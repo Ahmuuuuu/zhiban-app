@@ -124,7 +124,7 @@
 
 <script setup>
 import { ref, nextTick,onMounted } from 'vue'
-import {sendChatMessage,getConversationList,getConversationMessages} from '../api/apis'
+import { streamChatMessage, getConversationList, getConversationMessages } from '../api/apis'
 import PortraitSetupModal from '../components/PortraitSetupModal.vue'
 
 const inputValue = ref('')
@@ -456,26 +456,33 @@ const sendMessage = async () => {
   loading.value = true
 
   try {
-    const res = await sendChatMessage({
+    const target = messages.value.find(item => item.id === loadingMessageId)
+    let hasReceivedChunk = false
+
+    await streamChatMessage({
       user_req: text,
       chat_group_id: activeConversationId.value
-    })
-    const data = getResponseData(res)
+    }, {
+      onChunk: async chunk => {
+        if (!target) return
 
-    const chatGroupId = data?.chat_group_id || activeConversationId.value
+        if (!hasReceivedChunk) {
+          target.content = ''
+          hasReceivedChunk = true
+        }
 
-    if (chatGroupId) {
-      activeConversationId.value = chatGroupId
-      const historyRes = await getConversationMessages(chatGroupId)
-      messages.value = buildMessagesFromHistory(normalizeList(historyRes), chatGroupId)
-    } else {
-      const target = messages.value.find(item => item.id === loadingMessageId)
-
-      if (target) {
-        target.content = data?.res || data?.answer || '消息已发送'
+        target.content += chunk
         target.time = getNowTime()
+        await scrollToBottom()
+      },
+      onDone: data => {
+        const chatGroupId = data?.chat_group_id || activeConversationId.value
+
+        if (chatGroupId) {
+          activeConversationId.value = chatGroupId
+        }
       }
-    }
+    })
 
     await scrollToBottom()
     await loadConversationList()

@@ -65,8 +65,8 @@
               <span class="type-mark">
                 <FileText :size="18" />
               </span>
-              <span class="visibility" :class="resource.visibility">
-                {{ visibilityText(resource.visibility) }}
+              <span class="visibility" :class="resourceLabelType(resource)">
+                {{ visibilityText(resource) }}
               </span>
             </div>
 
@@ -90,7 +90,7 @@
             </span>
             <div>
               <h2>{{ selectedResource?.title || '选择一份资料' }}</h2>
-              <p>{{ selectedResource ? visibilityText(selectedResource.visibility) : '从左侧列表查看内容' }}</p>
+              <p>{{ selectedResource ? visibilityText(selectedResource) : '从左侧列表查看内容' }}</p>
             </div>
           </div>
 
@@ -139,6 +139,7 @@ const loading = ref(false)
 const errorMessage = ref('')
 const keyword = ref('')
 const activeFilter = ref('all')
+const currentUserId = ref(null)
 
 const filterOptions = [
   { label: '全部', value: 'all' },
@@ -159,9 +160,38 @@ const normalizeResources = data => {
   }))
 }
 
+const getCurrentUserIdFromToken = () => {
+  const token = localStorage.getItem('token')
+
+  if (!token) return null
+
+  try {
+    const payloadText = token.split('.')[1]
+
+    if (!payloadText) return null
+
+    const normalizedPayload = payloadText.replace(/-/g, '+').replace(/_/g, '/')
+    const paddedPayload = normalizedPayload.padEnd(
+      normalizedPayload.length + ((4 - normalizedPayload.length % 4) % 4),
+      '='
+    )
+    const payload = JSON.parse(atob(paddedPayload))
+    const id = Number(payload?.sub)
+
+    return Number.isFinite(id) ? id : null
+  } catch (error) {
+    return null
+  }
+}
+
+const isOwnResource = resource => {
+  return currentUserId.value !== null && Number(resource?.user_id) === currentUserId.value
+}
+
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
+  currentUserId.value = getCurrentUserIdFromToken()
 
   try {
     const result = await getStudyResources()
@@ -193,8 +223,8 @@ const filteredResources = computed(() => {
 
     const matchesFilter =
       activeFilter.value === 'all' ||
-      (activeFilter.value === 'public' && resource.visibility === 'public') ||
-      (activeFilter.value === 'mine' && resource.visibility !== 'public')
+      (activeFilter.value === 'public' && !isOwnResource(resource)) ||
+      (activeFilter.value === 'mine' && isOwnResource(resource))
 
     return matchesKeyword && matchesFilter
   })
@@ -215,8 +245,12 @@ const selectResource = resource => {
   selectedResource.value = resource
 }
 
-const visibilityText = visibility => {
-  return visibility === 'public' ? '公开资源' : '我的资源'
+const resourceLabelType = resource => {
+  return isOwnResource(resource) ? 'mine' : 'public'
+}
+
+const visibilityText = resource => {
+  return isOwnResource(resource) ? '我的资源' : '公开资源'
 }
 
 const getExcerpt = content => {
@@ -353,9 +387,9 @@ onMounted(loadResources)
 .import-link:hover,
 .filter-group button:hover,
 .filter-group button.active {
-  background: #cdf464;
-  border-color: #cdf464;
-  box-shadow: 0 4px 9px rgba(47, 79, 62, 0.16);
+  background: #c9dce9;
+  border-color: #5f8fc3;
+  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
   transform: translateY(-1px);
 }
 
@@ -432,6 +466,7 @@ onMounted(loadResources)
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+  align-content: start;
   gap: 14px;
   padding-right: 4px;
 }
@@ -446,10 +481,12 @@ onMounted(loadResources)
 
 .resource-card {
   min-height: 210px;
+  max-height: 240px;
   padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
@@ -506,6 +543,10 @@ onMounted(loadResources)
   font-size: 18px;
   line-height: 1.35;
   word-break: break-word;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .resource-card p {
@@ -514,6 +555,10 @@ onMounted(loadResources)
   font-size: 13px;
   line-height: 1.7;
   word-break: break-word;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .resource-card footer {
@@ -522,6 +567,7 @@ onMounted(loadResources)
   gap: 10px;
   color: #5f8fc3;
   font-size: 12px;
+  flex-wrap: wrap;
 }
 
 .resource-card footer span {
