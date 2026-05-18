@@ -60,6 +60,20 @@
               ></textarea>
             </label>
 
+            <fieldset class="visibility-group">
+              <legend>资料可见性</legend>
+              <label class="radio-option">
+                <input v-model="visibility" type="radio" value="private" />
+                <span>仅我可见</span>
+                <small>只有你可以访问和使用这份资料</small>
+              </label>
+              <label class="radio-option">
+                <input v-model="visibility" type="radio" value="public" />
+                <span>全员可见</span>
+                <small>所有用户都可以查看和使用（需管理员权限）</small>
+              </label>
+            </fieldset>
+
             <p v-if="statusMessage" class="status-message" :class="statusType">
               {{ statusMessage }}
             </p>
@@ -98,6 +112,7 @@ const selectedFile = ref(null)
 const previewText = ref('')
 const materialTitle = ref('')
 const materialDescription = ref('')
+const visibility = ref('private')
 const statusMessage = ref('')
 const statusType = ref('')
 const uploading = ref(false)
@@ -185,6 +200,7 @@ const submitMaterial = async () => {
   const formData = new FormData()
   formData.append('file', selectedFile.value)
   formData.append('title', materialTitle.value.trim() || selectedFile.value.name)
+  formData.append('visibility', visibility.value)
 
   try {
     const res = await uploadStudyMaterial(formData)
@@ -418,6 +434,49 @@ const submitMaterial = async () => {
 
 .status-message.error {
   background: #f0efdd;
+}
+
+.visibility-group {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #c9dce9;
+  border-radius: 8px;
+  background: #f5f9fc;
+}
+
+.visibility-group legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #5f8fc3;
+}
+
+.radio-option {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 10px;
+  cursor: pointer;
+  gap: 10px;
+}
+
+.radio-option input[type="radio"] {
+  margin-top: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.radio-option span {
+  font-size: 14px;
+  font-weight: 700;
+  color: #163f8f;
+}
+
+.radio-option small {
+  display: block;
+  font-size: 12px;
+  color: #5f8fc3;
+  line-height: 1.4;
+  margin-top: 4px;
 }
 
 .submit-btn {
