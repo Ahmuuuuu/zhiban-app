@@ -140,6 +140,7 @@ const errorMessage = ref('')
 const keyword = ref('')
 const activeFilter = ref('all')
 const currentUserId = ref(null)
+const currentUserToken = ref('')
 
 const filterOptions = [
   { label: '全部', value: 'all' },
@@ -155,6 +156,7 @@ const normalizeResources = data => {
     title: item.title || '',
     content: item.content || '',
     user_id: item.user_id,
+    user_token: item.user_token || item.token || item.owner_token || item.uploader_token,
     visibility: item.visibility || 'private',
     created_at: item.created_at || ''
   }))
@@ -185,12 +187,19 @@ const getCurrentUserIdFromToken = () => {
 }
 
 const isOwnResource = resource => {
+  const resourceOwnerToken = resource?.user_token || resource?.user_id
+
+  if (currentUserToken.value && String(resourceOwnerToken) === currentUserToken.value) {
+    return true
+  }
+
   return currentUserId.value !== null && Number(resource?.user_id) === currentUserId.value
 }
 
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
+  currentUserToken.value = localStorage.getItem('token') || ''
   currentUserId.value = getCurrentUserIdFromToken()
 
   try {
