@@ -36,17 +36,6 @@
         
          
 
-        <!-- //学习资源 -->
-         <nav class="menu">
-          <router-link  to="/resources" class="menu-item">
-         <div >
-            <span class="menu-icon"><img src="../assets/pic/资源.svg" ></span>
-            <span>学习资源</span>
-          </div>
-          </router-link>
-          
-        </nav>
-
         <!-- //学习路径 -->
          <nav class="menu">
           <router-link to="/spath" class="menu-item">

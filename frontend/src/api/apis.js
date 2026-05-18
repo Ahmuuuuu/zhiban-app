@@ -176,3 +176,11 @@ export function uploadStudyMaterial(data) {
     data
   })
 }
+
+export function getStudyResources(params = {}) {
+  return request({
+    url: '/knowledge_base/list',
+    method: 'get',
+    params
+  })
+}
