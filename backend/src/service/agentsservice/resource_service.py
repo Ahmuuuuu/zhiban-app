@@ -17,6 +17,10 @@ _FILE_EXT_MAP = {
     "case": "md",
     "reading": "md",
 }
+
+_FILE_MEDIA_TYPE_MAP = {
+    "document": "text/plain; charset=utf-8",
+}
 from backend.src.utils.portrait_utils import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.prompt_loader import load_prompt
@@ -205,7 +209,16 @@ class ResourceService:
             return None
         ext = _FILE_EXT_MAP.get(record.resource_type, "md")
         filename = f"{record.topic}_{record.resource_type}.{ext}"
-        return record.content, filename, "text/markdown; charset=utf-8"
+        media_type_map = {
+            "document": "text/markdown; charset=utf-8",
+            "ppt": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "mindmap": "text/markdown; charset=utf-8",
+            "exercise": "text/markdown; charset=utf-8",
+            "case": "text/markdown; charset=utf-8",
+            "reading": "text/markdown; charset=utf-8",
+        }
+        media_type = media_type_map.get(record.resource_type, "text/markdown; charset=utf-8")
+        return record.content, filename, media_type
 
     @staticmethod
     async def delete_resource(resource_id: int, user_id: int) -> bool:

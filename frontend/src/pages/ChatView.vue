@@ -95,7 +95,7 @@
 
           <div v-if="message.previewUrl || message.downloadUrl" class="file-actions">
             <a v-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
-            <a v-if="message.downloadUrl" :href="message.downloadUrl" target="_blank" rel="noopener noreferrer">下载</a>
+            <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
           </div>
         </div>
 
@@ -153,7 +153,13 @@
 
 <script setup>
 import { ref, nextTick, onMounted } from 'vue'
-import { streamChatMessage, getConversationList, getConversationMessages } from '../api/apis'
+import {
+  streamChatMessage,
+  getConversationList,
+  getConversationMessages,
+  getGeneratedResource,
+  resolveApiUrl
+} from '../api/apis'
 import PortraitSetupModal from '../components/PortraitSetupModal.vue'
 import ResourceSidebar from '../components/ResourceSidebar.vue'
 
@@ -458,23 +464,135 @@ const messages = ref([
 
 const normalizeFileMessage = data => {
   const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || 'file'
-  const filename =
+  const rawFilename =
     data.filename ||
     data.file_name ||
     data.name ||
-    `${fileTypeLabel(fileType)}.${fileExtension(fileType)}`
+    `${data.topic || fileTypeLabel(fileType)}.${fileExtension(fileType)}`
+  const filename = normalizeFileName(rawFilename, fileType)
+  const fileId = data.file_id || data.fileId || data.resource_id || data.resourceId || ''
 
   return {
-    id: `file-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: fileId ? `file-${fileId}` : `file-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role: 'assistant',
     type: 'file',
     fileType,
     filename,
     content: data.content || data.text || data.preview_content || data.previewContent || '',
-    fileId: data.file_id || data.fileId || data.resource_id || data.resourceId || '',
-    previewUrl: data.preview_url || data.previewUrl || data.preview || '',
-    downloadUrl: data.download_url || data.downloadUrl || data.url || '',
+    fileId,
+    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.preview || ''),
+    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || data.url || (fileId ? `/resource/${fileId}/download` : '')),
     time: getNowTime()
+  }
+}
+
+const appendFileMessage = fileData => {
+  const fileMessage = normalizeFileMessage(fileData)
+  const existingIndex = messages.value.findIndex(item => {
+    return item.type === 'file' && item.fileId && item.fileId === fileMessage.fileId
+  })
+
+  if (existingIndex === -1) {
+    messages.value.push(fileMessage)
+    return
+  }
+
+  messages.value[existingIndex] = {
+    ...messages.value[existingIndex],
+    ...fileMessage,
+    content: fileMessage.content || messages.value[existingIndex].content
+  }
+}
+
+const normalizeFileName = (filename, type) => {
+  const extension = fileExtension(type)
+  const rawName = String(filename || '').trim()
+  const safeName = rawName || `${fileTypeLabel(type)}.${extension}`
+
+  if (extension === 'file') return safeName
+
+  if (/\.[^.\\/]+$/.test(safeName)) {
+    return safeName.replace(/\.[^.\\/]+$/, `.${extension}`)
+  }
+
+  return `${safeName}.${extension}`
+}
+
+const getDownloadName = message => {
+  return normalizeFileName(message.filename, message.fileType)
+}
+
+const downloadGeneratedFile = async message => {
+  if (!message?.downloadUrl) return
+
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch(message.downloadUrl, {
+      headers: {
+        ...(token ? { token } : {})
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error(`下载失败：${response.status}`)
+    }
+
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+
+    link.href = url
+    link.download = getDownloadName(message)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    console.error('下载生成文件失败：', error)
+    window.alert('下载失败，请确认登录状态和后端服务是否正常。')
+  }
+}
+
+const extractResourceIds = text => {
+  const ids = new Set()
+  const patterns = [
+    /ID[:：]\s*(\d+)/gi,
+    /resource[_\s-]?id[:：]?\s*(\d+)/gi,
+    /资源\s*(?:ID|id)[:：]?\s*(\d+)/gi
+  ]
+
+  patterns.forEach(pattern => {
+    let match = pattern.exec(text || '')
+
+    while (match) {
+      ids.add(match[1])
+      match = pattern.exec(text || '')
+    }
+  })
+
+  return [...ids]
+}
+
+const hydrateGeneratedFilesFromText = async text => {
+  const resourceIds = extractResourceIds(text)
+
+  for (const resourceId of resourceIds) {
+    if (messages.value.some(item => item.type === 'file' && String(item.fileId) === String(resourceId))) {
+      continue
+    }
+
+    try {
+      const result = await getGeneratedResource(resourceId)
+      const resource = result?.data || result || {}
+
+      appendFileMessage({
+        ...resource,
+        resource_id: resource.resource_id || resourceId,
+        download_url: `/resource/${resourceId}/download`
+      })
+    } catch (error) {
+      console.error('获取生成文件失败：', error)
+    }
   }
 }
 
@@ -572,7 +690,7 @@ const sendMessage = async () => {
           hasReceivedChunk = true
         }
 
-        messages.value.push(normalizeFileMessage(fileData))
+        appendFileMessage(fileData)
         await scrollToBottom()
       },
       onDone: data => {
@@ -583,6 +701,10 @@ const sendMessage = async () => {
         }
       }
     })
+
+    if (target?.content) {
+      await hydrateGeneratedFilesFromText(target.content)
+    }
 
     await scrollToBottom()
     await loadConversationList()
@@ -1044,9 +1166,11 @@ onMounted(() => {
   gap: 8px;
 }
 
-.file-actions a {
+.file-actions a,
+.file-actions button {
   min-height: 30px;
   padding: 0 12px;
+  border: none;
   border-radius: 999px;
   background: #163f8f;
   color: #ffffff;
@@ -1055,6 +1179,8 @@ onMounted(() => {
   font-weight: 800;
   display: inline-flex;
   align-items: center;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .bubble p {

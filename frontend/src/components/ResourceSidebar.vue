@@ -91,6 +91,14 @@
               >
                 {{ expandedIdx === idx ? '收起' : '预览' }}
               </button>
+              <button
+                v-if="res.download_url"
+                type="button"
+                class="download-btn"
+                @click="downloadResource(res)"
+              >
+                下载
+              </button>
             </div>
             <div v-if="expandedIdx === idx" class="resource-content markdown-body"
               v-html="renderMarkdown(res.content)"
@@ -117,7 +125,7 @@
 
 <script setup>
 import { ref, watch, defineEmits } from 'vue'
-import { streamResourceGeneration } from '../api/apis'
+import { resolveApiUrl, streamResourceGeneration } from '../api/apis'
 
 const emit = defineEmits(['toggle'])
 
@@ -196,6 +204,93 @@ const truncate = (text, max) => {
   return text.length > max ? text.slice(0, max) + '...' : text
 }
 
+const resourceDownloadUrl = url => resolveApiUrl(url)
+
+const resourceExtension = type => {
+  const normalizedType = String(type || '').toLowerCase()
+
+  if (normalizedType.includes('document')) return 'txt'
+  if (normalizedType.includes('ppt')) return 'pptx'
+  return 'md'
+}
+
+const resourceFileName = resource => {
+  const extension = resourceExtension(resource.resource_type)
+  const rawName = String(resource.filename || `${resource.topic || 'resource'}_${resource.resource_type || 'document'}`).trim()
+
+  if (/\.[^.\\/]+$/.test(rawName)) {
+    return rawName.replace(/\.[^.\\/]+$/, `.${extension}`)
+  }
+
+  return `${rawName}.${extension}`
+}
+
+const downloadResource = async resource => {
+  if (!resource?.download_url) return
+
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch(resourceDownloadUrl(resource.download_url), {
+      headers: {
+        ...(token ? { token } : {})
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error(`下载失败：${response.status}`)
+    }
+
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+
+    link.href = url
+    link.download = resourceFileName(resource)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    console.error('下载生成资源失败：', error)
+    window.alert('下载失败，请确认登录状态和后端服务是否正常。')
+  }
+}
+
+const normalizeGeneratedResource = data => {
+  const resourceType = data.resource_type || data.file_type || data.fileType || 'document'
+
+  return {
+    ...data,
+    resource_id: data.resource_id || data.file_id || data.fileId || '',
+    resource_type: resourceType,
+    topic: data.topic || generatingTopic.value || topicInput.value || '学习资源',
+    content: data.content || data.text || data.preview_content || data.previewContent || '',
+    filename: data.filename || data.file_name || '',
+    download_url: data.download_url || data.downloadUrl || (data.resource_id ? `/resource/${data.resource_id}/download` : '')
+  }
+}
+
+const upsertGeneratedResource = data => {
+  const resource = normalizeGeneratedResource(data)
+  const index = generatedResources.value.findIndex(item => {
+    return (
+      (resource.resource_id && item.resource_id === resource.resource_id) ||
+      (resource.resource_type && item.resource_type === resource.resource_type)
+    )
+  })
+
+  if (index === -1) {
+    generatedResources.value.push(resource)
+    return
+  }
+
+  generatedResources.value[index] = {
+    ...generatedResources.value[index],
+    ...resource,
+    content: resource.content || generatedResources.value[index].content
+  }
+}
+
 const startGenerate = async () => {
   const topic = topicInput.value.trim() || generatingTopic.value
   if (!topic || isGenerating.value) return
@@ -263,10 +358,13 @@ const startGenerate = async () => {
             }
           }
         },
+        onFile: (eventData) => {
+          upsertGeneratedResource(eventData)
+        },
         onDone: (eventData) => {
           // eventData: { done: true, resources: [...] }
           if (eventData.resources && Array.isArray(eventData.resources)) {
-            generatedResources.value = eventData.resources
+            eventData.resources.forEach(upsertGeneratedResource)
           }
 
           // 标记所有进度为完成
@@ -787,18 +885,22 @@ const renderMarkdown = (content) => {
   gap: 8px;
 }
 
-.view-btn {
+.view-btn,
+.download-btn {
   padding: 4px 12px;
   border: 1px solid rgba(196, 226, 248, 0.5);
   border-radius: 8px;
   background: transparent;
   color: #163f8f;
   font-size: 12px;
+  line-height: 1.4;
+  text-decoration: none;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.view-btn:hover {
+.view-btn:hover,
+.download-btn:hover {
   background: rgba(22, 63, 143, 0.06);
 }
 
