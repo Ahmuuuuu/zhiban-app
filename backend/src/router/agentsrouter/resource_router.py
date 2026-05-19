@@ -20,7 +20,7 @@ async def generate_resource(
     data : GenerateResourceRequest = Body(...)
 ):
     try :
-        result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types)
+        result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id)
         return {"code" : 200, "msg" : "success", "data" : result}
     except HTTPException :
         raise
@@ -34,7 +34,7 @@ async def generate_resource_stream(
     data : GenerateResourceRequest = Body(...)
 ):
     return StreamingResponse(
-        ResourceService.generate_stream(data.topic, user_id, data.resource_types),
+        ResourceService.generate_stream(data.topic, user_id, data.resource_types, data.chat_group_id),
         media_type = "text/event-stream",
     )
 
