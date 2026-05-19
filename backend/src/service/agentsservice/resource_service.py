@@ -10,12 +10,16 @@ from backend.src.utils.database import init_db
 
 # 资源类型 → 文件扩展名映射
 _FILE_EXT_MAP = {
-    "document": "md",
+    "document": "txt",
     "ppt": "md",
     "mindmap": "md",
     "exercise": "md",
     "case": "md",
     "reading": "md",
+}
+
+_FILE_MEDIA_TYPE_MAP = {
+    "document": "text/plain; charset=utf-8",
 }
 from backend.src.utils.portrait_utils import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
@@ -203,9 +207,10 @@ class ResourceService:
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:
             return None
-        ext = "md"
+        ext = _FILE_EXT_MAP.get(record.resource_type, "md")
+        media_type = _FILE_MEDIA_TYPE_MAP.get(record.resource_type, "text/markdown; charset=utf-8")
         filename = f"{record.topic}_{record.resource_type}.{ext}"
-        return record.content, filename, "text/markdown; charset=utf-8"
+        return record.content, filename, media_type
 
     @staticmethod
     async def delete_resource(resource_id: int, user_id: int) -> bool:
