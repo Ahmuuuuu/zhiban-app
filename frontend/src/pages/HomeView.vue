@@ -15,7 +15,7 @@
         <p class="eyebrow">Personal Learning Companion</p>
         <h1>知伴</h1>
         <p class="lead">
-          汇集 AI 对话、学习画像、资料导入与路径规划，让你的学习状态、资源和计划放在同一个清晰界面里。
+          专属于你的学习助手
         </p>
 
         <div class="hero-actions">

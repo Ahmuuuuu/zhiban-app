@@ -38,30 +38,18 @@
 
         <!-- //学习路径 -->
          <nav class="menu">
-          <router-link to="/spath" class="menu-item">
+          <router-link to="/mine" class="menu-item">
 
              <div
            
             
           >
             <span class="menu-icon"><img src="../assets/pic/other.svg" ></span>
-            <span>学习路径</span>
+            <span>我的</span>
           </div>
           </router-link>
          
         </nav>
-        <!-- //学习情况 -->
-         <nav class="menu">
-          <router-link to="/situation" class="menu-item">
-            <div>
-            <span class="menu-icon"><img src="../assets/pic/other.svg" ></span>
-            <span>学习情况</span>
-          </div>
-          </router-link>
-         
-        </nav>
-          
-
         <nav class="menu">
           <router-link to="/profile" class="menu-item">
             <div>
@@ -88,8 +76,8 @@ export default {
 <style>
 /* 左侧导航 */
 .sidebar {
-  background: #ffffff;
-  border-right: 1px solid #edf0f5;
+  background: #f0efdd;
+  border-right: 1px solid #c9dce9;
   padding: 28px 18px;
   display: flex;
   flex-direction: column;
@@ -106,7 +94,7 @@ export default {
 .logo-icon {
   width: 28px;
   height: 28px;
-  border: 3px solid #111827;
+  border: 3px solid #163f8f;
   border-radius: 8px;
   transform: rotate(45deg);
 }
@@ -114,6 +102,7 @@ export default {
 .brand {
   font-size: 24px;
   font-weight: 800;
+  color: #163f8f;
 }
 
 .menu {
@@ -136,20 +125,20 @@ export default {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  color: #374151;
+  color: #163f8f;
   transition: all 0.25s ease;
 }
 
 .menu-item.router-link-active {
-  background: #cdf464;
+  background: #c9dce9;
   transform: translateX(6px) scale(1.03);
-  box-shadow: 0 4px 9px rgba(47, 79, 62, 0.16);
+  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
   
 }
 .menu-item:hover {
-  background: #cdf464;
+  background: #c9dce9;
   transform: translateX(6px) scale(1.03);
-  box-shadow: 0 4px 9px rgba(47, 79, 62, 0.16);
+  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
 
 }
 

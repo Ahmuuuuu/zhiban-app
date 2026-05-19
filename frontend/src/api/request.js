@@ -21,7 +21,6 @@ request.interceptors.request.use(
   }
 )
 
-//响应拦截器：处理token过期
 request.interceptors.response.use(
   response => {
     return response.data
@@ -29,12 +28,9 @@ request.interceptors.response.use(
   error => {
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('token')
-
-
-      window.location.href = '/LoginView'
-
       console.error('登录已过期，请重新登录')
     }
+
     return Promise.reject(error)
   }
 )
