@@ -307,7 +307,7 @@ const deleteAccount = async () => {
 
     localStorage.removeItem('token')
     localStorage.removeItem('user_id')
-    router.push('/resources')
+    router.push('/mine/resources')
   } catch (error) {
     errorMessage.value =
       error?.response?.data?.detail ||

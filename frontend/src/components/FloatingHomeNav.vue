@@ -2,10 +2,8 @@
   <header class="floating-nav">
     <nav class="nav-links">
       <router-link to="/chat">AI 对话</router-link>
-      <router-link to="/study-import">资料导入</router-link>
-      <router-link to="/resources">学习资源</router-link>
-      <router-link to="/spath">学习路径</router-link>
-      <router-link to="/situation">学习情况</router-link>
+      <router-link to="/resources">资源</router-link>
+      <router-link to="/mine">我的</router-link>
     </nav>
 
   </header>
