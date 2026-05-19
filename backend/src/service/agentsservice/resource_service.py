@@ -10,7 +10,7 @@ from backend.src.utils.database import init_db
 
 # 资源类型 → 文件扩展名映射
 _FILE_EXT_MAP = {
-    "document": "md",
+    "document": "txt",
     "ppt": "pptx",
     "mindmap": "md",
     "exercise": "md",
@@ -203,22 +203,19 @@ class ResourceService:
         ]
 
     @staticmethod
-    async def download_resource(resource_id: int, user_id: int) -> tuple[str, str, str] | None:
+    async def download_resource(resource_id: int, user_id: int) -> tuple[bytes, str, str] | None:
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:
             return None
         ext = _FILE_EXT_MAP.get(record.resource_type, "md")
         filename = f"{record.topic}_{record.resource_type}.{ext}"
-        media_type_map = {
-            "document": "text/markdown; charset=utf-8",
-            "ppt": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "mindmap": "text/markdown; charset=utf-8",
-            "exercise": "text/markdown; charset=utf-8",
-            "case": "text/markdown; charset=utf-8",
-            "reading": "text/markdown; charset=utf-8",
-        }
-        media_type = media_type_map.get(record.resource_type, "text/markdown; charset=utf-8")
-        return record.content, filename, media_type
+        if record.resource_type == "ppt":
+            from backend.src.utils.pptx_generator import markdown_to_pptx
+            content_bytes = markdown_to_pptx(record.content)
+            media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            return content_bytes, filename, media_type
+        else:
+            return record.content.encode("utf-8"), filename, "text/markdown; charset=utf-8"
 
     @staticmethod
     async def delete_resource(resource_id: int, user_id: int) -> bool:
