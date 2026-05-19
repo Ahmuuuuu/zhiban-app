@@ -20,7 +20,7 @@
 
         <div class="hero-actions">
           <router-link class="primary-action" to="/chat">开始 AI 对话</router-link>
-          <router-link class="secondary-action" to="/study-import">导入学习资料</router-link>
+          <router-link class="secondary-action" to="/mine/resources">查看我的资源</router-link>
         </div>
       </div>
 

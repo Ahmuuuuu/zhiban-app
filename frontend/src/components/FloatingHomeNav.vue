@@ -18,9 +18,9 @@
   top: 22px;
   left: 50%;
   z-index: 20;
-  width: min(1120px, calc(100% - 40px));
+  width: min(620px, calc(100% - 40px));
   min-height: 62px;
-  padding: 10px 18px;
+  padding: 10px 16px;
   transform: translateX(-50%);
   border: 1px solid rgba(201, 220, 233, 0.5);
   border-radius: 999px;
