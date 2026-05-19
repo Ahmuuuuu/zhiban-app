@@ -1,16 +1,41 @@
 import json
 
-from backend.src.ai_core.graph import resource_graph
+from backend.src.ai_core.graph import resource_graph, _fill
+from backend.src.ai_core.llm_config import llm
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.agent_skill_model import AgentSkill
+from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.portrait_utils import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
+from backend.src.utils.prompt_loader import load_prompt
 
 
-async def _make_state(topic: str, user_id: int, resource_types: list[str]) -> dict:
+async def _extract_topic_from_chat(user_id: int, chat_group_id: int) -> str:
+    """从聊天记录中提取学习主题"""
+    records = await ChatHistory.filter(
+        user__id=user_id,
+        chat_group_id=chat_group_id,
+    ).order_by("created_at").all()
+
+    if not records:
+        return "通用学习"
+
+    conversation = "\n".join(
+        f"用户：{r.req}\nAI：{r.res[:200]}" for r in records
+    )
+    prompt = _fill(load_prompt("resource/topic_extract"), conversation=conversation)
+    response = await llm.ainvoke(prompt)
+    return response.content.strip()
+
+
+async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> dict:
     await init_db()
+
+    # 没传 topic 但有 chat_group_id → 从聊天记录自动提取
+    if not topic and chat_group_id > 0:
+        topic = await _extract_topic_from_chat(user_id, chat_group_id)
 
     portrait_context = "暂无画像数据"
     user = await User.filter(id=user_id).first()
@@ -76,8 +101,9 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
 class ResourceService:
 
     @staticmethod
-    async def generate_and_save(topic: str, user_id: int, resource_types: list[str]) -> list[dict]:
-        initial_state = await _make_state(topic, user_id, resource_types)
+    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> list[dict]:
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
+        topic = initial_state["topic"]
         result = await resource_graph.ainvoke(initial_state)
         return await _save_resources(
             topic, user_id,
@@ -87,9 +113,10 @@ class ResourceService:
         )
 
     @staticmethod
-    async def generate_stream(topic: str, user_id: int, resource_types: list[str]):
+    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0):
         """节点级流式 — astream 逐节点产出状态，只跑一次 graph"""
-        initial_state = await _make_state(topic, user_id, resource_types)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
+        topic = initial_state["topic"]
         final_resources = {}
         final_passed = False
         final_retry = 0
