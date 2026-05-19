@@ -1,20 +1,21 @@
 <template>
-  <main class="resource-page">
-    <header class="resource-header">
+  <main class="resource-center-page">
+    <header class="center-header">
+      <router-link class="back-btn" to="/">
+        <ArrowLeft :size="18" />
+        <span>返回首页</span>
+      </router-link>
+
       <div>
-        <p class="eyebrow">My Resources</p>
-        <h1>我的学习资源</h1>
-        <p class="summary">这里只展示你自己上传的学习资料，公开资源请前往资源中心。</p>
+        <p class="eyebrow">Resource Center</p>
+        <h1>资源中心</h1>
+        <p>查看公开学习资源，也可以导入自己的学习资料。</p>
       </div>
 
       <div class="header-actions">
         <button class="icon-btn" type="button" :disabled="loading" title="刷新资源" @click="loadResources">
           <RefreshCw :size="18" :class="{ spinning: loading }" />
         </button>
-        <router-link class="import-link" to="/resources">
-          <BookOpenText :size="17" />
-          <span>资源中心</span>
-        </router-link>
         <router-link class="import-link" to="/study-import">
           <Upload :size="17" />
           <span>资料导入</span>
@@ -25,7 +26,7 @@
     <div class="resource-tools">
       <label class="search-field">
         <Search :size="18" />
-        <input v-model.trim="keyword" type="search" placeholder="搜索我的资源标题或内容" />
+        <input v-model.trim="keyword" type="search" placeholder="搜索公开资源标题或内容" />
       </label>
     </div>
 
@@ -56,7 +57,7 @@
             <span class="type-mark">
               <FileText :size="18" />
             </span>
-            <span class="visibility">我的资源</span>
+            <span class="visibility">公开资源</span>
           </div>
 
           <h2>{{ resource.title || '未命名资料' }}</h2>
@@ -78,8 +79,8 @@
             <BookOpenText :size="22" />
           </span>
           <div>
-            <h2>{{ selectedResource?.title || '选择一份资料' }}</h2>
-            <p>{{ selectedResource ? '我的资源' : '从左侧列表查看内容' }}</p>
+            <h2>{{ selectedResource?.title || '选择一份资源' }}</h2>
+            <p>公开资源</p>
           </div>
         </div>
 
@@ -89,16 +90,16 @@
         </div>
 
         <div class="preview-content">
-          <p v-if="selectedResource">{{ selectedResource.content || '这份资料暂时没有内容。' }}</p>
-          <p v-else>点击任意资源后，资料正文会在这里展示。</p>
+          <p v-if="selectedResource">{{ selectedResource.content || '这份资源暂时没有内容。' }}</p>
+          <p v-else>点击任意公开资源后，资源正文会在这里展示。</p>
         </div>
       </aside>
     </div>
 
     <div v-else class="empty-state">
       <FileSearch :size="44" />
-      <h2>还没有个人学习资源</h2>
-      <p>{{ resources.length ? '换个关键词试试。' : '可以先导入一份学习资料。' }}</p>
+      <h2>暂无公开资源</h2>
+      <p>可以先导入资料，或等待管理员发布公开资源。</p>
       <router-link class="import-link" to="/study-import">
         <Upload :size="17" />
         <span>资料导入</span>
@@ -111,6 +112,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   AlertCircle,
+  ArrowLeft,
   BookOpenText,
   CalendarDays,
   FileSearch,
@@ -126,8 +128,6 @@ const selectedResource = ref(null)
 const loading = ref(false)
 const errorMessage = ref('')
 const keyword = ref('')
-const currentUserId = ref(null)
-const currentUserToken = ref('')
 
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
@@ -136,72 +136,28 @@ const normalizeResources = data => {
     doc_id: String(item.doc_id || item.id || index),
     title: item.title || '',
     content: item.content || '',
-    user_id: item.user_id,
-    user_token: item.user_token || item.token || item.owner_token || item.uploader_token,
+    visibility: item.visibility || 'private',
     created_at: item.created_at || ''
   }))
-}
-
-const getCurrentUserIdFromToken = () => {
-  const token = localStorage.getItem('token')
-
-  if (!token) return null
-
-  try {
-    const payloadText = token.split('.')[1]
-    if (!payloadText) return null
-
-    const normalizedPayload = payloadText.replace(/-/g, '+').replace(/_/g, '/')
-    const paddedPayload = normalizedPayload.padEnd(
-      normalizedPayload.length + ((4 - normalizedPayload.length % 4) % 4),
-      '='
-    )
-    const payload = JSON.parse(atob(paddedPayload))
-    const id = Number(payload?.sub)
-
-    return Number.isFinite(id) ? id : null
-  } catch (error) {
-    return null
-  }
-}
-
-const isOwnResource = resource => {
-  const resourceOwnerToken = resource?.user_token || resource?.user_id
-
-  if (currentUserToken.value && String(resourceOwnerToken) === currentUserToken.value) {
-    return true
-  }
-
-  return currentUserId.value !== null && Number(resource?.user_id) === currentUserId.value
 }
 
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
-  currentUserToken.value = localStorage.getItem('token') || ''
-  currentUserId.value = getCurrentUserIdFromToken()
-
-  if (!currentUserToken.value) {
-    resources.value = []
-    selectedResource.value = null
-    errorMessage.value = '请先登录，再查看我的学习资源。'
-    loading.value = false
-    return
-  }
 
   try {
-    const result = await getStudyResources()
-    resources.value = normalizeResources(result).filter(isOwnResource)
+    const result = await getStudyResources({ visibility: 'public' })
+    resources.value = normalizeResources(result).filter(item => item.visibility === 'public')
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     if (error?.response?.status === 401) {
-      errorMessage.value = '请先登录，再查看我的学习资源。'
+      errorMessage.value = '请先登录，再查看资源中心。'
     } else {
       errorMessage.value =
         error?.response?.data?.detail ||
         error?.response?.data?.msg ||
         error?.message ||
-        '我的学习资源加载失败，请稍后再试。'
+        '资源中心加载失败，请稍后再试。'
     }
   } finally {
     loading.value = false
@@ -259,41 +215,62 @@ onMounted(loadResources)
 </script>
 
 <style scoped>
-.resource-page {
-  height: 100%;
-  min-height: 0;
+.resource-center-page {
+  width: 100vw;
+  height: 100vh;
   padding: 26px 34px 30px;
+  background: #fdfcf7;
   color: #163f8f;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
   display: flex;
   flex-direction: column;
   gap: 18px;
   overflow: hidden;
 }
 
-.resource-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+.center-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: 18px;
 }
 
-.eyebrow {
-  margin: 0 0 6px;
-  color: #5f8fc3;
-  font-size: 12px;
+.back-btn,
+.icon-btn,
+.import-link {
+  border: 1px solid #c9dce9;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #163f8f;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.back-btn,
+.import-link {
+  height: 42px;
+  padding: 0 14px;
+  gap: 8px;
+  font-size: 14px;
   font-weight: 800;
 }
 
-.resource-header h1 {
-  margin: 0;
-  font-size: 30px;
-  line-height: 1.15;
+.icon-btn {
+  width: 42px;
+  height: 42px;
 }
 
-.summary {
-  margin: 8px 0 0;
-  color: #5f8fc3;
-  font-size: 14px;
+.back-btn:hover,
+.icon-btn:hover,
+.import-link:hover {
+  background: #c9dce9;
+  border-color: #5f8fc3;
+  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
+  transform: translateY(-1px);
 }
 
 .header-actions,
@@ -308,48 +285,25 @@ onMounted(loadResources)
 
 .header-actions {
   gap: 10px;
-  flex-shrink: 0;
 }
 
-.icon-btn,
-.import-link {
-  border: 1px solid #c9dce9;
-  border-radius: 8px;
-  background: #163f8f;
-  color: #fafafa;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
-}
-
-.icon-btn {
-  width: 42px;
-  height: 42px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.import-link {
-  height: 42px;
-  padding: 0 14px;
-  gap: 8px;
-  text-decoration: none;
-  font-size: 14px;
+.eyebrow {
+  margin: 0 0 6px;
+  color: #5f8fc3;
+  font-size: 12px;
   font-weight: 800;
-  display: inline-flex;
-  align-items: center;
 }
 
-.icon-btn:hover,
-.import-link:hover {
-  background: #5f8fc3;
-  border-color: #5f8fc3;
-  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
-  transform: translateY(-1px);
+.center-header h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
 }
 
-.spinning {
-  animation: spin 0.9s linear infinite;
+.center-header p:last-child {
+  margin: 8px 0 0;
+  color: #5f8fc3;
+  font-size: 14px;
 }
 
 .search-field {
@@ -374,12 +328,16 @@ onMounted(loadResources)
   font: inherit;
 }
 
-.notice {
-  min-height: 52px;
-  padding: 0 16px;
+.notice,
+.empty-state {
   border: 1px solid #c9dce9;
   border-radius: 8px;
   background: #c9dce9;
+}
+
+.notice {
+  min-height: 52px;
+  padding: 0 16px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -406,8 +364,7 @@ onMounted(loadResources)
 }
 
 .resource-card,
-.preview-panel,
-.empty-state {
+.preview-panel {
   border: 1px solid #c9dce9;
   border-radius: 8px;
   background: #fafafa;
@@ -573,7 +530,6 @@ onMounted(loadResources)
   min-height: 320px;
   padding: 32px;
   color: #163f8f;
-  background: #c9dce9;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -635,6 +591,10 @@ onMounted(loadResources)
   border-radius: 999px;
 }
 
+.spinning {
+  animation: spin 0.9s linear infinite;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -647,14 +607,14 @@ onMounted(loadResources)
   }
 }
 
-@media (max-width: 1080px) {
-  .resource-page {
+@media (max-width: 980px) {
+  .resource-center-page {
     height: auto;
-    min-height: 100%;
+    min-height: 100vh;
     overflow: visible;
   }
 
-  .resource-header,
+  .center-header,
   .resource-layout {
     grid-template-columns: 1fr;
   }

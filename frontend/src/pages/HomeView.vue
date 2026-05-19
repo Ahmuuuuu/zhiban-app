@@ -15,55 +15,67 @@
         <p class="eyebrow">Personal Learning Companion</p>
         <h1>知伴</h1>
         <p class="lead">
-          汇集 AI 对话、学习画像、资料导入与路径规划，让你的学习状态、资源和计划放在同一个清晰界面里。
+          专属于你的学习助手
         </p>
 
         <div class="hero-actions">
           <router-link class="primary-action" to="/chat">开始 AI 对话</router-link>
-          <router-link class="secondary-action" to="/study-import">导入学习资料</router-link>
+          <router-link class="secondary-action" to="/mine/resources">查看我的资源</router-link>
         </div>
       </div>
 
       <div class="hero-board" aria-label="首页功能预览">
-        <article class="feature-card main-card">
+        <router-link class="feature-card main-card" to="/chat">
           <div class="feature-head">
             <img src="../assets/pic/message.svg" alt="" />
             <span>AI 对话</span>
           </div>
           <p>根据你的问题、资料和画像生成学习建议。</p>
           <div class="chat-preview">
-            <span></span>
-            <span></span>
-            <span></span>
+            <span>这章怎么复习？</span>
+            <span>先看重点概念，再做错题归因。</span>
+            <span>为你整理 3 个练习方向。</span>
           </div>
-        </article>
+        </router-link>
 
-        <article class="feature-card">
+        <router-link class="feature-card" to="/resources">
           <div class="feature-head">
             <img src="../assets/pic/yonghuhuaxiang.svg" alt="" />
-            <span>学习画像</span>
+            <span>个性化学习资源推荐</span>
           </div>
           <div class="tag-row">
-            <span>兴趣</span>
-            <span>方式</span>
-            <span>能力</span>
+            <span>兴趣匹配</span>
+            <span>资源推荐</span>
+            <span>重点优先</span>
           </div>
-        </article>
-
-        <article class="feature-card wide-card">
+          <div class="resource-preview">
+            <span>高频知识点讲义</span>
+            <span>错题巩固清单</span>
+          </div>
+        </router-link>
+      
+        <router-link class="feature-card wide-card" to="/mine/path">
           <div class="feature-head">
             <img src="../assets/pic/todolist.svg" alt="" />
-            <span>学习路径</span>
+            <span>学习路径规划</span>
           </div>
-          <div class="progress-list">
-            <span></span>
-            <span></span>
-            <span></span>
+           <div class="progress-list">
+            <span>目标拆解</span>
+            <span>阶段任务</span>
+            <span>复盘调整</span>
           </div>
-        </article>
+        </router-link>
 
-        <router-link class="mini-import-btn" to="/study-import">
-          资料导入
+         <router-link class="feature-card status-card" to="/mine/situation">
+          <div class="feature-head">
+            <img src="../assets/pic/xuexiqingkuang.svg" alt="" />
+            <span>学习情况分析</span>
+          </div>
+          <div class="status-metrics">
+            <span>进度追踪</span>
+            <span>活跃趋势</span>
+            <span>薄弱点</span>
+          </div>
         </router-link>
       </div>
     </section>
@@ -159,10 +171,14 @@ onUnmounted(() => {
 
 <style scoped>
 .home-cover {
+  position: relative;
   min-height: 100vh;
   background:
-    linear-gradient(135deg, rgba(240, 239, 221, 0.78) 0%, rgba(250, 250, 250, 0.92) 42%, rgba(201, 220, 233, 0.72) 100%),
-    #fafafa;
+    radial-gradient(ellipse 118% 82% at -24% 58%, rgba(255, 255, 255, 0.42) 0 34%, rgba(255, 255, 255, 0.2) 58%, transparent 86%),
+    radial-gradient(ellipse 88% 62% at 14% 18%, rgba(185, 222, 249, 0.36) 0 30%, rgba(185, 222, 249, 0.14) 56%, transparent 84%),
+    radial-gradient(ellipse 72% 44% at 84% 18%, rgba(255, 255, 255, 0.26) 0 28%, rgba(255, 255, 255, 0.1) 52%, transparent 78%),
+    radial-gradient(ellipse 86% 38% at 48% 88%, rgba(255, 255, 255, 0.28) 0 28%, rgba(255, 255, 255, 0.12) 52%, transparent 82%),
+    linear-gradient(155deg, #174d9b 0%, #438bd2 26%, #a8d7f6 62%, #f2fbff 100%);
   color: #163f8f;
   font-family:
     Inter,
@@ -173,6 +189,24 @@ onUnmounted(() => {
     "Microsoft YaHei",
     sans-serif;
   overflow: hidden;
+}
+
+.home-cover::before {
+  content: "";
+  position: fixed;
+  left: -32vw;
+  right: -20vw;
+  bottom: -28vh;
+  height: 68vh;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 42% 66% at 4% 48%, rgba(255, 255, 255, 0.8) 0 34%, rgba(255, 255, 255, 0.28) 62%, transparent 88%),
+    radial-gradient(ellipse 40% 70% at 24% 32%, rgba(255, 255, 255, 0.74) 0 34%, rgba(255, 255, 255, 0.24) 62%, transparent 88%),
+    radial-gradient(ellipse 40% 58% at 52% 44%, rgba(255, 255, 255, 0.62) 0 32%, rgba(255, 255, 255, 0.18) 58%, transparent 86%),
+    radial-gradient(ellipse 36% 62% at 76% 34%, rgba(255, 255, 255, 0.68) 0 30%, rgba(255, 255, 255, 0.2) 56%, transparent 84%),
+    radial-gradient(ellipse 32% 52% at 94% 52%, rgba(255, 255, 255, 0.62) 0 28%, rgba(255, 255, 255, 0.18) 54%, transparent 82%);
+  filter: blur(30px);
+  opacity: 0.66;
 }
 
 .primary-action,
@@ -189,8 +223,10 @@ onUnmounted(() => {
   min-height: 56px;
   padding: 7px 12px 7px 7px;
   border-radius: 999px;
-  border: 1px solid rgba(201, 220, 233, 0.82);
-  background: rgba(250, 250, 250, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.88), transparent 44%),
+    rgba(255, 255, 255, 0.42);
   color: #163f8f;
   text-decoration: none;
   backdrop-filter: blur(18px) saturate(135%);
@@ -208,7 +244,9 @@ onUnmounted(() => {
 }
 
 .account-corner:hover {
-  background: rgba(250, 250, 250, 0.86);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.94), transparent 44%),
+    rgba(255, 255, 255, 0.62);
   transform: translateY(-2px);
   box-shadow:
     0 18px 40px rgba(22, 63, 143, 0.18),
@@ -301,6 +339,8 @@ onUnmounted(() => {
   height: 46px;
   padding: 0 22px;
   border-radius: 999px;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   font-size: 15px;
   font-weight: 800;
   display: inline-flex;
@@ -325,15 +365,18 @@ onUnmounted(() => {
 }
 
 .primary-action {
-  background: #163f8f;
-  color: #fafafa;
-  border: 1px solid #163f8f;
+  background: rgba(255, 255, 255, 0.58);
+  color: #123b86;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow:
+    0 16px 34px rgba(22, 63, 143, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
 }
 
 .secondary-action {
-  background: #fafafa;
-  color: #163f8f;
-  border: 1px solid #c9dce9;
+  background: rgba(255, 255, 255, 0.42);
+  color: #123b86;
+  border: 1px solid rgba(255, 255, 255, 0.64);
 }
 
 .primary-action:hover,
@@ -350,14 +393,14 @@ onUnmounted(() => {
 }
 
 .primary-action:hover {
-  background: #5f8fc3;
-  border-color: #5f8fc3;
+  background: rgba(255, 255, 255, 0.76);
+  border-color: rgba(255, 255, 255, 0.92);
 }
 
 .secondary-action:hover,
 .mini-import-btn:hover {
-  background: #c9dce9;
-  border-color: #5f8fc3;
+  background: rgba(255, 255, 255, 0.68);
+  border-color: rgba(255, 255, 255, 0.86);
 }
 
 .primary-action:active,
@@ -368,24 +411,33 @@ onUnmounted(() => {
 }
 
 .hero-board {
-  min-height: 520px;
   padding: 18px;
-  border: 1px solid #c9dce9;
+  border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 24px;
-  background:rgba(240,239,221,0.05) ;
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(20px) saturate(145%);
+  -webkit-backdrop-filter: blur(20px) saturate(145%);
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
-  grid-template-rows: 1fr 1fr auto;
+   grid-template-rows: minmax(170px, 1fr) minmax(150px, 0.86fr) minmax(120px, auto);
   gap: 14px;
-  box-shadow: 0 24px 56px rgba(22, 63, 143, 0.14);
+  box-shadow:
+    0 24px 56px rgba(22, 63, 143, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
 .feature-card {
   padding: 18px;
   border-radius: 20px;
-  border: 1px solid #c9dce9;
-  background: #fafafa;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.86), transparent 34%),
+    rgba(255, 255, 255, 0.48);
   min-width: 0;
+  color: #163f8f;
+  text-decoration: none;
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
   transition:
     transform 0.22s ease,
     box-shadow 0.22s ease,
@@ -394,19 +446,36 @@ onUnmounted(() => {
 
 .feature-card:hover {
   transform: translateY(-4px);
-  border-color: #5f8fc3;
-  box-shadow: 0 16px 34px rgba(22, 63, 143, 0.13);
+  border-color: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    0 18px 38px rgba(22, 63, 143, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
 }
-
 .main-card {
+  grid-column: 1;
   grid-row: span 2;
-  background: #c9dce9;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.88), transparent 35%),
+    rgba(255, 255, 255, 0.52);
 }
 
 .wide-card {
-  background: #163f8f;
-  color: #fafafa;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  background:
+    linear-gradient(135deg, rgba(18, 59, 134, 0.84), rgba(72, 142, 211, 0.68)),
+    rgba(255, 255, 255, 0.24);
+  color: #ffffff;
 }
+
+.status-card {
+  grid-column: 2;
+  grid-row: 2;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.9), transparent 36%),
+    rgba(255, 255, 255, 0.5);
+}
+
 
 .mini-import-btn {
   position: relative;
@@ -466,14 +535,20 @@ onUnmounted(() => {
 
 .chat-preview span,
 .progress-list span {
-  height: 18px;
+  min-height: 30px;
+  padding: 0 12px;
   border-radius: 999px;
-  background: #fafafa;
+  background: rgba(255, 255, 255, 0.66);
+  color: #163f8f;
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .chat-preview span:nth-child(2) {
   width: 78%;
-  background: #f0efdd;
+  background: rgba(255, 255, 255, 0.46);
 }
 
 .chat-preview span:nth-child(3) {
@@ -491,9 +566,29 @@ onUnmounted(() => {
   height: 30px;
   padding: 0 12px;
   border-radius: 999px;
-  background: #f0efdd;
+  background: rgba(255, 255, 255, 0.54);
   color: #163f8f;
   display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+
+.resource-preview {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.resource-preview span {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.52);
+  color: #5f8fc3;
+  display: flex;
   align-items: center;
   font-size: 13px;
   font-weight: 700;
@@ -502,23 +597,38 @@ onUnmounted(() => {
 .wide-card .feature-head {
   color: #fafafa;
 }
-
 .progress-list {
   margin-top: 26px;
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
-
 .progress-list span {
-  background: #c9dce9;
+  background: rgba(255, 255, 255, 0.7);
 }
-
+.status-metrics {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.status-metrics span {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #163f8f;
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+}
 .progress-list span:nth-child(2) {
-  width: 72%;
+  width: auto;
 }
 
 .progress-list span:nth-child(3) {
-  width: 48%;
+  width: auto;
 }
 
 @media (max-width: 980px) {
@@ -546,8 +656,19 @@ onUnmounted(() => {
     font-size: 16px;
   }
 
-  .hero-board {
+   .hero-board {
     min-height: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .main-card,
+  .wide-card,
+  .status-card {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .progress-list {
     grid-template-columns: 1fr;
   }
 }
