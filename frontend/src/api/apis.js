@@ -3,6 +3,13 @@ import request from './request'
 const rawBase = request.defaults.baseURL || '/'
 const API_BASE_URL = rawBase.endsWith('/') ? rawBase : rawBase + '/'
 
+export const resolveApiUrl = path => {
+  if (!path) return ''
+  if (/^https?:\/\//i.test(path)) return path
+
+  return new URL(String(path).replace(/^\//, ''), API_BASE_URL).toString()
+}
+
 // 登录：后端 Login_User 接收 username/email/password
 export function login(data) {
   return request({
@@ -209,7 +216,7 @@ export function getStudyResources(params = {}) {
 //  学习资源生成（流式）
 // ═══════════════════════════════════════
 
-export async function streamResourceGeneration(data, { onProgress, onDone, onError } = {}) {
+export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
   const token = localStorage.getItem('token')
 
@@ -262,6 +269,24 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
           throw new Error(eventData.error)
         }
 
+        const isFileEvent =
+          eventData.type === 'file' ||
+          eventData.event === 'file' ||
+          eventData.file_type ||
+          eventData.fileType ||
+          eventData.filename ||
+          eventData.file_id ||
+          eventData.fileId ||
+          eventData.download_url ||
+          eventData.downloadUrl ||
+          eventData.preview_url ||
+          eventData.previewUrl
+
+        if (isFileEvent && !eventData.done) {
+          onFile?.(eventData)
+          continue
+        }
+
         if (eventData.resources !== undefined || eventData.review_passed !== undefined) {
           // progress event: {resources: ["ppt","document"], review_passed: false}
           onProgress?.(eventData)
@@ -278,6 +303,10 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
 // 获取已生成的资源列表
 export function getGeneratedResources() {
   return request.get('/resource/list')
+}
+
+export function getGeneratedResource(resourceId) {
+  return request.get(`/resource/${resourceId}`)
 }
 
 // 删除某个生成的资源
