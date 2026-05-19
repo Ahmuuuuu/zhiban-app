@@ -176,7 +176,7 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
           onChunk?.(eventData.content)
         }
 
-        if (eventData.done) {
+        if (eventData.done || eventData.type === 'done' || eventData.event === 'done') {
           onDone?.(eventData)
         }
       }
@@ -292,7 +292,7 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
           onProgress?.(eventData)
         }
 
-        if (eventData.done) {
+        if (eventData.done || eventData.type === 'done' || eventData.event === 'done') {
           onDone?.(eventData)
         }
       }

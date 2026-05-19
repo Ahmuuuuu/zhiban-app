@@ -143,7 +143,7 @@ const normalizeResources = data => {
   return list.map((item, index) => ({
     doc_id: String(item.doc_id || item.id || index),
     title: item.title || '',
-    content: item.content || '',
+    content: item.preview || item.content || '',
     category: item.category || '',
     categoryLabel: categoryLabelMap[item.category] || '',
     visibility: item.visibility || 'private',
