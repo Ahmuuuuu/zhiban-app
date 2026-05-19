@@ -41,30 +41,38 @@
         <article class="feature-card">
           <div class="feature-head">
             <img src="../assets/pic/yonghuhuaxiang.svg" alt="" />
-            <span>学习画像</span>
+            <span>个性化学习资源推荐</span>
           </div>
           <div class="tag-row">
-            <span>兴趣</span>
-            <span>方式</span>
-            <span>能力</span>
+            <span>兴趣匹配</span>
+            <span>资源推荐</span>
+            <span>重点优先</span>
           </div>
         </article>
-
+      
         <article class="feature-card wide-card">
           <div class="feature-head">
             <img src="../assets/pic/todolist.svg" alt="" />
-            <span>学习路径</span>
+            <span>学习路径规划</span>
           </div>
-          <div class="progress-list">
-            <span></span>
-            <span></span>
-            <span></span>
+           <div class="progress-list">
+            <span>目标拆解</span>
+            <span>阶段任务</span>
+            <span>复盘调整</span>
           </div>
         </article>
 
-        <router-link class="mini-import-btn" to="/study-import">
-          资料导入
-        </router-link>
+         <article class="feature-card status-card">
+          <div class="feature-head">
+            <img src="../assets/pic/xuexiqingkuang.svg" alt="" />
+            <span>学习情况分析</span>
+          </div>
+          <div class="status-metrics">
+            <span>进度追踪</span>
+            
+            <span>薄弱点</span>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -368,14 +376,15 @@ onUnmounted(() => {
 }
 
 .hero-board {
-  min-height: 520px;
+    padding: 18px;
+
   padding: 18px;
   border: 1px solid #c9dce9;
   border-radius: 24px;
   background:rgba(240,239,221,0.05) ;
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
-  grid-template-rows: 1fr 1fr auto;
+   grid-template-rows: minmax(170px, 1fr) minmax(150px, 0.86fr) minmax(120px, auto);
   gap: 14px;
   box-shadow: 0 24px 56px rgba(22, 63, 143, 0.14);
 }
@@ -397,16 +406,25 @@ onUnmounted(() => {
   border-color: #5f8fc3;
   box-shadow: 0 16px 34px rgba(22, 63, 143, 0.13);
 }
-
 .main-card {
+  grid-column: 1;
   grid-row: span 2;
   background: #c9dce9;
 }
 
 .wide-card {
+  grid-column: 1 / -1;
+  grid-row: 3;
   background: #163f8f;
   color: #fafafa;
 }
+
+.status-card {
+  grid-column: 2;
+  grid-row: 2;
+  background: #fafafa;
+}
+
 
 .mini-import-btn {
   position: relative;
@@ -466,9 +484,15 @@ onUnmounted(() => {
 
 .chat-preview span,
 .progress-list span {
-  height: 18px;
+  min-height: 30px;
+  padding: 0 12px;
   border-radius: 999px;
   background: #fafafa;
+  color: #163f8f;
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .chat-preview span:nth-child(2) {
@@ -499,26 +523,61 @@ onUnmounted(() => {
   font-weight: 700;
 }
 
+
+.resource-preview {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.resource-preview span {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #c9dce9;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #5f8fc3;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .wide-card .feature-head {
   color: #fafafa;
 }
-
 .progress-list {
   margin-top: 26px;
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
-
 .progress-list span {
   background: #c9dce9;
 }
-
+.status-metrics {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.status-metrics span {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #c9dce9;
+  color: #163f8f;
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+}
 .progress-list span:nth-child(2) {
-  width: 72%;
+  width: auto;
 }
 
 .progress-list span:nth-child(3) {
-  width: 48%;
+  width: auto;
 }
 
 @media (max-width: 980px) {
@@ -546,8 +605,19 @@ onUnmounted(() => {
     font-size: 16px;
   }
 
-  .hero-board {
+   .hero-board {
     min-height: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .main-card,
+  .wide-card,
+  .status-card {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .progress-list {
     grid-template-columns: 1fr;
   }
 }
