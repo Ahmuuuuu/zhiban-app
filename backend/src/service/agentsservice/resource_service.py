@@ -7,6 +7,16 @@ from backend.src.models.agent_skill_model import AgentSkill
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
+
+# 资源类型 → 文件扩展名映射
+_FILE_EXT_MAP = {
+    "document": "md",
+    "ppt": "md",
+    "mindmap": "md",
+    "exercise": "md",
+    "case": "md",
+    "reading": "md",
+}
 from backend.src.utils.portrait_utils import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.prompt_loader import load_prompt
@@ -114,18 +124,28 @@ class ResourceService:
 
     @staticmethod
     async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0):
-        """节点级流式 — astream 逐节点产出状态，只跑一次 graph"""
+        """节点级流式 — astream 逐节点产出状态，只跑一次 graph，同时推送文件事件"""
         initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
         topic = initial_state["topic"]
         final_resources = {}
         final_passed = False
         final_retry = 0
+        yielded_types: set[str] = set()
+
+        def _file_event(rt: str, content: str) -> str:
+            ext = _FILE_EXT_MAP.get(rt, "md")
+            filename = f"{topic}_{rt}.{ext}"
+            return f"data: {json.dumps({'type': 'file', 'file_type': rt, 'filename': filename, 'content': content}, ensure_ascii=False)}\n\n"
 
         async for chunk in resource_graph.astream(initial_state, stream_mode="values"):
-            # chunk 是当前累积的完整 state
             resources = chunk.get("generated_resources", {})
             if resources:
                 final_resources = resources
+                # 有新产出的资源类型 → 推送文件事件
+                for rt, content in resources.items():
+                    if rt not in yielded_types:
+                        yielded_types.add(rt)
+                        yield _file_event(rt, content)
             final_passed = chunk.get("review_passed", False)
             final_retry = chunk.get("retry_count", 0)
 
@@ -133,7 +153,20 @@ class ResourceService:
 
         # 流式结束后存库
         saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry)
-        yield f"data: {json.dumps({'done': True, 'resources': saved}, ensure_ascii=False)}\n\n"
+        # 在 done 事件中附带 download_url
+        done_data = {
+            "done": True,
+            "resources": [
+                {
+                    "resource_id": r["resource_id"],
+                    "file_type": r["resource_type"],
+                    "topic": r["topic"],
+                    "download_url": f"/resource/{r['resource_id']}/download",
+                }
+                for r in saved
+            ],
+        }
+        yield f"data: {json.dumps(done_data, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     @staticmethod
