@@ -104,8 +104,7 @@
 
     <div class="input-actions">
       <div class="left-tools">
-        <button>📎</button>
-        <button>◎</button>
+        <button class="tool-btn resource-tool-btn" @click="openResourceSidebar" title="生成学习资源">📄</button>
       </div>
 
       <button
@@ -119,14 +118,30 @@
   </div>
 </footer>
     </main>
+    <ResourceSidebar
+      :visible="showResourceSidebar"
+      :contextTopic="resourceTopic"
+      @toggle="showResourceSidebar = !showResourceSidebar"
+    />
     <PortraitSetupModal />
   </div>
 </template>
 
 <script setup>
-import { ref, nextTick,onMounted } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import { streamChatMessage, getConversationList, getConversationMessages } from '../api/apis'
 import PortraitSetupModal from '../components/PortraitSetupModal.vue'
+import ResourceSidebar from '../components/ResourceSidebar.vue'
+
+const showResourceSidebar = ref(false)
+const resourceTopic = ref('')
+
+const openResourceSidebar = () => {
+  // 用最近一条用户消息作为默认主题
+  const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user')
+  resourceTopic.value = lastUserMsg?.content?.slice(0, 80) || ''
+  showResourceSidebar.value = true
+}
 
 const inputValue = ref('')
 const recentChats = ref([])

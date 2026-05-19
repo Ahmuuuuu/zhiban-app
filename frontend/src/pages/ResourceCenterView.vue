@@ -1,110 +1,134 @@
 <template>
   <main class="resource-center-page">
     <header class="center-header">
-      <router-link class="back-btn" to="/">
-        <ArrowLeft :size="18" />
-        <span>返回首页</span>
+      <router-link class="home-pill" to="/">
+        首页
       </router-link>
 
-      <div>
-        <p class="eyebrow">Resource Center</p>
+      <div class="title-block">
         <h1>资源中心</h1>
-        <p>查看公开学习资源，也可以导入自己的学习资料。</p>
       </div>
 
+      <label class="search-field">
+        <Search :size="18" />
+        <input v-model.trim="keyword" type="search" placeholder="搜索框" />
+      </label>
+
+      <button class="send-search" type="button">发送</button>
+
       <div class="header-actions">
-        <button class="icon-btn" type="button" :disabled="loading" title="刷新资源" @click="loadResources">
-          <RefreshCw :size="18" :class="{ spinning: loading }" />
+        <button class="icon-btn refresh-btn" type="button" :disabled="loading" title="刷新资源" @click="loadResources">
+          <RefreshCw :size="24" :class="{ spinning: loading }" />
         </button>
         <router-link class="import-link" to="/study-import">
-          <Upload :size="17" />
-          <span>资料导入</span>
+          资料导入
+        </router-link>
+        <router-link class="user-link" to="/profile">
+          用户
         </router-link>
       </div>
     </header>
-
-    <div class="resource-tools">
-      <label class="search-field">
-        <Search :size="18" />
-        <input v-model.trim="keyword" type="search" placeholder="搜索公开资源标题或内容" />
-      </label>
-    </div>
 
     <div v-if="errorMessage" class="notice">
       <AlertCircle :size="18" />
       <span>{{ errorMessage }}</span>
     </div>
 
-    <div v-else-if="loading" class="resource-grid">
-      <article v-for="item in 6" :key="item" class="resource-card skeleton-card">
-        <span></span>
-        <strong></strong>
-        <p></p>
-        <p></p>
-      </article>
-    </div>
-
-    <div v-else-if="filteredResources.length" class="resource-layout">
-      <div class="resource-list">
-        <article
-          v-for="resource in filteredResources"
-          :key="resource.doc_id"
-          class="resource-card"
-          :class="{ selected: selectedResource?.doc_id === resource.doc_id }"
-          @click="selectedResource = resource"
+    <section class="resource-shell">
+      <aside class="category-panel">
+        <h2>分类</h2>
+        <button
+          v-for="category in categories"
+          :key="category"
+          type="button"
+          :class="{ active: activeCategory === category }"
+          @click="switchCategory(category)"
         >
-          <div class="card-top">
-            <span class="type-mark">
-              <FileText :size="18" />
-            </span>
-            <span class="visibility">公开资源</span>
-          </div>
-
-          <h2>{{ resource.title || '未命名资料' }}</h2>
-          <p>{{ getExcerpt(resource.content) }}</p>
-
-          <footer>
-            <span>
-              <CalendarDays :size="15" />
-              {{ formatDate(resource.created_at) }}
-            </span>
-            <span>{{ getWordCount(resource.content) }} 字</span>
-          </footer>
-        </article>
-      </div>
-
-      <aside class="preview-panel">
-        <div class="preview-title">
-          <span class="type-mark large">
-            <BookOpenText :size="22" />
-          </span>
-          <div>
-            <h2>{{ selectedResource?.title || '选择一份资源' }}</h2>
-            <p>公开资源</p>
-          </div>
-        </div>
-
-        <div v-if="selectedResource" class="preview-meta">
-          <span>文档 ID：{{ selectedResource.doc_id }}</span>
-          <span>创建时间：{{ formatDate(selectedResource.created_at, true) }}</span>
-        </div>
-
-        <div class="preview-content">
-          <p v-if="selectedResource">{{ selectedResource.content || '这份资源暂时没有内容。' }}</p>
-          <p v-else>点击任意公开资源后，资源正文会在这里展示。</p>
-        </div>
+          {{ category }}
+        </button>
       </aside>
-    </div>
 
-    <div v-else class="empty-state">
-      <FileSearch :size="44" />
-      <h2>暂无公开资源</h2>
-      <p>可以先导入资料，或等待管理员发布公开资源。</p>
-      <router-link class="import-link" to="/study-import">
-        <Upload :size="17" />
-        <span>资料导入</span>
-      </router-link>
-    </div>
+      <section class="resource-list" aria-label="公共资源列表">
+        <!-- 文档子分类 -->
+        <div v-if="activeCategory === '文档'" class="sub-category-bar">
+          <button
+            v-for="sub in subCategories"
+            :key="sub.value"
+            type="button"
+            class="sub-cat-btn"
+            :class="{ active: activeSubCategory === sub.value }"
+            @click="activeSubCategory = sub.value"
+          >
+            {{ sub.label }}
+          </button>
+        </div>
+
+        <template v-if="loading">
+          <article v-for="item in 9" :key="item" class="resource-card skeleton-card">
+            <span></span>
+            <strong></strong>
+            <p></p>
+          </article>
+        </template>
+
+        <template v-else-if="filteredResources.length">
+          <article
+            v-for="resource in filteredResources"
+            :key="resource.doc_id"
+            class="resource-card"
+            :class="{ selected: selectedResource?.doc_id === resource.doc_id }"
+            @click="selectedResource = resource"
+          >
+            <div class="card-top">
+              <span class="type-mark">
+                <FileText :size="18" />
+              </span>
+              <span class="visibility">{{ resource.categoryLabel || '公开资源' }}</span>
+            </div>
+
+            <h2>{{ resource.title || '未命名资料' }}</h2>
+            <p>{{ getExcerpt(resource.content) }}</p>
+
+            <footer>
+              <span>{{ formatDate(resource.created_at) }}</span>
+              <span>{{ getWordCount(resource.content) }} 字</span>
+            </footer>
+          </article>
+        </template>
+
+        <template v-else>
+          <article v-for="item in 9" :key="item" class="resource-card placeholder-card">
+            <div class="card-top">
+              <span class="type-mark soft">
+                <FileText :size="18" />
+              </span>
+              <span class="visibility">等待资源</span>
+            </div>
+            <h2>资源卡片</h2>
+            <p>后端传入公共资源后，会在这里展示标题、摘要、时间和字数。</p>
+          </article>
+        </template>
+      </section>
+
+      <aside class="hot-panel">
+        <h2>热门资源</h2>
+        <div class="hot-list">
+          <button
+            v-for="resource in hotResources"
+            :key="resource.doc_id"
+            type="button"
+            @click="selectedResource = resource"
+          >
+            {{ resource.title || '未命名资源' }}
+          </button>
+          <template v-if="!hotResources.length">
+            <span v-for="item in 5" :key="item"></span>
+          </template>
+        </div>
+
+        <button class="share-btn" type="button">我要分享</button>
+      </aside>
+    </section>
   </main>
 </template>
 
@@ -112,14 +136,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   AlertCircle,
-  ArrowLeft,
-  BookOpenText,
-  CalendarDays,
-  FileSearch,
   FileText,
   RefreshCw,
-  Search,
-  Upload
+  Search
 } from 'lucide-vue-next'
 import { getStudyResources } from '../api/apis'
 
@@ -128,6 +147,29 @@ const selectedResource = ref(null)
 const loading = ref(false)
 const errorMessage = ref('')
 const keyword = ref('')
+const categories = ['文档', 'ppt', '视频', '题库', '思维导图']
+const activeCategory = ref(categories[0])
+const activeSubCategory = ref('all')
+
+// 与后端 KB_CATEGORIES 对齐
+const subCategories = [
+  { value: 'all', label: '全部' },
+  { value: 'knowledge_point', label: '知识点讲解' },
+  { value: 'exercise', label: '习题/题库' },
+  { value: 'textbook', label: '教科书章节' },
+  { value: 'note', label: '学习笔记' },
+  { value: 'case_study', label: '实操案例' },
+  { value: 'reference', label: '参考资料' },
+]
+
+const categoryLabelMap = {
+  knowledge_point: '知识点讲解',
+  exercise: '习题/题库',
+  textbook: '教科书章节',
+  note: '学习笔记',
+  case_study: '实操案例',
+  reference: '参考资料',
+}
 
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
@@ -136,6 +178,9 @@ const normalizeResources = data => {
     doc_id: String(item.doc_id || item.id || index),
     title: item.title || '',
     content: item.content || '',
+    type: item.type || item.file_type || '',
+    category: item.category || '',
+    categoryLabel: categoryLabelMap[item.category] || '',
     visibility: item.visibility || 'private',
     created_at: item.created_at || ''
   }))
@@ -172,9 +217,39 @@ const filteredResources = computed(() => {
       !searchText ||
       resource.title.toLowerCase().includes(searchText) ||
       resource.content.toLowerCase().includes(searchText)
-    )
+    ) && matchesCategory(resource)
   })
 })
+
+const hotResources = computed(() => {
+  return resources.value.slice(0, 5)
+})
+
+const matchesCategory = resource => {
+  const cat = activeCategory.value
+
+  if (cat === '文档') {
+    // 文档按子分类匹配
+    if (activeSubCategory.value === 'all') return true
+    return resource.category === activeSubCategory.value
+  }
+
+  // 其他分类：按文件类型/关键词匹配
+  const resourceType = String(resource.type || resource.category || '').toLowerCase()
+  const categoryMap = {
+    ppt: ['ppt', 'pptx', 'slide'],
+    视频: ['video', 'mp4', 'mov', 'avi'],
+    题库: ['quiz', 'question', 'exam', '题'],
+    思维导图: ['mind', 'map', 'xmind', '思维']
+  }
+  return (categoryMap[cat] || []).some(type => resourceType.includes(type))
+}
+
+// 切换一级分类时重置子分类
+const switchCategory = (cat) => {
+  activeCategory.value = cat
+  activeSubCategory.value = 'all'
+}
 
 watch(filteredResources, list => {
   if (!list.length) {
@@ -626,6 +701,473 @@ onMounted(loadResources)
 
   .preview-panel {
     min-height: 460px;
+  }
+}
+
+/* 草图版资源中心布局 */
+.resource-center-page {
+  width: 100vw;
+  height: 100vh;
+  padding: 28px 34px 28px;
+  background:
+    radial-gradient(ellipse 72% 44% at 10% 0%, rgba(209, 244, 250, 0.46), transparent 70%),
+    linear-gradient(135deg, #fafafa 0%, rgb(237, 249, 252) 52%, #fafafa 100%);
+  color: #163f8f;
+  gap: 20px;
+  overflow: hidden;
+}
+
+.center-header {
+  display: grid;
+  grid-template-columns: 88px 180px minmax(280px, 1fr) 72px auto;
+  align-items: center;
+  gap: 18px;
+}
+
+.home-pill,
+.import-link,
+.user-link,
+.send-search,
+.icon-btn,
+.category-panel,
+.resource-card,
+.hot-panel {
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  background: rgba(250, 250, 250, 0.78);
+  color: #163f8f;
+  box-shadow:
+    0 14px 34px rgba(22, 63, 143, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+
+.home-pill {
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.title-block h1 {
+  margin: 0;
+  color: #163f8f;
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.search-field {
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  border: 2px solid rgba(22, 63, 143, 0.86);
+  border-radius: 9px;
+  background: rgba(250, 250, 250, 0.88);
+  color: #5f8fc3;
+  box-shadow: none;
+}
+
+.search-field input::placeholder {
+  color: rgba(22, 63, 143, 0.58);
+}
+
+.send-search {
+  height: 36px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.header-actions {
+  justify-content: flex-end;
+  gap: 18px;
+}
+
+.icon-btn {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+}
+
+.refresh-btn {
+  color: #163f8f;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.import-link,
+.user-link {
+  min-width: 92px;
+  height: 70px;
+  padding: 0 20px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.user-link {
+  min-width: 78px;
+}
+
+.home-pill:hover,
+.import-link:hover,
+.user-link:hover,
+.send-search:hover,
+.icon-btn:hover {
+  transform: translateY(-2px);
+  border-color: #5f8fc3;
+  background: #c9dce9;
+}
+
+.resource-shell {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 214px minmax(0, 1fr) 250px;
+  gap: 42px;
+  overflow: hidden;
+}
+
+.category-panel {
+  min-height: 0;
+  border-radius: 28px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.category-panel h2 {
+  position: relative;
+  margin: 0;
+  height: 62px;
+  border-bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #163f8f;
+  font-size: 24px;
+}
+
+.category-panel button {
+  position: relative;
+  height: 56px;
+  border: 0;
+  background: rgba(250, 250, 250, 0.34);
+  color: #163f8f;
+  font-size: 17px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.category-panel h2::after,
+.category-panel button::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 999px;
+  background:
+    linear-gradient(to right, transparent 0%, rgba(201, 220, 233, 0.34) 24%, rgba(201, 220, 233, 0.72) 48%, rgba(201, 220, 233, 0.72) 52%, rgba(201, 220, 233, 0.34) 76%, transparent 100%),
+    linear-gradient(to right, transparent 0%, transparent 42%, rgba(201, 220, 233, 0.9) 42%, rgba(201, 220, 233, 0.9) 58%, transparent 58%, transparent 100%);
+  opacity: 0.66;
+}
+
+.category-panel button:hover,
+.category-panel button.active {
+  background: #c9dce9;
+  color: #163f8f;
+}
+
+.resource-list {
+  min-height: 0;
+  padding: 18px 6px 10px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-auto-rows: 178px;
+  align-content: start;
+  gap: 28px 48px;
+}
+
+/* 文档子分类栏 */
+.sub-category-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 0 6px;
+}
+
+.sub-cat-btn {
+  padding: 5px 14px;
+  border: 1px solid rgba(22, 63, 143, 0.18);
+  border-radius: 999px;
+  background: rgba(250, 250, 250, 0.6);
+  color: rgba(22, 63, 143, 0.7);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.sub-cat-btn:hover {
+  background: #c9dce9;
+  border-color: #5f8fc3;
+}
+
+.sub-cat-btn.active {
+  background: #163f8f;
+  color: #fafafa;
+  border-color: #163f8f;
+}
+
+.resource-card {
+  min-height: 0;
+  max-height: none;
+  height: 178px;
+  padding: 14px 15px 16px;
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(250, 250, 250, 0.92), rgba(237, 249, 252, 0.84)),
+    #fafafa;
+  cursor: pointer;
+  position: relative;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.resource-card::after {
+  content: "";
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  width: 36px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f0efdd;
+  opacity: 0.82;
+}
+
+.resource-card:hover,
+.resource-card.selected {
+  background:
+    linear-gradient(135deg, rgba(250, 250, 250, 0.96), rgba(201, 220, 233, 0.74)),
+    #fafafa;
+  border-color: #5f8fc3;
+  transform: translateY(-4px);
+}
+
+.card-top {
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.type-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 12px;
+  background: #163f8f;
+}
+
+.type-mark.soft {
+  background: #5f8fc3;
+}
+
+.visibility {
+  background: #c9dce9;
+  color: #163f8f;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.resource-card h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+  line-height: 1.28;
+  -webkit-line-clamp: 2;
+  flex-shrink: 0;
+}
+
+.resource-card p {
+  font-size: 12px;
+  line-height: 1.55;
+  -webkit-line-clamp: 2;
+  min-height: 38px;
+}
+
+.resource-card footer {
+  margin-top: auto;
+  font-size: 11px;
+  line-height: 1.2;
+  position: relative;
+  z-index: 1;
+}
+
+.placeholder-card {
+  background:
+    linear-gradient(135deg, rgba(250, 250, 250, 0.8), rgba(237, 249, 252, 0.68)),
+    #fafafa;
+}
+
+.hot-panel {
+  position: relative;
+  min-height: 0;
+  padding: 10px 0 22px;
+  border-color: transparent;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.hot-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 999px;
+  background:
+    linear-gradient(to bottom, transparent 0%, rgba(201, 220, 233, 0.34) 20%, rgba(201, 220, 233, 0.68) 48%, rgba(201, 220, 233, 0.68) 52%, rgba(201, 220, 233, 0.34) 80%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, transparent 38%, rgba(201, 220, 233, 0.86) 38%, rgba(201, 220, 233, 0.86) 62%, transparent 62%, transparent 100%);
+  opacity: 0.72;
+}
+
+.hot-panel h2 {
+  margin: 0 0 16px;
+  padding-left: 26px;
+  color: #163f8f;
+  font-size: 18px;
+}
+
+.hot-list {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow: hidden;
+}
+
+.hot-list button,
+.hot-list span {
+  height: 2px;
+  margin-left: 26px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(to right, transparent, rgba(201, 220, 233, 0.74) 18%, rgba(201, 220, 233, 0.74) 82%, transparent);
+}
+
+.hot-list button {
+  height: auto;
+  min-height: 28px;
+  padding: 4px 0;
+  text-align: left;
+  color: #163f8f;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  background: transparent;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.7);
+}
+
+.share-btn {
+  align-self: flex-end;
+  min-width: 124px;
+  height: 34px;
+  border: 1px solid rgba(22, 63, 143, 0.32);
+  border-radius: 8px;
+  background: rgba(250, 250, 250, 0.82);
+  color: #163f8f;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.notice {
+  position: fixed;
+  left: 50%;
+  top: 96px;
+  z-index: 5;
+  transform: translateX(-50%);
+  background: #c9dce9;
+}
+
+@media (max-width: 1100px) {
+  .center-header {
+    grid-template-columns: auto 1fr;
+  }
+
+  .search-field,
+  .send-search,
+  .header-actions {
+    grid-column: 1 / -1;
+  }
+
+  .resource-shell {
+    grid-template-columns: 170px minmax(0, 1fr);
+    gap: 22px;
+  }
+
+  .hot-panel {
+    display: none;
+  }
+
+  .resource-list {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    gap: 24px;
+  }
+}
+
+@media (max-width: 720px) {
+  .resource-center-page {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    padding: 18px;
+  }
+
+  .resource-shell {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .category-panel {
+    flex-direction: row;
+    overflow-x: auto;
+    border-radius: 18px;
+  }
+
+  .category-panel h2,
+  .category-panel button {
+    min-width: 110px;
+    border-bottom: 0;
+    border-right: 1px solid rgba(201, 220, 233, 0.44);
+  }
+
+  .resource-list {
+    overflow: visible;
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -56,7 +56,7 @@
             <span class="type-mark">
               <FileText :size="18" />
             </span>
-            <span class="visibility">我的资源</span>
+            <span class="visibility">{{ resource.categoryLabel || '我的资源' }}</span>
           </div>
 
           <h2>{{ resource.title || '未命名资料' }}</h2>
@@ -129,6 +129,15 @@ const keyword = ref('')
 const currentUserId = ref(null)
 const currentUserToken = ref('')
 
+const categoryLabelMap = {
+  knowledge_point: '知识点讲解',
+  exercise: '习题/题库',
+  textbook: '教科书章节',
+  note: '学习笔记',
+  case_study: '实操案例',
+  reference: '参考资料',
+}
+
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
 
@@ -136,6 +145,8 @@ const normalizeResources = data => {
     doc_id: String(item.doc_id || item.id || index),
     title: item.title || '',
     content: item.content || '',
+    category: item.category || '',
+    categoryLabel: categoryLabelMap[item.category] || '',
     user_id: item.user_id,
     user_token: item.user_token || item.token || item.owner_token || item.uploader_token,
     created_at: item.created_at || ''

@@ -22,13 +22,13 @@
               ref="fileInputRef"
               class="file-input"
               type="file"
-              accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json"
+              accept=".txt,.md,.csv,.json,.pdf,.docx,text/plain,text/markdown,text/csv,application/json,application/pdf"
               @change="handleFileChange"
             />
 
             <div class="upload-mark">文</div>
             <h2>{{ selectedFile ? selectedFile.name : '选择或拖入文字文件' }}</h2>
-            <p>{{ selectedFile ? fileMetaText : '当前仅处理 txt、md、csv、json 等文字文件' }}</p>
+            <p>{{ selectedFile ? fileMetaText : '当前支持 txt、pdf、docx、md、csv、json 等文字文件' }}</p>
 
             <div class="upload-actions">
               <button type="button" class="primary-btn" @click="openFilePicker">
@@ -74,6 +74,21 @@
               </label>
             </fieldset>
 
+            <fieldset class="category-group">
+              <legend>资料类型</legend>
+              <div class="category-options">
+                <label
+                  v-for="cat in categoryOptions"
+                  :key="cat.value"
+                  class="cat-label"
+                  :class="{ active: category === cat.value }"
+                >
+                  <input v-model="category" type="radio" :value="cat.value" />
+                  <span>{{ cat.label }}</span>
+                </label>
+              </div>
+            </fieldset>
+
             <p v-if="statusMessage" class="status-message" :class="statusType">
               {{ statusMessage }}
             </p>
@@ -113,12 +128,23 @@ const previewText = ref('')
 const materialTitle = ref('')
 const materialDescription = ref('')
 const visibility = ref('private')
+const category = ref('knowledge_point')
 const statusMessage = ref('')
 const statusType = ref('')
 const uploading = ref(false)
 const isDragging = ref(false)
 
-const allowedExtensions = ['txt', 'md', 'csv', 'json']
+const allowedExtensions = ['txt', 'md', 'csv', 'json', 'pdf', 'docx']
+
+// 与后端 KB_CATEGORIES 对齐
+const categoryOptions = [
+  { value: 'knowledge_point', label: '知识点讲解' },
+  { value: 'exercise', label: '习题/题库' },
+  { value: 'textbook', label: '教科书章节' },
+  { value: 'note', label: '学习笔记' },
+  { value: 'case_study', label: '实操案例' },
+  { value: 'reference', label: '参考资料' },
+]
 
 const fileMetaText = computed(() => {
   if (!selectedFile.value) return ''
@@ -201,6 +227,7 @@ const submitMaterial = async () => {
   formData.append('file', selectedFile.value)
   formData.append('title', materialTitle.value.trim() || selectedFile.value.name)
   formData.append('visibility', visibility.value)
+  formData.append('category', category.value)
 
   try {
     const res = await uploadStudyMaterial(formData)
@@ -477,6 +504,61 @@ const submitMaterial = async () => {
   color: #5f8fc3;
   line-height: 1.4;
   margin-top: 4px;
+}
+
+/* 资料类型 */
+.category-group {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #c9dce9;
+  border-radius: 8px;
+  background: #f5f9fc;
+}
+
+.category-group legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #5f8fc3;
+}
+
+.category-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cat-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.cat-label input {
+  display: none;
+}
+
+.cat-label span {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(196, 226, 248, 0.5);
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(22, 63, 143, 0.7);
+  background: rgba(255, 255, 255, 0.5);
+  transition: all 0.2s;
+}
+
+.cat-label.active span {
+  background: #163f8f;
+  color: #fafafa;
+  border-color: #163f8f;
+}
+
+.cat-label:hover span {
+  border-color: #5f8fc3;
 }
 
 .submit-btn {
