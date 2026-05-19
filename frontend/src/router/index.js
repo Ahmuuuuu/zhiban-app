@@ -2,10 +2,12 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 
 import HomeView from '../pages/HomeView.vue'
 import ResourceView from '../pages/ResourceView.vue'
+import ResourceCenterView from '../pages/ResourceCenterView.vue'
 import ChatView from '../pages/ChatView.vue'
 import StudyPath from '../pages/StudyPath.vue'
 import StudySituation from '../pages/StudySituation.vue'
 import StudyImportView from '../pages/StudyImportView.vue'
+import MyStudyView from '../pages/MyStudyView.vue'
 import MyProfile from '../pages/MyAccount/MyProfile.vue'
 
 const router = createRouter({
@@ -19,7 +21,7 @@ const router = createRouter({
     {
       path: '/resources',
       name: 'resources',
-      component: ResourceView
+      component: ResourceCenterView
     },
     {
       path: '/chat',
@@ -28,13 +30,33 @@ const router = createRouter({
     },
     {
       path: '/spath',
-      name: 'spath',
-      component: StudyPath
+      redirect: '/mine/path'
     },
     {
       path: '/situation',
-      name: 'situation',
-      component: StudySituation
+      redirect: '/mine/situation'
+    },
+    {
+      path: '/mine',
+      component: MyStudyView,
+      redirect: '/mine/resources',
+      children: [
+        {
+          path: 'resources',
+          name: 'mineResources',
+          component: ResourceView
+        },
+        {
+          path: 'situation',
+          name: 'mineSituation',
+          component: StudySituation
+        },
+        {
+          path: 'path',
+          name: 'minePath',
+          component: StudyPath
+        }
+      ]
     },
     {
       path: '/study-import',

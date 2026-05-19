@@ -50,7 +50,7 @@ export function deleteUser(data) {
 export function sendChatMessage(data) {
   if (data.chat_group_id) {
     return request.post('/ai_chat/create_msg_into_history', {
-      chat_group_id: data.chat_group_id,
+      chat_group_id: Number(data.chat_group_id),
       user_req: data.user_req
     })
   }
@@ -58,9 +58,8 @@ export function sendChatMessage(data) {
   return request({
     url: '/ai_chat/create_new_history',
     method: 'post',
-    data: JSON.stringify(data.user_req),
-    headers: {
-      'Content-Type': 'application/json'
+    data: {
+      user_req: data.user_req
     }
   })
 }
@@ -100,10 +99,12 @@ export async function streamChatMessage(data, { onChunk, onDone, onError } = {})
     },
     body: isExistingConversation
       ? JSON.stringify({
-        chat_group_id: data.chat_group_id,
+        chat_group_id: Number(data.chat_group_id),
         user_req: data.user_req
       })
-      : JSON.stringify(data.user_req)
+      : JSON.stringify({
+        user_req: data.user_req
+      })
   })
 
   if (!response.ok || !response.body) {
@@ -174,5 +175,13 @@ export function uploadStudyMaterial(data) {
     url: '/knowledge_base/upload',
     method: 'post',
     data
+  })
+}
+
+export function getStudyResources(params = {}) {
+  return request({
+    url: '/knowledge_base/list',
+    method: 'get',
+    params
   })
 }
