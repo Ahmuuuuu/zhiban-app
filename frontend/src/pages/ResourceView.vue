@@ -56,7 +56,7 @@
             <span class="type-mark">
               <FileText :size="18" />
             </span>
-            <span class="visibility">我的资源</span>
+            <span class="visibility">{{ resource.categoryLabel || '我的资源' }}</span>
           </div>
 
           <h2>{{ resource.title || '未命名资料' }}</h2>
@@ -126,8 +126,16 @@ const selectedResource = ref(null)
 const loading = ref(false)
 const errorMessage = ref('')
 const keyword = ref('')
-const currentUserId = ref(null)
 const currentUserToken = ref('')
+
+const categoryLabelMap = {
+  knowledge_point: '知识点讲解',
+  exercise: '习题/题库',
+  textbook: '教科书章节',
+  note: '学习笔记',
+  case_study: '实操案例',
+  reference: '参考资料',
+}
 
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
@@ -136,50 +144,17 @@ const normalizeResources = data => {
     doc_id: String(item.doc_id || item.id || index),
     title: item.title || '',
     content: item.content || '',
-    user_id: item.user_id,
-    user_token: item.user_token || item.token || item.owner_token || item.uploader_token,
+    category: item.category || '',
+    categoryLabel: categoryLabelMap[item.category] || '',
+    visibility: item.visibility || 'private',
     created_at: item.created_at || ''
   }))
-}
-
-const getCurrentUserIdFromToken = () => {
-  const token = localStorage.getItem('token')
-
-  if (!token) return null
-
-  try {
-    const payloadText = token.split('.')[1]
-    if (!payloadText) return null
-
-    const normalizedPayload = payloadText.replace(/-/g, '+').replace(/_/g, '/')
-    const paddedPayload = normalizedPayload.padEnd(
-      normalizedPayload.length + ((4 - normalizedPayload.length % 4) % 4),
-      '='
-    )
-    const payload = JSON.parse(atob(paddedPayload))
-    const id = Number(payload?.sub)
-
-    return Number.isFinite(id) ? id : null
-  } catch (error) {
-    return null
-  }
-}
-
-const isOwnResource = resource => {
-  const resourceOwnerToken = resource?.user_token || resource?.user_id
-
-  if (currentUserToken.value && String(resourceOwnerToken) === currentUserToken.value) {
-    return true
-  }
-
-  return currentUserId.value !== null && Number(resource?.user_id) === currentUserId.value
 }
 
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
   currentUserToken.value = localStorage.getItem('token') || ''
-  currentUserId.value = getCurrentUserIdFromToken()
 
   if (!currentUserToken.value) {
     resources.value = []
@@ -190,8 +165,8 @@ const loadResources = async () => {
   }
 
   try {
-    const result = await getStudyResources()
-    resources.value = normalizeResources(result).filter(isOwnResource)
+    const result = await getStudyResources({ visibility: 'private' })
+    resources.value = normalizeResources(result).filter(item => item.visibility !== 'public')
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     if (error?.response?.status === 401) {

@@ -5,7 +5,7 @@
       <div class="brand">
         <router-link class="home-link" to="/" aria-label="返回首页">←</router-link>
         <div class="brand-left">
-          <span class="brand-name">知伴</span>
+        
         </div>
       </div>
 
@@ -76,7 +76,31 @@
 
       <div class="message-body">
         <div
-          v-if="message.role === 'assistant'"
+          v-if="message.type === 'file'"
+          class="file-bubble"
+        >
+          <div class="file-head">
+            <span class="file-icon">{{ fileIcon(message.fileType) }}</span>
+            <div class="file-title">
+              <strong>{{ message.filename }}</strong>
+              <span>{{ fileTypeLabel(message.fileType) }}</span>
+            </div>
+          </div>
+
+          <pre v-if="message.content" class="file-preview">{{ message.content }}</pre>
+
+          <div v-else class="file-placeholder">
+            文件已生成，等待后端提供可预览内容。
+          </div>
+
+          <div v-if="message.previewUrl || message.downloadUrl" class="file-actions">
+            <a v-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
+            <a v-if="message.downloadUrl" :href="message.downloadUrl" target="_blank" rel="noopener noreferrer">下载</a>
+          </div>
+        </div>
+
+        <div
+          v-else-if="message.role === 'assistant'"
           class="bubble rich-bubble markdown-body"
           v-html="renderMarkdown(message.content)"
         ></div>
@@ -104,8 +128,7 @@
 
     <div class="input-actions">
       <div class="left-tools">
-        <button>📎</button>
-        <button>◎</button>
+        <button class="tool-btn resource-tool-btn" @click="openResourceSidebar" title="生成学习资源">📄</button>
       </div>
 
       <button
@@ -119,14 +142,30 @@
   </div>
 </footer>
     </main>
+    <ResourceSidebar
+      :visible="showResourceSidebar"
+      :contextTopic="resourceTopic"
+      @toggle="showResourceSidebar = !showResourceSidebar"
+    />
     <PortraitSetupModal />
   </div>
 </template>
 
 <script setup>
-import { ref, nextTick,onMounted } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import { streamChatMessage, getConversationList, getConversationMessages } from '../api/apis'
 import PortraitSetupModal from '../components/PortraitSetupModal.vue'
+import ResourceSidebar from '../components/ResourceSidebar.vue'
+
+const showResourceSidebar = ref(false)
+const resourceTopic = ref('')
+
+const openResourceSidebar = () => {
+  // 用最近一条用户消息作为默认主题
+  const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user')
+  resourceTopic.value = lastUserMsg?.content?.slice(0, 80) || ''
+  showResourceSidebar.value = true
+}
 
 const inputValue = ref('')
 const recentChats = ref([])
@@ -417,6 +456,56 @@ const messages = ref([
   }
 ])
 
+const normalizeFileMessage = data => {
+  const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || 'file'
+  const filename =
+    data.filename ||
+    data.file_name ||
+    data.name ||
+    `${fileTypeLabel(fileType)}.${fileExtension(fileType)}`
+
+  return {
+    id: `file-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    role: 'assistant',
+    type: 'file',
+    fileType,
+    filename,
+    content: data.content || data.text || data.preview_content || data.previewContent || '',
+    fileId: data.file_id || data.fileId || data.resource_id || data.resourceId || '',
+    previewUrl: data.preview_url || data.previewUrl || data.preview || '',
+    downloadUrl: data.download_url || data.downloadUrl || data.url || '',
+    time: getNowTime()
+  }
+}
+
+const fileExtension = type => {
+  const normalizedType = String(type || '').toLowerCase()
+
+  if (normalizedType.includes('ppt')) return 'pptx'
+  if (normalizedType.includes('txt') || normalizedType.includes('document')) return 'txt'
+  if (normalizedType.includes('pdf')) return 'pdf'
+  return 'file'
+}
+
+const fileTypeLabel = type => {
+  const normalizedType = String(type || '').toLowerCase()
+
+  if (normalizedType.includes('ppt')) return 'PPT 文件'
+  if (normalizedType.includes('txt')) return 'TXT 文档'
+  if (normalizedType.includes('document')) return '学习文档'
+  if (normalizedType.includes('pdf')) return 'PDF 文件'
+  return '文件'
+}
+
+const fileIcon = type => {
+  const normalizedType = String(type || '').toLowerCase()
+
+  if (normalizedType.includes('ppt')) return '📊'
+  if (normalizedType.includes('txt') || normalizedType.includes('document')) return '📄'
+  if (normalizedType.includes('pdf')) return '📕'
+  return '📁'
+}
+
 const scrollToBottom = async () => {
   await nextTick()
 
@@ -474,6 +563,16 @@ const sendMessage = async () => {
 
         target.content += chunk
         target.time = getNowTime()
+        await scrollToBottom()
+      },
+      onFile: async fileData => {
+        if (target && !hasReceivedChunk) {
+          target.content = '已生成文件，可以在下方查看预览。'
+          target.time = getNowTime()
+          hasReceivedChunk = true
+        }
+
+        messages.value.push(normalizeFileMessage(fileData))
         await scrollToBottom()
       },
       onDone: data => {
@@ -864,6 +963,98 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.62);
   color: #123b86;
   border-top-right-radius: 6px;
+}
+
+.file-bubble {
+  width: min(520px, 100%);
+  padding: 16px;
+  border: 1px solid rgba(196, 226, 248, 0.58);
+  border-radius: 18px;
+  border-top-left-radius: 6px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #163f8f;
+  backdrop-filter: blur(16px) saturate(145%);
+  -webkit-backdrop-filter: blur(16px) saturate(145%);
+  box-shadow:
+    0 10px 24px rgba(22, 63, 143, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+.file-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #c9dce9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.file-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.file-title strong {
+  color: #163f8f;
+  font-size: 15px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.file-title span,
+.file-placeholder {
+  color: rgba(22, 63, 143, 0.62);
+  font-size: 12px;
+}
+
+.file-preview {
+  max-height: 260px;
+  margin: 14px 0 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid rgba(196, 226, 248, 0.52);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #163f8f;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.file-placeholder {
+  margin-top: 12px;
+}
+
+.file-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.file-actions a {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #163f8f;
+  color: #ffffff;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
 }
 
 .bubble p {

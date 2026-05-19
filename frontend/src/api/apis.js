@@ -1,6 +1,7 @@
 import request from './request'
 
-const API_BASE_URL = request.defaults.baseURL || '/'
+const rawBase = request.defaults.baseURL || '/'
+const API_BASE_URL = rawBase.endsWith('/') ? rawBase : rawBase + '/'
 
 // 登录：后端 Login_User 接收 username/email/password
 export function login(data) {
@@ -86,7 +87,7 @@ const parseStreamEvent = (eventText) => {
     .filter(Boolean)
 }
 
-export async function streamChatMessage(data, { onChunk, onDone, onError } = {}) {
+export async function streamChatMessage(data, { onChunk, onDone, onError, onFile } = {}) {
   const isExistingConversation = Boolean(data.chat_group_id)
   const url = `${API_BASE_URL}${isExistingConversation ? 'ai_chat/stream_msg_into_history' : 'ai_chat/stream_new_history'}`
   const token = localStorage.getItem('token')
@@ -146,6 +147,24 @@ export async function streamChatMessage(data, { onChunk, onDone, onError } = {})
           throw new Error(eventData.error)
         }
 
+        const isFileEvent =
+          eventData.type === 'file' ||
+          eventData.event === 'file' ||
+          eventData.file_type ||
+          eventData.fileType ||
+          eventData.filename ||
+          eventData.file_id ||
+          eventData.fileId ||
+          eventData.download_url ||
+          eventData.downloadUrl ||
+          eventData.preview_url ||
+          eventData.previewUrl
+
+        if (isFileEvent) {
+          onFile?.(eventData)
+          continue
+        }
+
         if (eventData.content) {
           onChunk?.(eventData.content)
         }
@@ -184,4 +203,84 @@ export function getStudyResources(params = {}) {
     method: 'get',
     params
   })
+}
+
+// ═══════════════════════════════════════
+//  学习资源生成（流式）
+// ═══════════════════════════════════════
+
+export async function streamResourceGeneration(data, { onProgress, onDone, onError } = {}) {
+  const url = `${API_BASE_URL}resource/generate/stream`
+  const token = localStorage.getItem('token')
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { token } : {})
+    },
+    body: JSON.stringify({
+      topic: data.topic,
+      resource_types: data.resource_types
+    })
+  })
+
+  if (!response.ok || !response.body) {
+    throw new Error(`资源生成请求失败：${response.status}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const events = buffer.split(/\r?\n\r?\n/)
+    buffer = events.pop() || ''
+
+    for (const eventText of events) {
+      const payloads = parseStreamEvent(eventText)
+
+      for (const payload of payloads) {
+        if (payload === '[DONE]') {
+          onDone?.({})
+          continue
+        }
+
+        let eventData
+        try {
+          eventData = JSON.parse(payload)
+        } catch {
+          continue
+        }
+
+        if (eventData.error) {
+          onError?.(eventData.error)
+          throw new Error(eventData.error)
+        }
+
+        if (eventData.resources !== undefined || eventData.review_passed !== undefined) {
+          // progress event: {resources: ["ppt","document"], review_passed: false}
+          onProgress?.(eventData)
+        }
+
+        if (eventData.done) {
+          onDone?.(eventData)
+        }
+      }
+    }
+  }
+}
+
+// 获取已生成的资源列表
+export function getGeneratedResources() {
+  return request.get('/resource/list')
+}
+
+// 删除某个生成的资源
+export function deleteGeneratedResource(resourceId) {
+  return request.delete(`/resource/${resourceId}`)
 }
