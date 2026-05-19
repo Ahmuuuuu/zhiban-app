@@ -2,13 +2,6 @@
   <div class="profile-page">
     <div class="profile-container">
       <section class="profile-header">
-        <div class="header-bg">
-          <div class="color-block cream"></div>
-          <div class="color-block deep-blue"></div>
-          <div class="color-block blue"></div>
-          <div class="color-block light-blue"></div>
-        </div>
-
         <div class="user-main">
           <div class="avatar-wrap">
             <img class="avatar" :src="defaultAvatar" alt="用户头像" />
@@ -331,52 +324,51 @@ onMounted(loadProfile)
 
 <style scoped>
 .profile-page {
-  min-height: calc(100vh - 120px);
-  background: #fafafa;
-  padding: 16px 8px;
+  position: relative;
+  min-height: 100vh;
+  background: #fdfcf7;
+  color: #163f8f;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  padding: 26px 30px 30px;
   box-sizing: border-box;
+  overflow: hidden;
+}
+
+.profile-page::before {
+  content: "";
+  position: fixed;
+  left: -32vw;
+  right: -20vw;
+  bottom: -28vh;
+  height: 68vh;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 62% 44% at 8% 12%, rgba(201, 220, 233, 0.36), transparent 68%),
+    radial-gradient(ellipse 54% 36% at 84% 88%, rgba(240, 239, 221, 0.32), transparent 72%);
+  filter: blur(22px);
+  opacity: 0.72;
 }
 
 .profile-container {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: none;
-  min-height: 100vh;
+  min-height: calc(100vh - 56px);
   margin: 0 auto;
 }
 
 .profile-header {
   position: relative;
-  background: #f0efdd;
-  border-radius: 16px;
+  background: rgba(250, 250, 250, 0.68);
+  border-radius: 28px;
   overflow: hidden;
-  border: 1px solid rgba(215, 228, 239, 0.9);
-  box-shadow: 0 12px 32px rgba(24, 63, 143, 0.08);
-}
-
-.header-bg {
-  height: 8px;
-  display: flex;
-  flex-direction: row;
-}
-
-.color-block {
-  flex: 1;
-}
-
-.cream {
-  background: #f0efdd;
-}
-
-.deep-blue {
-  background: #f0efdd;
-}
-
-.blue {
-  background: #f0efdd;
-}
-
-.light-blue {
-  background: #f0efdd;
+  border: 1px solid #c9dce9;
+  box-shadow:
+    0 14px 34px rgba(22, 63, 143, 0.1),
+    inset 0 1px 0 rgba(250, 250, 250, 0.64);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
 }
 
 .user-main {
@@ -399,9 +391,9 @@ onMounted(loadProfile)
   height: 104px;
   border-radius: 22px;
   object-fit: cover;
-  background: #f4f3df;
-  border: 6px solid #fafafa;
-  box-shadow: 0 10px 24px rgba(24, 63, 143, 0.14);
+  background: rgba(255, 255, 255, 0.66);
+  border: 6px solid rgba(255, 255, 255, 0.78);
+  box-shadow: 0 14px 30px rgba(22, 63, 143, 0.16);
 }
 
 .online-dot {
@@ -410,9 +402,9 @@ onMounted(loadProfile)
   bottom: 8px;
   width: 16px;
   height: 16px;
-  background: #638fc2;
+  background: #5f8fc3;
   border-radius: 50%;
-  border: 4px solid #fafafa;
+  border: 4px solid rgba(255, 255, 255, 0.9);
 }
 
 .user-text {
@@ -421,14 +413,14 @@ onMounted(loadProfile)
 
 .user-text h2 {
   margin: 0;
-  color: #183f8f;
+  color: #163f8f;
   font-size: 28px;
   font-weight: 700;
 }
 
 .user-text p {
   margin: 8px 0 0;
-  color: #638fc2;
+  color: rgba(22, 63, 143, 0.68);
   font-size: 15px;
 }
 
@@ -439,7 +431,7 @@ onMounted(loadProfile)
   height: 42px;
   padding: 0 22px;
   border: none;
-  border-radius: 12px;
+  border-radius: 28px;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -451,10 +443,10 @@ onMounted(loadProfile)
 .save-btn:hover,
 .status-tag:hover,
 .quick-card button:hover {
-  background: #638fc2;
-  color: #fafafa;
-  border-color: #638fc2;
-  box-shadow: 0 8px 18px rgba(24, 63, 143, 0.12);
+  background: #c9dce9;
+  color: #163f8f;
+  border-color: #5f8fc3;
+  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
   transform: translateY(-1px);
 }
 
@@ -468,8 +460,8 @@ onMounted(loadProfile)
 }
 
 .cancel-btn:hover {
-  background: #d7e4ef;
-  color: #183f8f;
+  background: rgba(201, 220, 233, 0.68);
+  color: #163f8f;
 }
 
 .header-actions {
@@ -480,32 +472,36 @@ onMounted(loadProfile)
 }
 
 .home-btn {
-  border: 1px solid #d7e4ef;
+  border: 1px solid #c9dce9;
   background: #fafafa;
-  color: #183f8f;
+  color: #163f8f;
 }
 
 .edit-btn {
-  background: #183f8f;
-  color: #fafafa;
+  border: 1px solid #163f8f;
+  background: #163f8f;
+  color: #ffffff;
 }
 
 .profile-content {
-  
   display: grid;
   grid-template-columns: 1fr 320px;
-  gap: 16px;
-  margin-top: 16px;
+  gap: 18px;
+  margin-top: 18px;
   min-height: calc(100vh - 210px);
 }
 
 .info-card,
 .account-card,
 .quick-card {
-  background: #fafafa;
-  border-radius: 16px;
-  border: 1px solid rgba(215, 228, 239, 0.9);
-  box-shadow: 0 10px 28px rgba(24, 63, 143, 0.06);
+  background: rgba(250, 250, 250, 0.68);
+  border-radius: 28px;
+  border: 1px solid #c9dce9;
+  box-shadow:
+    0 14px 34px rgba(22, 63, 143, 0.08),
+    inset 0 1px 0 rgba(250, 250, 250, 0.64);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
 
 .info-card,
@@ -526,7 +522,7 @@ onMounted(loadProfile)
 .account-card h3,
 .quick-card h3 {
   margin: 0;
-  color: #183f8f;
+  color: #163f8f;
   font-size: 20px;
 }
 
@@ -534,7 +530,7 @@ onMounted(loadProfile)
 .state-text {
   display: block;
   margin-top: 6px;
-  color: #638fc2;
+  color: rgba(22, 63, 143, 0.62);
   font-size: 13px;
 }
 
@@ -548,30 +544,30 @@ onMounted(loadProfile)
 .info-item {
   min-height: 72px;
   padding: 16px 18px;
-  border-radius: 12px;
+  border-radius: 18px;
   background: #fafafa;
-  border: 1px solid #d7e4ef;
+  border: 1px solid #c9dce9;
   box-sizing: border-box;
   transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .info-item:hover {
-  background: #fafafa;
-  border-color: #638fc2;
+  background: #dcebf4;
+  border-color: #5f8fc3;
   transform: translateY(-1px);
 }
 
 .label,
 .form-item label {
   display: block;
-  color: #638fc2;
+  color: rgba(22, 63, 143, 0.62);
   font-size: 13px;
   margin-bottom: 8px;
 }
 
 .value {
   display: block;
-  color: #183f8f;
+  color: #163f8f;
   font-size: 15px;
   font-weight: 600;
 }
@@ -580,11 +576,11 @@ onMounted(loadProfile)
 .form-item textarea {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #d7e4ef;
-  border-radius: 12px;
+  border: 1px solid #c9dce9;
+  border-radius: 18px;
   padding: 0 14px;
   background: #fafafa;
-  color: #183f8f;
+  color: #163f8f;
   font-size: 14px;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -592,8 +588,8 @@ onMounted(loadProfile)
 
 .form-item input:focus,
 .form-item textarea:focus {
-  border-color: #638fc2;
-  box-shadow: 0 0 0 3px rgba(99, 143, 194, 0.18);
+  border-color: rgba(95, 143, 195, 0.76);
+  box-shadow: 0 0 0 3px rgba(95, 143, 195, 0.18);
 }
 
 .form-item input {
@@ -621,11 +617,11 @@ onMounted(loadProfile)
 }
 
 .error-message {
-  color: #183f8f;
+  color: #163f8f;
 }
 
 .success-message {
-  color: #638fc2;
+  color: #5f8fc3;
 }
 
 .form-actions {
@@ -634,14 +630,14 @@ onMounted(loadProfile)
 }
 
 .save-btn {
-  background: #183f8f;
-  color: #fafafa;
+  background: #163f8f;
+  color: #ffffff;
 }
 
 .cancel-btn {
-  border: 1px solid #d7e4ef;
+  border: 1px solid #c9dce9;
   background: #fafafa;
-  color: #183f8f;
+  color: #163f8f;
 }
 
 .side-card {
@@ -653,23 +649,23 @@ onMounted(loadProfile)
 .status-box {
   margin-top: 18px;
   padding: 16px;
-  border-radius: 12px;
-  background: #c9dce9;
+  border-radius: 14px;
+  background: #edf5fa;
   border: 1px solid #c9dce9;
-  border-left: 4px solid #183f8f;
+  border-left: 4px solid #163f8f;
   display: flex;
   justify-content: space-between;
   gap: 16px;
 }
 
 .status-box strong {
-  color: #183f8f;
+  color: #163f8f;
   font-size: 16px;
 }
 
 .status-box p {
   margin: 6px 0 0;
-  color: #638fc2;
+  color: rgba(22, 63, 143, 0.62);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -679,8 +675,8 @@ onMounted(loadProfile)
   padding: 0 12px;
   border: none;
   border-radius: 999px;
-  background: #183f8f;
-  color: #fafafa;
+  background: #163f8f;
+  color: #ffffff;
   font-size: 12px;
   line-height: 28px;
   flex-shrink: 0;
@@ -691,10 +687,10 @@ onMounted(loadProfile)
   width: 100%;
   height: 42px;
   margin-top: 14px;
-  border: 1px solid #d7e4ef;
-  border-radius: 12px;
+  border: 1px solid #c9dce9;
+  border-radius: 18px;
   background: #fafafa;
-  color: #183f8f;
+  color: #163f8f;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -702,15 +698,15 @@ onMounted(loadProfile)
 }
 
 .quick-card .logout-btn {
-  background: #183f8f;
-  color: #fafafa;
-  border-color: #183f8f;
+  background: #163f8f;
+  color: #ffffff;
+  border-color: #163f8f;
 }
 
 .quick-card .delete-account-btn {
   background: #fafafa;
-  color: #183f8f;
-  border-color: #638fc2;
+  color: #163f8f;
+  border-color: #c9dce9;
 }
 
 @media (max-width: 900px) {
