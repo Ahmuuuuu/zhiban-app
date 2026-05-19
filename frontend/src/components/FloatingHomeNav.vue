@@ -23,17 +23,19 @@
   min-height: 62px;
   padding: 10px 12px;
   transform: none;
-  border: 1px solid rgba(201, 220, 233, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 999px;
-  background: rgba(250, 250, 250, 0.42);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.82), transparent 42%),
+    rgba(255, 255, 255, 0.36);
   backdrop-filter: blur(24px) saturate(155%);
   -webkit-backdrop-filter: blur(24px) saturate(155%);
   display: flex;
   justify-content: center;
   align-items: center;
   box-shadow:
-    0 20px 46px rgba(22, 63, 143, 0.1),
-    inset 0 1px 0 rgba(250, 250, 250, 0.64);
+    0 20px 46px rgba(22, 63, 143, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.74);
 }
 
 .nav-links a {
@@ -52,8 +54,10 @@
   min-height: 38px;
   padding: 0 13px;
   border-radius: 999px;
-  border: 1px solid rgba(201, 220, 233, 0.46);
-  background: rgba(250, 250, 250, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  background:
+    radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.82), transparent 45%),
+    rgba(255, 255, 255, 0.36);
   color: #163f8f;
   font-size: 14px;
   font-weight: 700;
@@ -70,12 +74,14 @@
 
 .nav-links a:hover,
 .nav-links a.router-link-active {
-  background: rgba(201, 220, 233, 0.58);
-  border-color: rgba(95, 143, 195, 0.45);
+  background:
+    radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.9), transparent 45%),
+    rgba(255, 255, 255, 0.58);
+  border-color: rgba(255, 255, 255, 0.82);
   transform: translateY(-2px);
   box-shadow:
-    0 8px 18px rgba(22, 63, 143, 0.12),
-    inset 0 1px 0 rgba(250, 250, 250, 0.55);
+    0 8px 18px rgba(22, 63, 143, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
 }
 
 .nav-links a:active {

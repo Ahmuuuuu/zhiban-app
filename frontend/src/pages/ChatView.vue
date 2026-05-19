@@ -599,11 +599,15 @@ onMounted(() => {
 }
 
 .chat-page {
+  position: relative;
   width: 100%;
   height: 100vh;
   display: flex;
-  background: #fafafa;
-  color: #111827;
+  background:
+    radial-gradient(ellipse 72% 46% at 8% 14%, rgba(196, 226, 248, 0.28) 0 24%, rgba(196, 226, 248, 0.08) 48%, transparent 74%),
+    radial-gradient(ellipse 58% 34% at 86% 82%, rgba(168, 215, 246, 0.18) 0 22%, transparent 70%),
+    linear-gradient(145deg, #ffffff 0%, #f9fdff 52%, #eef8ff 100%);
+  color: #163f8f;
   font-family:
     Inter,
     -apple-system,
@@ -612,15 +616,37 @@ onMounted(() => {
     "PingFang SC",
     "Microsoft YaHei",
     sans-serif;
+  overflow: hidden;
+}
+
+.chat-page::before {
+  content: "";
+  position: fixed;
+  left: -30vw;
+  right: -18vw;
+  bottom: -30vh;
+  height: 54vh;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 44% 60% at 10% 52%, rgba(196, 226, 248, 0.22) 0 34%, rgba(196, 226, 248, 0.08) 62%, transparent 88%),
+    radial-gradient(ellipse 42% 58% at 62% 44%, rgba(168, 215, 246, 0.16) 0 30%, rgba(168, 215, 246, 0.06) 58%, transparent 86%);
+  filter: blur(34px);
+  opacity: 0.42;
 }
 
 /* 左侧栏 */
 .sidebar {
+  position: relative;
+  z-index: 1;
   width: 220px;
   height: 100%;
   padding: 20px 14px;
-  background: #f0efdd;
-  border-right: 1px solid rgba(22, 63, 143, 0.08);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.72), transparent 42%),
+    rgba(255, 255, 255, 0.3);
+  border-right: 1px solid rgba(255, 255, 255, 0.48);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -629,9 +655,9 @@ onMounted(() => {
 .home-link {
   width: 30px;
   height: 30px;
-  border: 1px solid #c9dce9;
+  border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 999px;
-  background: rgba(250, 250, 250, 0.72);
+  background: rgba(255, 255, 255, 0.46);
   color: #163f8f;
   text-decoration: none;
   display: inline-flex;
@@ -644,7 +670,7 @@ onMounted(() => {
 }
 
 .home-link:hover {
-  background: #c9dce9;
+  background: rgba(255, 255, 255, 0.68);
   box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
   transform: translateY(-1px);
 }
@@ -663,19 +689,21 @@ onMounted(() => {
 
 .new-chat-btn {
   height: 48px;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 14px;
-  background: #163f8f;
-  color: #fafafa;
+  background: rgba(255, 255, 255, 0.46);
+  color: #123b86;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 12px 24px rgba(22, 63, 143, 0.18);
+  box-shadow:
+    0 12px 24px rgba(22, 63, 143, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
   transition: all 0.2s ease;
 }
 
 .new-chat-btn:hover {
-  background: #0f3274;
+  background: rgba(255, 255, 255, 0.68);
   transform: translateY(-1px);
 }
 
@@ -701,7 +729,7 @@ onMounted(() => {
 
 .delete-icon {
   cursor: pointer;
-  color: #64748b;
+  color: rgba(22, 63, 143, 0.56);
 }
 
 .recent-list {
@@ -712,11 +740,12 @@ onMounted(() => {
 
 
 .recent-item:hover {
-  background: rgba(250, 250, 250, 0.65);
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .recent-item.active {
-  background: rgba(201, 220, 233, 0.75);
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
 .chat-dot {
@@ -735,24 +764,28 @@ onMounted(() => {
 }
 
 .recent-time {
-  color: #64748b;
+  color: rgba(22, 63, 143, 0.56);
   font-size: 12px;
 }
 
 /* 主区域 */
 .main {
+  position: relative;
+  z-index: 1;
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #fafafa;
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .topbar {
   height: 68px;
   padding: 0 34px;
-  background: rgba(250, 250, 250, 0.95);
-  border-bottom: 1px solid rgba(22, 63, 143, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+  border-bottom: 1px solid rgba(196, 226, 248, 0.38);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -760,7 +793,7 @@ onMounted(() => {
 
 .topbar h1 {
   margin: 0;
-  color: #111827;
+  color: #163f8f;
   font-size: 20px;
   font-weight: 700;
 }
@@ -773,6 +806,9 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 26px;
+  background:
+    radial-gradient(ellipse 48% 32% at 14% 16%, rgba(196, 226, 248, 0.14), transparent 70%),
+    rgba(255, 255, 255, 0.44);
 }
 
 .message-row {
@@ -793,8 +829,8 @@ onMounted(() => {
   height: 38px;
   margin-top: 4px;
   border-radius: 50%;
-  background: #5f8fc3;
-  color: #fafafa;
+  background: rgba(255, 255, 255, 0.5);
+  color: #163f8f;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -810,18 +846,23 @@ onMounted(() => {
   border-radius: 18px;
   font-size: 15px;
   line-height: 1.8;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.54);
+  backdrop-filter: blur(16px) saturate(145%);
+  -webkit-backdrop-filter: blur(16px) saturate(145%);
+  box-shadow:
+    0 10px 24px rgba(22, 63, 143, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58);
 }
 
 .assistant .bubble {
-  background: #f0efdd;
-  color: #1f2937;
+  background: rgba(255, 255, 255, 0.48);
+  color: #163f8f;
   border-top-left-radius: 6px;
 }
 
 .user .bubble {
-  background: #c9dce9;
-  color: #111827;
+  background: rgba(255, 255, 255, 0.62);
+  color: #123b86;
   border-top-right-radius: 6px;
 }
 
@@ -850,7 +891,7 @@ onMounted(() => {
 
 .markdown-body :deep(p) {
   margin: 0;
-  color: #1f2937;
+  color: #163f8f;
 }
 
 .markdown-body :deep(p + p),
@@ -890,22 +931,22 @@ onMounted(() => {
 .markdown-body :deep(li) {
   margin: 5px 0;
   padding-left: 2px;
-  color: #334155;
+  color: #163f8f;
 }
 
 .markdown-body :deep(blockquote) {
   margin: 12px 0 0;
   padding: 10px 12px;
   border-left: 3px solid #5f8fc3;
-  background: rgba(201, 220, 233, 0.45);
-  color: #334155;
+  background: rgba(255, 255, 255, 0.34);
+  color: #163f8f;
   border-radius: 6px;
 }
 
 .markdown-body :deep(code) {
   padding: 2px 5px;
   border-radius: 5px;
-  background: rgba(201, 220, 233, 0.65);
+  background: rgba(255, 255, 255, 0.52);
   color: #163f8f;
   font-family:
     "SFMono-Regular",
@@ -919,8 +960,8 @@ onMounted(() => {
   margin-top: 12px;
   overflow: hidden;
   border-radius: 8px;
-  border: 1px solid #c9dce9;
-  background: #fafafa;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  background: rgba(255, 255, 255, 0.38);
 }
 
 .markdown-body :deep(.md-code-block span) {
@@ -928,7 +969,7 @@ onMounted(() => {
   padding: 7px 12px;
   color: #5f8fc3;
   font-size: 12px;
-  border-bottom: 1px solid #c9dce9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.48);
 }
 
 .markdown-body :deep(pre) {
@@ -940,7 +981,7 @@ onMounted(() => {
 .markdown-body :deep(pre code) {
   padding: 0;
   background: transparent;
-  color: #111827;
+  color: #163f8f;
   white-space: pre;
 }
 
@@ -954,39 +995,39 @@ onMounted(() => {
 .markdown-body :deep(.md-table-wrap) {
   margin-top: 12px;
   overflow-x: auto;
-  border: 1px solid #c9dce9;
+  border: 1px solid rgba(255, 255, 255, 0.52);
   border-radius: 8px;
 }
 
 .markdown-body :deep(table) {
   width: 100%;
   border-collapse: collapse;
-  background: #fafafa;
+  background: rgba(255, 255, 255, 0.38);
   font-size: 14px;
 }
 
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
   padding: 9px 11px;
-  border-bottom: 1px solid #c9dce9;
-  border-right: 1px solid #c9dce9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.48);
+  border-right: 1px solid rgba(255, 255, 255, 0.48);
   text-align: left;
   vertical-align: top;
 }
 
 .markdown-body :deep(th) {
   color: #163f8f;
-  background: #c9dce9;
+  background: rgba(255, 255, 255, 0.5);
   font-weight: 700;
 }
 
 .markdown-body :deep(td) {
-  color: #334155;
+  color: #163f8f;
 }
 
 .message-time {
   margin-top: 6px;
-  color: #64748b;
+  color: rgba(22, 63, 143, 0.68);
   font-size: 12px;
 }
 
@@ -997,15 +1038,19 @@ onMounted(() => {
 /* 输入框 */
 .input-area {
   padding: 18px 56px 28px;
-  background: #fafafa;
+  background: rgba(255, 255, 255, 0.46);
 }
 
 .input-box {
   padding: 14px 16px;
-  border: 1.5px solid rgba(22, 63, 143, 0.28);
-  background: #fafafa;
+  border: 1.5px solid rgba(196, 226, 248, 0.54);
+  background: rgba(255, 255, 255, 0.78);
   border-radius: 18px;
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.05);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  box-shadow:
+    0 14px 36px rgba(22, 63, 143, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.66);
 }
 
 textarea {
@@ -1015,14 +1060,14 @@ textarea {
   border: none;
   outline: none;
   background: transparent;
-  color: #111827;
+  color: #123b86;
   font-size: 14px;
   line-height: 1.6;
   font-family: inherit;
 }
 
 textarea::placeholder {
-  color: #94a3b8;
+  color: rgba(22, 63, 143, 0.48);
 }
 
 .input-actions {
@@ -1043,14 +1088,14 @@ textarea::placeholder {
   border: none;
   border-radius: 10px;
   background: transparent;
-  color: #5f8fc3;
+  color: #163f8f;
   font-size: 17px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .left-tools button:hover {
-  background: #c9dce9;
+  background: rgba(255, 255, 255, 0.52);
 }
 
 .send-btn {
@@ -1059,19 +1104,19 @@ textarea::placeholder {
   border: none;
   border-radius: 12px;
   background: #163f8f;
-  color: #fafafa;
+  color: #ffffff;
   font-size: 18px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .send-btn:hover {
-  background: #0f3274;
+  background: #1d5dab;
   transform: translateY(-1px);
 }
 
 .send-btn:disabled {
-  background: #5f8fc3;
+  background: rgba(22, 63, 143, 0.48);
   cursor: not-allowed;
   transform: none;
 }
@@ -1120,17 +1165,18 @@ textarea::placeholder {
   gap: 9px;
   border-radius: 12px;
   font-size: 13px;
-  color: #334155;
+  color: #163f8f;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .recent-item:hover {
-  background: rgba(250, 250, 250, 0.65);
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .recent-item.active {
-  background: rgba(201, 220, 233, 0.75);
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
 .recent-main {
@@ -1139,7 +1185,7 @@ textarea::placeholder {
 }
 
 .recent-title {
-  color: #111827;
+  color: #123b86;
   font-weight: 600;
   overflow: hidden;
   white-space: nowrap;
@@ -1148,7 +1194,7 @@ textarea::placeholder {
 
 .recent-desc {
   margin-top: 3px;
-  color: #64748b;
+  color: rgba(22, 63, 143, 0.58);
   font-size: 12px;
   overflow: hidden;
   white-space: nowrap;
@@ -1156,20 +1202,20 @@ textarea::placeholder {
 }
 
 .recent-time {
-  color: #64748b;
+  color: rgba(22, 63, 143, 0.56);
   font-size: 12px;
   flex-shrink: 0;
 }
 
 .empty-history {
   padding: 16px 10px;
-  color: #64748b;
+  color: rgba(22, 63, 143, 0.62);
   font-size: 13px;
 }
 
 .history-loading {
   margin: auto;
-  color: #64748b;
+  color: #ffffff;
   font-size: 14px;
 }
 </style>
