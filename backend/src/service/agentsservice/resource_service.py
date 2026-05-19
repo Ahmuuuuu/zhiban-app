@@ -11,7 +11,7 @@ from backend.src.utils.database import init_db
 # 资源类型 → 文件扩展名映射
 _FILE_EXT_MAP = {
     "document": "md",
-    "ppt": "md",
+    "ppt": "pptx",
     "mindmap": "md",
     "exercise": "md",
     "case": "md",
@@ -203,7 +203,7 @@ class ResourceService:
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:
             return None
-        ext = "md"
+        ext = _FILE_EXT_MAP.get(record.resource_type, "md")
         filename = f"{record.topic}_{record.resource_type}.{ext}"
         return record.content, filename, "text/markdown; charset=utf-8"
 

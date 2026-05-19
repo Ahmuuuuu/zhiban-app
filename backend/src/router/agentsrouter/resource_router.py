@@ -1,13 +1,34 @@
-from fastapi import APIRouter, HTTPException, Depends, Body
+from urllib.parse import quote
+
+from fastapi import APIRouter, HTTPException, Depends, Body, Query, Header
 from fastapi.responses import StreamingResponse
 
 from backend.src.service.agentsservice.resource_service import ResourceService
 from backend.src.service.agentsservice.skill_service import SkillService
 from backend.src.pojo.resourcepojo import GenerateResourceRequest
 from backend.src.pojo.skillpojo import UpsertSkillRequest
-from backend.src.utils.jwt import get_user_id_from_token
+from backend.src.utils.jwt import get_user_id_from_token, JWT_KEY, ALGORITHM
+from jose import jwt, JWTError
 
 router = APIRouter(prefix = "/resource", tags = ["学习资源生成"])
+
+
+async def get_user_id_from_download(
+    token : str | None = Header(None),
+    t : str | None = Query(None, alias = "token"),
+) -> int:
+    """优先从 Header 取 token，下载链接可从 query 参数取"""
+    actual = token or t
+    if not actual:
+        raise HTTPException(401, "未携带Token")
+    try:
+        payload = jwt.decode(actual, JWT_KEY, [ALGORITHM])
+        uid = payload.get("sub")
+        if uid is None:
+            raise ValueError
+        return int(uid)
+    except (ValueError, JWTError, TypeError):
+        raise HTTPException(401, "token无效或已过期")
 
 
 # ═══════════════════════════════════════
@@ -136,17 +157,18 @@ async def get_resource(
 @router.get("/{resource_id}/download")
 async def download_resource(
     resource_id : int,
-    user_id : int = Depends(get_user_id_from_token)
+    user_id : int = Depends(get_user_id_from_download)
 ):
     try :
         result = await ResourceService.download_resource(resource_id, user_id)
         if result is None :
             return {"code" : 404, "msg" : "资源不存在"}
         content, filename, media_type = result
+        ascii_name = quote(filename, safe="")
         return StreamingResponse(
             iter([content]),
             media_type = media_type,
-            headers = {"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers = {"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{ascii_name}"},
         )
     except HTTPException :
         raise

@@ -30,32 +30,19 @@ from langchain_core.runnables import RunnableWithMessageHistory
 
 @tool
 async def search_knowledge_base(query: str, user_id: str, top_k: int = 5):
-    """
-    从知识库中检索相关资料。
-    - query: 用户想查询的问题或关键词
-    - user_id: 当前用户的数字 ID（必须传入）
-    - top_k: 返回最相关的几条资料，默认5条
-    """
+    """从知识库中检索相关资料。参数：query用户问题关键词，user_id用户数字ID，top_k返回条数默认5"""
     return await kb_search(query, top_k, user_id=int(user_id))
 
 
 @tool
 async def ingest_document(title: str, content: str, user_id: str):
-    """
-    向知识库添加一篇新资料。
-    - title: 资料标题
-    - content: 资料正文
-    - user_id: 当前用户的数字 ID（必须传入）
-    """
+    """向知识库添加一篇新资料。参数：title资料标题，content资料正文，user_id用户数字ID"""
     return await kb_ingest(title, content, user_id=int(user_id))
 
 
 @tool
 async def list_knowledge(user_id: str):
-    """
-    列出知识库中该用户可见的全部资料（公开资料 + 自己的私有资料）。
-    - user_id: 当前用户的数字 ID（必须传入）
-    """
+    """列出知识库中该用户可见的全部资料（公开+自己的私有）。参数：user_id用户数字ID"""
     records = await kb_list(user_id=int(user_id))
     if not records:
         return "知识库中暂无资料"
@@ -69,29 +56,13 @@ async def list_knowledge(user_id: str):
 
 @tool
 async def update_knowledge(doc_id: str, user_id: str, title: str = None, content: str = None):
-    """
-    更新知识库中的一条资料。
-    - doc_id: 要更新的资料 ID
-    - user_id: 当前用户的数字 ID（必须传入）
-    - title: 新标题（可选，不传则不修改）
-    - content: 新内容（可选，不传则不修改）
-    """
-    return await kb_update(
-        doc_id=doc_id,
-        title=title,
-        content=content,
-        user_id=int(user_id),
-        is_admin=False,
-    )
+    """更新知识库中的一条资料。参数：doc_id资料ID，user_id用户数字ID，title新标题(可选)，content新内容(可选)"""
+    return await kb_update(doc_id=doc_id, title=title, content=content, user_id=int(user_id), is_admin=False)
 
 
 @tool
 async def delete_knowledge(doc_id: str, user_id: str):
-    """
-    删除知识库中的一条资料（仅限自己上传的私有资料）。
-    - doc_id: 要删除的资料 ID
-    - user_id: 当前用户的数字 ID（必须传入）
-    """
+    """删除知识库中的一条资料（仅限自己上传的私有资料）。参数：doc_id资料ID，user_id用户数字ID"""
     return await kb_delete(doc_id=doc_id, user_id=int(user_id), is_admin=False)
 
 
@@ -121,29 +92,21 @@ async def update_portrait(user_id: str, field: str, value: str, source: str = "u
     try:
         await init_db()
         user_id_int = int(user_id.strip())
-
         if field not in TRAIT_KEYS:
             return f"未知维度 '{field}'，可选：{', '.join(TRAIT_KEYS)}"
-
         user = await User.filter(id=user_id_int).first()
         if not user:
             return "未查找到该用户"
-
         picture = await user.picture
         if not picture:
             return "该用户尚未创建画像"
-
         traits = parse_traits(picture.traits)
         existing = traits.get(field) if isinstance(traits.get(field), dict) else None
         traits[field] = build_trait_entry(value, source, existing)
         picture.traits = dump_traits(traits)
         await picture.save()
-
         entry = traits[field]
-        return (
-            f"维度 '{field}' 已更新：{value}，"
-            f"置信度 {entry['confidence']}（来源：{source}）"
-        )
+        return f"维度 '{field}' 已更新：{value}，置信度 {entry['confidence']}（来源：{source}）"
     except Exception as e:
         return f"更新画像失败：{e}"
 
@@ -169,37 +132,6 @@ async def get_used_history(user_id: str):
         return chat_content
     except Exception as e:
         return f"获取历史记录失败：{e}"
-
-
-# ═══════════════════════════════════════
-#  工具：资源生成
-# ═══════════════════════════════════════
-
-@tool
-async def generate_learning_resource(
-    topic: str,
-    user_id: str = "",
-    resource_types: str = "document",
-):
-    """
-    生成学习资源（文档/PPT/习题/思维导图/案例/拓展阅读）。
-    当用户说"帮我生成学习资料""做个PPT""出几道练习题""总结成文档"时调用。
-    - topic: 学习主题（从对话中提取）
-    - user_id: 当前用户的数字 ID（必须传入）
-    - resource_types: 资源类型，逗号分隔，可选值：document / ppt / mindmap / exercise / case / reading
-    """
-    from backend.src.service.agentsservice.resource_service import ResourceService
-
-    uid = int(user_id.strip())
-    types = [t.strip() for t in resource_types.split(",")]
-    results = await ResourceService.generate_and_save(topic, uid, types)
-    if not results:
-        return "生成失败，请稍后重试"
-    lines = [
-        f"- {r['resource_type']}: {len(r['content'])}字 （ID: {r['resource_id']}）"
-        for r in results
-    ]
-    return f"已为您生成 {len(results)} 份学习资料：\n" + "\n".join(lines)
 
 
 # ═══════════════════════════════════════
@@ -234,7 +166,6 @@ class UnifiedChat:
             list_knowledge, update_knowledge, delete_knowledge,
             read_portrait, update_portrait,
             get_used_history,
-            generate_learning_resource,
         ]
         agent = create_tool_calling_agent(llm=llm, prompt=prompt, tools=tools)
         agent_executor = AgentExecutor(
@@ -250,29 +181,19 @@ class UnifiedChat:
             history_messages_key="history",
         )
 
-    async def chat(self, message: str) -> str:
+    async def chat(self, message: str, resource_context: str = "") -> str:
         response = await self.agent_with_memory.ainvoke(
-            {"input": message, "current_user_id": str(self.user_id)},
+            {"input": message, "current_user_id": str(self.user_id), "resource_context": resource_context},
             config={"configurable": {"session_id": self.session_id}},
         )
         return response["output"]
 
-    async def stream(self, message: str):
-        """逐 token 流式输出 — 用 astream_events 从 LLM 层捕获 token，手动维护历史"""
+    async def stream(self, message: str, resource_context: str = ""):
+        """逐 token 流式输出 — yield dict: type=content"""
         history = self._get_session_history(self.session_id)
-        history_messages = list(history.messages)  # 历史对话（不含当前这一轮）
+        history_messages = list(history.messages)
 
         full_response = ""
-
-        def _is_stream_content(event: dict) -> str | None:
-            """提取 LLM 流式 chunk 的文本内容"""
-            if event.get("event") != "on_chat_model_stream":
-                return None
-            chunk = event.get("data", {}).get("chunk")
-            if chunk is None:
-                return None
-            content = getattr(chunk, "content", None)
-            return content if content else None
 
         try:
             async for event in self._raw_executor.astream_events(
@@ -280,28 +201,34 @@ class UnifiedChat:
                     "input": message,
                     "history": history_messages,
                     "current_user_id": str(self.user_id),
+                    "resource_context": resource_context,
                 },
                 version="v2",
             ):
-                content = _is_stream_content(event)
-                if content:
-                    full_response += content
-                    yield content
+                if event.get("event") == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk:
+                        content = getattr(chunk, "content", None)
+                        if content:
+                            full_response += content
+                            yield {"type": "content", "content": content}
         except (TypeError, NotImplementedError):
-            # langchain 版本较旧，降级用 v1
             async for event in self._raw_executor.astream_events(
                 {
                     "input": message,
                     "history": history_messages,
                     "current_user_id": str(self.user_id),
+                    "resource_context": resource_context,
                 },
                 version="v1",
             ):
-                content = _is_stream_content(event)
-                if content:
-                    full_response += content
-                    yield content
+                if event.get("event") == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk:
+                        content = getattr(chunk, "content", None)
+                        if content:
+                            full_response += content
+                            yield {"type": "content", "content": content}
 
-        # 流式结束后手动更新历史记录
         history.add_user_message(message)
         history.add_ai_message(full_response)
