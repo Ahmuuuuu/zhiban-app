@@ -566,7 +566,7 @@ onUnmounted(() => {
 }
 
 .monster-drop {
-  animation: monster-drop-in 1680ms linear backwards;
+  animation: monster-drop-in 1180ms linear backwards;
   transform-origin: bottom center;
   will-change: translate, scale, opacity, border-bottom-left-radius, border-bottom-right-radius;
 }
@@ -576,15 +576,15 @@ onUnmounted(() => {
 }
 
 .monster-drop-black {
-  animation-delay: 420ms;
+  animation-delay: 300ms;
 }
 
 .monster-drop-orange {
-  animation-delay: 760ms;
+  animation-delay: 540ms;
 }
 
 .monster-drop-yellow {
-  animation-delay: 1100ms;
+  animation-delay: 780ms;
 }
 
 .monster-body-slow {
