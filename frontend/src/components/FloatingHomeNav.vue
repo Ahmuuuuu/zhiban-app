@@ -16,12 +16,13 @@
 .floating-nav {
   position: fixed;
   top: 22px;
-  left: 50%;
+  left: 28px;
   z-index: 20;
-  width: min(620px, calc(100% - 40px));
+  width: fit-content;
+  max-width: calc(100% - 40px);
   min-height: 62px;
-  padding: 10px 16px;
-  transform: translateX(-50%);
+  padding: 10px 12px;
+  transform: none;
   border: 1px solid rgba(201, 220, 233, 0.5);
   border-radius: 999px;
   background: rgba(250, 250, 250, 0.42);
@@ -97,6 +98,7 @@
 @media (max-width: 640px) {
   .floating-nav {
     top: 12px;
+    left: 12px;
     width: calc(100% - 24px);
   }
 

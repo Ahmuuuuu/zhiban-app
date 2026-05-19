@@ -3,6 +3,7 @@
     <!-- 左侧栏 -->
     <aside class="sidebar">
       <div class="brand">
+        <router-link class="home-link" to="/" aria-label="返回首页">←</router-link>
         <div class="brand-left">
           <span class="brand-name">知伴</span>
         </div>
@@ -623,6 +624,29 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+.home-link {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #c9dce9;
+  border-radius: 999px;
+  background: rgba(250, 250, 250, 0.72);
+  color: #163f8f;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 800;
+  flex-shrink: 0;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.home-link:hover {
+  background: #c9dce9;
+  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
+  transform: translateY(-1px);
 }
 
 .brand {
