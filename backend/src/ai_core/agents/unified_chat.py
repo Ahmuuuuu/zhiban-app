@@ -172,6 +172,37 @@ async def get_used_history(user_id: str):
 
 
 # ═══════════════════════════════════════
+#  工具：资源生成
+# ═══════════════════════════════════════
+
+@tool
+async def generate_learning_resource(
+    topic: str,
+    user_id: str = "",
+    resource_types: str = "document",
+):
+    """
+    生成学习资源（文档/PPT/习题/思维导图/案例/拓展阅读）。
+    当用户说"帮我生成学习资料""做个PPT""出几道练习题""总结成文档"时调用。
+    - topic: 学习主题（从对话中提取）
+    - user_id: 当前用户的数字 ID（必须传入）
+    - resource_types: 资源类型，逗号分隔，可选值：document / ppt / mindmap / exercise / case / reading
+    """
+    from backend.src.service.agentsservice.resource_service import ResourceService
+
+    uid = int(user_id.strip())
+    types = [t.strip() for t in resource_types.split(",")]
+    results = await ResourceService.generate_and_save(topic, uid, types)
+    if not results:
+        return "生成失败，请稍后重试"
+    lines = [
+        f"- {r['resource_type']}: {len(r['content'])}字 （ID: {r['resource_id']}）"
+        for r in results
+    ]
+    return f"已为您生成 {len(results)} 份学习资料：\n" + "\n".join(lines)
+
+
+# ═══════════════════════════════════════
 #  UnifiedChat Agent
 # ═══════════════════════════════════════
 
@@ -203,6 +234,7 @@ class UnifiedChat:
             list_knowledge, update_knowledge, delete_knowledge,
             read_portrait, update_portrait,
             get_used_history,
+            generate_learning_resource,
         ]
         agent = create_tool_calling_agent(llm=llm, prompt=prompt, tools=tools)
         agent_executor = AgentExecutor(

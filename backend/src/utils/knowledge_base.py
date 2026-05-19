@@ -2,8 +2,12 @@
 知识库 — 向量数据存储于 MySQL，支持用户隔离和公开/私有权限
 BGE 模型仍从本地加载（开源模型，不包含用户数据）
 """
+import os
 import json
 from pathlib import Path
+
+# 国内网络：HuggingFace 镜像加速
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
