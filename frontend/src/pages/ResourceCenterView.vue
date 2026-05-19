@@ -848,23 +848,26 @@ onMounted(loadResources)
 .category-panel h2 {
   position: relative;
   margin: 0;
-  height: 62px;
+  height: 52px;
   border-bottom: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #163f8f;
-  font-size: 24px;
+  font-size: 21px;
 }
 
 .category-panel button {
   position: relative;
-  height: 56px;
+  width: calc(100% - 28px);
+  height: 40px;
+  margin: 7px 14px 0;
   border: 0;
-  background: rgba(250, 250, 250, 0.34);
+  border-radius: 999px;
+  background: rgba(250, 250, 250, 0.48);
   color: #163f8f;
-  font-size: 17px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease;
 }
@@ -873,10 +876,10 @@ onMounted(loadResources)
 .category-panel button::after {
   content: "";
   position: absolute;
-  left: 18px;
-  right: 18px;
+  left: 24px;
+  right: 24px;
   bottom: 0;
-  height: 3px;
+  height: 2px;
   border-radius: 999px;
   background:
     linear-gradient(to right, transparent 0%, rgba(201, 220, 233, 0.34) 24%, rgba(201, 220, 233, 0.72) 48%, rgba(201, 220, 233, 0.72) 52%, rgba(201, 220, 233, 0.34) 76%, transparent 100%),
@@ -886,7 +889,7 @@ onMounted(loadResources)
 
 .category-panel button:hover,
 .category-panel button.active {
-  background: #c9dce9;
+  background: rgba(201, 220, 233, 0.72);
   color: #163f8f;
 }
 
@@ -896,7 +899,7 @@ onMounted(loadResources)
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(3, minmax(180px, 1fr));
-  grid-auto-rows: 178px;
+  grid-auto-rows: auto;
   align-content: start;
   gap: 28px 48px;
 }
@@ -906,18 +909,21 @@ onMounted(loadResources)
   grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 0 6px;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 4px 0 10px;
 }
 
 .sub-cat-btn {
-  padding: 5px 14px;
-  border: 1px solid rgba(22, 63, 143, 0.18);
+  height: 38px;
+  padding: 0 20px;
+  border: 1px solid rgba(201, 220, 233, 0.72);
   border-radius: 999px;
-  background: rgba(250, 250, 250, 0.6);
+  background: rgba(250, 250, 250, 0.66);
   color: rgba(22, 63, 143, 0.7);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
@@ -929,9 +935,9 @@ onMounted(loadResources)
 }
 
 .sub-cat-btn.active {
-  background: #163f8f;
-  color: #fafafa;
-  border-color: #163f8f;
+  background: rgba(201, 220, 233, 0.78);
+  color: #163f8f;
+  border-color: rgba(95, 143, 195, 0.42);
 }
 
 .resource-card {
@@ -1160,9 +1166,15 @@ onMounted(loadResources)
 
   .category-panel h2,
   .category-panel button {
-    min-width: 110px;
+    min-width: 96px;
     border-bottom: 0;
     border-right: 1px solid rgba(201, 220, 233, 0.44);
+  }
+
+  .category-panel button {
+    width: auto;
+    margin: 6px 8px;
+    padding: 0 16px;
   }
 
   .resource-list {

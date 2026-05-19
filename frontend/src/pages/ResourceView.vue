@@ -126,7 +126,6 @@ const selectedResource = ref(null)
 const loading = ref(false)
 const errorMessage = ref('')
 const keyword = ref('')
-const currentUserId = ref(null)
 const currentUserToken = ref('')
 
 const categoryLabelMap = {
@@ -147,50 +146,15 @@ const normalizeResources = data => {
     content: item.content || '',
     category: item.category || '',
     categoryLabel: categoryLabelMap[item.category] || '',
-    user_id: item.user_id,
-    user_token: item.user_token || item.token || item.owner_token || item.uploader_token,
+    visibility: item.visibility || 'private',
     created_at: item.created_at || ''
   }))
-}
-
-const getCurrentUserIdFromToken = () => {
-  const token = localStorage.getItem('token')
-
-  if (!token) return null
-
-  try {
-    const payloadText = token.split('.')[1]
-    if (!payloadText) return null
-
-    const normalizedPayload = payloadText.replace(/-/g, '+').replace(/_/g, '/')
-    const paddedPayload = normalizedPayload.padEnd(
-      normalizedPayload.length + ((4 - normalizedPayload.length % 4) % 4),
-      '='
-    )
-    const payload = JSON.parse(atob(paddedPayload))
-    const id = Number(payload?.sub)
-
-    return Number.isFinite(id) ? id : null
-  } catch (error) {
-    return null
-  }
-}
-
-const isOwnResource = resource => {
-  const resourceOwnerToken = resource?.user_token || resource?.user_id
-
-  if (currentUserToken.value && String(resourceOwnerToken) === currentUserToken.value) {
-    return true
-  }
-
-  return currentUserId.value !== null && Number(resource?.user_id) === currentUserId.value
 }
 
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
   currentUserToken.value = localStorage.getItem('token') || ''
-  currentUserId.value = getCurrentUserIdFromToken()
 
   if (!currentUserToken.value) {
     resources.value = []
@@ -201,8 +165,8 @@ const loadResources = async () => {
   }
 
   try {
-    const result = await getStudyResources()
-    resources.value = normalizeResources(result).filter(isOwnResource)
+    const result = await getStudyResources({ visibility: 'private' })
+    resources.value = normalizeResources(result).filter(item => item.visibility !== 'public')
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     if (error?.response?.status === 401) {

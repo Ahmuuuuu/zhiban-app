@@ -87,7 +87,7 @@ const parseStreamEvent = (eventText) => {
     .filter(Boolean)
 }
 
-export async function streamChatMessage(data, { onChunk, onDone, onError } = {}) {
+export async function streamChatMessage(data, { onChunk, onDone, onError, onFile } = {}) {
   const isExistingConversation = Boolean(data.chat_group_id)
   const url = `${API_BASE_URL}${isExistingConversation ? 'ai_chat/stream_msg_into_history' : 'ai_chat/stream_new_history'}`
   const token = localStorage.getItem('token')
@@ -145,6 +145,24 @@ export async function streamChatMessage(data, { onChunk, onDone, onError } = {})
         if (eventData.error) {
           onError?.(eventData.error)
           throw new Error(eventData.error)
+        }
+
+        const isFileEvent =
+          eventData.type === 'file' ||
+          eventData.event === 'file' ||
+          eventData.file_type ||
+          eventData.fileType ||
+          eventData.filename ||
+          eventData.file_id ||
+          eventData.fileId ||
+          eventData.download_url ||
+          eventData.downloadUrl ||
+          eventData.preview_url ||
+          eventData.previewUrl
+
+        if (isFileEvent) {
+          onFile?.(eventData)
+          continue
         }
 
         if (eventData.content) {

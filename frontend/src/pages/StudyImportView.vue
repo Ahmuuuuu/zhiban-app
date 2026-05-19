@@ -525,8 +525,8 @@ const submitMaterial = async () => {
 .category-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .cat-label {
@@ -541,10 +541,10 @@ const submitMaterial = async () => {
 
 .cat-label span {
   display: inline-block;
-  padding: 5px 12px;
-  border-radius: 8px;
+  padding: 3px 10px;
+  border-radius: 6px;
   border: 1px solid rgba(196, 226, 248, 0.5);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: rgba(22, 63, 143, 0.7);
   background: rgba(255, 255, 255, 0.5);
