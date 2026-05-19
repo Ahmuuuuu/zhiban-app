@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from fastapi import APIRouter, HTTPException, Depends, Body
 from fastapi.responses import StreamingResponse
 
@@ -146,7 +148,12 @@ async def download_resource(
         return StreamingResponse(
             iter([content]),
             media_type = media_type,
-            headers = {"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers = {
+                "Content-Disposition": (
+                    f'attachment; filename="{quote(filename)}"; '
+                    f"filename*=UTF-8''{quote(filename)}"
+                )
+            },
         )
     except HTTPException :
         raise
