@@ -2,13 +2,11 @@
   <main class="home-cover">
     <FloatingHomeNav />
 
-    <router-link class="account-corner" to="/profile" :aria-label="isLoggedIn ? '个人信息' : '登录'">
-      <span class="avatar">{{ avatarText }}</span>
-      <span class="account-text">
-        <strong>{{ accountName }}</strong>
-        <small>{{ accountRole }}</small>
-      </span>
-    </router-link>
+    <UserAccountButton
+      variant="home"
+      corner
+      logged-out-meta="点击进入个人信息"
+    />
 
     <section class="hero">
       <div class="hero-copy">
@@ -79,106 +77,19 @@
         </router-link>
       </div>
     </section>
-
-    <LoginView
-      :visible="showLogin"
-      @close="showLogin = false"
-      @login="handleLoginSuccess"
-    />
   </main>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { getUserProfile } from '../api/apis'
 import FloatingHomeNav from '../components/FloatingHomeNav.vue'
-import LoginView from '../components/LoginView.vue'
-
-const router = useRouter()
-const token = ref(localStorage.getItem('token') || '')
-const username = ref(localStorage.getItem('username') || '')
-const userRole = ref(localStorage.getItem('role') || localStorage.getItem('identity') || '')
-const showLogin = ref(false)
-
-const isLoggedIn = computed(() => Boolean(token.value))
-const accountName = computed(() => (isLoggedIn.value ? username.value.trim() || '正在获取用户' : '请登录账户'))
-const accountRole = computed(() => {
-  if (!isLoggedIn.value) return '点击进入个人信息'
-  if (userRole.value === 'teacher') return '教师'
-  if (userRole.value === 'student') return '学生'
-  return '学生'
-})
-const avatarText = computed(() => {
-  return isLoggedIn.value ? accountName.value.slice(0, 1).toUpperCase() : '登'
-})
-
-const normalizeProfile = (result) => {
-  return result?.data || result?.user || result || {}
-}
-
-const loadAccountInfo = async () => {
-  if (!token.value) return
-
-  try {
-    const profile = normalizeProfile(await getUserProfile())
-
-    if (profile.username) {
-      username.value = profile.username
-      localStorage.setItem('username', profile.username)
-    }
-
-    if (profile.role || profile.identity) {
-      userRole.value = profile.role || profile.identity
-      localStorage.setItem('role', userRole.value)
-    }
-  } catch (error) {
-    username.value = localStorage.getItem('username') || '已登录账户'
-  }
-}
-
-const openLogin = () => {
-  showLogin.value = true
-}
-
-const handleLoginSuccess = async () => {
-  token.value = localStorage.getItem('token') || ''
-  showLogin.value = false
-  await loadAccountInfo()
-  await router.push('/')
-}
-
-const handleAccountClick = event => {
-  if (token.value) return
-
-  const accountEntry = event.target.closest?.('.account-corner')
-
-  if (!accountEntry) return
-
-  event.preventDefault()
-  openLogin()
-}
-
-onMounted(() => {
-  loadAccountInfo()
-  document.addEventListener('click', handleAccountClick, true)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleAccountClick, true)
-})
+import UserAccountButton from '../components/UserAccountButton.vue'
 </script>
 
 <style scoped>
 .home-cover {
   position: relative;
   min-height: 100vh;
-  background:
-    radial-gradient(ellipse 118% 82% at -24% 58%, rgba(255, 255, 255, 0.42) 0 34%, rgba(255, 255, 255, 0.2) 58%, transparent 86%),
-    radial-gradient(ellipse 88% 62% at 14% 18%, rgba(185, 222, 249, 0.36) 0 30%, rgba(185, 222, 249, 0.14) 56%, transparent 84%),
-    radial-gradient(ellipse 72% 44% at 84% 18%, rgba(255, 255, 255, 0.26) 0 28%, rgba(255, 255, 255, 0.1) 52%, transparent 78%),
-    radial-gradient(ellipse 86% 38% at 48% 88%, rgba(255, 255, 255, 0.28) 0 28%, rgba(255, 255, 255, 0.12) 52%, transparent 82%),
-    linear-gradient(155deg, #174d9b 0%, #438bd2 26%, #a8d7f6 62%, #f2fbff 100%);
+  background: transparent;
   color: #163f8f;
   font-family:
     Inter,
@@ -192,101 +103,13 @@ onUnmounted(() => {
 }
 
 .home-cover::before {
-  content: "";
-  position: fixed;
-  left: -32vw;
-  right: -20vw;
-  bottom: -28vh;
-  height: 68vh;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse 42% 66% at 4% 48%, rgba(255, 255, 255, 0.8) 0 34%, rgba(255, 255, 255, 0.28) 62%, transparent 88%),
-    radial-gradient(ellipse 40% 70% at 24% 32%, rgba(255, 255, 255, 0.74) 0 34%, rgba(255, 255, 255, 0.24) 62%, transparent 88%),
-    radial-gradient(ellipse 40% 58% at 52% 44%, rgba(255, 255, 255, 0.62) 0 32%, rgba(255, 255, 255, 0.18) 58%, transparent 86%),
-    radial-gradient(ellipse 36% 62% at 76% 34%, rgba(255, 255, 255, 0.68) 0 30%, rgba(255, 255, 255, 0.2) 56%, transparent 84%),
-    radial-gradient(ellipse 32% 52% at 94% 52%, rgba(255, 255, 255, 0.62) 0 28%, rgba(255, 255, 255, 0.18) 54%, transparent 82%);
-  filter: blur(30px);
-  opacity: 0.66;
+  content: none;
 }
 
 .primary-action,
 .secondary-action,
 .mini-import-btn {
   text-decoration: none;
-}
-
-.account-corner {
-  position: fixed;
-  top: 24px;
-  right: 28px;
-  z-index: 30;
-  min-height: 56px;
-  padding: 7px 12px 7px 7px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  background:
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.88), transparent 44%),
-    rgba(255, 255, 255, 0.42);
-  color: #163f8f;
-  text-decoration: none;
-  backdrop-filter: blur(18px) saturate(135%);
-  -webkit-backdrop-filter: blur(18px) saturate(135%);
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  box-shadow:
-    0 14px 34px rgba(22, 63, 143, 0.14),
-    inset 0 1px 0 rgba(250, 250, 250, 0.76);
-  transition:
-    transform 0.22s ease,
-    box-shadow 0.22s ease,
-    background 0.22s ease;
-}
-
-.account-corner:hover {
-  background:
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.94), transparent 44%),
-    rgba(255, 255, 255, 0.62);
-  transform: translateY(-2px);
-  box-shadow:
-    0 18px 40px rgba(22, 63, 143, 0.18),
-    inset 0 1px 0 rgba(250, 250, 250, 0.8);
-}
-
-.account-corner:active {
-  transform: translateY(0) scale(0.98);
-}
-
-.avatar {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: #163f8f;
-  color: #fafafa;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 800;
-  flex-shrink: 0;
-}
-
-.account-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  line-height: 1.15;
-  white-space: nowrap;
-}
-
-.account-text strong {
-  color: #163f8f;
-  font-size: 14px;
-}
-
-.account-text small {
-  color: #5f8fc3;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .hero {
@@ -639,15 +462,6 @@ onUnmounted(() => {
 }
 
 @media (max-width: 640px) {
-  .account-corner {
-    top: 14px;
-    right: 16px;
-  }
-
-  .account-text {
-    display: none;
-  }
-
   .hero {
     padding: 150px 20px 30px;
   }

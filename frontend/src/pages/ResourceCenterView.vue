@@ -23,9 +23,11 @@
         <router-link class="import-link" to="/study-import">
           资料导入
         </router-link>
-        <router-link class="user-link" to="/profile">
-          用户
-        </router-link>
+        <UserAccountButton
+          variant="dark"
+          logged-out-name="未登录"
+          @login="loadResources"
+        />
       </div>
     </header>
 
@@ -141,6 +143,7 @@ import {
   Search
 } from 'lucide-vue-next'
 import { getStudyResources } from '../api/apis'
+import UserAccountButton from '../components/UserAccountButton.vue'
 
 const resources = ref([])
 const selectedResource = ref(null)
@@ -726,7 +729,6 @@ onMounted(loadResources)
 
 .home-pill,
 .import-link,
-.user-link,
 .send-search,
 .icon-btn,
 .category-panel,
@@ -803,8 +805,7 @@ onMounted(loadResources)
   box-shadow: none;
 }
 
-.import-link,
-.user-link {
+.import-link {
   min-width: 92px;
   height: 70px;
   padding: 0 20px;
@@ -812,20 +813,27 @@ onMounted(loadResources)
   text-decoration: none;
   font-size: 16px;
   font-weight: 800;
-}
-
-.user-link {
-  min-width: 78px;
+  border-color: rgba(22, 63, 143, 0.92);
+  background: #163f8f;
+  color: #fafafa;
+  box-shadow:
+    0 14px 30px rgba(22, 63, 143, 0.18),
+    inset 0 1px 0 rgba(250, 250, 250, 0.18);
 }
 
 .home-pill:hover,
 .import-link:hover,
-.user-link:hover,
 .send-search:hover,
 .icon-btn:hover {
   transform: translateY(-2px);
   border-color: #5f8fc3;
   background: #c9dce9;
+}
+
+.import-link:hover {
+  background: #1d5dab;
+  border-color: #1d5dab;
+  color: #fafafa;
 }
 
 .resource-shell {
