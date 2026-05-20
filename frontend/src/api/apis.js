@@ -1,4 +1,4 @@
-import request from './request'
+﻿import request from './request'
 
 const rawBase = request.defaults.baseURL || '/'
 const API_BASE_URL = rawBase.endsWith('/') ? rawBase : rawBase + '/'
@@ -10,7 +10,7 @@ export const resolveApiUrl = path => {
   return new URL(String(path).replace(/^\//, ''), API_BASE_URL).toString()
 }
 
-// 登录：后端 Login_User 接收 username/email/password
+// 鐧诲綍锛氬悗绔?Login_User 鎺ユ敹 username/email/password
 export function login(data) {
   return request({
     url: '/user/login_user',
@@ -19,7 +19,7 @@ export function login(data) {
   })
 }
 
-// 注册：后端 Create_User 接收 username/password
+// 娉ㄥ唽锛氬悗绔?Create_User 鎺ユ敹 username/password
 export function register(data) {
   return request({
     url: '/user/create_user',
@@ -28,7 +28,7 @@ export function register(data) {
   })
 }
 
-// 获取用户资料：后端 Read_User 通过 token 获取 user_id
+// 鑾峰彇鐢ㄦ埛璧勬枡锛氬悗绔?Read_User 閫氳繃 token 鑾峰彇 user_id
 export function getUserProfile() {
   return request({
     url: '/user/read_user',
@@ -36,7 +36,7 @@ export function getUserProfile() {
   })
 }
 
-// 更新个人信息：后端 Update_User_Information 接收 username/major/email/phonenum/profile
+// 鏇存柊涓汉淇℃伅锛氬悗绔?Update_User_Information 鎺ユ敹 username/major/email/phonenum/profile
 export function updateUserProfile(data) {
   return request({
     url: '/user/update_user/information',
@@ -45,7 +45,7 @@ export function updateUserProfile(data) {
   })
 }
 
-// 注销账户：后端 Delete_User 接收 password，用户身份通过 token 获取
+// 娉ㄩ攢璐︽埛锛氬悗绔?Delete_User 鎺ユ敹 password锛岀敤鎴疯韩浠介€氳繃 token 鑾峰彇
 export function deleteUser(data) {
   return request({
     url: '/user/delete_user',
@@ -54,7 +54,7 @@ export function deleteUser(data) {
   })
 }
 
-// AI 聊天信息返回
+// AI 鑱婂ぉ淇℃伅杩斿洖
 export function sendChatMessage(data) {
   if (data.chat_group_id) {
     return request.post('/ai_chat/create_msg_into_history', {
@@ -72,12 +72,12 @@ export function sendChatMessage(data) {
   })
 }
 
-// 获取最近历史对话列表
+// 鑾峰彇鏈€杩戝巻鍙插璇濆垪琛?
 export function getConversationList() {
   return request.get('/ai_chat/read_history_group')
 }
 
-// 获取某条对话的完整消息
+// 鑾峰彇鏌愭潯瀵硅瘽鐨勫畬鏁存秷鎭?
 export function getConversationMessages(chatGroupId) {
   return request.get('/ai_chat/read_messages_from_history', {
     params: {
@@ -116,7 +116,7 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
   })
 
   if (!response.ok || !response.body) {
-    throw new Error(`流式请求失败：${response.status}`)
+    throw new Error(`娴佸紡璇锋眰澶辫触锛?{response.status}`)
   }
 
   const reader = response.body.getReader()
@@ -212,9 +212,9 @@ export function getStudyResources(params = {}) {
   })
 }
 
-// ═══════════════════════════════════════
-//  学习资源生成（流式）
-// ═══════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+//  瀛︿範璧勬簮鐢熸垚锛堟祦寮忥級
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
@@ -228,12 +228,13 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
     },
     body: JSON.stringify({
       topic: data.topic,
-      resource_types: data.resource_types
+      resource_types: data.resource_types,
+      chat_group_id: Number(data.chat_group_id || 0)
     })
   })
 
   if (!response.ok || !response.body) {
-    throw new Error(`资源生成请求失败：${response.status}`)
+    throw new Error(`璧勬簮鐢熸垚璇锋眰澶辫触锛?{response.status}`)
   }
 
   const reader = response.body.getReader()
@@ -300,7 +301,7 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
   }
 }
 
-// 获取已生成的资源列表
+// 鑾峰彇宸茬敓鎴愮殑璧勬簮鍒楄〃
 export function getGeneratedResources() {
   return request.get('/resource/list')
 }
@@ -309,7 +310,30 @@ export function getGeneratedResource(resourceId) {
   return request.get(`/resource/${resourceId}`)
 }
 
-// 删除某个生成的资源
+export function generateImage(data) {
+  return request({
+    url: '/image/generate',
+    method: 'post',
+    data: {
+      prompt: data.prompt,
+      aspect_ratio: data.aspect_ratio || '1:1',
+      img_count: data.img_count || 1
+    }
+  })
+}
+
+export function getGeneratedImages() {
+  return request.get('/image/list')
+}
+
+export function getGeneratedImage(imageId) {
+  return request.get(`/image/${imageId}`)
+}
+
+export function deleteGeneratedImage(imageId) {
+  return request.delete(`/image/${imageId}`)
+}
+
 export function deleteGeneratedResource(resourceId) {
   return request.delete(`/resource/${resourceId}`)
 }

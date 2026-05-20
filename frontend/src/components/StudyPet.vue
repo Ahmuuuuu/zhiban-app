@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { streamChatMessage } from "../api/apis";
+import { resolveApiUrl, streamChatMessage, streamResourceGeneration } from "../api/apis";
+import petImage from "../assets/pic/zhiban-pet-base.png";
 
 const PET_ASPECT_RATIO = 1;
-const petImage = new URL("../assets/pic/zhiban-pet-base.png", import.meta.url).href;
 type PetState =
   | "idle"
   | "waiting"
@@ -83,6 +83,92 @@ type StreamChatMessageFn = (
 ) => Promise<void>;
 
 const sendStreamChatMessage = streamChatMessage as unknown as StreamChatMessageFn;
+
+type ResourceStreamHandlers = {
+  onProgress?: (eventData: { resources?: string[]; review_passed?: boolean }) => void | Promise<void>;
+  onDone?: (eventData?: { resources?: unknown[] }) => void | Promise<void>;
+  onError?: (error: string) => void;
+  onFile?: (fileData: unknown) => void | Promise<void>;
+};
+
+type StreamResourceGenerationFn = (
+  data: {
+    topic: string;
+    resource_types: string[];
+    chat_group_id?: number | string | null;
+  },
+  handlers?: ResourceStreamHandlers,
+) => Promise<void>;
+
+const sendStreamResourceGeneration = streamResourceGeneration as unknown as StreamResourceGenerationFn;
+
+const escapeHtml = (value: string) =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const isImageUrl = (url: string) =>
+  /\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(String(url || ""));
+
+const renderPetMarkdown = (value: string) => {
+  let text = escapeHtml(value);
+
+  text = text.replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g, (_, label, url) => {
+    const href = escapeHtml(resolveApiUrl(url));
+    return `<a class="pet-chat__image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="pet-chat__generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`;
+  });
+
+  text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/)[^\s)]+)\)/g, (_, label, url) => {
+    const href = escapeHtml(resolveApiUrl(url));
+
+    if (!/^mailto:/i.test(url) && isImageUrl(url)) {
+      return `<a class="pet-chat__image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="pet-chat__generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`;
+    }
+
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+
+  return text.replace(/\n/g, "<br>");
+};
+
+const shouldGeneratePpt = (text: string) =>
+  /(ppt|PPT|幻灯片|演示文稿)/.test(text) && /(生成|制作|做|创建|来一份|出一份)/.test(text);
+
+const extractPptTopic = (text: string) => {
+  return text
+    .replace(/(帮我|请|小知|可以|能不能|能否)/g, "")
+    .replace(/(生成|制作|做|创建|来一份|出一份)/g, "")
+    .replace(/(一个|一份|的)?(ppt|PPT|幻灯片|演示文稿)/g, "")
+    .replace(/[：:，,。！？!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const fileTypeLabel = (type: unknown) => {
+  const normalizedType = String(type || "").toLowerCase();
+
+  if (normalizedType.includes("ppt")) return "PPT";
+  if (normalizedType.includes("mindmap")) return "思维导图";
+  if (normalizedType.includes("document")) return "学习文档";
+  return "学习资源";
+};
+
+const renderResourceLinks = (resources: unknown[]) => {
+  const links = resources
+    .map((item, index) => {
+      const resource = item as Record<string, unknown>;
+      const label = `${fileTypeLabel(resource.file_type || resource.resource_type)} ${index + 1}`;
+      const url = String(resource.download_url || "");
+
+      return url ? `- [${label}](${url})` : `- ${label}`;
+    })
+    .join("\n");
+
+  return links || "PPT 已生成，但后端没有返回下载链接。";
+};
 
 const petMessages = ref<PetChatMessage[]>([
   {
@@ -374,7 +460,7 @@ onUnmounted(() => {
           class="pet-chat__message"
           :class="`pet-chat__message--${message.role}`"
         >
-          {{ message.content || "正在思考..." }}
+          <span v-html="renderPetMarkdown(message.content || 'Thinking...')"></span>
         </div>
       </div>
 
@@ -801,6 +887,23 @@ onUnmounted(() => {
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+:deep(.pet-chat__image-link) {
+  display: block;
+  margin-top: 8px;
+  text-decoration: none;
+}
+
+:deep(.pet-chat__generated-image) {
+  display: block;
+  width: min(100%, 360px);
+  max-height: 280px;
+  object-fit: contain;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(22, 63, 143, 0.1);
 }
 
 .pet-chat--expanded .pet-chat__message {
