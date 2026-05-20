@@ -194,6 +194,7 @@ const handleSubmit = async () => {
     const result = await login(buildLoginPayload())
     checkResponse(result)
     saveLoginUser(result)
+    window.dispatchEvent(new CustomEvent('zhiban-login-success', { detail: result }))
     emit('login', result)
     emit('close')
   } catch (error) {
