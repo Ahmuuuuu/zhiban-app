@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Body
 from backend.src.service.userservice import UserService
 from backend.src.utils.jwt import create_access_token, get_user_id_from_token
-from backend.src.pojo.userpojo import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
+from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
 
 router = APIRouter(prefix = "/user", tags = ["用户"])
 
