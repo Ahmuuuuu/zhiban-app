@@ -11,7 +11,7 @@ async def generate_image(prompt: str, user_id: str, aspect_ratio: str = "1:1", i
 
     try:
         records = await ImageService.generate(prompt, user_id, aspect_ratio, img_count)
-        lines = [f"- [{r['filename']}]({r['url']})" for r in records]
-        return f"已为您生成 {len(records)} 张图片：\n" + "\n".join(lines)
+        lines = [f"![{r['filename']}]({r['url']})" for r in records]
+        return f"已为您生成 {len(records)} 张图片：\n\n" + "\n\n".join(lines)
     except Exception as e:
         return f"图片生成异常: {e}"

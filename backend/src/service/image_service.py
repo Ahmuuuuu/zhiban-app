@@ -20,17 +20,21 @@ HOST = "cn-huadong-1.xf-yun.com"
 CREATE_PATH = "/v1/private/s3fd61810/create"
 QUERY_PATH = "/v1/private/s3fd61810/query"
 
+import logging
+_logger = logging.getLogger("image_service")
+
+_task_status: dict[str, dict] = {}
+
 
 def _load_env():
-    env_file = Path(__file__).parent.parent.parent.parent / ".env"
+    env_file = Path(__file__).parent.parent.parent / ".env"
     load_dotenv(env_file)
     app_id = os.getenv("XF_APP_ID", "")
     api_key = os.getenv("XF_API_KEY", "")
     api_secret = os.getenv("XF_API_SECRET", "")
-    proxy = os.getenv("HTTP_PROXY", None)
     if not all([app_id, api_key, api_secret]):
         raise RuntimeError("图片生成服务未配置，请在 .env 中设置 XF_APP_ID、XF_API_KEY、XF_API_SECRET")
-    return app_id, api_key, api_secret, proxy
+    return app_id, api_key, api_secret
 
 
 def _make_auth_url(path: str, api_key: str, api_secret: str) -> str:
@@ -46,23 +50,21 @@ def _make_auth_url(path: str, api_key: str, api_secret: str) -> str:
     })
 
 
+SAVE_DIR = Path(__file__).parent.parent.parent / "static" / "images"
+
+
 class ImageService:
 
     @staticmethod
-    async def generate(prompt: str, user_id: str, aspect_ratio: str = "1:1", img_count: int = 1) -> list[dict]:
-        """生成图片，保存至 static/images/，创建 DB 记录，返回记录列表"""
+    async def submit(prompt: str, user_id: int, aspect_ratio: str = "1:1", img_count: int = 1) -> dict:
+        """提交生成任务到讯飞，立即返回 task_id"""
         from backend.src.models.usermodel import User
-        from backend.src.models.image_model import GeneratedImage
 
-        app_id, api_key, api_secret, proxy = _load_env()
+        app_id, api_key, api_secret = _load_env()
 
-        user = await User.filter(id=int(user_id)).first()
+        user = await User.filter(id=user_id).first()
         if not user:
             raise RuntimeError("用户不存在")
-
-        # 确保保存目录存在
-        save_dir = Path(__file__).parent.parent.parent / "static" / "images"
-        save_dir.mkdir(parents=True, exist_ok=True)
 
         prompt_json = json.dumps({
             "image": [],
@@ -73,12 +75,7 @@ class ImageService:
         })
         text_base64 = base64.b64encode(prompt_json.encode()).decode()
 
-        client_kwargs = {"timeout": httpx.Timeout(120.0)}
-        if proxy:
-            client_kwargs["proxy"] = proxy
-
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            # 创建任务
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             create_body = {
                 "header": {
                     "app_id": app_id, "status": 3,
@@ -109,9 +106,31 @@ class ImageService:
             if not task_id:
                 raise RuntimeError("未获取到 task_id")
 
-            # 轮询
-            for _ in range(30):
-                await asyncio.sleep(2)
+        _task_status[task_id] = {
+            "status": "processing",
+            "prompt": prompt,
+            "user_id": user_id,
+            "aspect_ratio": aspect_ratio,
+            "img_count": img_count,
+            "created_at": str(datetime.now()),
+        }
+
+        _logger.info(f"图片任务已提交 task_id={task_id}")
+        return {"task_id": task_id, "status": "processing"}
+
+    @staticmethod
+    async def poll_once(task_id: str) -> dict | None:
+        """查询讯飞一次，如果完成则下载存库并更新状态。返回当前任务状态。"""
+        info = _task_status.get(task_id)
+        if not info:
+            return None
+        if info["status"] in ("done", "failed"):
+            return dict(info)
+
+        app_id, api_key, api_secret = _load_env()
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
                 query_body = {"header": {"app_id": app_id, "task_id": task_id}}
                 resp = await client.post(
                     _make_auth_url(QUERY_PATH, api_key, api_secret),
@@ -119,40 +138,61 @@ class ImageService:
                     headers={"Content-Type": "application/json"},
                 )
                 if resp.status_code != 200:
-                    continue
+                    _logger.warning(f"查询 task_id={task_id} HTTP {resp.status_code}: {resp.text[:200]}")
+                    return dict(info)
+
                 qdata = resp.json()
                 qheader = qdata.get("header", {})
-                if qheader.get("code") != 0:
-                    raise RuntimeError(f"查询任务失败: {qheader.get('message')}")
-                if qheader.get("task_status") != "4":
-                    continue
+                code = qheader.get("code", 0)
+                if code != 0:
+                    _task_status[task_id] = {**info, "status": "failed", "error": f"查询失败: {qheader.get('message')}"}
+                    _logger.error(f"task_id={task_id} 查询失败 code={code} msg={qheader.get('message')}")
+                    return _task_status[task_id]
 
+                task_status_code = qheader.get("task_status", "")
+                if task_status_code != "4":
+                    return dict(info)
+
+                _logger.info(f"task_id={task_id} 任务完成，开始下载")
                 payload = qdata.get("payload", {})
                 oig = payload.get("oig", {})
-                result = oig.get("result", {})
+                result = payload.get("result", {}) or oig.get("result", {})
                 result_text = result.get("text", "")
                 if not result_text:
-                    continue
+                    _logger.warning(f"task_id={task_id} 任务完成但 result_text 为空")
+                    return dict(info)
+
+                # 下载图片并存库
+                from backend.src.models.usermodel import User
+                from backend.src.models.image_model import GeneratedImage
+
+                user = await User.filter(id=info.get("user_id")).first()
+                if not user:
+                    _task_status[task_id] = {**info, "status": "failed", "error": "用户不存在"}
+                    return _task_status[task_id]
+
+                SAVE_DIR.mkdir(parents=True, exist_ok=True)
                 items = json.loads(base64.b64decode(result_text).decode())
-                saved = []
+                images = []
                 for item in items:
                     img_url = item.get("image_wm") or item.get("image")
                     if not img_url:
                         continue
                     img_resp = await client.get(img_url)
                     if img_resp.status_code != 200:
+                        _logger.warning(f"下载图片失败 HTTP {img_resp.status_code}: {img_url[:100]}")
                         continue
                     filename = f"{uuid.uuid4().hex}.jpg"
-                    filepath = save_dir / filename
+                    filepath = SAVE_DIR / filename
                     filepath.write_bytes(img_resp.content)
 
                     record = await GeneratedImage.create(
-                        prompt=prompt,
+                        prompt=info.get("prompt", ""),
                         filename=filename,
-                        aspect_ratio=aspect_ratio,
+                        aspect_ratio=info.get("aspect_ratio", "1:1"),
                         user=user,
                     )
-                    saved.append({
+                    images.append({
                         "image_id": record.id,
                         "prompt": record.prompt,
                         "filename": record.filename,
@@ -160,6 +200,28 @@ class ImageService:
                         "aspect_ratio": record.aspect_ratio,
                         "created_at": str(record.created_at),
                     })
-                return saved
 
-            raise TimeoutError("图片生成超时")
+                _task_status[task_id] = {**info, "status": "done", "images": images}
+                _logger.info(f"task_id={task_id} 完成 {len(images)} 张图片")
+                return _task_status[task_id]
+
+        except BaseException as e:
+            _task_status[task_id] = {**info, "status": "failed", "error": f"{type(e).__name__}: {e}"}
+            _logger.error(f"task_id={task_id} 异常: {type(e).__name__}: {e}")
+            return _task_status[task_id]
+
+    @staticmethod
+    async def generate(prompt: str, user_id: str, aspect_ratio: str = "1:1", img_count: int = 1) -> list[dict]:
+        """同步生成（供 tool 使用，阻塞等待结果）"""
+        result = await ImageService.submit(prompt, int(user_id), aspect_ratio, img_count)
+        task_id = result["task_id"]
+
+        for _ in range(30):
+            await asyncio.sleep(2)
+            status = await ImageService.poll_once(task_id)
+            if status["status"] == "done":
+                return status.get("images", [])
+            if status["status"] == "failed":
+                raise RuntimeError(status.get("error", "图片生成失败"))
+
+        raise TimeoutError("图片生成超时")

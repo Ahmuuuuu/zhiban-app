@@ -12,4 +12,5 @@ llm = ChatOpenAI(
     api_key=api_key,
     base_url="https://api.deepseek.com",
     streaming=True,
+    model_kwargs={"tool_choice": "auto"},
 )
