@@ -146,8 +146,9 @@
           v-for="tool in resourceTools"
           :key="tool.label"
           class="quick-tool"
+          :class="{ active: selectedResourceTool?.label === tool.label }"
           type="button"
-          @click="selectResourceTool(tool.prompt)"
+          @click="selectResourceTool(tool)"
         >
           <component :is="tool.icon" :size="15" stroke-width="1.5" />
           <span>{{ tool.label }}</span>
@@ -186,9 +187,10 @@
 import { ref, nextTick, onMounted } from 'vue'
 import {
   streamChatMessage,
+  streamResourceGeneration,
+  generateImage,
   getConversationList,
   getConversationMessages,
-  getGeneratedResource,
   resolveApiUrl
 } from '../api/apis'
 import ResourceSidebar from '../components/ResourceSidebar.vue'
@@ -211,20 +213,63 @@ import resourceHeroImage from '../assets/pic/资源生成背景.png'
 const showResourceSidebar = ref(false)
 const showHistoryPanel = ref(false)
 const resourceTopic = ref('')
+const selectedResourceTool = ref(null)
 
 const resourceTools = [
-  { label: 'music', icon: Music, prompt: '帮我生成一份音乐学习资源：' },
-  { label: 'image', icon: Image, prompt: '帮我生成一张学习配图：' },
-  { label: 'ppt', icon: Presentation, prompt: '帮我生成一份 PPT 学习资源：' },
-  { label: 'word', icon: FileText, prompt: '帮我生成一份 Word 学习文档：' },
-  { label: 'video', icon: Video, prompt: '帮我规划一个学习视频脚本：' },
-  { label: 'mindmap', icon: GitBranch, prompt: '帮我生成一份思维导图：' }
+  {
+    label: 'music',
+    icon: Music,
+    prompt: '帮我生成一份音乐学习资源：',
+    generateMode: 'resource',
+    resourceTypes: ['document']
+  },
+  {
+    label: 'image',
+    icon: Image,
+    prompt: '帮我生成一张学习配图：',
+    generateMode: 'image',
+    aspectRatio: '1:1',
+    imageCount: 1
+  },
+  {
+    label: 'ppt',
+    icon: Presentation,
+    prompt: '帮我生成一份 PPT 学习资源：',
+    generateMode: 'resource',
+    resourceTypes: ['ppt']
+  },
+  {
+    label: 'word',
+    icon: FileText,
+    prompt: '帮我生成一份 Word 学习文档：',
+    generateMode: 'resource',
+    resourceTypes: ['document']
+  },
+  {
+    label: 'video',
+    icon: Video,
+    prompt: '帮我规划一个学习视频脚本：',
+    generateMode: 'resource',
+    resourceTypes: ['document']
+  },
+  {
+    label: 'mindmap',
+    icon: GitBranch,
+    prompt: '帮我生成一份思维导图：',
+    generateMode: 'resource',
+    resourceTypes: ['mindmap']
+  }
 ]
 
-const selectResourceTool = prompt => {
+const selectResourceTool = tool => {
+  selectedResourceTool.value = tool
   inputValue.value = inputValue.value.trim()
-    ? `${inputValue.value.trim()} ${prompt}`
-    : prompt
+    ? `${inputValue.value.trim()} ${tool.prompt}`
+    : tool.prompt
+}
+
+const stripTypedResourceInstruction = value => {
+  return String(value || '').replace(/\n\n【生成类型指令】[\s\S]*$/, '')
 }
 
 const openResourceSidebar = () => {
@@ -239,8 +284,6 @@ const recentChats = ref([])
 const activeConversationId = ref(null)
 const historyLoading = ref(false)
 const loading = ref(false)
-// 选择智能体
-// const currentAgentId = ref('study-assistant')
 const chatContentRef = ref(null)
 
 const getResponseData = (res) => {
@@ -272,7 +315,7 @@ const buildMessagesFromHistory = (records, conversationId) => {
           id: `${conversationId}-${id}-req`,
           role: 'user',
           type: 'text',
-          content: item.req || '',
+          content: stripTypedResourceInstruction(item.req),
           time
         },
         {
@@ -305,8 +348,8 @@ const normalizeHistoryGroups = (res) => {
 
     return {
       id: Number(groupId) || firstRecord.chat_group_id || groupId,
-      title: firstRecord.req || `对话 ${groupId}`,
-      lastMessage: lastRecord.req || lastRecord.res || '',
+      title: stripTypedResourceInstruction(firstRecord.req) || `对话 ${groupId}`,
+      lastMessage: stripTypedResourceInstruction(lastRecord.req) || lastRecord.res || '',
       time: formatTime(getRecordTime(lastRecord))
     }
   })
@@ -329,9 +372,25 @@ const renderInlineMarkdown = (value) => {
   text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>')
   text = text.replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
   text = text.replace(/_([^_\n]+)_/g, '<em>$1</em>')
-  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+  text = text.replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g, (_, label, url) => {
+    const href = escapeHtml(resolveApiUrl(url))
+    return `<a class="md-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="md-generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`
+  })
+  text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/)[^\s)]+)\)/g, (_, label, url) => {
+    const href = escapeHtml(resolveApiUrl(url))
+
+    if (!/^mailto:/i.test(url) && isImageResourceUrl(url)) {
+      return `<a class="md-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="md-generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`
+    }
+
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`
+  })
 
   return text
+}
+
+const isImageResourceUrl = url => {
+  return /\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(String(url || ''))
 }
 
 const isTableSeparator = (line) => {
@@ -606,47 +665,116 @@ const downloadGeneratedFile = async message => {
   }
 }
 
-const extractResourceIds = text => {
-  const ids = new Set()
-  const patterns = [
-    /ID[:：]\s*(\d+)/gi,
-    /resource[_\s-]?id[:：]?\s*(\d+)/gi,
-    /资源\s*(?:ID|id)[:：]?\s*(\d+)/gi
-  ]
+const extractToolTopic = (text, tool) => {
+  const rawText = String(text || '').trim()
+  const prompt = String(tool?.prompt || '').trim()
 
-  patterns.forEach(pattern => {
-    let match = pattern.exec(text || '')
+  if (prompt && rawText.startsWith(prompt)) {
+    return rawText.slice(prompt.length).trim()
+  }
 
-    while (match) {
-      ids.add(match[1])
-      match = pattern.exec(text || '')
-    }
-  })
-
-  return [...ids]
+  return rawText
 }
 
-const hydrateGeneratedFilesFromText = async text => {
-  const resourceIds = extractResourceIds(text)
+const normalizeImageRecords = res => {
+  const data = getResponseData(res)
+  const list = Array.isArray(data) ? data : data?.data || data?.records || []
 
-  for (const resourceId of resourceIds) {
-    if (messages.value.some(item => item.type === 'file' && String(item.fileId) === String(resourceId))) {
-      continue
-    }
+  return Array.isArray(list) ? list : []
+}
 
-    try {
-      const result = await getGeneratedResource(resourceId)
-      const resource = result?.data || result || {}
+const renderGeneratedImages = records => {
+  if (!records.length) return '图片生成完成，但后端没有返回可展示的图片地址。'
 
-      appendFileMessage({
-        ...resource,
-        resource_id: resource.resource_id || resourceId,
-        download_url: `/resource/${resourceId}/download`
-      })
-    } catch (error) {
-      console.error('获取生成文件失败：', error)
-    }
+  const links = records
+    .map((item, index) => {
+      const filename = item.filename || `生成图片 ${index + 1}`
+      const url = item.url || item.image_url || item.imageUrl || ''
+
+      return url ? `- [${filename}](${url})` : `- ${filename}`
+    })
+    .join('\n')
+
+  return `已生成 ${records.length} 张图片：\n${links}`
+}
+
+const sendImageGeneration = async (target, text, tool) => {
+  const prompt = extractToolTopic(text, tool)
+
+  if (!prompt) {
+    target.content = '请在 image 后面补充图片描述，比如“帮我生成一张学习配图：细胞结构示意图”。'
+    return
   }
+
+  target.content = '正在调用图片生成接口...'
+  const result = await generateImage({
+    prompt,
+    aspect_ratio: tool.aspectRatio || '1:1',
+    img_count: tool.imageCount || 1
+  })
+
+  target.content = renderGeneratedImages(normalizeImageRecords(result))
+  target.time = getNowTime()
+}
+
+const sendResourceGeneration = async (target, text, tool) => {
+  const topic = extractToolTopic(text, tool)
+  const resourceTypes = tool.resourceTypes || ['document']
+
+  if (!topic && !activeConversationId.value) {
+    target.content = `请先补充要生成的主题，再点击发送。`
+    return
+  }
+
+  target.content = `正在生成 ${resourceTypes.join(' / ')} 学习资源...`
+  let hasFile = false
+
+  await streamResourceGeneration(
+    {
+      topic,
+      resource_types: resourceTypes,
+      chat_group_id: activeConversationId.value || 0
+    },
+    {
+      onProgress: async eventData => {
+        const finished = Array.isArray(eventData.resources) ? eventData.resources : []
+        target.content = finished.length
+          ? `正在生成学习资源，已完成：${finished.join(' / ')}`
+          : `正在生成 ${resourceTypes.join(' / ')} 学习资源...`
+        target.time = getNowTime()
+        await scrollToBottom()
+      },
+      onFile: async fileData => {
+        hasFile = true
+        appendFileMessage(fileData)
+        target.content = '已生成文件，可以在下方查看预览。'
+        target.time = getNowTime()
+        await scrollToBottom()
+      },
+      onDone: async eventData => {
+        if (eventData?.resources && Array.isArray(eventData.resources)) {
+          eventData.resources.forEach(appendFileMessage)
+          hasFile = true
+        }
+
+        if (!hasFile) {
+          target.content = '学习资源生成完成。'
+        }
+
+        target.time = getNowTime()
+        await scrollToBottom()
+      }
+    }
+  )
+}
+
+const sendBackendGeneration = async (target, text, tool) => {
+  if (tool.generateMode === 'image') {
+    await sendImageGeneration(target, text, tool)
+    return
+  }
+
+  await sendResourceGeneration(target, text, tool)
 }
 
 const fileExtension = type => {
@@ -692,6 +820,7 @@ const sendMessage = async () => {
 
   if (!text || loading.value) return
 
+  const activeTool = selectedResourceTool.value
   const loadingMessageId = Date.now() + 1
 
   messages.value.push({
@@ -703,6 +832,7 @@ const sendMessage = async () => {
   })
 
   inputValue.value = ''
+  selectedResourceTool.value = null
 
   messages.value.push({
     id: loadingMessageId,
@@ -718,6 +848,14 @@ const sendMessage = async () => {
 
   try {
     const target = messages.value.find(item => item.id === loadingMessageId)
+    if (!target) return
+
+    if (activeTool?.generateMode) {
+      await sendBackendGeneration(target, text, activeTool)
+      await scrollToBottom()
+      return
+    }
+
     let hasReceivedChunk = false
 
     await streamChatMessage({
@@ -755,10 +893,6 @@ const sendMessage = async () => {
       }
     })
 
-    if (target?.content) {
-      await hydrateGeneratedFilesFromText(target.content)
-    }
-
     await scrollToBottom()
     await loadConversationList()
 
@@ -788,8 +922,8 @@ const loadConversationList = async () => {
 
       return {
         id,
-        title: item.title || `对话 ${id}`,
-        lastMessage: item.lastMessage || item.req || '',
+        title: stripTypedResourceInstruction(item.title || item.req) || `对话 ${id}`,
+        lastMessage: stripTypedResourceInstruction(item.lastMessage || item.req) || '',
         time: item.time || formatTime(item.updateTime || item.created_time)
       }
     })
@@ -832,6 +966,7 @@ const openConversation = async (conversationId) => {
 const createNewChat = () => {
   activeConversationId.value = null
   inputValue.value = ''
+  selectedResourceTool.value = null
   messages.value = []
   showHistoryPanel.value = false
 }
@@ -1339,6 +1474,23 @@ onMounted(() => {
   font-weight: 700;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+.markdown-body :deep(.md-image-link) {
+  display: block;
+  margin-top: 10px;
+  text-decoration: none;
+}
+
+.markdown-body :deep(.md-generated-image) {
+  display: block;
+  width: min(100%, 420px);
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(22, 63, 143, 0.1);
 }
 
 .markdown-body :deep(.md-table-wrap) {
@@ -2916,6 +3068,12 @@ textarea {
   font-size: 13px;
   font-weight: 800;
   transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.quick-tool.active {
+  border-color: var(--primary);
+  background: rgba(201, 220, 233, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(22, 63, 143, 0.12);
 }
 
 .send-btn:not(:disabled) {

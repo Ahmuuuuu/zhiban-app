@@ -41,6 +41,7 @@ export function streamResourceGeneration(
   data: {
     topic: string;
     resource_types: string[];
+    chat_group_id?: number | string | null;
   },
   handlers?: {
     onProgress?: (eventData: unknown) => void;
@@ -49,6 +50,18 @@ export function streamResourceGeneration(
     onFile?: (eventData: unknown) => void;
   },
 ): Promise<void>;
+
+export function generateImage(data: {
+  prompt: string;
+  aspect_ratio?: string;
+  img_count?: number;
+}): Promise<unknown>;
+
+export function getGeneratedImages(): Promise<unknown>;
+
+export function getGeneratedImage(imageId: number | string): Promise<unknown>;
+
+export function deleteGeneratedImage(imageId: number | string): Promise<unknown>;
 
 export function getGeneratedResources(): Promise<unknown>;
 
