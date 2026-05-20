@@ -3,10 +3,10 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Depends, Body, Query, Header
 from fastapi.responses import StreamingResponse
 
-from backend.src.service.agentsservice.resource_service import ResourceService
-from backend.src.service.agentsservice.skill_service import SkillService
-from backend.src.pojo.resourcepojo import GenerateResourceRequest
-from backend.src.pojo.skillpojo import UpsertSkillRequest
+from backend.src.service.resource_service import ResourceService
+from backend.src.service.skill_service import SkillService
+from backend.src.schemas.resource import GenerateResourceRequest
+from backend.src.schemas.skill import UpsertSkillRequest
 from backend.src.utils.jwt import get_user_id_from_token, JWT_KEY, ALGORITHM
 from jose import jwt, JWTError
 

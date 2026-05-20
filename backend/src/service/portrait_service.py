@@ -1,18 +1,20 @@
-"""
-画像共享工具 — 解析、格式化、置信度计算。
-dailychat 和 portrait 两个 agent 共用，避免重复代码。
-"""
+"""画像服务 — 初始化、读取、格式化、置信度计算"""
 
 import json
+from backend.src.models.usermodel import User
+from backend.src.models.portraitmodel import User_picture
 
-# ── 维度与标签映射 ──
+# ═══════════════════════════════════════
+#  维度与标签映射（原 portrait_utils）
+# ═══════════════════════════════════════
+
 TRAIT_KEYS = [
-    "knowbase",       # 知识掌握程度 1-5
-    "commonmis",      # 易错点
-    "learning_pace",  # 学习节奏偏好
-    "interest",       # 兴趣方向
-    "strengths",      # 学习强项
-    "weaknesses",     # 学习弱项
+    "knowbase",
+    "commonmis",
+    "learning_pace",
+    "interest",
+    "strengths",
+    "weaknesses",
 ]
 
 LABEL_MAP = {
@@ -24,20 +26,13 @@ LABEL_MAP = {
     "weaknesses":    "学习弱项",
 }
 
-
-# ── 置信度规则 ──
 CONFIDENCE_FLOOR = {"popup": 0.75, "user_stated": 0.65, "agent_inferred": 0.30}
 CONFIDENCE_CEIL  = {"popup": 0.95, "user_stated": 0.95, "agent_inferred": 0.60}
 CONFIDENCE_BOOST = {"popup": 0.08, "user_stated": 0.10, "agent_inferred": 0.10}
-
-# 总上限
 CONFIDENCE_MAX = 0.95
-
-# trait 的 JSON 结构：{ "value": ..., "confidence": 0.x, "source": "..." }
 
 
 def parse_traits(raw: str | None) -> dict:
-    """安全解析 traits JSON，失败返回 {}"""
     if not raw:
         return {}
     try:
@@ -51,7 +46,6 @@ def dump_traits(traits: dict) -> str:
 
 
 def trait_display(traits: dict, key: str) -> str | None:
-    """读取单个维度的展示值（仅 value 部分，不含元数据）"""
     data = traits.get(key)
     if data is None:
         return None
@@ -61,7 +55,6 @@ def trait_display(traits: dict, key: str) -> str | None:
 
 
 def trait_confident(traits: dict, key: str) -> bool:
-    """该维度是否已经达到 0.95"""
     data = traits.get(key)
     if not isinstance(data, dict):
         return False
@@ -69,10 +62,6 @@ def trait_confident(traits: dict, key: str) -> bool:
 
 
 def build_trait_entry(value: str, source: str, existing: dict | None = None) -> dict:
-    """
-    构造或更新单维度的 {'value', 'confidence', 'source'}。
-    existing 为旧数据（可能为空）。
-    """
     old_conf = existing.get("confidence", 0) if existing else 0
     old_source = existing.get("source", "")    if existing else ""
 
@@ -80,7 +69,6 @@ def build_trait_entry(value: str, source: str, existing: dict | None = None) -> 
     boost = CONFIDENCE_BOOST.get(source, 0.10)
     ceil  = CONFIDENCE_CEIL.get(source, 0.95)
 
-    # 如果来源相同则累加；不同来源取较高者
     if source == old_source:
         new_conf = min(ceil, max(old_conf, floor) + boost)
     else:
@@ -93,14 +81,15 @@ def build_trait_entry(value: str, source: str, existing: dict | None = None) -> 
     }
 
 
+def _unpack(data) -> tuple:
+    if isinstance(data, dict):
+        return data.get("value"), data.get("confidence", 0)
+    return data, 0
+
+
 def format_portrait(picture, show_missing: bool = False) -> list[str]:
-    """
-    把 User_picture 对象格式化成行列表。
-    show_missing=True 时额外输出【待补充维度】。
-    """
     lines = ["【用户画像】"]
 
-    # 弹窗标签
     if picture.cognition:
         lines.append(f"认知风格：{picture.cognition}")
     if picture.learning_goal:
@@ -112,7 +101,6 @@ def format_portrait(picture, show_missing: bool = False) -> list[str]:
         except (json.JSONDecodeError, TypeError):
             lines.append(f"性格标签：{picture.personality_tags}")
 
-    # AI 动态画像
     traits = parse_traits(picture.traits)
     filled_keys = []
     for key in TRAIT_KEYS:
@@ -127,7 +115,6 @@ def format_portrait(picture, show_missing: bool = False) -> list[str]:
         marker = " ✓" if conf >= CONFIDENCE_MAX else ""
         lines.append(f"{label}：{val}（置信度 {conf}）{marker}")
 
-    # 画像摘要
     if picture.profile_summary:
         lines.append(f"画像总结：{picture.profile_summary}")
 
@@ -141,8 +128,63 @@ def format_portrait(picture, show_missing: bool = False) -> list[str]:
     return lines
 
 
-def _unpack(data) -> tuple:
-    """从 traits[key] 中取出 (value, confidence)"""
-    if isinstance(data, dict):
-        return data.get("value"), data.get("confidence", 0)
-    return data, 0
+# ═══════════════════════════════════════
+#  Service 方法
+# ═══════════════════════════════════════
+
+class PortraitChatHistory_Service:
+
+    @staticmethod
+    async def init_portrait(user_id: int, cognition: str | None,
+                            learning_goal: str | None, personality_tags: str | None):
+        user = await User.filter(id=user_id).first()
+        if not user:
+            return None, "未查找到该用户"
+
+        picture = None
+        picture_id = getattr(user, "picture_id", None)
+
+        if picture_id:
+            picture = await User_picture.filter(id=picture_id).first()
+
+        if not picture:
+            try:
+                picture = await user.picture
+            except Exception:
+                picture = None
+        if not picture:
+            picture = await User_picture.create()
+            user.picture = picture
+            await user.save()
+
+        if cognition:
+            picture.cognition = cognition
+        if learning_goal:
+            picture.learning_goal = learning_goal
+        if personality_tags is not None:
+            if isinstance(personality_tags, list):
+                picture.personality_tags = json.dumps(personality_tags, ensure_ascii=False)
+            else:
+                picture.personality_tags = personality_tags
+
+        await picture.save()
+        return user, "画像初始化成功"
+
+    @staticmethod
+    async def read_portrait(user_id: int):
+        user = await User.filter(id=user_id).first()
+        if not user:
+            return None, "未查找到该用户"
+
+        picture = await user.picture
+        if not picture:
+            return None, "该用户暂无画像"
+
+        data = {
+            "cognition": picture.cognition,
+            "learning_goal": picture.learning_goal,
+            "personality_tags": picture.personality_tags,
+            "traits": parse_traits(picture.traits),
+            "profile_summary": picture.profile_summary,
+        }
+        return data, "获取画像成功"

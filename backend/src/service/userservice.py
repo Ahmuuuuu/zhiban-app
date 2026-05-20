@@ -1,6 +1,6 @@
 from backend.src.models.usermodel import User
 from backend.src.models.portraitmodel import User_picture
-from backend.src.pojo.userpojo import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
+from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
 from backend.src.utils.pwintohash import get_password_hash, verify_password
 
 

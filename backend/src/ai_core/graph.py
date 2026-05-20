@@ -5,7 +5,6 @@ LeaderAgent → [ExecutorAgent × N 多线程并行] → ReviewerAgent
 import asyncio
 import json
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TypedDict
 
@@ -86,7 +85,7 @@ async def leader_node(state: ResourceState) -> dict:
 
 
 async def executor_node(state: ResourceState) -> dict:
-    """多 Executor 多线程并行生成 — ThreadPoolExecutor"""
+    """多 Executor 并行生成 — 线程池 + 信号量限流"""
     topic = state["topic"]
     resource_types = state.get("resource_types", ["document"])
     portrait = state.get("portrait_context", "")
@@ -112,15 +111,15 @@ async def executor_node(state: ResourceState) -> dict:
             feedback=feedback,
         )
 
-    # 多线程并行调 LLM（同步 invoke）
-    def gen_one_sync(rt: str) -> tuple[str, str]:
-        response = llm.invoke(prompts[rt])
-        return rt, response.content
+    # 信号量限制最大并发数，防止 DeepSeek 限流
+    semaphore = asyncio.Semaphore(5)
 
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor(max_workers=len(resource_types)) as pool:
-        tasks = [loop.run_in_executor(pool, gen_one_sync, rt) for rt in resource_types]
-        results = await asyncio.gather(*tasks)
+    async def gen_one(rt: str) -> tuple[str, str]:
+        async with semaphore:
+            response = await llm.ainvoke(prompts[rt])
+            return rt, response.content
+
+    results = await asyncio.gather(*(gen_one(rt) for rt in resource_types))
 
     retry = state.get("retry_count", 0)
     if feedback:

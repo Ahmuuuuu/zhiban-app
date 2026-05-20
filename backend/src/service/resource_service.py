@@ -10,7 +10,7 @@ from backend.src.utils.database import init_db
 
 # 资源类型 → 文件扩展名映射
 _FILE_EXT_MAP = {
-    "document": "txt",
+    "document": "md",
     "ppt": "pptx",
     "mindmap": "md",
     "exercise": "md",
@@ -18,10 +18,7 @@ _FILE_EXT_MAP = {
     "reading": "md",
 }
 
-_FILE_MEDIA_TYPE_MAP = {
-    "document": "text/plain; charset=utf-8",
-}
-from backend.src.utils.portrait_utils import format_portrait
+from backend.src.service.portrait_service import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.prompt_loader import load_prompt
 

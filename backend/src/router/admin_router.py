@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Body
 
-from backend.src.service.adminservice.admin_service import AdminService
-from backend.src.pojo.adminpojo import ResetPasswordRequest, DeleteUserRequest
+from backend.src.service.admin_service import AdminService
+from backend.src.schemas.admin import ResetPasswordRequest, DeleteUserRequest
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.utils.admin_check import is_admin
 

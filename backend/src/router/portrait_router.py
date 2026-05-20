@@ -1,8 +1,8 @@
 import traceback
 
 from fastapi import APIRouter, HTTPException, Depends, Body
-from backend.src.service.agentsservice.portrait_service import PortraitChatHistory_Service
-from backend.src.pojo.portraitpojo import Init_Portrait
+from backend.src.service.portrait_service import PortraitChatHistory_Service
+from backend.src.schemas.portrait import Init_Portrait
 from backend.src.utils.jwt import create_access_token, get_user_id_from_token
 
 router = APIRouter(prefix="/ai_portrait", tags=["AI人设（仅初始化/读取）"])
