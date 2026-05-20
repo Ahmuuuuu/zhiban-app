@@ -1,9 +1,9 @@
 <template>
-  
-  <transition name="fade">
-    <div v-if="visible" class="login-mask" @click.self="closeModal">
-      <transition name="pop">
-        <div class="login-modal">
+  <Teleport to="body">
+    <transition name="fade">
+      <div v-if="visible" class="login-mask" @click.self="closeModal">
+        <transition name="pop">
+          <div class="login-modal">
           <button class="close-btn" @click="closeModal">×</button>
 
           <div class="login-layout">
@@ -66,10 +66,11 @@
             </p>
           </div>
         </div>
-        </div>
-      </transition>
-    </div>
-  </transition>
+          </div>
+        </transition>
+      </div>
+    </transition>
+  </Teleport>
 </template>
 
 <script setup>
@@ -217,7 +218,7 @@ const handleSubmit = async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 99;
+  z-index: 2000;
 }
 
 .login-modal {
