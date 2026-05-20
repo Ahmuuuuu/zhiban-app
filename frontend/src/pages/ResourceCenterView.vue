@@ -722,9 +722,9 @@ onMounted(loadResources)
 
 .center-header {
   display: grid;
-  grid-template-columns: 88px 180px minmax(280px, 1fr) 72px auto;
+  grid-template-columns: 62px 150px minmax(280px, 1fr) 64px auto;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
 }
 
 .home-pill,
@@ -745,31 +745,31 @@ onMounted(loadResources)
 }
 
 .home-pill {
-  width: 86px;
-  height: 86px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 800;
 }
 
 .title-block h1 {
   margin: 0;
   color: #163f8f;
-  font-size: 34px;
+  font-size: 28px;
   font-weight: 900;
   letter-spacing: 0;
 }
 
 .search-field {
   width: 100%;
-  height: 44px;
-  padding: 0 16px;
+  height: 42px;
+  padding: 0 14px;
   border: 2px solid rgba(22, 63, 143, 0.86);
-  border-radius: 9px;
+  border-radius: 18px;
   background: rgba(250, 250, 250, 0.88);
   color: #5f8fc3;
   box-shadow: none;
@@ -780,22 +780,27 @@ onMounted(loadResources)
 }
 
 .send-search {
-  height: 36px;
+  min-width: 76px;
+  height: 42px;
   padding: 0 18px;
-  border-radius: 8px;
+  border-radius: 18px;
+  border: 2px solid rgba(22, 63, 143, 0.86);
+  background: rgba(250, 250, 250, 0.88);
+  color: #163f8f;
+  box-shadow: none;
   font-weight: 800;
   cursor: pointer;
 }
 
 .header-actions {
   justify-content: flex-end;
-  gap: 18px;
+  gap: 12px;
 }
 
 .icon-btn {
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
+  width: 42px;
+  height: 42px;
+  border-radius: 18px;
 }
 
 .refresh-btn {
@@ -806,12 +811,12 @@ onMounted(loadResources)
 }
 
 .import-link {
-  min-width: 92px;
-  height: 70px;
-  padding: 0 20px;
-  border-radius: 999px;
+  min-width: 82px;
+  height: 46px;
+  padding: 0 14px;
+  border-radius: 22px;
   text-decoration: none;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
   border-color: rgba(22, 63, 143, 0.92);
   background: #163f8f;
@@ -819,6 +824,26 @@ onMounted(loadResources)
   box-shadow:
     0 14px 30px rgba(22, 63, 143, 0.18),
     inset 0 1px 0 rgba(250, 250, 250, 0.18);
+}
+
+.center-header :deep(.account-entry.dark) {
+  min-width: 128px;
+  max-width: 156px;
+  height: 46px;
+  min-height: 46px;
+  padding: 0 14px 0 7px;
+  border-radius: 24px;
+}
+
+.center-header :deep(.account-entry.dark .account-avatar) {
+  width: 32px;
+  height: 32px;
+  font-size: 13px;
+}
+
+.center-header :deep(.account-entry.dark .account-text strong),
+.center-header :deep(.account-entry.dark .account-text small) {
+  max-width: 86px;
 }
 
 .home-pill:hover,

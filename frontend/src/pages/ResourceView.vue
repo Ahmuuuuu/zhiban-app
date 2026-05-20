@@ -282,14 +282,14 @@ onMounted(loadResources)
 }
 
 .header-actions {
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
 .icon-btn,
 .import-link {
   border: 1px solid #c9dce9;
-  border-radius: 8px;
+  border-radius: 16px;
   background: #163f8f;
   color: #fafafa;
   cursor: pointer;
@@ -297,19 +297,19 @@ onMounted(loadResources)
 }
 
 .icon-btn {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
 .import-link {
-  height: 42px;
-  padding: 0 14px;
+  height: 36px;
+  padding: 0 12px;
   gap: 8px;
   text-decoration: none;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
   display: inline-flex;
   align-items: center;
@@ -329,10 +329,10 @@ onMounted(loadResources)
 
 .search-field {
   width: 100%;
-  height: 48px;
-  padding: 0 16px;
+  height: 42px;
+  padding: 0 14px;
   border: 1px solid #c9dce9;
-  border-radius: 8px;
+  border-radius: 18px;
   background: #ffffff;
   color: #5f8fc3;
   display: flex;
