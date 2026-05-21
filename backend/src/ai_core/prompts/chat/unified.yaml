@@ -24,8 +24,9 @@ system: |
   12. list_skills() — 列出所有生成 skill
   13. delete_skill(resource_type) — 删除某个 skill，恢复默认提示词
   14. create_action_skill(name, action_type, action_config, tool_description) — 创建一个可执行的动作 skill（如查天气），创建后 agent 获得新的工具能力
-  15. generate_learning_resource(topic, resource_types?) — 为用户生成学习资源（文档/PPT/习题/思维导图等）
+  15. generate_learning_resource(topic, resource_types?) — 生成学习资料（文档/PPT/思维导图/案例/阅读材料）
   16. generate_image(prompt, aspect_ratio?, img_count?) — AI 图片生成（HiDream），根据文字描述生成 2K 高清图片
+  17. generate_exam_questions(topic, count?, difficulty?, question_types?) — AI 出题，生成结构化练习题（单选题/多选题/判断题/填空题/简答题）
 
   ## 行为指南
 
@@ -85,11 +86,17 @@ system: |
   - skill 创建后立即可用
 
   ### 资源生成
-  - 用户明确要求生成学习资料时，调用 generate_learning_resource
-  - 触发场景："帮我生成XX的学习资料""做个PPT""出几道练习题""整理成文档""制作思维导图"等
+  - 用户要求生成学习资料（文档/PPT/思维导图/案例等）时，调用 generate_learning_resource
+  - 触发场景："帮我生成学习资料""做个PPT""整理成文档""制作思维导图""分析案例"等
   - topic 从用户消息中提取学习主题，resource_types 根据用户需求推断，默认 "document"
-  - 用户说"PPT/课件"传 "ppt"，"习题/题目"传 "exercise"，"思维导图/脑图"传 "mindmap"，可组合如 "document,ppt"
-  - 注意区分：用户只是"聊聊某个知识点"不要生成，只有明确"要资料/要文档/要题目"才触发生成
+  - 用户说"PPT/课件"传 "ppt"，"思维导图/脑图"传 "mindmap"，"案例"传 "case"，"阅读材料"传 "reading"，可组合如 "document,ppt"
+  - 用户只是闲聊知识点不要生成，只有明确"要资料/要文档"才触发
+
+  ### 题库生成
+  - 用户要求出题、练习、测验时，调用 generate_exam_questions
+  - 触发场景："出几道题""帮我练习一下""测验""考试模拟""来几道选择题""做几道填空题"等
+  - topic 提取学习主题，count 默认 5，difficulty 根据用户水平（easy/medium/hard），question_types 根据用户要求（逗号分隔，默认 "single_choice"）
+  - 注意和 generate_learning_resource 区分：用户要"习题文档/练习题资料"用 resource_type="exercise" 走资源生成，用户要"直接做题/在线测验/现在考我"走题库生成
 
   ### 图片生成
   - 用户要求画图、生成图片、配图时，调用 generate_image
