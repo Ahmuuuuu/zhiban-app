@@ -19,21 +19,27 @@ export const resourceTools: ResourceToolConfig[] = [
 
 export function detectGenerationIntent(text: string): ResourceToolConfig | null {
   const trimmed = String(text || '').trim()
-  const hasGenerate = /(生成|制作|做|创建|来一份|出一份|画|画一张|设计)/.test(trimmed)
+  const hasGenerate = /(生成|制作|做|创建|来一份|出一份|画|设计|规划|整理)/.test(trimmed)
   if (!hasGenerate) return null
 
-  if (/(图片|图|image|img|插图|配图|示意图|图解)/i.test(trimmed))
+  if (/(图片|图像|image|img|插图|配图|示意图|图解|海报|插画)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'image')! }
-  if (/(ppt|PPT|幻灯片|演示文稿|slide)/i.test(trimmed))
+  }
+  if (/(ppt|PPT|幻灯片|演示|课件|slide)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'ppt')! }
-  if (/(思维导图|mindmap|脑图|mind map)/i.test(trimmed))
+  }
+  if (/(思维导图|mindmap|脑图|mind map)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'mindmap')! }
-  if (/(视频|video|课程视频|教学视频)/i.test(trimmed))
+  }
+  if (/(视频|video|课程视频|教学视频|脚本|分镜)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'video')! }
-  if (/(文档|word|学习资源|资料|笔记|教案)/i.test(trimmed))
+  }
+  if (/(文档|word|学习资源|资料|笔记|教案|讲义|总结)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'word')! }
-  if (/(音乐|歌曲|music|节奏|旋律)/i.test(trimmed))
+  }
+  if (/(音乐|歌曲|music|节奏|旋律)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'music')! }
+  }
   return null
 }
 
@@ -42,6 +48,32 @@ export type GenerationCallbacks = {
   onFile?: (fileData: unknown) => void
   onDone?: () => void
   onError?: (err: string) => void
+}
+
+const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
+
+const normalizeImageRecords = (payload: any): any[] => {
+  const data = unwrapResponseData(payload)
+
+  if (Array.isArray(data)) return data
+
+  const records =
+    data?.images ||
+    data?.records ||
+    data?.image_list ||
+    data?.imageList ||
+    data?.data ||
+    []
+
+  if (Array.isArray(records)) return records
+
+  const urls = data?.urls || data?.image_urls || data?.imageUrls || data?.url || data?.image_url || data?.imageUrl
+  const list = Array.isArray(urls) ? urls : urls ? [urls] : []
+
+  return list.map((url: string, index: number) => ({
+    filename: data?.filename || `图片 ${index + 1}`,
+    url,
+  }))
 }
 
 export async function executeGeneration(
@@ -56,41 +88,59 @@ export async function executeGeneration(
       callbacks.onError?.('请告诉我你想生成什么图片')
       return
     }
+
     callbacks.onProgress?.('正在提交图片生成任务...')
+
     try {
       const submitRes: any = await generateImage({
         prompt,
         aspect_ratio: tool.aspectRatio || '1:1',
         img_count: tool.imageCount || 1,
       })
-      const taskId = submitRes?.data?.task_id
+      const submitData = unwrapResponseData(submitRes)
+      const taskId = submitData?.task_id || submitData?.taskId || submitData?.id
+
       if (!taskId) {
+        const immediateImages = normalizeImageRecords(submitRes)
+        if (immediateImages.length) {
+          callbacks.onProgress?.(
+            immediateImages.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
+          )
+          callbacks.onDone?.()
+          return
+        }
+
         callbacks.onError?.('图片生成任务提交失败，请稍后重试。')
         return
       }
 
       for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 2000))
+        await new Promise(resolve => setTimeout(resolve, 2000))
         const statusRes: any = await getImageTaskStatus(taskId)
-        const taskInfo = statusRes?.data
+        const taskInfo = unwrapResponseData(statusRes)
         if (!taskInfo) continue
+
         if (taskInfo.status === 'done') {
-          const images = taskInfo.images || []
+          const images = normalizeImageRecords(taskInfo)
           if (images.length) {
-            const lines = images.map((r: any) => `![${r.filename || '图片'}](${r.url})`)
-            callbacks.onProgress?.(lines.join('\n'))
+            callbacks.onProgress?.(
+              images.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
+            )
           } else {
             callbacks.onProgress?.('图片生成完成，但没有返回可展示的图片地址。')
           }
           callbacks.onDone?.()
           return
         }
+
         if (taskInfo.status === 'failed') {
           callbacks.onError?.(taskInfo.error || '图片生成失败')
           return
         }
+
         callbacks.onProgress?.(`正在生成图片（${i + 1}/30）...`)
       }
+
       callbacks.onError?.('图片生成超时，请稍后重试。')
     } catch {
       callbacks.onError?.('图片生成失败，请稍后再试。')
