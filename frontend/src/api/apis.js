@@ -341,3 +341,37 @@ export function deleteGeneratedImage(imageId) {
 export function deleteGeneratedResource(resourceId) {
   return request.delete(`/resource/${resourceId}`)
 }
+
+// ── 题库 Exam API ──
+
+export function generateExamQuestions(data) {
+  return request({
+    url: '/exam/generate',
+    method: 'post',
+    data: { ...data, user_id: Number(localStorage.getItem('user_id')) }
+  })
+}
+
+export function getExamQuestions(params = {}) {
+  return request({
+    url: '/exam/questions',
+    method: 'get',
+    params: { user_id: Number(localStorage.getItem('user_id')), ...params }
+  })
+}
+
+export function getExamQuestion(questionId) {
+  return request({
+    url: `/exam/questions/${questionId}`,
+    method: 'get',
+    params: { user_id: Number(localStorage.getItem('user_id')) }
+  })
+}
+
+export function submitExamAnswer(data) {
+  return request({
+    url: '/exam/submit',
+    method: 'post',
+    data: { ...data, user_id: Number(localStorage.getItem('user_id')) }
+  })
+}

@@ -65,7 +65,7 @@
   </div>
 
   <div v-else-if="messages.length === 0" class="empty-chat">
-    <h1>ready to create your learning<br>resources ?</h1>
+    <h1>ready to create<br>your <span class="empty-chat__sub">learning resources ?</span></h1>
     <div class="resource-hero-visual" aria-hidden="true">
       <img :src="resourceHeroImage" alt="" />
     </div>
@@ -84,7 +84,21 @@
 
       <div class="message-body">
         <div
-          v-if="message.type === 'file'"
+          v-if="message.type === 'quiz'"
+          class="quiz-bubble"
+        >
+          <div class="file-head">
+            <span class="file-icon">✓</span>
+            <div class="file-title">
+              <strong>{{ message.title || '题目已生成' }}</strong>
+              <span>{{ message.questionCount || 0 }} 道题，已放入题库</span>
+            </div>
+          </div>
+          <router-link class="quiz-action" :to="`/question-bank/${message.quizId}`">去题库做题</router-link>
+        </div>
+
+        <div
+          v-else-if="message.type === 'file'"
           class="file-bubble"
         >
           <div class="file-head">
@@ -101,9 +115,16 @@
             文件已生成，等待后端提供可预览内容。
           </div>
 
-          <div v-if="message.previewUrl || message.downloadUrl" class="file-actions">
+          <div v-if="message.previewUrl || message.downloadUrl || message.fileId || message.content" class="file-actions">
             <a v-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
+            <button
+              type="button"
+              :disabled="message.centerSaveStatus === 'saving' || message.centerSaveStatus === 'saved'"
+              @click="saveGeneratedFileToResourceCenter(message)"
+            >
+              {{ centerSaveLabel(message) }}
+            </button>
           </div>
         </div>
 
@@ -212,10 +233,12 @@ import {
   Music,
   Plus,
   Presentation,
+  CircleHelp,
   SendHorizontal,
   Video
 } from 'lucide-vue-next'
 import resourceHeroImage from '../assets/pic/资源生成背景.png'
+import { upsertQuizSet } from '../utils/quizBank'
 
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
@@ -264,6 +287,13 @@ const resourceTools = [
     prompt: '帮我生成一份思维导图：',
     generateMode: 'resource',
     resourceTypes: ['mindmap']
+  },
+  {
+    label: 'quiz',
+    icon: CircleHelp,
+    prompt: '帮我生成一套练习题，题目要包含题干、选项（如有）、正确答案和解析：',
+    generateMode: 'resource',
+    resourceTypes: ['exercise']
   }
 ]
 
@@ -287,7 +317,8 @@ const selectedResourceToolName = computed(() => {
     ppt: 'PPT',
     word: 'Word',
     video: '视频',
-    mindmap: '思维导图'
+    mindmap: '思维导图',
+    quiz: '题目'
   }
 
   return names[label] || label || ''
@@ -610,6 +641,7 @@ const getNowTime = () => {
 
 // 初始空状态展示草图里的学习资源引导
 const messages = ref([])
+const SAVED_GENERATED_RESOURCES_KEY = 'zhiban_saved_generated_resources'
 
 const normalizeFileMessage = data => {
   const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || 'file'
@@ -629,27 +661,137 @@ const normalizeFileMessage = data => {
     filename,
     content: data.content || data.text || data.preview_content || data.previewContent || '',
     fileId,
+    resourceKind: data.resourceKind || data.kind || 'resource',
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.preview || ''),
     downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || data.url || (fileId ? `/resource/${fileId}/download` : '')),
+    centerSaveStatus: data.centerSaveStatus || '',
     time: getNowTime()
   }
 }
 
-const appendFileMessage = fileData => {
+const isExerciseFile = fileData => {
+  const type = String(fileData?.file_type || fileData?.fileType || fileData?.resource_type || fileData?.resourceType || '').toLowerCase()
+  return type.includes('exercise') || type.includes('quiz') || type.includes('question')
+}
+
+const appendQuizMessage = async fileData => {
+  const fileType = fileData.file_type || fileData.fileType || fileData.resource_type || fileData.resourceType || 'exercise'
+  const sourceId = fileData.file_id || fileData.fileId || fileData.resource_id || fileData.resourceId || ''
+  const filename = fileData.filename || fileData.file_name || fileData.name || 'AI 生成题目'
+  const existingQuiz = sourceId
+    ? messages.value.find(item => item.type === 'quiz' && item.sourceId === sourceId)
+    : messages.value.find(item => item.type === 'quiz' && !item.sourceId && item.fileType === fileType)
+  const quiz = await upsertQuizSet({
+    id: existingQuiz?.quizId,
+    sourceId,
+    title: fileTitleWithoutExtension(filename),
+    filename,
+    fileType,
+    content: fileData.content || fileData.text || fileData.preview_content || fileData.previewContent || existingQuiz?.content || ''
+  })
+  if (!quiz) return
+  const quizMessage = {
+    id: `quiz-${quiz.id}`,
+    role: 'assistant',
+    type: 'quiz',
+    quizId: quiz.id,
+    sourceId,
+    fileType,
+    title: quiz.title,
+    content: quiz.content,
+    questionCount: quiz.questionCount,
+    time: getNowTime()
+  }
+
+  if (existingQuiz) {
+    Object.assign(existingQuiz, quizMessage)
+    return
+  }
+
+  messages.value.push(quizMessage)
+}
+
+const appendFileMessage = async fileData => {
+  if (isExerciseFile(fileData)) {
+    await appendQuizMessage(fileData)
+    return
+  }
+
   const fileMessage = normalizeFileMessage(fileData)
   const existingIndex = messages.value.findIndex(item => {
     return item.type === 'file' && item.fileId && item.fileId === fileMessage.fileId
   })
+  const fallbackIndex = existingIndex === -1 && fileMessage.fileType
+    ? messages.value.findIndex(item => item.type === 'file' && !item.fileId && item.fileType === fileMessage.fileType)
+    : existingIndex
 
-  if (existingIndex === -1) {
+  if (fallbackIndex === -1) {
     messages.value.push(fileMessage)
     return
   }
 
-  messages.value[existingIndex] = {
-    ...messages.value[existingIndex],
+  messages.value[fallbackIndex] = {
+    ...messages.value[fallbackIndex],
     ...fileMessage,
-    content: fileMessage.content || messages.value[existingIndex].content
+    content: fileMessage.content || messages.value[fallbackIndex].content,
+    centerSaveStatus: messages.value[fallbackIndex].centerSaveStatus || fileMessage.centerSaveStatus
+  }
+}
+
+const appendImageMessage = imageData => {
+  const imageId = imageData?.image_id || imageData?.imageId || imageData?.id || ''
+  const imageUrl = resolveApiUrl(imageData?.url || imageData?.image_url || imageData?.imageUrl || '')
+  const filename = imageData?.filename || imageData?.name || `生成图片${imageId ? `-${imageId}` : ''}.jpg`
+
+  appendFileMessage({
+    resourceKind: 'image',
+    file_id: imageId || imageUrl || `image-${Date.now()}`,
+    file_type: 'image',
+    filename,
+    preview_url: imageUrl,
+    download_url: imageId ? `/image/${imageId}/download` : imageUrl,
+    content: imageData?.prompt || ''
+  })
+}
+
+const centerSaveLabel = message => {
+  if (message.centerSaveStatus === 'saving') return '保存中...'
+  if (message.centerSaveStatus === 'saved') return '已存入资源中心'
+  if (message.centerSaveStatus === 'error') return '重新存入资源中心'
+  return '存入资源中心'
+}
+
+const fileTitleWithoutExtension = filename => String(filename || '生成资源').replace(/\.[^.\\/]+$/, '')
+
+const saveGeneratedFileToResourceCenter = async message => {
+  if (!message || message.centerSaveStatus === 'saving' || message.centerSaveStatus === 'saved') return
+
+  message.centerSaveStatus = 'saving'
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(SAVED_GENERATED_RESOURCES_KEY) || '[]')
+    const id = `${message.resourceKind || 'resource'}-${message.fileId || message.id}`
+    const record = {
+      id,
+      sourceId: message.fileId || '',
+      kind: message.resourceKind || 'resource',
+      fileType: message.fileType,
+      title: fileTitleWithoutExtension(message.filename),
+      filename: message.filename,
+      previewUrl: message.previewUrl || '',
+      downloadUrl: message.downloadUrl || '',
+      content: message.content || '',
+      createdAt: new Date().toISOString()
+    }
+    const next = [record, ...saved.filter(item => item.id !== id)]
+    localStorage.setItem(SAVED_GENERATED_RESOURCES_KEY, JSON.stringify(next))
+    window.dispatchEvent(new CustomEvent('zhiban-generated-resource-saved', { detail: record }))
+
+    message.centerSaveStatus = 'saved'
+  } catch (error) {
+    console.error('存入资源中心失败：', error)
+    message.centerSaveStatus = 'error'
+    window.alert(error?.message || '存入资源中心失败，请稍后再试。')
   }
 }
 
@@ -706,6 +848,7 @@ const fileExtension = type => {
   const normalizedType = String(type || '').toLowerCase()
 
   if (normalizedType.includes('ppt')) return 'pptx'
+  if (normalizedType.includes('image')) return 'jpg'
   if (normalizedType.includes('txt') || normalizedType.includes('document')) return 'txt'
   if (normalizedType.includes('pdf')) return 'pdf'
   return 'file'
@@ -715,6 +858,7 @@ const fileTypeLabel = type => {
   const normalizedType = String(type || '').toLowerCase()
 
   if (normalizedType.includes('ppt')) return 'PPT 文件'
+  if (normalizedType.includes('image')) return '图片'
   if (normalizedType.includes('txt')) return 'TXT 文档'
   if (normalizedType.includes('document')) return '学习文档'
   if (normalizedType.includes('pdf')) return 'PDF 文件'
@@ -725,6 +869,7 @@ const fileIcon = type => {
   const normalizedType = String(type || '').toLowerCase()
 
   if (normalizedType.includes('ppt')) return '📊'
+  if (normalizedType.includes('image')) return '🖼️'
   if (normalizedType.includes('txt') || normalizedType.includes('document')) return '📄'
   if (normalizedType.includes('pdf')) return '📕'
   return '📁'
@@ -780,8 +925,16 @@ const sendMessage = async () => {
     if (activeTool?.generateMode) {
       await executeGeneration(backendText, activeTool, activeConversationId.value, {
         onProgress: (msg) => { target.content = msg; target.time = getNowTime() },
-        onFile: (fileData) => { appendFileMessage(fileData) },
-        onDone: () => { target.time = getNowTime() },
+        onFile: async (fileData) => { await appendFileMessage(fileData) },
+        onImage: (imageData) => { appendImageMessage(imageData) },
+        onDone: async (eventData) => {
+          target.time = getNowTime()
+          if (Array.isArray(eventData?.resources)) {
+            for (const resource of eventData.resources) {
+              await appendFileMessage(resource)
+            }
+          }
+        },
       })
       await scrollToBottom()
       return
@@ -792,8 +945,16 @@ const sendMessage = async () => {
     if (detectedTool?.generateMode) {
       await executeGeneration(text, detectedTool, activeConversationId.value, {
         onProgress: (msg) => { target.content = msg; target.time = getNowTime() },
-        onFile: (fileData) => { appendFileMessage(fileData) },
-        onDone: () => { target.time = getNowTime() },
+        onFile: async (fileData) => { await appendFileMessage(fileData) },
+        onImage: (imageData) => { appendImageMessage(imageData) },
+        onDone: async (eventData) => {
+          target.time = getNowTime()
+          if (Array.isArray(eventData?.resources)) {
+            for (const resource of eventData.resources) {
+              await appendFileMessage(resource)
+            }
+          }
+        },
       })
       await scrollToBottom()
       return
@@ -824,7 +985,7 @@ const sendMessage = async () => {
           hasReceivedChunk = true
         }
 
-        appendFileMessage(fileData)
+        await appendFileMessage(fileData)
         await scrollToBottom()
       },
       onDone: data => {
@@ -1218,10 +1379,14 @@ onMounted(() => {
   margin: 0;
   max-width: 880px;
   color: #25344a;
-  font-size: clamp(36px, 3.4vw, 64px);
-  font-weight: 500;
+  font-size: clamp(28px, 2.8vw, 52px);
+  font-weight: 400;
   line-height: 1.22;
   text-align: center;
+}
+
+.empty-chat__sub {
+  color: #163f8f;
 }
 
 .resource-hero-visual {
@@ -1275,7 +1440,8 @@ onMounted(() => {
 }
 
 .bubble,
-.file-bubble {
+.file-bubble,
+.quiz-bubble {
   padding: 16px 18px;
   border: 1px solid rgba(201, 220, 233, 0.82);
   border-radius: 18px;
@@ -1287,7 +1453,8 @@ onMounted(() => {
 }
 
 .assistant .bubble,
-.file-bubble {
+.file-bubble,
+.quiz-bubble {
   border-top-left-radius: 6px;
 }
 
@@ -1310,7 +1477,8 @@ onMounted(() => {
   text-align: right;
 }
 
-.file-bubble {
+.file-bubble,
+.quiz-bubble {
   width: min(520px, 100%);
 }
 
@@ -1393,6 +1561,25 @@ onMounted(() => {
   align-items: center;
   cursor: pointer;
   font-family: inherit;
+}
+
+.file-actions button:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.quiz-action {
+  margin-top: 14px;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #ffffff;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
 }
 
 .input-area {

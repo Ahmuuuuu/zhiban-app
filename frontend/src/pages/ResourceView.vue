@@ -1,132 +1,90 @@
 <template>
   <main class="resource-page">
     <header class="resource-header">
-      <div>
-        <p class="eyebrow">My Resources</p>
+      <div class="title-block">
+        <p>My Resources</p>
         <h1>我的学习资源</h1>
-        <p class="summary">这里只展示你自己上传的学习资料，公开资源请前往资源中心。</p>
       </div>
 
       <div class="header-actions">
-        <button class="icon-btn" type="button" :disabled="loading" title="刷新资源" @click="loadResources">
-          <RefreshCw :size="18" :class="{ spinning: loading }" />
+        <button class="icon-btn refresh-btn" type="button" :disabled="loading" title="刷新资源" @click="loadResources">
+          <RefreshCw :size="22" :class="{ spinning: loading }" />
         </button>
-        <router-link class="import-link" to="/resources">
-          <BookOpenText :size="17" />
-          <span>资源中心</span>
-        </router-link>
-        <router-link class="import-link" to="/study-import">
-          <Upload :size="17" />
-          <span>资料导入</span>
-        </router-link>
+        <router-link class="import-link" to="/resources">资源中心</router-link>
+        <router-link class="import-link primary" to="/study-import">资料导入</router-link>
       </div>
     </header>
-
-    <div class="resource-tools">
-      <label class="search-field">
-        <Search :size="18" />
-        <input v-model.trim="keyword" type="search" placeholder="搜索我的资源标题或内容" />
-      </label>
-    </div>
 
     <div v-if="errorMessage" class="notice">
       <AlertCircle :size="18" />
       <span>{{ errorMessage }}</span>
     </div>
 
-    <div v-else-if="loading" class="resource-grid">
-      <article v-for="item in 6" :key="item" class="resource-card skeleton-card">
-        <span></span>
-        <strong></strong>
-        <p></p>
-        <p></p>
-      </article>
-    </div>
+    <section class="resource-shell">
+      <section class="resource-list" aria-label="我的资源列表">
+        <template v-if="loading">
+          <article v-for="item in 9" :key="item" class="resource-card skeleton-card">
+            <span></span>
+            <strong></strong>
+            <p></p>
+          </article>
+        </template>
 
-    <div v-else-if="filteredResources.length" class="resource-layout">
-      <div class="resource-list">
-        <article
-          v-for="resource in filteredResources"
-          :key="resource.doc_id"
-          class="resource-card"
-          :class="{ selected: selectedResource?.doc_id === resource.doc_id }"
-          @click="selectedResource = resource"
-        >
-          <div class="card-top">
-            <span class="type-mark">
-              <FileText :size="18" />
-            </span>
-            <span class="visibility">{{ resource.categoryLabel || '我的资源' }}</span>
-          </div>
+        <template v-else-if="filteredResources.length">
+          <article
+            v-for="resource in filteredResources"
+            :key="resource.doc_id"
+            class="resource-card"
+            @click="selectedResource = resource"
+          >
+            <div class="card-top">
+              <span class="type-mark">
+                <FileText :size="18" />
+              </span>
+              <span class="visibility">{{ resource.categoryLabel || '我的资源' }}</span>
+            </div>
 
-          <h2>{{ resource.title || '未命名资料' }}</h2>
-          <p>{{ getExcerpt(resource.content) }}</p>
+            <h2>{{ resource.title || '未命名资源' }}</h2>
+            <p>{{ getExcerpt(resource.content) }}</p>
 
-          <footer>
-            <span>
-              <CalendarDays :size="15" />
-              {{ formatDate(resource.created_at) }}
-            </span>
-            <span>{{ getWordCount(resource.content) }} 字</span>
-          </footer>
-        </article>
-      </div>
+            <footer>
+              <span>{{ formatDate(resource.created_at) }}</span>
+              <span>{{ getWordCount(resource.content) }} 字</span>
+            </footer>
+          </article>
+        </template>
 
-      <aside class="preview-panel">
-        <div class="preview-title">
-          <span class="type-mark large">
-            <BookOpenText :size="22" />
-          </span>
-          <div>
-            <h2>{{ selectedResource?.title || '选择一份资料' }}</h2>
-            <p>{{ selectedResource ? '我的资源' : '从左侧列表查看内容' }}</p>
-          </div>
-        </div>
+        <template v-else>
+          <article class="empty-state">
+            <FileSearch :size="44" />
+            <h2>还没有个人学习资源</h2>
+            <p>{{ resources.length ? '换个分类试试。' : '可以先导入一份学习资料。' }}</p>
+            <router-link class="import-link primary" to="/study-import">资料导入</router-link>
+          </article>
+        </template>
+      </section>
 
-        <div v-if="selectedResource" class="preview-meta">
-          <span>文档 ID：{{ selectedResource.doc_id }}</span>
-          <span>创建时间：{{ formatDate(selectedResource.created_at, true) }}</span>
-        </div>
-
-        <div class="preview-content">
-          <p v-if="selectedResource">{{ selectedResource.content || '这份资料暂时没有内容。' }}</p>
-          <p v-else>点击任意资源后，资料正文会在这里展示。</p>
-        </div>
-      </aside>
-    </div>
-
-    <div v-else class="empty-state">
-      <FileSearch :size="44" />
-      <h2>还没有个人学习资源</h2>
-      <p>{{ resources.length ? '换个关键词试试。' : '可以先导入一份学习资料。' }}</p>
-      <router-link class="import-link" to="/study-import">
-        <Upload :size="17" />
-        <span>资料导入</span>
-      </router-link>
-    </div>
+    </section>
   </main>
 </template>
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   AlertCircle,
-  BookOpenText,
-  CalendarDays,
   FileSearch,
   FileText,
-  RefreshCw,
-  Search,
-  Upload
+  RefreshCw
 } from 'lucide-vue-next'
 import { getStudyResources } from '../api/apis'
 
+const route = useRoute()
 const resources = ref([])
 const selectedResource = ref(null)
 const loading = ref(false)
 const errorMessage = ref('')
-const keyword = ref('')
-const currentUserToken = ref('')
+
 
 const categoryLabelMap = {
   knowledge_point: '知识点讲解',
@@ -137,6 +95,8 @@ const categoryLabelMap = {
   reference: '参考资料',
 }
 
+const activeCategory = computed(() => String(route.query.category || 'document'))
+const activeSubCategory = computed(() => String(route.query.sub || 'all'))
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
 
@@ -144,6 +104,7 @@ const normalizeResources = data => {
     doc_id: String(item.doc_id || item.id || index),
     title: item.title || '',
     content: item.preview || item.content || '',
+    type: item.type || item.file_type || '',
     category: item.category || '',
     categoryLabel: categoryLabelMap[item.category] || '',
     visibility: item.visibility || 'private',
@@ -154,9 +115,8 @@ const normalizeResources = data => {
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
-  currentUserToken.value = localStorage.getItem('token') || ''
 
-  if (!currentUserToken.value) {
+  if (!localStorage.getItem('token')) {
     resources.value = []
     selectedResource.value = null
     errorMessage.value = '请先登录，再查看我的学习资源。'
@@ -169,31 +129,35 @@ const loadResources = async () => {
     resources.value = normalizeResources(result).filter(item => item.visibility !== 'public')
     selectedResource.value = resources.value[0] || null
   } catch (error) {
-    if (error?.response?.status === 401) {
-      errorMessage.value = '请先登录，再查看我的学习资源。'
-    } else {
-      errorMessage.value =
-        error?.response?.data?.detail ||
-        error?.response?.data?.msg ||
-        error?.message ||
-        '我的学习资源加载失败，请稍后再试。'
-    }
+    errorMessage.value =
+      error?.response?.data?.detail ||
+      error?.response?.data?.msg ||
+      error?.message ||
+      '我的学习资源加载失败，请稍后再试。'
   } finally {
     loading.value = false
   }
 }
 
-const filteredResources = computed(() => {
-  const searchText = keyword.value.toLowerCase()
+const filteredResources = computed(() => resources.value.filter(matchesCategory))
 
-  return resources.value.filter(resource => {
-    return (
-      !searchText ||
-      resource.title.toLowerCase().includes(searchText) ||
-      resource.content.toLowerCase().includes(searchText)
-    )
-  })
-})
+const matchesCategory = resource => {
+  const cat = activeCategory.value
+
+  if (cat === 'document') {
+    if (activeSubCategory.value === 'all') return true
+    return resource.category === activeSubCategory.value
+  }
+
+  const resourceType = String(resource.type || resource.category || resource.title || '').toLowerCase()
+  const categoryMap = {
+    ppt: ['ppt', 'pptx', 'slide', 'reference'],
+    video: ['video', 'mp4', 'mov', 'avi'],
+    quiz: ['quiz', 'question', 'exam', 'exercise', '题'],
+    mindmap: ['mind', 'map', 'xmind', '思维', 'note']
+  }
+  return (categoryMap[cat] || []).some(type => resourceType.includes(type))
+}
 
 watch(filteredResources, list => {
   if (!list.length) {
@@ -211,15 +175,12 @@ const getExcerpt = content => {
   return text ? text.slice(0, 118) : '暂无正文内容'
 }
 
-const getWordCount = content => {
-  return String(content || '').replace(/\s/g, '').length
-}
+const getWordCount = content => String(content || '').replace(/\s/g, '').length
 
 const formatDate = (value, withTime = false) => {
   if (!value) return '未知时间'
 
   const date = new Date(value)
-
   if (Number.isNaN(date.getTime())) return '未知时间'
 
   return date.toLocaleString('zh-CN', {
@@ -235,9 +196,10 @@ onMounted(loadResources)
 
 <style scoped>
 .resource-page {
+  width: 100%;
   height: 100%;
   min-height: 0;
-  padding: 26px 34px 30px;
+  padding: 24px;
   color: #163f8f;
   display: flex;
   flex-direction: column;
@@ -247,176 +209,152 @@ onMounted(loadResources)
 
 .resource-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 14px;
 }
 
-.eyebrow {
-  margin: 0 0 6px;
+.title-block p {
+  margin: 0 0 5px;
   color: #5f8fc3;
   font-size: 12px;
   font-weight: 800;
 }
 
-.resource-header h1 {
+.title-block h1 {
   margin: 0;
-  font-size: 30px;
+  font-size: 28px;
   line-height: 1.15;
 }
 
-.summary {
-  margin: 8px 0 0;
-  color: #5f8fc3;
-  font-size: 14px;
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
-.header-actions,
-.resource-tools,
+.icon-btn,
+.import-link,
+.resource-card,
+.empty-state {
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  background: rgba(250, 250, 250, 0.78);
+  color: #163f8f;
+  box-shadow:
+    0 14px 34px rgba(22, 63, 143, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+
+.icon-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 18px;
+  cursor: pointer;
+}
+
+.refresh-btn {
+  color: #163f8f;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.import-link {
+  min-width: 82px;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 20px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.import-link.primary {
+  border-color: rgba(22, 63, 143, 0.92);
+  background: #163f8f;
+  color: #fafafa;
+}
+
+.icon-btn:hover,
+.import-link:hover {
+  transform: translateY(-2px);
+  border-color: #5f8fc3;
+  background: #c9dce9;
+}
+
+.notice {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 18px;
+  background: #c9dce9;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.resource-shell {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.resource-list {
+  min-height: 0;
+  padding: 8px 4px 10px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  align-content: start;
+  gap: 22px;
+}
+
+.resource-card {
+  height: 178px;
+  padding: 14px 15px 16px;
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(250, 250, 250, 0.92), rgba(237, 249, 252, 0.84)),
+    #fafafa;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.resource-card:hover {
+  background:
+    linear-gradient(135deg, rgba(250, 250, 250, 0.96), rgba(201, 220, 233, 0.74)),
+    #fafafa;
+  border-color: #5f8fc3;
+  transform: translateY(-4px);
+}
+
 .card-top,
-.preview-title,
-.preview-meta,
 .resource-card footer {
   display: flex;
   align-items: center;
 }
 
-.header-actions {
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.icon-btn,
-.import-link {
-  border: 1px solid #c9dce9;
-  border-radius: 16px;
-  background: #163f8f;
-  color: #fafafa;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
-}
-
-.icon-btn {
-  width: 36px;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.import-link {
-  height: 36px;
-  padding: 0 12px;
-  gap: 8px;
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 800;
-  display: inline-flex;
-  align-items: center;
-}
-
-.icon-btn:hover,
-.import-link:hover {
-  background: #5f8fc3;
-  border-color: #5f8fc3;
-  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
-  transform: translateY(-1px);
-}
-
-.spinning {
-  animation: spin 0.9s linear infinite;
-}
-
-.search-field {
-  width: 100%;
-  height: 42px;
-  padding: 0 14px;
-  border: 1px solid #c9dce9;
-  border-radius: 18px;
-  background: #ffffff;
-  color: #5f8fc3;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.search-field input {
-  width: 100%;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #163f8f;
-  font: inherit;
-}
-
-.notice {
-  min-height: 52px;
-  padding: 0 16px;
-  border: 1px solid #c9dce9;
-  border-radius: 8px;
-  background: #c9dce9;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.resource-layout {
-  min-height: 0;
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.62fr);
-  gap: 18px;
-  overflow: hidden;
-}
-
-.resource-list,
-.resource-grid {
-  min-height: 0;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
-  align-content: start;
-  gap: 14px;
-  padding-right: 4px;
-}
-
-.resource-card,
-.preview-panel,
-.empty-state {
-  border: 1px solid #c9dce9;
-  border-radius: 8px;
-  background: #fafafa;
-}
-
-.resource-card {
-  min-height: 210px;
-  max-height: 240px;
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-}
-
-.resource-card:hover,
-.resource-card.selected {
-  background: #f5f9fc;
-  border-color: #5f8fc3;
-  box-shadow: 0 14px 28px rgba(22, 63, 143, 0.12);
-  transform: translateY(-2px);
-}
-
 .card-top {
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .type-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 12px;
   background: #163f8f;
   color: #fafafa;
   display: inline-flex;
@@ -425,32 +363,27 @@ onMounted(loadResources)
   flex-shrink: 0;
 }
 
-.type-mark.large {
-  width: 44px;
-  height: 44px;
-}
-
-.visibility,
-.preview-meta span {
+.visibility {
   background: #c9dce9;
   color: #163f8f;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
 .visibility {
-  height: 26px;
-  padding: 0 9px;
+  height: 24px;
+  padding: 0 8px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
 }
 
 .resource-card h2 {
-  margin: 0;
+  margin: 2px 0 0;
   color: #163f8f;
-  font-size: 18px;
-  line-height: 1.35;
+  font-size: 16px;
+  line-height: 1.28;
   word-break: break-word;
   display: -webkit-box;
   overflow: hidden;
@@ -460,14 +393,15 @@ onMounted(loadResources)
 
 .resource-card p {
   margin: 0;
+  min-height: 38px;
   color: #5f8fc3;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 12px;
+  line-height: 1.55;
   word-break: break-word;
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 2;
 }
 
 .resource-card footer {
@@ -475,80 +409,15 @@ onMounted(loadResources)
   justify-content: space-between;
   gap: 10px;
   color: #5f8fc3;
-  font-size: 12px;
-  flex-wrap: wrap;
+  font-size: 11px;
 }
 
-.resource-card footer span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.preview-panel {
-  min-height: 0;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  overflow: hidden;
-}
-
-.preview-title {
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.preview-title h2 {
-  margin: 0;
-  color: #163f8f;
-  font-size: 20px;
-  line-height: 1.35;
-}
-
-.preview-title p {
-  margin: 5px 0 0;
-  color: #5f8fc3;
-  font-size: 13px;
-}
-
-.preview-meta {
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.preview-meta span {
-  min-height: 28px;
-  padding: 5px 9px;
-  border-radius: 8px;
-  word-break: break-all;
-}
-
-.preview-content {
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-  border: 1px solid #c9dce9;
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 18px;
-}
-
-.preview-content p {
-  margin: 0;
-  color: #163f8f;
-  font-size: 14px;
-  line-height: 1.9;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 
 .empty-state {
-  flex: 1;
+  grid-column: 1 / -1;
   min-height: 320px;
   padding: 32px;
-  color: #163f8f;
-  background: #c9dce9;
+  border-radius: 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -557,13 +426,12 @@ onMounted(loadResources)
   gap: 12px;
 }
 
-.empty-state h2 {
+.empty-state h2,
+.empty-state p {
   margin: 0;
-  font-size: 20px;
 }
 
 .empty-state p {
-  margin: 0;
   color: #5f8fc3;
 }
 
@@ -592,22 +460,17 @@ onMounted(loadResources)
   height: 16px;
 }
 
-.resource-list::-webkit-scrollbar,
-.preview-content::-webkit-scrollbar {
-  width: 9px;
+.resource-list::-webkit-scrollbar {
+  width: 8px;
 }
 
-.resource-list::-webkit-scrollbar-track,
-.preview-content::-webkit-scrollbar-track {
-  background: #c9dce9;
+.resource-list::-webkit-scrollbar-thumb {
   border-radius: 999px;
+  background: rgba(95, 143, 195, 0.45);
 }
 
-.resource-list::-webkit-scrollbar-thumb,
-.preview-content::-webkit-scrollbar-thumb {
-  background: #163f8f;
-  border: 2px solid #c9dce9;
-  border-radius: 999px;
+.spinning {
+  animation: spin 0.9s linear infinite;
 }
 
 @keyframes spin {
@@ -622,25 +485,20 @@ onMounted(loadResources)
   }
 }
 
-@media (max-width: 1080px) {
-  .resource-page {
-    height: auto;
-    min-height: 100%;
-    overflow: visible;
-  }
-
+@media (max-width: 1120px) {
   .resource-header,
-  .resource-layout {
+  .resource-shell {
     grid-template-columns: 1fr;
   }
 
-  .resource-layout,
+  .resource-page,
+  .resource-shell,
   .resource-list {
     overflow: visible;
   }
 
-  .preview-panel {
-    min-height: 460px;
+  .resource-page {
+    height: auto;
   }
 }
 </style>
