@@ -1,52 +1,159 @@
-import { generateExamQuestions } from '../api/apis'
-
 const SESSION_KEY = 'zhiban_quiz_sessions'
 
-function readSessions() {
+const uid = prefix => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+const readSessions = () => {
   try {
-    return JSON.parse(localStorage.getItem(SESSION_KEY) || '[]')
+    const data = JSON.parse(localStorage.getItem(SESSION_KEY) || '[]')
+    return Array.isArray(data) ? data : []
   } catch {
     return []
   }
 }
 
-function writeSessions(sessions) {
+const writeSessions = sessions => {
   localStorage.setItem(SESSION_KEY, JSON.stringify(sessions))
 }
 
-/** 将后端题目格式转为前端期望的格式 */
-function toFrontendQuestion(q) {
-  const optionLabels = Array.isArray(q.options) ? q.options : []
-  const options = optionLabels.map((opt, i) => {
-    const match = String(opt).match(/^\s*([A-D])[\).、]?\s*(.*)$/)
-    return {
-      key: match?.[1]?.toUpperCase() || String.fromCharCode(65 + i),
-      text: match?.[2] || String(opt),
-    }
-  })
+const stripFence = value =>
+  String(value || '')
+    .trim()
+    .replace(/^```(?:json|markdown|md)?\s*/i, '')
+    .replace(/```$/i, '')
+    .trim()
+
+const normalizeAnswer = value =>
+  String(value || '')
+    .trim()
+    .replace(/^(答案|正确答案|参考答案)[:：]?\s*/i, '')
+    .replace(/^[（(]?([A-D])[\)）.、]?\s*$/i, '$1')
+    .toUpperCase()
+
+const normalizeQuestion = (item, index) => {
+  const rawOptions = item.options || item.choices || item.option || []
+  const options = Array.isArray(rawOptions)
+    ? rawOptions.map((option, optionIndex) => {
+      const text = typeof option === 'string'
+        ? option
+        : String(option.text || option.content || option.value || '')
+      const match = text.match(/^\s*([A-D])[\).、]\s*(.*)$/i)
+
+      return {
+        key: String(option.key || option.label || match?.[1] || String.fromCharCode(65 + optionIndex)).toUpperCase(),
+        text: match?.[2] || text
+      }
+    })
+    : []
+
+  const stem =
+    item.stem ||
+    item.question ||
+    item.content ||
+    item.title ||
+    item.question_text ||
+    `第 ${index + 1} 题`
 
   return {
-    id: q.question_id,
-    type: ['single_choice', 'multi_choice', 'true_false'].includes(q.question_type) ? 'choice' : 'short',
-    stem: q.content,
+    id: item.id || item.question_id || uid(`question-${index + 1}`),
+    type: options.length ? 'choice' : 'short',
+    stem: String(stem).trim(),
     options,
-    answer: Array.isArray(q.answer)
-      ? q.answer.map(a => String(a).replace(/^([A-D])[\).、]?\s*$/, '$1')).join(',')
-      : String(q.answer || '').replace(/^([A-D])[\).、]?\s*$/, '$1'),
-    explanation: q.analysis || '',
-    question_type: q.question_type,
+    answer: normalizeAnswer(item.answer ?? item.correctAnswer ?? item.correct_answer ?? item.correct ?? ''),
+    explanation: String(item.explanation || item.analysis || item.reason || '').trim()
   }
+}
+
+const parseJsonQuestions = content => {
+  const text = stripFence(content)
+  const candidates = [text]
+  const arrayMatch = text.match(/\[[\s\S]*\]/)
+  const objectMatch = text.match(/\{[\s\S]*\}/)
+
+  if (arrayMatch) candidates.push(arrayMatch[0])
+  if (objectMatch) candidates.push(objectMatch[0])
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate)
+      const list = Array.isArray(parsed) ? parsed : parsed.questions || parsed.items || parsed.data || []
+      if (Array.isArray(list) && list.length) {
+        return list.map(normalizeQuestion).filter(item => item.stem)
+      }
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  return []
+}
+
+const parseMarkdownQuestions = content => {
+  const text = stripFence(content)
+  const blocks = text
+    .split(/\n(?=\s*(?:#{1,4}\s*)?(?:第\s*)?\d+\s*[.、）)]|\n-{3,}\n)/)
+    .map(block => block.trim())
+    .filter(Boolean)
+
+  const sourceBlocks = blocks.length > 1
+    ? blocks
+    : text.split(/\n{2,}/).map(block => block.trim()).filter(Boolean)
+
+  return sourceBlocks.map((block, index) => {
+    const lines = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const stemLines = []
+    const options = []
+    let answer = ''
+    let explanation = ''
+
+    lines.forEach(line => {
+      const optionMatch = line.match(/^(?:[-*]\s*)?([A-D])[\).、]\s*(.+)$/i)
+      const answerMatch = line.match(/^(?:[-*]\s*)?(?:答案|正确答案|参考答案|answer)[:：]\s*(.+)$/i)
+      const explanationMatch = line.match(/^(?:[-*]\s*)?(?:解析|解释|说明|analysis)[:：]\s*(.+)$/i)
+
+      if (optionMatch) {
+        options.push({ key: optionMatch[1].toUpperCase(), text: optionMatch[2].trim() })
+        return
+      }
+
+      if (answerMatch) {
+        answer = answerMatch[1].trim()
+        return
+      }
+
+      if (explanationMatch) {
+        explanation = explanationMatch[1].trim()
+        return
+      }
+
+      stemLines.push(line.replace(/^#{1,4}\s*/, '').replace(/^(?:第\s*)?\d+\s*[.、）)]\s*/, ''))
+    })
+
+    return normalizeQuestion({ stem: stemLines.join('\n'), options, answer, explanation }, index)
+  }).filter(item => item.stem && (item.options.length || item.answer))
+}
+
+export const parseQuizQuestions = content => {
+  const jsonQuestions = parseJsonQuestions(content)
+  if (jsonQuestions.length) return jsonQuestions
+  return parseMarkdownQuestions(content)
+}
+
+export const looksLikeQuizContent = content => {
+  const text = String(content || '')
+  if (!text.trim()) return false
+  if (parseQuizQuestions(text).length > 0) return true
+  return /question_type|single_choice|multi_choice|true_false|正确答案|参考答案|答案[:：]|解析[:：]/i.test(text)
 }
 
 export const QUIZ_BANK_KEY = SESSION_KEY
 
-/**
- * 调用后端 API 生成题目，并记录会话到本地索引
- * 返回 session 对象（questions 字段可能在 API 返回后填充）
- */
-export async function upsertQuizSet(payload) {
+export const upsertQuizSet = payload => {
+  const questions = payload.questions || parseQuizQuestions(payload.content)
+  if (!questions.length) return null
+
   const sessionId =
-    payload.id || `session-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+    payload.id ||
+    (payload.sourceId ? `quiz-resource-${payload.sourceId}` : uid('quiz'))
 
   const session = {
     id: sessionId,
@@ -55,46 +162,18 @@ export async function upsertQuizSet(payload) {
     content: payload.content || '',
     fileType: payload.fileType || 'exercise',
     filename: payload.filename || '',
-    questionCount: 0,
-    questions: [],
-    createdAt: new Date().toISOString(),
+    questionCount: questions.length,
+    questions,
+    createdAt: payload.createdAt || new Date().toISOString()
   }
 
-  // 先写入占位
   const sessions = readSessions()
-  const next = [session, ...sessions.filter(s => s.id !== sessionId)]
+  const next = [session, ...sessions.filter(item => item.id !== sessionId && item.sourceId !== session.sourceId)]
   writeSessions(next)
-
-  try {
-    const res = await generateExamQuestions({
-      topic: payload.title || '练习题',
-      count: 5,
-      difficulty: 'medium',
-      question_types: 'single_choice',
-    })
-    const apiQuestions = Array.isArray(res?.data) ? res.data : []
-    session.questions = apiQuestions.map(toFrontendQuestion)
-    session.questionCount = session.questions.length
-
-    // 持久化更新
-    const all = readSessions()
-    const idx = all.findIndex(s => s.id === sessionId)
-    if (idx !== -1) all[idx] = session
-    writeSessions(all)
-  } catch (err) {
-    console.error('生成题目失败：', err)
-  }
-
   window.dispatchEvent(new CustomEvent('zhiban-quiz-bank-updated', { detail: session }))
   return session
 }
 
-/** 读取本地会话索引（同步，仅含元数据） */
-export function readQuizBank() {
-  return readSessions()
-}
+export const readQuizBank = () => readSessions()
 
-/** 按 ID 获取会话（含 questions，如 API 尚未返回则为空数组） */
-export function getQuizSet(quizId) {
-  return readSessions().find(s => s.id === quizId) || null
-}
+export const getQuizSet = quizId => readSessions().find(item => item.id === quizId) || null

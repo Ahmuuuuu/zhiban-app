@@ -20,17 +20,17 @@ export const resourceTools: ResourceToolConfig[] = [
 
 export function detectGenerationIntent(text: string): ResourceToolConfig | null {
   const trimmed = String(text || '').trim()
-  const hasGenerate = /(鐢熸垚|鍒朵綔|鍋殀鍒涘缓|鏉ヤ竴浠絴鍑轰竴浠絴鐢粅璁捐|瑙勫垝|鏁寸悊)/.test(trimmed)
+  const hasGenerate = /(生成|制作|做|创建|来一份|出一份|出题|设计|规划|整理|测一测|测试|quiz|exercise)/i.test(trimmed)
   if (!hasGenerate) return null
 
+  if (/(题目|题库|练习题|习题|测试题|quiz|exercise|出题|做题|选择题|填空题|简答题|测一测)/i.test(trimmed)) {
+    return { ...resourceTools.find(t => t.label === 'quiz')! }
+  }
   if (/(鍥剧墖|鍥惧儚|image|img|鎻掑浘|閰嶅浘|绀烘剰鍥緗鍥捐В|娴锋姤|鎻掔敾)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'image')! }
   }
   if (/(ppt|PPT|骞荤伅鐗噟婕旂ず|璇句欢|slide)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'ppt')! }
-  if (/(题目|题库|练习题|习题|测试题|quiz|exercise|出题|做题|选择题|填空题|简答题)/i.test(trimmed)) {
-    return { ...resourceTools.find(t => t.label === 'quiz')! }
-  }
   }
   if (/(鎬濈淮瀵煎浘|mindmap|鑴戝浘|mind map)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'mindmap')! }

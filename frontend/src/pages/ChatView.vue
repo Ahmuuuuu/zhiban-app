@@ -238,7 +238,7 @@ import {
   Video
 } from 'lucide-vue-next'
 import resourceHeroImage from '../assets/pic/资源生成背景.png'
-import { upsertQuizSet } from '../utils/quizBank'
+import { looksLikeQuizContent, upsertQuizSet } from '../utils/quizBank'
 
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
@@ -711,6 +711,33 @@ const appendQuizMessage = async fileData => {
   messages.value.push(quizMessage)
 }
 
+const replaceTextWithQuizMessage = async (message, title = 'AI 生成题目') => {
+  if (!message?.content || !looksLikeQuizContent(message.content)) return false
+
+  const quiz = upsertQuizSet({
+    id: message.quizId,
+    title,
+    filename: title,
+    fileType: 'exercise',
+    content: message.content
+  })
+
+  if (!quiz) return false
+
+  Object.assign(message, {
+    id: `quiz-${quiz.id}`,
+    role: 'assistant',
+    type: 'quiz',
+    quizId: quiz.id,
+    title: quiz.title,
+    content: '',
+    questionCount: quiz.questionCount,
+    time: getNowTime()
+  })
+
+  return true
+}
+
 const appendFileMessage = async fileData => {
   if (isExerciseFile(fileData)) {
     await appendQuizMessage(fileData)
@@ -988,14 +1015,22 @@ const sendMessage = async () => {
         await appendFileMessage(fileData)
         await scrollToBottom()
       },
-      onDone: data => {
+      onDone: async data => {
         const chatGroupId = data?.chat_group_id || activeConversationId.value
 
         if (chatGroupId) {
           activeConversationId.value = chatGroupId
         }
+
+        if (target && hasReceivedChunk) {
+          await replaceTextWithQuizMessage(target, 'AI 生成题目')
+        }
       }
     })
+
+    if (target && hasReceivedChunk) {
+      await replaceTextWithQuizMessage(target, 'AI 生成题目')
+    }
 
     await scrollToBottom()
     await loadConversationList()

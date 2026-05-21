@@ -1,9 +1,9 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref } from "vue";
 import { resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
-import { upsertQuizSet } from "../utils/quizBank";
+import { looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -18,7 +18,7 @@ const emit = defineEmits<{
 const SAVED_GENERATED_RESOURCES_KEY = "zhiban_saved_generated_resources";
 const router = useRouter();
 
-// ─── Types ───
+// 鈹€鈹€鈹€ Types 鈹€鈹€鈹€
 type PetChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -47,7 +47,7 @@ type StreamChatMessageFn = (
   handlers?: StreamChatHandlers,
 ) => Promise<void>;
 
-// ─── State ───
+// 鈹€鈹€鈹€ State 鈹€鈹€鈹€
 const chatExpanded = ref(false);
 const chatInput = ref("");
 const chatLoading = ref(false);
@@ -63,7 +63,7 @@ const petMessages = ref<PetChatMessage[]>([
   },
 ]);
 
-// ─── Helpers ───
+// 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€
 const sendStreamChatMessage = streamChatMessage as unknown as StreamChatMessageFn;
 
 const escapeHtml = (value: string) =>
@@ -123,7 +123,7 @@ const isPetExerciseFile = (fileData: any) => {
 const applyPetQuizFile = async (message: PetChatMessage, fileData: any) => {
   const sourceId = getPetGeneratedResourceId(fileData);
   const filename = fileData?.filename || fileData?.file_name || fileData?.name || "AI 生成题目";
-  const quiz = await upsertQuizSet({
+  const quiz = upsertQuizSet({
     id: message.quizId,
     sourceId,
     title: String(filename).replace(/\.[^.\\/]+$/, ""),
@@ -135,6 +135,25 @@ const applyPetQuizFile = async (message: PetChatMessage, fileData: any) => {
   message.quizId = quiz.id;
   message.questionCount = quiz.questionCount;
   message.content = `题目已生成，已放入题库。共 ${quiz.questionCount} 道题。`;
+};
+
+const replacePetTextWithQuiz = (message: PetChatMessage, title = "AI 生成题目") => {
+  if (!message.content || !looksLikeQuizContent(message.content)) return false;
+
+  const quiz = upsertQuizSet({
+    id: message.quizId,
+    title,
+    filename: title,
+    fileType: "exercise",
+    content: message.content,
+  });
+
+  if (!quiz) return false;
+
+  message.quizId = quiz.id;
+  message.questionCount = quiz.questionCount;
+  message.content = `题目已生成，已放入题库。共 ${quiz.questionCount} 道题。`;
+  return true;
 };
 
 const openPetQuiz = (quizId?: string) => {
@@ -188,7 +207,7 @@ const savePetResourceToCenter = async (message: PetChatMessage) => {
   }
 };
 
-// ─── Send ───
+// 鈹€鈹€鈹€ Send 鈹€鈹€鈹€
 const sendPetMessage = async () => {
   const text = chatInput.value.trim();
   if (!text || chatLoading.value) return;
@@ -313,15 +332,22 @@ const sendPetMessage = async () => {
           if (data?.chat_group_id) {
             petChatGroupId.value = data.chat_group_id;
           }
+          if (receivedChunk) {
+            replacePetTextWithQuiz(assistantMessage);
+          }
         },
       },
     );
+
+    if (receivedChunk) {
+      replacePetTextWithQuiz(assistantMessage);
+    }
 
     if (!assistantMessage.content) {
       assistantMessage.content = "我收到啦，不过这次没有返回具体内容。";
     }
   } catch (error) {
-    console.error("小人聊天失败：", error);
+    console.error("小知聊天失败：", error);
     assistantMessage.content = "抱歉，我这会儿没有连上 AI，请稍后再试。";
     chatError.value = "AI 对话请求失败";
   } finally {
