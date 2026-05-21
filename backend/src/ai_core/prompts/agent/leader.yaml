@@ -11,7 +11,7 @@ system: |
   {kb_context}
 
   ## 输出格式
-  必须返回严格 JSON（不要 markdown 代码块）：
+  你的回复必须是纯 JSON，第一个字符是 `{`，最后一个字符是 `}`。绝对禁止加 markdown 代码块、禁止加任何说明文字。
   {
     "resource_types": ["document", "ppt"],
     "topic": "用户的学习主题",
