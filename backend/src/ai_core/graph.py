@@ -16,7 +16,7 @@ PROMPT_MAP = {
     "document": "resource/document",
     "ppt": "resource/ppt",
     "mindmap": "resource/document",
-    "exercise": "resource/document",
+    "exercise": "resource/exam",
     "case": "resource/document",
     "reading": "resource/document",
 }
@@ -98,6 +98,9 @@ async def executor_node(state: ResourceState) -> dict:
             portrait_context=portrait,
             kb_context=kb,
             feedback=feedback,
+            count="5",
+            question_types="single_choice",
+            difficulty="medium",
         )
 
     # 信号量限制最大并发数，防止 DeepSeek 限流
