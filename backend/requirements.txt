@@ -6,9 +6,13 @@ tortoise-orm==0.19.0
 passlib[bcrypt]==1.7.4
 pydantic==2.12.5
 python-dotenv==1.2.1
+numpy
 sentence-transformers
 langgraph
+langchain-core
+langchain-openai
 langchain-classic
+langchain-community
 pyyaml
 python-docx
 python-pptx

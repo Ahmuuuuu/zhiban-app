@@ -20,21 +20,28 @@ async def generate_image(
     user_id: int = Depends(get_user_id_from_token),
     data: GenerateImageRequest = Body(...),
 ):
-    """调用 HiDream 生成图片，保存至服务器 static/images/ 目录"""
+    """提交图片生成任务到讯飞 HiDream，立即返回 task_id，后台异步轮询"""
     try:
-        records = await ImageService.generate(
+        result = await ImageService.submit(
             prompt=data.prompt,
-            user_id=str(user_id),
+            user_id=user_id,
             aspect_ratio=data.aspect_ratio,
             img_count=data.img_count,
         )
-        return {"code": 200, "msg": "success", "data": records}
+        return {"code": 200, "msg": "任务已提交", "data": result}
     except RuntimeError as e:
         raise HTTPException(400, str(e))
-    except TimeoutError:
-        raise HTTPException(504, "图片生成超时，请稍后重试")
     except Exception:
         raise HTTPException(500, "服务器错误")
+
+
+@router.get("/status/{task_id}")
+async def get_task_status(task_id: str):
+    """查询图片生成任务状态，每次调用会主动查询一次讯飞"""
+    result = await ImageService.poll_once(task_id)
+    if result is None:
+        return {"code": 404, "msg": "任务不存在"}
+    return {"code": 200, "msg": "success", "data": result}
 
 
 @router.get("/list")
