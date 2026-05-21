@@ -19,21 +19,27 @@ export const resourceTools: ResourceToolConfig[] = [
 
 export function detectGenerationIntent(text: string): ResourceToolConfig | null {
   const trimmed = String(text || '').trim()
-  const hasGenerate = /(生成|制作|做|创建|来一份|出一份|画|画一张|设计)/.test(trimmed)
+  const hasGenerate = /(生成|制作|做|创建|来一份|出一份|画|设计|规划|整理)/.test(trimmed)
   if (!hasGenerate) return null
 
-  if (/(图片|图|image|img|插图|配图|示意图|图解)/i.test(trimmed))
+  if (/(图片|图像|image|img|插图|配图|示意图|图解|海报|插画)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'image')! }
-  if (/(ppt|PPT|幻灯片|演示文稿|slide)/i.test(trimmed))
+  }
+  if (/(ppt|PPT|幻灯片|演示|课件|slide)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'ppt')! }
-  if (/(思维导图|mindmap|脑图|mind map)/i.test(trimmed))
+  }
+  if (/(思维导图|mindmap|脑图|mind map)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'mindmap')! }
-  if (/(视频|video|课程视频|教学视频)/i.test(trimmed))
+  }
+  if (/(视频|video|课程视频|教学视频|脚本|分镜)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'video')! }
-  if (/(文档|word|学习资源|资料|笔记|教案)/i.test(trimmed))
+  }
+  if (/(文档|word|学习资源|资料|笔记|教案|讲义|总结)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'word')! }
-  if (/(音乐|歌曲|music|节奏|旋律)/i.test(trimmed))
+  }
+  if (/(音乐|歌曲|music|节奏|旋律)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'music')! }
+  }
   return null
 }
 
@@ -88,7 +94,9 @@ export async function executeGeneration(
       callbacks.onError?.('请告诉我你想生成什么图片')
       return
     }
+
     callbacks.onProgress?.('正在生成图片...')
+
     try {
       const result: any = await generateImage({
         prompt,
@@ -97,6 +105,7 @@ export async function executeGeneration(
       })
       const status = getImageStatus(result)
       const records = normalizeImageRecords(result)
+
       if (records.length) {
         const lines = records.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`)
         callbacks.onDone?.()

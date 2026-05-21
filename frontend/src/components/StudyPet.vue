@@ -126,6 +126,24 @@ const renderPetMarkdown = (value: string) => {
   return text.replace(/\n/g, "<br>");
 };
 
+const getPetGeneratedFileMessage = (fileData: any) => {
+  const fileId = fileData?.file_id || fileData?.fileId || fileData?.resource_id || fileData?.resourceId || "";
+  const filename = fileData?.filename || fileData?.file_name || fileData?.name || "生成文件";
+  const previewUrl = resolveApiUrl(fileData?.preview_url || fileData?.previewUrl || fileData?.preview || "");
+  const downloadUrl = resolveApiUrl(
+    fileData?.download_url ||
+      fileData?.downloadUrl ||
+      fileData?.url ||
+      (fileId ? `/resource/${fileId}/download` : ""),
+  );
+  const links = [
+    previewUrl ? `[预览](${previewUrl})` : "",
+    downloadUrl ? `[下载](${downloadUrl})` : "",
+  ].filter(Boolean);
+
+  return links.length ? `已生成：${filename}\n${links.join("  ")}` : `已生成：${filename}`;
+};
+
 const petMessages = ref<PetChatMessage[]>([
   {
     id: "pet-welcome",
@@ -527,6 +545,7 @@ const sendPetMessage = async () => {
         onProgress: (msg) => { assistantMessage.content = msg },
         onFile: (fileData: any) => {
           assistantMessage.content = `✅ 已生成：${fileData.filename || fileData.file_name || '文件'}`
+          assistantMessage.content = getPetGeneratedFileMessage(fileData)
         },
         onError: (err) => { assistantMessage.content = err },
       })
