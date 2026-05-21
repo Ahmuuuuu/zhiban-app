@@ -15,9 +15,9 @@
           <span>{{ quiz.questionCount || quiz.questions?.length || 0 }} 题</span>
           <small>{{ formatDate(quiz.createdAt) }}</small>
         </div>
-        <h2>{{ quiz.title }}</h2>
+        <h2>{{ quiz.title || 'AI 生成题目' }}</h2>
         <p>{{ quiz.filename || 'AI 生成练习题' }}</p>
-        <router-link class="start-btn" :to="`/question-bank/${quiz.id}`">开始做题</router-link>
+        <router-link class="start-btn" :to="`/question-bank/${quiz.id}`">开始练习</router-link>
       </article>
     </section>
 
