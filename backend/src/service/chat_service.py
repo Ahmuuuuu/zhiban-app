@@ -50,43 +50,8 @@ class ChatService:
     # ── 流式 ──
 
     @staticmethod
-    async def stream_create_new_history(user_id: int, user_req: str):
-        user = await User.filter(id=user_id).first()
-        if not user:
-            yield f"data: {json.dumps({'error': '未查找到用户'})}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
-        chat_group_id = await get_max_chat_group(user_id)
-        instance_key = f"unified_{user_id}_{chat_group_id}"
-        if instance_key not in chat_instances:
-            chat_instances[instance_key] = UnifiedChat(user_id=user_id)
-
-        bot = chat_instances[instance_key]
-        full_response = ""
-        async for chunk in bot.stream(user_req):
-            if isinstance(chunk, dict):
-                if chunk.get("type") == "content":
-                    full_response += chunk["content"]
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-            else:
-                full_response += chunk
-                yield f"data: {json.dumps({'type': 'content', 'content': chunk}, ensure_ascii=False)}\n\n"
-
-        message = await ChatHistory.create(
-            user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=full_response,
-        )
-        yield f"data: {json.dumps({'type': 'done', 'chat_group_id': message.chat_group_id}, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n"
-
-    @staticmethod
-    async def stream_create_message_into_history(user_id: int, chat_group_id: int, user_req: str):
-        user = await User.filter(id=user_id).first()
-        if not user:
-            yield f"data: {json.dumps({'error': '未查找到用户'})}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
+    async def _stream_chat(user_id: int, chat_group_id: int, user_req: str):
+        """流式对话核心逻辑"""
         instance_key = f"unified_{user_id}_{chat_group_id}"
         if instance_key not in chat_instances:
             chat_instances[instance_key] = UnifiedChat(user_id=user_id)
@@ -107,6 +72,27 @@ class ChatService:
         )
         yield f"data: {json.dumps({'type': 'done', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
+
+    @staticmethod
+    async def stream_create_new_history(user_id: int, user_req: str):
+        user = await User.filter(id=user_id).first()
+        if not user:
+            yield f"data: {json.dumps({'error': '未查找到用户'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        chat_group_id = await get_max_chat_group(user_id)
+        async for event in ChatService._stream_chat(user_id, chat_group_id, user_req):
+            yield event
+
+    @staticmethod
+    async def stream_create_message_into_history(user_id: int, chat_group_id: int, user_req: str):
+        user = await User.filter(id=user_id).first()
+        if not user:
+            yield f"data: {json.dumps({'error': '未查找到用户'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        async for event in ChatService._stream_chat(user_id, chat_group_id, user_req):
+            yield event
 
     # ── 读取、删除 ──
 

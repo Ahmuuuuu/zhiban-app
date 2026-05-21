@@ -1,6 +1,7 @@
 import json
 
-from backend.src.ai_core.graph import resource_graph, _fill
+from backend.src.ai_core.graph import resource_graph
+from backend.src.utils.prompt_loader import fill_prompt
 from backend.src.ai_core.llm_config import llm
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.agent_skill_model import AgentSkill
@@ -36,7 +37,7 @@ async def _extract_topic_from_chat(user_id: int, chat_group_id: int) -> str:
     conversation = "\n".join(
         f"用户：{r.req}\nAI：{r.res[:200]}" for r in records
     )
-    prompt = _fill(load_prompt("resource/topic_extract"), conversation=conversation)
+    prompt = fill_prompt(load_prompt("resource/topic_extract"), conversation=conversation)
     response = await llm.ainvoke(prompt)
     return response.content.strip()
 
@@ -207,7 +208,10 @@ class ResourceService:
         ext = _FILE_EXT_MAP.get(record.resource_type, "md")
         filename = f"{record.topic}_{record.resource_type}.{ext}"
         if record.resource_type == "ppt":
-            from backend.src.utils.pptx_generator import markdown_to_pptx
+            try:
+                from backend.src.utils.pptx_generator import markdown_to_pptx
+            except ImportError:
+                raise ImportError("PPT 导出需要安装 python-pptx 依赖")
             content_bytes = markdown_to_pptx(record.content)
             media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             return content_bytes, filename, media_type

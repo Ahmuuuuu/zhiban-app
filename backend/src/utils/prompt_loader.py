@@ -6,6 +6,14 @@ from pathlib import Path
 PROMPTS_DIR = Path(__file__).parent.parent / "ai_core" / "prompts"
 
 
+def fill_prompt(template: str, **kwargs) -> str:
+    """用 kwargs 替换模板中的 {key} 占位符"""
+    result = template
+    for key, value in kwargs.items():
+        result = result.replace("{" + key + "}", str(value))
+    return result
+
+
 def load_prompt(name: str) -> str:
     """
     读取 prompts/{name}.yaml 并返回 system 字段。
