@@ -18,11 +18,39 @@ from backend.src.ai_core.tools.search import web_search
 from backend.src.ai_core.tools.image import generate_image
 from backend.src.ai_core.tools.history import get_used_history
 from backend.src.utils.prompt_loader import load_prompt
+from pydantic import create_model
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import StructuredTool
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.runnables import RunnableWithMessageHistory
+from langchain_core.messages import HumanMessage, AIMessage
+
+
+def _inject_user_id(tool, user_id: str):
+    """拷贝一个 tool，移除 user_id 参数并自动注入当前用户 ID"""
+    original_coro = tool.coroutine
+    if tool.args_schema:
+        fields = {}
+        for name, field_info in tool.args_schema.model_fields.items():
+            if name != "user_id":
+                fields[name] = (field_info.annotation, field_info)
+        new_schema = create_model(f"{tool.name}_input", **fields) if fields else None
+    else:
+        new_schema = None
+
+    desc = (tool.description or "").replace("user_id用户数字ID", "")
+    desc = desc.replace("，，", "，").replace("，。", "。").replace("参数：，", "参数：").strip()
+
+    async def _scoped(**kwargs):
+        kwargs["user_id"] = user_id
+        return await original_coro(**kwargs)
+
+    _scoped.__name__ = tool.name
+    return StructuredTool.from_function(
+        coroutine=_scoped,
+        name=tool.name,
+        description=desc,
+        args_schema=new_schema,
+    )
 
 
 class UnifiedChat:
@@ -31,16 +59,11 @@ class UnifiedChat:
     def __init__(self, user_id: int, session_id: str = None):
         self.user_id = user_id
         self.session_id = session_id or f"unified_{user_id}"
-        self.store = {}
         self._raw_executor = None
         self._action_tools_loaded = False
-        self.agent_with_memory = self._build_agent(action_tools=[])
+        self._history: list = []
+        self._build_agent(action_tools=[])
         UnifiedChat._instances.append(self)
-
-    def _get_session_history(self, session_id: str):
-        if session_id not in self.store:
-            self.store[session_id] = ChatMessageHistory()
-        return self.store[session_id]
 
     # ── 动态工具工厂 ──
 
@@ -107,29 +130,31 @@ class UnifiedChat:
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
 
+        uid = str(self.user_id)
         tools = [
-            search_knowledge_base, ingest_document,
-            list_knowledge, update_knowledge, delete_knowledge,
-            read_portrait, update_portrait,
-            get_used_history, web_search,
-            read_skill, upsert_skill, list_skills, delete_skill,
-            create_action_skill,
-            generate_learning_resource,
-            generate_image,
+            _inject_user_id(search_knowledge_base, uid),
+            _inject_user_id(ingest_document, uid),
+            _inject_user_id(list_knowledge, uid),
+            _inject_user_id(update_knowledge, uid),
+            _inject_user_id(delete_knowledge, uid),
+            _inject_user_id(read_portrait, uid),
+            _inject_user_id(update_portrait, uid),
+            _inject_user_id(get_used_history, uid),
+            web_search,
+            _inject_user_id(read_skill, uid),
+            _inject_user_id(upsert_skill, uid),
+            _inject_user_id(list_skills, uid),
+            _inject_user_id(delete_skill, uid),
+            _inject_user_id(create_action_skill, uid),
+            _inject_user_id(generate_learning_resource, uid),
+            _inject_user_id(generate_image, uid),
         ]
-        tools.extend(action_tools)
+        tools.extend(_inject_user_id(t, uid) for t in action_tools)
 
         agent = create_tool_calling_agent(llm=llm, prompt=prompt, tools=tools)
-        agent_executor = AgentExecutor(
+        self._raw_executor = AgentExecutor(
             agent=agent, tools=tools,
             verbose=True, handle_parsing_errors=True, max_iterations=5,
-        )
-        self._raw_executor = agent_executor
-        return RunnableWithMessageHistory(
-            runnable=agent_executor,
-            get_session_history=self._get_session_history,
-            input_messages_key="input",
-            history_messages_key="history",
         )
 
     async def _ensure_action_tools(self):
@@ -137,23 +162,24 @@ class UnifiedChat:
         if self._action_tools_loaded:
             return
         action_tools = await self._load_action_tools_async()
-        self.agent_with_memory = self._build_agent(action_tools)
+        self._build_agent(action_tools)
         self._action_tools_loaded = True
 
     async def chat(self, message: str, resource_context: str = "") -> str:
         await self._ensure_action_tools()
-        response = await self.agent_with_memory.ainvoke(
-            {"input": message, "current_user_id": str(self.user_id), "resource_context": resource_context},
-            config={"configurable": {"session_id": self.session_id}},
-        )
+        response = await self._raw_executor.ainvoke({
+            "input": message,
+            "history": list(self._history),
+            "current_user_id": str(self.user_id),
+            "resource_context": resource_context,
+        })
+        self._history.append(HumanMessage(content=message))
+        self._history.append(AIMessage(content=response["output"]))
         return response["output"]
 
     async def stream(self, message: str, resource_context: str = ""):
-        """逐 token 流式输出 — yield dict: type=content"""
+        """逐 token 流式输出 — 包含工具调用事件"""
         await self._ensure_action_tools()
-
-        history = self._get_session_history(self.session_id)
-        history_messages = list(history.messages)
 
         full_response = ""
 
@@ -161,13 +187,26 @@ class UnifiedChat:
             async for event in self._raw_executor.astream_events(
                 {
                     "input": message,
-                    "history": history_messages,
+                    "history": list(self._history),
                     "current_user_id": str(self.user_id),
                     "resource_context": resource_context,
                 },
                 version="v2",
             ):
-                if event.get("event") == "on_chat_model_stream":
+                kind = event.get("event", "")
+
+                if kind == "on_tool_start":
+                    tool_name = event.get("name", "")
+                    yield {"type": "tool_start", "tool": tool_name}
+
+                elif kind == "on_tool_end":
+                    tool_name = event.get("name", "")
+                    tool_output = event.get("data", {}).get("output", "")
+                    if isinstance(tool_output, str) and len(tool_output) > 500:
+                        tool_output = tool_output[:500] + "..."
+                    yield {"type": "tool_end", "tool": tool_name, "output": str(tool_output)}
+
+                elif kind == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
                     if chunk:
                         content = getattr(chunk, "content", None)
@@ -178,13 +217,26 @@ class UnifiedChat:
             async for event in self._raw_executor.astream_events(
                 {
                     "input": message,
-                    "history": history_messages,
+                    "history": list(self._history),
                     "current_user_id": str(self.user_id),
                     "resource_context": resource_context,
                 },
                 version="v1",
             ):
-                if event.get("event") == "on_chat_model_stream":
+                kind = event.get("event", "")
+
+                if kind == "on_tool_start":
+                    tool_name = event.get("name", "")
+                    yield {"type": "tool_start", "tool": tool_name}
+
+                elif kind == "on_tool_end":
+                    tool_name = event.get("name", "")
+                    tool_output = event.get("data", {}).get("output", "")
+                    if isinstance(tool_output, str) and len(tool_output) > 500:
+                        tool_output = tool_output[:500] + "..."
+                    yield {"type": "tool_end", "tool": tool_name, "output": str(tool_output)}
+
+                elif kind == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
                     if chunk:
                         content = getattr(chunk, "content", None)
@@ -192,5 +244,5 @@ class UnifiedChat:
                             full_response += content
                             yield {"type": "content", "content": content}
 
-        history.add_user_message(message)
-        history.add_ai_message(full_response)
+        self._history.append(HumanMessage(content=message))
+        self._history.append(AIMessage(content=full_response))

@@ -1,4 +1,4 @@
-import { generateImage, streamResourceGeneration } from '../api/apis'
+import { generateImage, getImageTaskStatus, streamResourceGeneration } from '../api/apis'
 
 export interface ResourceToolConfig {
   label: string
@@ -50,36 +50,30 @@ export type GenerationCallbacks = {
   onError?: (err: string) => void
 }
 
-function unwrapResponseData(result: any) {
-  return result?.data?.data ?? result?.data ?? result
-}
+const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
 
-function normalizeImageRecords(result: any): any[] {
-  const payload = unwrapResponseData(result)
+const normalizeImageRecords = (payload: any): any[] => {
+  const data = unwrapResponseData(payload)
 
-  if (Array.isArray(payload)) return payload
+  if (Array.isArray(data)) return data
 
   const records =
-    payload?.records ||
-    payload?.images ||
-    payload?.image_list ||
-    payload?.imageList ||
-    payload?.data ||
+    data?.images ||
+    data?.records ||
+    data?.image_list ||
+    data?.imageList ||
+    data?.data ||
     []
 
   if (Array.isArray(records)) return records
 
-  const urls = payload?.urls || payload?.image_urls || payload?.imageUrls || payload?.url || payload?.image_url || payload?.imageUrl
+  const urls = data?.urls || data?.image_urls || data?.imageUrls || data?.url || data?.image_url || data?.imageUrl
   const list = Array.isArray(urls) ? urls : urls ? [urls] : []
 
   return list.map((url: string, index: number) => ({
-    filename: payload?.filename || `图片 ${index + 1}`,
+    filename: data?.filename || `图片 ${index + 1}`,
     url,
   }))
-}
-
-function getImageStatus(result: any) {
-  return unwrapResponseData(result)?.status ?? result?.status
 }
 
 export async function executeGeneration(
@@ -95,26 +89,59 @@ export async function executeGeneration(
       return
     }
 
-    callbacks.onProgress?.('正在生成图片...')
+    callbacks.onProgress?.('正在提交图片生成任务...')
 
     try {
-      const result: any = await generateImage({
+      const submitRes: any = await generateImage({
         prompt,
         aspect_ratio: tool.aspectRatio || '1:1',
         img_count: tool.imageCount || 1,
       })
-      const status = getImageStatus(result)
-      const records = normalizeImageRecords(result)
+      const submitData = unwrapResponseData(submitRes)
+      const taskId = submitData?.task_id || submitData?.taskId || submitData?.id
 
-      if (records.length) {
-        const lines = records.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`)
-        callbacks.onDone?.()
-        callbacks.onProgress?.(lines.join('\n'))
-      } else if (status !== undefined) {
-        callbacks.onProgress?.(`图片生成状态：${status}，但暂时没有返回可展示的图片地址。`)
-      } else {
-        callbacks.onProgress?.('图片生成完成，但没有返回可展示的图片地址。')
+      if (!taskId) {
+        const immediateImages = normalizeImageRecords(submitRes)
+        if (immediateImages.length) {
+          callbacks.onProgress?.(
+            immediateImages.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
+          )
+          callbacks.onDone?.()
+          return
+        }
+
+        callbacks.onError?.('图片生成任务提交失败，请稍后重试。')
+        return
       }
+
+      for (let i = 0; i < 30; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        const statusRes: any = await getImageTaskStatus(taskId)
+        const taskInfo = unwrapResponseData(statusRes)
+        if (!taskInfo) continue
+
+        if (taskInfo.status === 'done') {
+          const images = normalizeImageRecords(taskInfo)
+          if (images.length) {
+            callbacks.onProgress?.(
+              images.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
+            )
+          } else {
+            callbacks.onProgress?.('图片生成完成，但没有返回可展示的图片地址。')
+          }
+          callbacks.onDone?.()
+          return
+        }
+
+        if (taskInfo.status === 'failed') {
+          callbacks.onError?.(taskInfo.error || '图片生成失败')
+          return
+        }
+
+        callbacks.onProgress?.(`正在生成图片（${i + 1}/30）...`)
+      }
+
+      callbacks.onError?.('图片生成超时，请稍后重试。')
     } catch {
       callbacks.onError?.('图片生成失败，请稍后再试。')
     }
