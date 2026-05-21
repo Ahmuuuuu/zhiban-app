@@ -201,8 +201,12 @@ class ImageService:
                         "created_at": str(record.created_at),
                     })
 
-                _task_status[task_id] = {**info, "status": "done", "images": images}
-                _logger.info(f"task_id={task_id} 完成 {len(images)} 张图片")
+                if images:
+                    _task_status[task_id] = {**info, "status": "done", "images": images}
+                    _logger.info(f"task_id={task_id} 完成 {len(images)} 张图片")
+                else:
+                    _task_status[task_id] = {**info, "status": "failed", "error": "图片下载失败，请重试"}
+                    _logger.error(f"task_id={task_id} 所有图片下载均失败")
                 return _task_status[task_id]
 
         except BaseException as e:
