@@ -1,23 +1,26 @@
 <template>
   <div class="app-shell">
-    <div
-      v-if="isHomeChatRoute"
-      class="route-slide-track"
-      :class="{ 'show-chat': route.path === '/chat' }"
-    >
-      <section class="route-slide-pane">
-        <HomeView />
-      </section>
-      <section class="route-slide-pane">
-        <ChatView v-if="showChatPane" />
-      </section>
-    </div>
+    <Transition name="page-fade" mode="out-in">
+      <div v-if="isHomeChatRoute" key="home-chat" class="home-chat-shell">
+        <div
+          class="route-slide-track"
+          :class="{ 'show-chat': route.path === '/chat' }"
+        >
+          <section class="route-slide-pane">
+            <HomeView />
+          </section>
+          <section class="route-slide-pane">
+            <ChatView v-if="showChatPane" />
+          </section>
+        </div>
+      </div>
 
-    <RouterView v-else v-slot="{ Component }">
-      <Transition name="page-fade" mode="out-in">
-        <component :is="Component" :key="route.fullPath" />
-      </Transition>
-    </RouterView>
+      <RouterView v-else v-slot="{ Component }" :key="route.fullPath">
+        <div class="page-transition-shell">
+          <component :is="Component" />
+        </div>
+      </RouterView>
+    </Transition>
   </div>
 
   <StudyPet floating auto-play-actions />
@@ -117,21 +120,60 @@ watch(
   overflow: hidden;
 }
 
+.home-chat-shell {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  transform-origin: 50% 46%;
+  will-change: opacity, transform, filter;
+}
+
+.page-transition-shell {
+  min-height: 100vh;
+  transform-origin: 50% 46%;
+  will-change: opacity, transform, filter;
+}
+
 .page-fade-enter-active,
 .page-fade-leave-active {
   transition:
-    opacity 0.28s ease,
-    transform 0.28s ease;
+    opacity 0.42s ease,
+    transform 0.52s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.42s ease;
 }
 
 .page-fade-enter-from {
   opacity: 0;
-  transform: translateY(12px) scale(0.99);
+  transform: translateY(28px) scale(0.975);
+  filter: blur(8px);
+}
+
+.page-fade-enter-to,
+.page-fade-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
 }
 
 .page-fade-leave-to {
   opacity: 0;
-  transform: translateY(-8px) scale(0.99);
+  transform: translateY(-18px) scale(0.985);
+  filter: blur(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-slide-track,
+  .page-fade-enter-active,
+  .page-fade-leave-active {
+    transition: none;
+  }
+
+  .page-fade-enter-from,
+  .page-fade-leave-to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
 }
 
 </style>

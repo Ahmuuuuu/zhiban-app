@@ -126,15 +126,24 @@ export async function executeGeneration(
             callbacks.onProgress?.(
               images.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
             )
+            callbacks.onDone?.()
           } else {
-            callbacks.onProgress?.('图片生成完成，但没有返回可展示的图片地址。')
+            callbacks.onError?.('图片没有下载成功，请稍后重试。')
           }
-          callbacks.onDone?.()
+          return
+        }
+
+        if (['download_failed', 'download_error'].includes(String(taskInfo.status))) {
+          callbacks.onError?.(taskInfo.error || '图片没有下载成功，请稍后重试。')
           return
         }
 
         if (taskInfo.status === 'failed') {
-          callbacks.onError?.(taskInfo.error || '图片生成失败')
+          if (/下载|download/i.test(String(taskInfo.error || ''))) {
+            callbacks.onError?.(taskInfo.error || '图片没有下载成功，请稍后重试。')
+          } else {
+            callbacks.onError?.(taskInfo.error || '图片生成失败')
+          }
           return
         }
 
