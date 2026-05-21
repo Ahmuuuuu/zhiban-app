@@ -43,9 +43,7 @@
 
         <div v-if="checked[currentQuestion.id]" class="judge" :class="{ wrong: !isCurrentCorrect }">
           <strong>{{ isCurrentCorrect ? '回答正确' : '回答错误' }}</strong>
-          <span v-if="!isCurrentCorrect">
-            正确答案：{{ currentQuestion.answer || '等待老师判定' }}
-          </span>
+          <span v-if="!isCurrentCorrect">正确答案：{{ currentQuestion.answer || '等待老师判定' }}</span>
           <p v-if="currentQuestion.explanation">{{ currentQuestion.explanation }}</p>
         </div>
 
@@ -60,7 +58,8 @@
 
       <article v-else class="score-panel">
         <p>总分</p>
-        <h2>{{ score }} / {{ questions.length }}</h2>
+        <h2 class="score-value">{{ percentScore }}<span>分</span></h2>
+        <small class="score-subtitle">答对 {{ score }} / {{ questions.length }} 题</small>
         <div class="score-list">
           <div v-for="(question, index) in questions" :key="question.id">
             <span>第 {{ index + 1 }} 题</span>
@@ -134,6 +133,11 @@ const isCurrentCorrect = computed(() => {
 const score = computed(() => questions.value.reduce((total, question) => {
   return total + (results.value[question.id]?.is_correct ? 1 : 0)
 }, 0))
+
+const percentScore = computed(() => {
+  if (!questions.value.length) return '0.0'
+  return ((score.value / questions.value.length) * 100).toFixed(1)
+})
 
 const goNext = () => {
   checkCurrent()
@@ -217,6 +221,30 @@ const goNext = () => {
   padding: 28px;
 }
 
+.score-panel {
+  text-align: center;
+}
+
+.score-value {
+  color: #163f8f;
+  font-size: clamp(58px, 9vw, 112px);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.score-value span {
+  margin-left: 8px;
+  font-size: clamp(20px, 3vw, 34px);
+}
+
+.score-subtitle {
+  display: block;
+  margin-top: 10px;
+  color: #5f8fc3;
+  font-size: 15px;
+  font-weight: 800;
+}
+
 .question-meta,
 .runner-actions,
 .score-list div {
@@ -295,7 +323,9 @@ textarea {
 .score-list {
   display: grid;
   gap: 10px;
-  margin: 20px 0;
+  margin: 24px auto;
+  max-width: 620px;
+  text-align: left;
 }
 
 .score-list div {

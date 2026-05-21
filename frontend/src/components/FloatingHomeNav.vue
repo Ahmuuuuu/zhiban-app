@@ -1,7 +1,7 @@
 <template>
   <header class="floating-nav" :class="{ 'entering-chat': enteringChat }">
     <nav class="nav-links">
-      <a href="#/chat" @click.prevent="goChat">AI 对话</a>
+      <a href="#/chat" @click.prevent="goChat">资源生成</a>
       <router-link to="/resources">资源</router-link>
       <router-link to="/mine">我的</router-link>
     </nav>

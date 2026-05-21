@@ -99,7 +99,7 @@
         </template>
 
         <template v-else>
-          <article v-for="item in 9" :key="item" class="resource-card placeholder-card">
+          <article class="empty-state">
             <div class="card-top">
               <span class="type-mark soft">
                 <FileText :size="18" />
@@ -123,9 +123,7 @@
           >
             {{ resource.title || '未命名资源' }}
           </button>
-          <template v-if="!hotResources.length">
-            <span v-for="item in 5" :key="item"></span>
-          </template>
+          <p v-if="!hotResources.length" class="hot-empty">暂无热门资源</p>
         </div>
 
         <button class="share-btn" type="button">我要分享</button>
@@ -166,6 +164,7 @@ import {
   Search
 } from 'lucide-vue-next'
 import { getStudyResources } from '../api/apis'
+import { hydrateSavedResourceRefs } from '../utils/savedResources'
 import UserAccountButton from '../components/UserAccountButton.vue'
 
 const resources = ref([])
@@ -209,7 +208,9 @@ const normalizeResources = data => {
     category: item.category || '',
     categoryLabel: categoryLabelMap[item.category] || '',
     visibility: item.visibility || 'private',
-    created_at: item.created_at || ''
+    created_at: item.created_at || item.createdAt || '',
+    previewUrl: item.previewUrl || item.preview_url || '',
+    downloadUrl: item.downloadUrl || item.download_url || ''
   }))
 }
 
@@ -219,7 +220,9 @@ const loadResources = async () => {
 
   try {
     const result = await getStudyResources({ visibility: 'public' })
-    resources.value = normalizeResources(result).filter(item => item.visibility === 'public')
+    const backendResources = normalizeResources(result).filter(item => item.visibility === 'public')
+    const generatedResources = await hydrateSavedResourceRefs('public')
+    resources.value = [...generatedResources, ...backendResources]
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     if (error?.response?.status === 401) {
