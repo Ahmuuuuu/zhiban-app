@@ -57,6 +57,8 @@ export function generateImage(data: {
   img_count?: number;
 }): Promise<unknown>;
 
+export function getImageTaskStatus(taskId: string): Promise<unknown>;
+
 export function getGeneratedImages(): Promise<unknown>;
 
 export function getGeneratedImage(imageId: number | string): Promise<unknown>;

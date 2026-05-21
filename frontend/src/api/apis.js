@@ -322,6 +322,10 @@ export function generateImage(data) {
   })
 }
 
+export function getImageTaskStatus(taskId) {
+  return request.get(`/image/status/${taskId}`)
+}
+
 export function getGeneratedImages() {
   return request.get('/image/list')
 }
