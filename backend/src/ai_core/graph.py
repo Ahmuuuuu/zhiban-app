@@ -4,33 +4,22 @@ LeaderAgent → [ExecutorAgent × N 多线程并行] → ReviewerAgent
 """
 import asyncio
 import json
-import sys
-from pathlib import Path
 from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
-sys.path.append(str(Path(__file__).parent.parent))
-
 from backend.src.ai_core.llm_config import llm
-from backend.src.utils.prompt_loader import load_prompt
+from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 
 # 资源类型 → 默认 prompt 路径
 PROMPT_MAP = {
-    "document": "resource/executor",
-    "ppt": "resource/executor_ppt",
-    "mindmap": "resource/executor",
-    "exercise": "resource/executor",
-    "case": "resource/executor",
-    "reading": "resource/executor",
+    "document": "resource/document",
+    "ppt": "resource/ppt",
+    "mindmap": "resource/document",
+    "exercise": "resource/document",
+    "case": "resource/document",
+    "reading": "resource/document",
 }
-
-
-def _fill(template: str, **kwargs) -> str:
-    result = template
-    for key, value in kwargs.items():
-        result = result.replace("{" + key + "}", str(value))
-    return result
 
 
 # ═══════════════════════════════════════
@@ -59,7 +48,7 @@ async def leader_node(state: ResourceState) -> dict:
     topic = state["topic"]
     portrait = state.get("portrait_context", "")
     kb = state.get("kb_context", "")
-    prompt_text = _fill(load_prompt("resource/leader"), topic=topic, portrait_context=portrait, kb_context=kb)
+    prompt_text = fill_prompt(load_prompt("agent/leader"), topic=topic, portrait_context=portrait, kb_context=kb)
 
     response = await llm.ainvoke(prompt_text)
 
@@ -100,9 +89,9 @@ async def executor_node(state: ResourceState) -> dict:
         if custom.strip():
             template = custom
         else:
-            prompt_path = PROMPT_MAP.get(rt, "resource/executor")
+            prompt_path = PROMPT_MAP.get(rt, "resource/document")
             template = load_prompt(prompt_path)
-        prompts[rt] = _fill(
+        prompts[rt] = fill_prompt(
             template,
             topic=topic,
             resource_type=rt,
@@ -141,7 +130,7 @@ async def reviewer_node(state: ResourceState) -> dict:
         parts.append(f"## [{rt}]\n{content[:2000]}...")
     combined = "\n\n".join(parts)
 
-    prompt_text = _fill(load_prompt("resource/reviewer"), content=combined)
+    prompt_text = fill_prompt(load_prompt("agent/reviewer"), content=combined)
 
     response = await llm.ainvoke(prompt_text)
 
@@ -181,7 +170,7 @@ def should_continue(state: ResourceState) -> str:
 #  Graph
 # ═══════════════════════════════════════
 
-def build_graph() -> StateGraph:
+def build_graph():
     workflow = StateGraph(ResourceState)
 
     workflow.add_node("leader", leader_node)

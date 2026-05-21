@@ -1,7 +1,5 @@
 import sys
 import json
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent))
 
 import httpx
 from backend.src.ai_core.llm_config import llm
@@ -16,6 +14,7 @@ from backend.src.ai_core.tools.skill import (
 from backend.src.ai_core.tools.resource import generate_learning_resource
 from backend.src.ai_core.tools.search import web_search
 from backend.src.ai_core.tools.image import generate_image
+from backend.src.ai_core.tools.exam import generate_exam_questions
 from backend.src.ai_core.tools.history import get_used_history
 from backend.src.utils.prompt_loader import load_prompt
 from pydantic import create_model
@@ -56,13 +55,12 @@ def _inject_user_id(tool, user_id: str):
 class UnifiedChat:
     _instances: list["UnifiedChat"] = []
 
-    def __init__(self, user_id: int, session_id: str = None):
+    def __init__(self, user_id: int, session_id: str | None = None):
         self.user_id = user_id
         self.session_id = session_id or f"unified_{user_id}"
         self._raw_executor = None
         self._action_tools_loaded = False
         self._history: list = []
-        self._build_agent(action_tools=[])
         UnifiedChat._instances.append(self)
 
     # ── 动态工具工厂 ──
@@ -70,7 +68,7 @@ class UnifiedChat:
     @staticmethod
     def _make_http_tool(skill: dict):
         """将 HTTP 类型的 action skill 包装成 LangChain StructuredTool"""
-        from pydantic import create_model, Field as PydanticField
+        from pydantic import Field as PydanticField
 
         config = json.loads(skill["action_config"]) if isinstance(skill["action_config"], str) else skill["action_config"]
         safe_name = skill["name"].replace("-", "_").replace(" ", "_")
@@ -148,6 +146,7 @@ class UnifiedChat:
             _inject_user_id(create_action_skill, uid),
             _inject_user_id(generate_learning_resource, uid),
             _inject_user_id(generate_image, uid),
+            _inject_user_id(generate_exam_questions, uid),
         ]
         tools.extend(_inject_user_id(t, uid) for t in action_tools)
 
@@ -161,7 +160,10 @@ class UnifiedChat:
         """首次调用或 rebuild_for_user 后，异步加载 action tools 并重建 agent"""
         if self._action_tools_loaded:
             return
-        action_tools = await self._load_action_tools_async()
+        try:
+            action_tools = await self._load_action_tools_async()
+        except Exception:
+            action_tools = []
         self._build_agent(action_tools)
         self._action_tools_loaded = True
 

@@ -11,6 +11,7 @@ from backend.src.router.image_router import router as image_router
 from backend.src.router.knowledge_router import router as knowledge_router
 from backend.src.router.user_router import router as user_router
 from backend.src.router.admin_router import router as admin_router
+from backend.src.router.exam_router import router as exam_router
 from backend.src.utils.jwt import create_access_token
 
 app = FastAPI(
@@ -70,3 +71,4 @@ app.include_router(resource_router)
 app.include_router(image_router)
 app.include_router(knowledge_router)
 app.include_router(admin_router)
+app.include_router(exam_router)
