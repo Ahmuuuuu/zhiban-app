@@ -67,7 +67,22 @@
   <div v-else-if="messages.length === 0" class="empty-chat">
     <h1>ready to create<br>your <span class="empty-chat__sub">learning resources ?</span></h1>
     <div class="resource-hero-visual" aria-hidden="true">
-      <img :src="resourceHeroImage" alt="" />
+      <article class="hero-card hero-card--left">
+        <span class="hero-card__icon">▰</span>
+        <strong>整理资料</strong>
+        <p>把笔记、文档和知识点快速归纳成学习资源。</p>
+      </article>
+      <article class="hero-card hero-card--center">
+        <span class="hero-card__icon">✦</span>
+        <strong>生成内容</strong>
+        <p>PPT、图片、题目和思维导图都可以从对话开始。</p>
+      </article>
+      <article class="hero-card hero-card--right">
+        <span class="hero-card__icon">☑</span>
+        <strong>开始练习</strong>
+        <p>生成题目后进入题库，一题一题完成练习。</p>
+      </article>
+      <img class="hero-pet" :src="petHeroImage" alt="" />
     </div>
   </div>
 
@@ -95,6 +110,15 @@
             </div>
           </div>
           <router-link class="quiz-action" :to="`/question-bank/${message.quizId}`">开始练习</router-link>
+          <button
+            v-if="message.sourceId"
+            class="quiz-action"
+            type="button"
+            :disabled="message.centerSaveStatus === 'saving' || message.centerSaveStatus === 'saved'"
+            @click="saveGeneratedQuizToResources(message)"
+          >
+            {{ centerSaveLabel(message) }}
+          </button>
         </div>
 
         <div
@@ -209,6 +233,29 @@
   </div>
 </footer>
     </main>
+
+    <Teleport to="body">
+      <section v-if="saveDialog.visible" class="save-dialog" @click.self="closeSaveDialog">
+        <article class="save-dialog__panel">
+          <h2>保存生成资源</h2>
+          <p>选择保存位置，公开后会出现在资源中心；仅自己可见会出现在我的资源。</p>
+          <div class="save-dialog__options">
+            <label :class="{ active: saveDialog.visibility === 'private' }">
+              <input v-model="saveDialog.visibility" type="radio" value="private" />
+              <span>仅自己可见</span>
+            </label>
+            <label :class="{ active: saveDialog.visibility === 'public' }">
+              <input v-model="saveDialog.visibility" type="radio" value="public" />
+              <span>公开到资源中心</span>
+            </label>
+          </div>
+          <div class="save-dialog__actions">
+            <button type="button" @click="closeSaveDialog">取消</button>
+            <button type="button" class="primary" @click="confirmSaveGeneratedResource">保存</button>
+          </div>
+        </article>
+      </section>
+    </Teleport>
   </div>
 </template>
 
@@ -237,8 +284,9 @@ import {
   SendHorizontal,
   Video
 } from 'lucide-vue-next'
-import resourceHeroImage from '../assets/pic/资源生成背景.png'
+import petHeroImage from '../assets/pic/zhiban-pet-base.png'
 import { looksLikeQuizContent, upsertQuizSet } from '../utils/quizBank'
+import { saveGeneratedResourceRef } from '../utils/savedResources'
 
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
@@ -353,6 +401,11 @@ const activeConversationId = ref(null)
 const historyLoading = ref(false)
 const loading = ref(false)
 const chatContentRef = ref(null)
+const saveDialog = ref({
+  visible: false,
+  visibility: 'private',
+  message: null
+})
 
 const getResponseData = (res) => {
   return res?.data ?? res ?? {}
@@ -378,6 +431,7 @@ const buildMessagesFromHistory = (records, conversationId) => {
       const time = formatTime(getRecordTime(item))
       const id = getRecordId(item, index)
 
+      const assistantMessage = normalizeHistoryAssistantMessage(item, `${conversationId}-${id}-res`, time)
       return [
         {
           id: `${conversationId}-${id}-req`,
@@ -386,14 +440,8 @@ const buildMessagesFromHistory = (records, conversationId) => {
           content: stripTypedResourceInstruction(item.req),
           time
         },
-        {
-          id: `${conversationId}-${id}-res`,
-          role: 'assistant',
-          type: 'text',
-          content: item.res || '',
-          time
-        }
-      ].filter(message => message.content)
+        assistantMessage
+      ].filter(message => message.type !== 'text' || message.content)
     })
 }
 
@@ -641,8 +689,6 @@ const getNowTime = () => {
 
 // 初始空状态展示草图里的学习资源引导
 const messages = ref([])
-const SAVED_GENERATED_RESOURCES_KEY = 'zhiban_saved_generated_resources'
-
 const normalizeFileMessage = data => {
   const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || 'file'
   const rawFilename =
@@ -673,6 +719,67 @@ const isExerciseFile = fileData => {
   const type = String(fileData?.file_type || fileData?.fileType || fileData?.resource_type || fileData?.resourceType || '').toLowerCase()
   const content = fileData?.content || fileData?.text || fileData?.preview_content || fileData?.previewContent || ''
   return type.includes('exercise') || type.includes('quiz') || type.includes('question') || looksLikeQuizContent(content)
+}
+
+const tryParseJson = value => {
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+const normalizeHistoryAssistantMessage = (item, id, time) => {
+  const rawContent = item.res || item.content || item.answer || ''
+  const parsed = typeof rawContent === 'string' ? tryParseJson(rawContent) : rawContent
+
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const hasFileShape =
+      parsed.file_type ||
+      parsed.fileType ||
+      parsed.filename ||
+      parsed.file_id ||
+      parsed.fileId ||
+      parsed.resource_id ||
+      parsed.resourceId ||
+      parsed.download_url ||
+      parsed.preview_url
+
+    if (hasFileShape) {
+      return { ...normalizeFileMessage(parsed), id, time }
+    }
+  }
+
+  if (looksLikeQuizContent(rawContent)) {
+    const quiz = upsertQuizSet({
+      id: `history-quiz-${id}`,
+      title: '历史生成题目',
+      filename: '历史生成题目',
+      fileType: 'exercise',
+      content: rawContent
+    })
+
+    if (quiz) {
+      return {
+        id,
+        role: 'assistant',
+        type: 'quiz',
+        quizId: quiz.id,
+        title: quiz.title,
+        content: quiz.content,
+        questionCount: quiz.questionCount,
+        time
+      }
+    }
+  }
+
+  return {
+    id,
+    role: 'assistant',
+    type: 'text',
+    content: stripTypedResourceInstruction(rawContent),
+    time
+  }
 }
 
 const appendQuizMessage = async fileData => {
@@ -784,42 +891,72 @@ const appendImageMessage = imageData => {
 
 const centerSaveLabel = message => {
   if (message.centerSaveStatus === 'saving') return '保存中...'
-  if (message.centerSaveStatus === 'saved') return '已存入资源中心'
-  if (message.centerSaveStatus === 'error') return '重新存入资源中心'
-  return '存入资源中心'
+  if (message.centerSaveStatus === 'saved') return message.savedVisibility === 'public' ? '已公开到资源中心' : '已存入我的资源'
+  if (message.centerSaveStatus === 'error') return '重新保存'
+  return '保存资源'
 }
 
 const fileTitleWithoutExtension = filename => String(filename || '生成资源').replace(/\.[^.\\/]+$/, '')
 
 const saveGeneratedFileToResourceCenter = async message => {
   if (!message || message.centerSaveStatus === 'saving' || message.centerSaveStatus === 'saved') return
+  saveDialog.value = {
+    visible: true,
+    visibility: 'private',
+    message
+  }
+}
+
+const saveGeneratedQuizToResources = message => {
+  Object.assign(message, {
+    fileId: message.sourceId,
+    resourceKind: 'resource',
+    fileType: message.fileType || 'exercise',
+    filename: message.title || 'AI 生成题目',
+    content: message.content || ''
+  })
+  saveGeneratedFileToResourceCenter(message)
+}
+
+const closeSaveDialog = () => {
+  saveDialog.value.visible = false
+  saveDialog.value.message = null
+}
+
+const confirmSaveGeneratedResource = async () => {
+  const message = saveDialog.value.message
+  if (!message || message.centerSaveStatus === 'saving' || message.centerSaveStatus === 'saved') return
 
   message.centerSaveStatus = 'saving'
 
   try {
-    const saved = JSON.parse(localStorage.getItem(SAVED_GENERATED_RESOURCES_KEY) || '[]')
-    const id = `${message.resourceKind || 'resource'}-${message.fileId || message.id}`
-    const record = {
-      id,
+    const category = isExerciseFile(message)
+      ? 'exercise'
+      : String(message.fileType || '').toLowerCase().includes('ppt')
+        ? 'reference'
+        : 'reference'
+
+    saveGeneratedResourceRef({
       sourceId: message.fileId || '',
       kind: message.resourceKind || 'resource',
       fileType: message.fileType,
+      category,
       title: fileTitleWithoutExtension(message.filename),
       filename: message.filename,
       previewUrl: message.previewUrl || '',
       downloadUrl: message.downloadUrl || '',
       content: message.content || '',
+      visibility: saveDialog.value.visibility,
       createdAt: new Date().toISOString()
-    }
-    const next = [record, ...saved.filter(item => item.id !== id)]
-    localStorage.setItem(SAVED_GENERATED_RESOURCES_KEY, JSON.stringify(next))
-    window.dispatchEvent(new CustomEvent('zhiban-generated-resource-saved', { detail: record }))
+    })
 
     message.centerSaveStatus = 'saved'
+    message.savedVisibility = saveDialog.value.visibility
+    closeSaveDialog()
   } catch (error) {
     console.error('存入资源中心失败：', error)
     message.centerSaveStatus = 'error'
-    window.alert(error?.message || '存入资源中心失败，请稍后再试。')
+    window.alert(error?.message || '保存资源失败，请稍后再试。')
   }
 }
 
@@ -1433,13 +1570,77 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   overflow: visible;
+  position: relative;
 }
 
-.resource-hero-visual img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+.hero-card {
+  position: absolute;
+  top: 50%;
+  width: clamp(150px, 13vw, 205px);
+  min-height: clamp(158px, 20vh, 220px);
+  padding: clamp(18px, 2vw, 24px);
+  border: 1px solid rgba(226, 235, 244, 0.86);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 22px 48px rgba(56, 76, 112, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  transform: translateY(-50%);
+}
+
+.hero-card--left {
+  left: 11%;
+}
+
+.hero-card--center {
+  left: 50%;
+  z-index: 2;
+  min-height: clamp(184px, 24vh, 250px);
+  transform: translate(-50%, -45%);
+}
+
+.hero-card--right {
+  right: 11%;
+}
+
+.hero-card__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 13px;
+  background: rgba(201, 220, 233, 0.48);
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.hero-card strong {
+  color: #171d2d;
+  font-size: clamp(16px, 1.4vw, 22px);
+  line-height: 1.18;
+}
+
+.hero-card p {
+  margin: 0;
+  color: rgba(23, 29, 45, 0.62);
+  font-size: clamp(12px, 0.95vw, 14px);
+  line-height: 1.55;
+}
+
+.hero-pet {
+  position: absolute;
+  z-index: 3;
+  right: 5%;
+  top: -8%;
+  width: clamp(94px, 10vw, 138px);
+  height: auto;
+  filter: drop-shadow(0 16px 26px rgba(95, 143, 195, 0.28));
 }
 
 .message-row {
@@ -1608,6 +1809,7 @@ onMounted(() => {
   margin-top: 14px;
   min-height: 34px;
   padding: 0 14px;
+  border: 0;
   border-radius: 999px;
   background: var(--primary);
   color: #ffffff;
@@ -1616,6 +1818,17 @@ onMounted(() => {
   font-weight: 900;
   display: inline-flex;
   align-items: center;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.quiz-action + .quiz-action {
+  margin-left: 8px;
+}
+
+.quiz-action:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
 }
 
 .input-area {
@@ -1910,6 +2123,86 @@ textarea::placeholder {
   border-radius: 8px;
 }
 
+.save-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 4200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(12, 28, 58, 0.28);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.save-dialog__panel {
+  width: min(420px, 100%);
+  padding: 22px;
+  border: 1px solid rgba(201, 220, 233, 0.85);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 70px rgba(22, 63, 143, 0.2);
+}
+
+.save-dialog__panel h2 {
+  margin: 0;
+  color: var(--primary);
+  font-size: 20px;
+}
+
+.save-dialog__panel p {
+  margin: 8px 0 18px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.save-dialog__options {
+  display: grid;
+  gap: 10px;
+}
+
+.save-dialog__options label {
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 18px;
+  background: #fff;
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.save-dialog__options label.active {
+  border-color: var(--primary);
+  background: rgba(237, 249, 252, 0.78);
+}
+
+.save-dialog__actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.save-dialog__actions button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 18px;
+  background: #fff;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.save-dialog__actions .primary {
+  background: var(--primary);
+  color: #fff;
+}
+
 .markdown-body :deep(table) {
   width: 100%;
   border-collapse: collapse;
@@ -1993,6 +2286,31 @@ textarea::placeholder {
     width: min(100%, 640px);
     min-width: 0;
     height: clamp(160px, 28vh, 280px);
+  }
+
+  .hero-card {
+    width: clamp(118px, 31vw, 158px);
+    min-height: 150px;
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .hero-card--left {
+    left: 0;
+  }
+
+  .hero-card--right {
+    right: 0;
+  }
+
+  .hero-card p {
+    display: none;
+  }
+
+  .hero-pet {
+    right: 2%;
+    top: -10%;
+    width: clamp(74px, 20vw, 104px);
   }
 
   .input-area {

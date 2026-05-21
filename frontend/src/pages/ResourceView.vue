@@ -101,6 +101,7 @@ import {
   RefreshCw
 } from 'lucide-vue-next'
 import { getStudyResources } from '../api/apis'
+import { hydrateSavedResourceRefs } from '../utils/savedResources'
 
 const route = useRoute()
 const resources = ref([])
@@ -132,7 +133,9 @@ const normalizeResources = data => {
     category: item.category || '',
     categoryLabel: categoryLabelMap[item.category] || '',
     visibility: item.visibility || 'private',
-    created_at: item.created_at || ''
+    created_at: item.created_at || item.createdAt || '',
+    previewUrl: item.previewUrl || item.preview_url || '',
+    downloadUrl: item.downloadUrl || item.download_url || ''
   }))
 }
 
@@ -150,7 +153,9 @@ const loadResources = async () => {
 
   try {
     const result = await getStudyResources({ visibility: 'private' })
-    resources.value = normalizeResources(result).filter(item => item.visibility !== 'public')
+    const backendResources = normalizeResources(result).filter(item => item.visibility !== 'public')
+    const generatedResources = await hydrateSavedResourceRefs('private')
+    resources.value = [...generatedResources, ...backendResources]
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     errorMessage.value =
