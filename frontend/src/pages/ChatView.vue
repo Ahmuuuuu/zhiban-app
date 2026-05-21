@@ -94,7 +94,7 @@
               <span>{{ message.questionCount || 0 }} 道题，已放入题库</span>
             </div>
           </div>
-          <router-link class="quiz-action" :to="`/question-bank/${message.quizId}`">去题库做题</router-link>
+          <router-link class="quiz-action" :to="`/question-bank/${message.quizId}`">开始练习</router-link>
         </div>
 
         <div
@@ -671,7 +671,8 @@ const normalizeFileMessage = data => {
 
 const isExerciseFile = fileData => {
   const type = String(fileData?.file_type || fileData?.fileType || fileData?.resource_type || fileData?.resourceType || '').toLowerCase()
-  return type.includes('exercise') || type.includes('quiz') || type.includes('question')
+  const content = fileData?.content || fileData?.text || fileData?.preview_content || fileData?.previewContent || ''
+  return type.includes('exercise') || type.includes('quiz') || type.includes('question') || looksLikeQuizContent(content)
 }
 
 const appendQuizMessage = async fileData => {

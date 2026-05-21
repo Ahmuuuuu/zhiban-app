@@ -117,7 +117,8 @@ const isPetExerciseFile = (fileData: any) => {
   const type = String(
     fileData?.file_type || fileData?.fileType || fileData?.resource_type || fileData?.resourceType || "",
   ).toLowerCase();
-  return type.includes("exercise") || type.includes("quiz") || type.includes("question");
+  const content = fileData?.content || fileData?.text || fileData?.preview_content || fileData?.previewContent || "";
+  return type.includes("exercise") || type.includes("quiz") || type.includes("question") || looksLikeQuizContent(content);
 };
 
 const applyPetQuizFile = async (message: PetChatMessage, fileData: any) => {
@@ -415,7 +416,7 @@ const handleChatEnter = (event: KeyboardEvent) => {
           class="pet-chat__save-resource"
           @click="openPetQuiz(message.quizId)"
         >
-          去题库做题
+          开始练习
         </button>
       </div>
     </div>

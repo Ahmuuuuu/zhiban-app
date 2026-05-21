@@ -6,7 +6,7 @@
         <p>Quiz</p>
         <h1>{{ quiz?.title || '做题' }}</h1>
       </div>
-      <span class="progress">{{ currentIndex + 1 }} / {{ questions.length }}</span>
+      <span class="progress">{{ currentIndex + 1 }} / {{ questions.length || 0 }}</span>
     </header>
 
     <section v-if="loading" class="empty-state">
@@ -43,8 +43,10 @@
 
         <div v-if="checked[currentQuestion.id]" class="judge" :class="{ wrong: !isCurrentCorrect }">
           <strong>{{ isCurrentCorrect ? '回答正确' : '回答错误' }}</strong>
-          <span v-if="!isCurrentCorrect">正确答案：{{ results[currentQuestion.id]?.correct_answer || currentQuestion.answer || '等待老师判定' }}</span>
-          <p v-if="!isCurrentCorrect && (results[currentQuestion.id]?.analysis || currentQuestion.explanation)">{{ results[currentQuestion.id]?.analysis || currentQuestion.explanation }}</p>
+          <span v-if="!isCurrentCorrect">
+            正确答案：{{ currentQuestion.answer || '等待老师判定' }}
+          </span>
+          <p v-if="currentQuestion.explanation">{{ currentQuestion.explanation }}</p>
         </div>
 
         <footer class="runner-actions">
@@ -62,7 +64,9 @@
         <div class="score-list">
           <div v-for="(question, index) in questions" :key="question.id">
             <span>第 {{ index + 1 }} 题</span>
-            <strong :class="{ wrong: !results[question.id]?.is_correct }">{{ results[question.id]?.is_correct ? '正确' : (results[question.id] !== undefined ? '错误' : '未作答') }}</strong>
+            <strong :class="{ wrong: !results[question.id]?.is_correct }">
+              {{ results[question.id]?.is_correct ? '正确' : '错误' }}
+            </strong>
           </div>
         </div>
         <router-link class="primary-btn" to="/question-bank">回到题库</router-link>
@@ -77,10 +81,9 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { getQuizSet } from '../utils/quizBank'
-import { submitExamAnswer } from '../api/apis'
 
 const route = useRoute()
 const quiz = ref(null)
@@ -89,22 +92,12 @@ const loading = ref(true)
 const currentIndex = ref(0)
 const answers = ref({})
 const checked = ref({})
-const results = ref({}) // { questionId: { is_correct, correct_answer, analysis } }
+const results = ref({})
 const finished = ref(false)
 
-onMounted(async () => {
+onMounted(() => {
   const id = String(route.params.quizId || '')
-  let session = getQuizSet(id)
-
-  // 如题目尚未生成完成，轮询等待（最多 10 秒）
-  if (session && !session.questions?.length) {
-    for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, 1000))
-      session = getQuizSet(id)
-      if (session?.questions?.length) break
-    }
-  }
-
+  const session = getQuizSet(id)
   quiz.value = session
   questions.value = session?.questions || []
   loading.value = false
@@ -112,50 +105,38 @@ onMounted(async () => {
 
 const currentQuestion = computed(() => questions.value[currentIndex.value] || {})
 
-// 记录开始时间用于 time_spent
-const startTime = ref(Date.now())
+const normalizeAnswer = value =>
+  String(value || '')
+    .trim()
+    .replace(/^[（(]?([A-D])[\)）.、]?\s*$/i, '$1')
+    .toUpperCase()
 
-const checkCurrent = async () => {
-  const q = currentQuestion.value
-  if (!q?.id) return
-  checked.value[q.id] = true
+const checkCurrent = () => {
+  const question = currentQuestion.value
+  if (!question?.id) return
 
-  // 提交答案到后端，用后端返回的评判结果
-  try {
-    const res = await submitExamAnswer({
-      question_id: q.id,
-      answer: answers.value[q.id] || '',
-      time_spent: Math.round((Date.now() - startTime.value) / 1000),
-    })
-    const data = res?.data || res
-    if (data) {
-      results.value[q.id] = {
-        is_correct: data.is_correct,
-        correct_answer: data.correct_answer || q.answer,
-        analysis: data.analysis || q.explanation || '',
-      }
-    }
-  } catch (err) {
-    console.error('提交答案失败：', err)
+  checked.value[question.id] = true
+  const userAnswer = normalizeAnswer(answers.value[question.id])
+  const correctAnswer = normalizeAnswer(question.answer)
+
+  results.value[question.id] = {
+    is_correct: correctAnswer ? userAnswer === correctAnswer : Boolean(userAnswer),
+    correct_answer: question.answer,
+    analysis: question.explanation || ''
   }
 }
 
 const isCurrentCorrect = computed(() => {
-  const r = results.value[currentQuestion.value?.id]
-  return r !== undefined ? r.is_correct : false
+  const result = results.value[currentQuestion.value?.id]
+  return result !== undefined ? result.is_correct : false
 })
 
-const score = computed(() => {
-  let total = 0
-  for (const q of questions.value) {
-    const r = results.value[q.id]
-    if (r?.is_correct) total += 1
-  }
-  return total
-})
+const score = computed(() => questions.value.reduce((total, question) => {
+  return total + (results.value[question.id]?.is_correct ? 1 : 0)
+}, 0))
 
-const goNext = async () => {
-  await checkCurrent()
+const goNext = () => {
+  checkCurrent()
 
   if (currentIndex.value >= questions.value.length - 1) {
     finished.value = true
@@ -194,195 +175,142 @@ const goNext = async () => {
 }
 
 .runner-header h1,
+.question-panel h2,
 .score-panel h2 {
   margin: 0;
-  font-size: 30px;
 }
 
-.progress {
-  min-height: 34px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: #c9dce9;
+.progress,
+.soft-btn,
+.primary-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(22, 63, 143, 0.2);
+  border-radius: 18px;
+  background: #ffffff;
+  color: #163f8f;
+  text-decoration: none;
   display: inline-flex;
   align-items: center;
-  font-weight: 900;
+  justify-content: center;
+  font: inherit;
+  font-weight: 800;
 }
 
 .runner-shell,
-.empty-state {
-  max-width: 920px;
-  margin: 0 auto;
+.empty-state,
+.question-panel,
+.score-panel {
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 18px 44px rgba(22, 63, 143, 0.08);
+}
+
+.runner-shell {
+  padding: 24px;
 }
 
 .question-panel,
 .score-panel,
 .empty-state {
-  border: 1px solid rgba(22, 63, 143, 0.14);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 18px 44px rgba(22, 63, 143, 0.08);
+  padding: 28px;
 }
 
-.question-panel,
-.score-panel {
-  padding: 24px;
+.question-meta,
+.runner-actions,
+.score-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .question-meta {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.question-meta span {
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #c9dce9;
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.question-panel h2 {
-  margin: 0 0 20px;
-  font-size: 22px;
-  line-height: 1.55;
-  white-space: pre-wrap;
+  margin-bottom: 18px;
+  color: #5f8fc3;
+  font-weight: 800;
 }
 
 .options {
   display: grid;
   gap: 12px;
+  margin-top: 22px;
 }
 
 .options button {
+  width: 100%;
   min-height: 54px;
   padding: 12px 14px;
   border: 1px solid #c9dce9;
-  border-radius: 16px;
-  background: #ffffff;
+  border-radius: 18px;
+  background: #fff;
   color: #163f8f;
   display: flex;
   align-items: center;
   gap: 12px;
   text-align: left;
-  font: inherit;
   cursor: pointer;
 }
 
 .options button.selected {
   border-color: #163f8f;
-  box-shadow: 0 0 0 3px rgba(22, 63, 143, 0.12);
-}
-
-.options strong {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: #163f8f;
-  color: #ffffff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+  background: #edf9fc;
 }
 
 textarea {
   width: 100%;
   min-height: 140px;
+  margin-top: 22px;
   padding: 14px;
   border: 1px solid #c9dce9;
-  border-radius: 16px;
+  border-radius: 18px;
   color: #163f8f;
   font: inherit;
   resize: vertical;
 }
 
 .judge {
-  margin-top: 16px;
-  padding: 14px;
-  border-radius: 16px;
-  background: rgba(34, 197, 94, 0.12);
-  color: #166534;
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(73, 156, 111, 0.12);
+  color: #2f7d57;
 }
 
 .judge.wrong {
-  background: rgba(239, 68, 68, 0.1);
-  color: #991b1b;
-}
-
-.judge p {
-  margin: 8px 0 0;
-  line-height: 1.7;
+  background: rgba(178, 65, 65, 0.1);
+  color: #b24141;
 }
 
 .runner-actions {
-  margin-top: 22px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.soft-btn,
-.primary-btn {
-  min-height: 42px;
-  padding: 0 16px;
-  border: 1px solid rgba(22, 63, 143, 0.2);
-  border-radius: 18px;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font: inherit;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.soft-btn {
-  background: #ffffff;
-  color: #163f8f;
+  margin-top: 24px;
 }
 
 .primary-btn {
   background: #163f8f;
-  color: #ffffff;
-}
-
-.soft-btn:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
+  color: #fff;
 }
 
 .score-list {
-  margin: 22px 0;
   display: grid;
   gap: 10px;
+  margin: 20px 0;
 }
 
 .score-list div {
   min-height: 42px;
   padding: 0 14px;
-  border-radius: 14px;
-  background: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  border-radius: 16px;
+  background: #edf9fc;
 }
 
-.score-list strong {
-  color: #166534;
-}
-
-.score-list strong.wrong {
-  color: #991b1b;
+.wrong {
+  color: #b24141;
 }
 
 .empty-state {
-  min-height: 360px;
-  padding: 32px;
+  min-height: 320px;
   display: grid;
   place-items: center;
   text-align: center;
