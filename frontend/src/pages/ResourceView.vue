@@ -35,7 +35,7 @@
             v-for="resource in filteredResources"
             :key="resource.doc_id"
             class="resource-card"
-            @click="selectedResource = resource"
+            @click="openResourcePreview(resource)"
           >
             <div class="card-top">
               <span class="type-mark">
@@ -65,6 +65,29 @@
       </section>
 
     </section>
+
+    <Teleport to="body">
+      <section v-if="previewOpen && selectedResource" class="resource-fullscreen" @click.self="closeResourcePreview">
+        <article class="resource-fullscreen__panel">
+          <header class="resource-fullscreen__header">
+            <div>
+              <span>{{ selectedResource.categoryLabel || '学习资源' }}</span>
+              <h2>{{ selectedResource.title || '未命名资源' }}</h2>
+            </div>
+            <button type="button" aria-label="关闭预览" @click="closeResourcePreview">×</button>
+          </header>
+
+          <div class="resource-fullscreen__meta">
+            <span>{{ formatDate(selectedResource.created_at, true) }}</span>
+            <span>{{ getWordCount(selectedResource.content) }} 字</span>
+          </div>
+
+          <div class="resource-fullscreen__content">
+            <p>{{ selectedResource.content || '暂无正文内容' }}</p>
+          </div>
+        </article>
+      </section>
+    </Teleport>
   </main>
 </template>
 
@@ -82,6 +105,7 @@ import { getStudyResources } from '../api/apis'
 const route = useRoute()
 const resources = ref([])
 const selectedResource = ref(null)
+const previewOpen = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
 
@@ -140,6 +164,15 @@ const loadResources = async () => {
 }
 
 const filteredResources = computed(() => resources.value.filter(matchesCategory))
+
+const openResourcePreview = resource => {
+  selectedResource.value = resource
+  previewOpen.value = true
+}
+
+const closeResourcePreview = () => {
+  previewOpen.value = false
+}
 
 const matchesCategory = resource => {
   const cat = activeCategory.value
@@ -471,6 +504,86 @@ onMounted(loadResources)
 
 .spinning {
   animation: spin 0.9s linear infinite;
+}
+
+.resource-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  padding: clamp(18px, 4vw, 46px);
+  background: rgba(12, 28, 58, 0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+}
+
+.resource-fullscreen__panel {
+  width: min(1120px, 100%);
+  height: min(780px, 100%);
+  min-height: 0;
+  padding: clamp(20px, 3vw, 34px);
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 30px 90px rgba(22, 63, 143, 0.24);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.resource-fullscreen__header,
+.resource-fullscreen__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.resource-fullscreen__header span,
+.resource-fullscreen__meta {
+  color: #5f8fc3;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.resource-fullscreen__header h2 {
+  margin: 5px 0 0;
+  color: #163f8f;
+  font-size: clamp(22px, 3vw, 34px);
+  line-height: 1.2;
+}
+
+.resource-fullscreen__header button {
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(201, 220, 233, 0.9);
+  border-radius: 18px;
+  background: #fafafa;
+  color: #163f8f;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.resource-fullscreen__content {
+  min-height: 0;
+  flex: 1;
+  padding: 22px;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 24px;
+  background: rgba(237, 249, 252, 0.48);
+  overflow: auto;
+}
+
+.resource-fullscreen__content p {
+  margin: 0;
+  color: #1f2d43;
+  font-size: 16px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @keyframes spin {
