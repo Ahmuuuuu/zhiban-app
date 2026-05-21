@@ -86,11 +86,11 @@
 
             <div class="status-box">
               <div>
-                <strong>{{ userId ? '已登录' : '未登录' }}</strong>
-                <p>{{ userId ? '资料已保存' : '请先登录后再完善资料' }}</p>
+                <strong>{{ token ? '已登录' : '未登录' }}</strong>
+                <p>{{ token ? '资料已保存' : '请先登录后再完善资料' }}</p>
               </div>
               <button class="status-tag" type="button" @click="openLogin">
-                {{ userId ? 'Active' : 'Login' }}
+                {{ token ? 'Active' : 'Login' }}
               </button>
             </div>
           </div>
@@ -123,7 +123,6 @@ const router = useRouter()
 const defaultAvatar = 'https://api.dicebear.com/7.x/avataaars/svg?seed=Zhiban'
 
 const token = ref(localStorage.getItem('token') || '')
-const userId = token
 const loading = ref(false)
 const saving = ref(false)
 const isEditing = ref(false)
@@ -212,7 +211,7 @@ const buildProfilePayload = () => {
 }
 
 const loadProfile = async () => {
-  if (!userId.value) {
+  if (!token.value) {
     errorMessage.value = '请先登录'
     isEditing.value = true
     return
@@ -238,7 +237,7 @@ const loadProfile = async () => {
 }
 
 const openLogin = () => {
-  if (userId.value) return
+  if (token.value) return
 
   showLogin.value = true
 }
@@ -250,7 +249,7 @@ const handleLogin = async () => {
 }
 
 const saveProfile = async () => {
-  if (!userId.value) {
+  if (!token.value) {
     errorMessage.value = '请先登录'
     return
   }
@@ -261,8 +260,7 @@ const saveProfile = async () => {
 
   try {
     const payload = buildProfilePayload()
-    const result = await updateUserProfile(payload)
-    const savedProfile = normalizeProfile(result)
+    await updateUserProfile(payload)
     const profileResult = await getUserProfile()
 
     fillProfile(normalizeProfile(profileResult))

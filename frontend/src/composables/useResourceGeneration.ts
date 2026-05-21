@@ -1,4 +1,4 @@
-import { generateImage, getImageTaskStatus, streamResourceGeneration } from '../api/apis'
+﻿import { generateImage, getImageTaskStatus, streamResourceGeneration } from '../api/apis'
 
 export interface ResourceToolConfig {
   label: string
@@ -15,29 +15,33 @@ export const resourceTools: ResourceToolConfig[] = [
   { label: 'word', generateMode: 'resource', resourceTypes: ['document'] },
   { label: 'video', generateMode: 'resource', resourceTypes: ['document'] },
   { label: 'mindmap', generateMode: 'resource', resourceTypes: ['mindmap'] },
+  { label: 'quiz', generateMode: 'resource', resourceTypes: ['exercise'] },
 ]
 
 export function detectGenerationIntent(text: string): ResourceToolConfig | null {
   const trimmed = String(text || '').trim()
-  const hasGenerate = /(生成|制作|做|创建|来一份|出一份|画|设计|规划|整理)/.test(trimmed)
+  const hasGenerate = /(鐢熸垚|鍒朵綔|鍋殀鍒涘缓|鏉ヤ竴浠絴鍑轰竴浠絴鐢粅璁捐|瑙勫垝|鏁寸悊)/.test(trimmed)
   if (!hasGenerate) return null
 
-  if (/(图片|图像|image|img|插图|配图|示意图|图解|海报|插画)/i.test(trimmed)) {
+  if (/(鍥剧墖|鍥惧儚|image|img|鎻掑浘|閰嶅浘|绀烘剰鍥緗鍥捐В|娴锋姤|鎻掔敾)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'image')! }
   }
-  if (/(ppt|PPT|幻灯片|演示|课件|slide)/i.test(trimmed)) {
+  if (/(ppt|PPT|骞荤伅鐗噟婕旂ず|璇句欢|slide)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'ppt')! }
+  if (/(题目|题库|练习题|习题|测试题|quiz|exercise|出题|做题|选择题|填空题|简答题)/i.test(trimmed)) {
+    return { ...resourceTools.find(t => t.label === 'quiz')! }
   }
-  if (/(思维导图|mindmap|脑图|mind map)/i.test(trimmed)) {
+  }
+  if (/(鎬濈淮瀵煎浘|mindmap|鑴戝浘|mind map)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'mindmap')! }
   }
-  if (/(视频|video|课程视频|教学视频|脚本|分镜)/i.test(trimmed)) {
+  if (/(瑙嗛|video|璇剧▼瑙嗛|鏁欏瑙嗛|鑴氭湰|鍒嗛暅)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'video')! }
   }
-  if (/(文档|word|学习资源|资料|笔记|教案|讲义|总结)/i.test(trimmed)) {
+  if (/(鏂囨。|word|瀛︿範璧勬簮|璧勬枡|绗旇|鏁欐|璁蹭箟|鎬荤粨)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'word')! }
   }
-  if (/(音乐|歌曲|music|节奏|旋律)/i.test(trimmed)) {
+  if (/(闊充箰|姝屾洸|music|鑺傚|鏃嬪緥)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'music')! }
   }
   return null
@@ -46,7 +50,8 @@ export function detectGenerationIntent(text: string): ResourceToolConfig | null 
 export type GenerationCallbacks = {
   onProgress?: (msg: string) => void
   onFile?: (fileData: unknown) => void
-  onDone?: () => void
+  onImage?: (imageData: unknown) => void
+  onDone?: (eventData?: unknown) => void
   onError?: (err: string) => void
 }
 
@@ -71,7 +76,7 @@ const normalizeImageRecords = (payload: any): any[] => {
   const list = Array.isArray(urls) ? urls : urls ? [urls] : []
 
   return list.map((url: string, index: number) => ({
-    filename: data?.filename || `图片 ${index + 1}`,
+    filename: data?.filename || `鍥剧墖 ${index + 1}`,
     url,
   }))
 }
@@ -89,7 +94,7 @@ export async function executeGeneration(
       return
     }
 
-    callbacks.onProgress?.('正在提交图片生成任务...')
+    callbacks.onProgress?.('姝ｅ湪鎻愪氦鍥剧墖鐢熸垚浠诲姟...')
 
     try {
       const submitRes: any = await generateImage({
@@ -103,8 +108,9 @@ export async function executeGeneration(
       if (!taskId) {
         const immediateImages = normalizeImageRecords(submitRes)
         if (immediateImages.length) {
+          immediateImages.forEach((image: unknown) => callbacks.onImage?.(image))
           callbacks.onProgress?.(
-            immediateImages.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
+            immediateImages.map((r: any) => `![${r.filename || '鍥剧墖'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
           )
           callbacks.onDone?.()
           return
@@ -123,8 +129,9 @@ export async function executeGeneration(
         if (taskInfo.status === 'done') {
           const images = normalizeImageRecords(taskInfo)
           if (images.length) {
+            images.forEach((image: unknown) => callbacks.onImage?.(image))
             callbacks.onProgress?.(
-              images.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
+              images.map((r: any) => `![${r.filename || '鍥剧墖'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
             )
             callbacks.onDone?.()
           } else {
@@ -139,15 +146,15 @@ export async function executeGeneration(
         }
 
         if (taskInfo.status === 'failed') {
-          if (/下载|download/i.test(String(taskInfo.error || ''))) {
+          if (/涓嬭浇|download/i.test(String(taskInfo.error || ''))) {
             callbacks.onError?.(taskInfo.error || '图片没有下载成功，请稍后重试。')
           } else {
-            callbacks.onError?.(taskInfo.error || '图片生成失败')
+            callbacks.onError?.(taskInfo.error || '鍥剧墖鐢熸垚澶辫触')
           }
           return
         }
 
-        callbacks.onProgress?.(`正在生成图片（${i + 1}/30）...`)
+        callbacks.onProgress?.(`姝ｅ湪鐢熸垚鍥剧墖锛?{i + 1}/30锛?..`)
       }
 
       callbacks.onError?.('图片生成超时，请稍后重试。')
@@ -158,7 +165,7 @@ export async function executeGeneration(
   }
 
   const resourceTypes = tool.resourceTypes || ['document']
-  callbacks.onProgress?.(`正在生成 ${resourceTypes.join(' / ')} 学习资源...`)
+  callbacks.onProgress?.(`姝ｅ湪鐢熸垚 ${resourceTypes.join(' / ')} 瀛︿範璧勬簮...`)
 
   try {
     await streamResourceGeneration(
@@ -172,15 +179,15 @@ export async function executeGeneration(
           const finished = Array.isArray(eventData?.resources) ? eventData.resources : []
           callbacks.onProgress?.(
             finished.length
-              ? `正在生成学习资源，已完成：${finished.join(' / ')}`
-              : `正在生成 ${resourceTypes.join(' / ')} 学习资源...`,
+              ? `正在生成学习资源，已完成：${finished.map((item: any) => typeof item === 'string' ? item : item?.file_type || item?.resource_type || 'resource').join(' / ')}`
+              : `姝ｅ湪鐢熸垚 ${resourceTypes.join(' / ')} 瀛︿範璧勬簮...`,
           )
         },
         onFile: (fileData: unknown) => {
           callbacks.onFile?.(fileData)
         },
-        onDone: () => {
-          callbacks.onDone?.()
+        onDone: (eventData: unknown) => {
+          callbacks.onDone?.(eventData)
         },
         onError: (err: string) => {
           callbacks.onError?.(err)

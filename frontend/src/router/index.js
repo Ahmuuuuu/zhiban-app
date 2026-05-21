@@ -9,6 +9,8 @@ import StudySituation from '../pages/StudySituation.vue'
 import StudyImportView from '../pages/StudyImportView.vue'
 import MyStudyView from '../pages/MyStudyView.vue'
 import MyProfile from '../pages/MyAccount/MyProfile.vue'
+import QuestionBankView from '../pages/QuestionBankView.vue'
+import QuizRunnerView from '../pages/QuizRunnerView.vue'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -27,6 +29,16 @@ const router = createRouter({
       path: '/chat',
       name: 'chat',
       component: ChatView
+    },
+    {
+      path: '/question-bank',
+      name: 'questionBank',
+      component: QuestionBankView
+    },
+    {
+      path: '/question-bank/:quizId',
+      name: 'quizRunner',
+      component: QuizRunnerView
     },
     {
       path: '/spath',

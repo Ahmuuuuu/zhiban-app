@@ -2,36 +2,83 @@
   <div class="my-full-page">
     <main class="main">
       <header class="topbar">
-        <div class="topbar-left">
-          <router-link class="home-btn" to="/" aria-label="返回首页">
-            <ArrowLeft :size="18" />
-            <span>返回首页</span>
-          </router-link>
+        <router-link class="home-pill" to="/" aria-label="返回首页">
+          首页
+        </router-link>
 
-          <div class="search-box">
-            <span>搜索课程、计划、错题...</span>
-          </div>
+        <div class="title-block">
+          <p>Mine</p>
+          <h1>我的</h1>
         </div>
 
-        <UserAccountButton meta-type="major" />
+        <label class="search-field">
+          <Search :size="18" />
+          <input type="search" placeholder="搜索课程、计划、错题..." />
+        </label>
+
+        <UserAccountButton variant="dark" meta-type="major" logged-out-name="未登录" />
       </header>
 
       <section class="my-page">
         <aside class="my-side">
-          <div class="my-side-head">
-            <p>Mine</p>
-            <h1>我的</h1>
-          </div>
-
+          <h2>导航</h2>
           <nav class="my-tabs" aria-label="我的学习导航">
-            <router-link
-              v-for="item in tabs"
-              :key="item.to"
-              class="my-tab"
-              :to="item.to"
+            <button
+              class="my-tab resource-trigger"
+              type="button"
+              :class="{ active: isResourcesPage }"
+              @click="toggleResourcePicker"
             >
-              <component :is="item.icon" :size="18" />
-              <span>{{ item.label }}</span>
+              <BookOpenText :size="18" />
+              <span>学习资源</span>
+            </button>
+
+            <Transition name="resource-picker-slide">
+              <div v-if="resourcePickerOpen" class="resource-picker">
+                <div class="picker__group">
+                  <span class="picker__label">资源分类</span>
+                  <div class="picker__tags">
+                    <button
+                      v-for="item in resourceCategories"
+                      :key="item.value"
+                      type="button"
+                      class="picker__tag"
+                      :class="{ active: activeCategory === item.value }"
+                      @click="setResourceCategory(item.value)"
+                    >
+                      {{ item.label }}
+                    </button>
+                  </div>
+                </div>
+
+                <Transition name="sub-picker-slide">
+                  <div v-if="activeCategory === 'document'" class="picker__group">
+                    <span class="picker__label">文档子分类</span>
+                    <div class="picker__tags">
+                      <button
+                        v-for="item in subCategories"
+                        :key="item.value"
+                        type="button"
+                        class="picker__tag"
+                        :class="{ active: activeSubCategory === item.value }"
+                        @click="setSubCategory(item.value)"
+                      >
+                        {{ item.label }}
+                      </button>
+                    </div>
+                  </div>
+                </Transition>
+              </div>
+            </Transition>
+
+            <router-link class="my-tab" to="/mine/situation" @click="resourcePickerOpen = false">
+              <ChartNoAxesColumnIncreasing :size="18" />
+              <span>学习情况</span>
+            </router-link>
+
+            <router-link class="my-tab" to="/mine/path" @click="resourcePickerOpen = false">
+              <Route :size="18" />
+              <span>学习路径</span>
             </router-link>
           </nav>
         </aside>
@@ -45,14 +92,72 @@
 </template>
 
 <script setup>
-import { ArrowLeft, BookOpenText, ChartNoAxesColumnIncreasing, Route } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { BookOpenText, ChartNoAxesColumnIncreasing, Route, Search } from 'lucide-vue-next'
 import UserAccountButton from '../components/UserAccountButton.vue'
 
-const tabs = [
-  { label: '学习资源', to: '/mine/resources', icon: BookOpenText },
-  { label: '学习情况', to: '/mine/situation', icon: ChartNoAxesColumnIncreasing },
-  { label: '学习路径', to: '/mine/path', icon: Route }
+const route = useRoute()
+const router = useRouter()
+const resourcePickerOpen = ref(false)
+
+const resourceCategories = [
+  { value: 'document', label: '文档' },
+  { value: 'ppt', label: 'PPT' },
+  { value: 'video', label: '视频' },
+  { value: 'quiz', label: '题库' },
+  { value: 'mindmap', label: '思维导图' }
 ]
+
+const subCategories = [
+  { value: 'all', label: '全部' },
+  { value: 'knowledge_point', label: '知识点讲解' },
+  { value: 'exercise', label: '习题/题库' },
+  { value: 'textbook', label: '教科书章节' },
+  { value: 'note', label: '学习笔记' },
+  { value: 'case_study', label: '实操案例' },
+  { value: 'reference', label: '参考资料' }
+]
+
+const isResourcesPage = computed(() => route.path === '/mine/resources')
+const activeCategory = computed(() => String(route.query.category || 'document'))
+const activeSubCategory = computed(() => String(route.query.sub || 'all'))
+
+const goResources = query => {
+  router.push({
+    path: '/mine/resources',
+    query: {
+      category: activeCategory.value,
+      ...(activeCategory.value === 'document' ? { sub: activeSubCategory.value } : {}),
+      ...query
+    }
+  })
+}
+
+const toggleResourcePicker = () => {
+  resourcePickerOpen.value = !resourcePickerOpen.value
+
+  if (!isResourcesPage.value) {
+    goResources({})
+  }
+}
+
+const setResourceCategory = category => {
+  goResources({
+    category,
+    ...(category === 'document' ? { sub: activeSubCategory.value } : { sub: undefined })
+  })
+}
+
+const setSubCategory = sub => {
+  goResources({ category: 'document', sub })
+}
+
+watch(() => route.path, path => {
+  if (path !== '/mine/resources') {
+    resourcePickerOpen.value = false
+  }
+})
 </script>
 
 <style scoped>
@@ -63,7 +168,9 @@ const tabs = [
 .my-full-page {
   width: 100vw;
   height: 100vh;
-  background: #fdfcf7;
+  background:
+    radial-gradient(ellipse 72% 44% at 10% 0%, rgba(209, 244, 250, 0.46), transparent 70%),
+    linear-gradient(135deg, #fafafa 0%, rgb(237, 249, 252) 52%, #fafafa 100%);
   color: #163f8f;
   font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
   display: grid;
@@ -73,194 +180,298 @@ const tabs = [
 .main {
   min-width: 0;
   height: 100vh;
-  padding: 26px 30px 30px;
+  padding: 28px 34px;
   overflow: hidden;
 }
 
 .topbar {
-  height: 64px;
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 22px;
+  grid-template-columns: 62px 150px minmax(280px, 1fr) auto;
   align-items: center;
-  margin-bottom: 24px;
+  gap: 14px;
+  margin-bottom: 20px;
 }
 
-.topbar-left {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
-}
-
-.home-btn {
-  height: 42px;
-  padding: 0 13px;
-  border: 1px solid #c9dce9;
-  border-radius: 28px;
-  background: #fafafa;
+.home-pill,
+.search-field,
+.my-side,
+.my-content,
+.resource-picker {
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  background: rgba(250, 250, 250, 0.78);
   color: #163f8f;
+  box-shadow:
+    0 14px 34px rgba(22, 63, 143, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+
+.home-pill {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
   font-size: 14px;
   font-weight: 800;
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    background 0.2s ease,
-    border-color 0.2s ease;
 }
 
-.home-btn:hover {
-  background: #c9dce9;
-  border-color: #5f8fc3;
-  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
-  transform: translateY(-1px);
-}
-
-.search-box {
-  height: 52px;
-  padding: 0 22px;
-  border: 1px solid rgba(201, 220, 233, 0.5);
-  border-radius: 999px;
-  background: rgba(250, 250, 250, 0.42);
+.title-block p {
+  margin: 0 0 5px;
   color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.title-block h1 {
+  margin: 0;
+  color: #163f8f;
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.search-field {
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border: 2px solid rgba(22, 63, 143, 0.86);
+  border-radius: 18px;
+  background: rgba(250, 250, 250, 0.88);
+  box-shadow: none;
   display: flex;
   align-items: center;
-  backdrop-filter: blur(24px) saturate(155%);
-  -webkit-backdrop-filter: blur(24px) saturate(155%);
-  box-shadow:
-    0 20px 46px rgba(22, 63, 143, 0.1),
-    inset 0 1px 0 rgba(250, 250, 250, 0.64);
+  gap: 10px;
+}
+
+.search-field input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #163f8f;
+  font: inherit;
+}
+
+.search-field input::placeholder {
+  color: rgba(22, 63, 143, 0.58);
+}
+
+.topbar :deep(.account-entry.dark) {
+  min-width: 128px;
+  max-width: 156px;
+  height: 46px;
+  min-height: 46px;
+  padding: 0 14px 0 7px;
+  border-radius: 24px;
+}
+
+.topbar :deep(.account-entry.dark .account-avatar) {
+  width: 32px;
+  height: 32px;
+  font-size: 13px;
+}
+
+.topbar :deep(.account-entry.dark .account-text strong),
+.topbar :deep(.account-entry.dark .account-text small) {
+  max-width: 86px;
 }
 
 .my-page {
-  height: calc(100vh - 118px);
+  height: calc(100vh - 110px);
   min-height: 0;
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
-  gap: 18px;
-  color: #163f8f;
+  gap: 24px;
   overflow: hidden;
 }
 
 .my-side,
 .my-content {
   min-height: 0;
-  border: 1px solid #c9dce9;
   border-radius: 28px;
-  background: rgba(250, 250, 250, 0.68);
-  backdrop-filter: blur(18px) saturate(135%);
-  -webkit-backdrop-filter: blur(18px) saturate(135%);
 }
 
 .my-side {
-  padding: 18px;
-  background: #edf5fa;
+  position: relative;
+  z-index: 5;
+  overflow: visible;
   display: flex;
   flex-direction: column;
-  gap: 18px;
 }
 
-.my-side-head p {
-  margin: 0 0 6px;
-  color: #5f8fc3;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.my-side-head h1 {
+.my-side h2 {
+  position: relative;
   margin: 0;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #163f8f;
-  font-size: 28px;
-  line-height: 1.15;
+  font-size: 21px;
 }
 
 .my-tabs {
+  position: relative;
   display: grid;
-  gap: 10px;
+  gap: 7px;
 }
 
 .my-tab {
-  min-height: 42px;
-  padding: 0 12px;
-  border: 1px solid #c9dce9;
-  border-radius: 18px;
-  background: #fafafa;
+  position: relative;
+  width: calc(100% - 28px);
+  height: 42px;
+  margin: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(250, 250, 250, 0.48);
   color: #163f8f;
   text-decoration: none;
   display: flex;
   align-items: center;
-  gap: 9px;
+  justify-content: center;
+  gap: 8px;
+  font: inherit;
   font-size: 14px;
   font-weight: 800;
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    background 0.2s ease,
-    border-color 0.2s ease;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.my-side h2::after,
+.my-tab::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background:
+    linear-gradient(to right, transparent 0%, rgba(201, 220, 233, 0.34) 24%, rgba(201, 220, 233, 0.72) 48%, rgba(201, 220, 233, 0.72) 52%, rgba(201, 220, 233, 0.34) 76%, transparent 100%),
+    linear-gradient(to right, transparent 0%, transparent 42%, rgba(201, 220, 233, 0.9) 42%, rgba(201, 220, 233, 0.9) 58%, transparent 58%, transparent 100%);
+  opacity: 0.66;
 }
 
 .my-tab:hover,
-.my-tab.router-link-active {
-  background: #dcebf4;
+.my-tab.router-link-active,
+.my-tab.active {
+  background: rgba(201, 220, 233, 0.72);
+  transform: translateY(-1px);
+}
+
+.resource-picker {
+  position: absolute;
+  left: calc(100% + 14px);
+  top: 0;
+  z-index: 20;
+  width: 280px;
+  padding: 16px;
+  border-radius: 22px;
+  display: grid;
+  gap: 14px;
+}
+
+.picker__group {
+  display: grid;
+  gap: 10px;
+}
+
+.picker__label {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.picker__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.picker__tag {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 18px;
+  background: rgba(250, 250, 250, 0.68);
+  color: #163f8f;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 14px 34px rgba(22, 63, 143, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.64);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+
+.picker__tag:hover {
+  background: rgba(201, 220, 233, 0.72);
   border-color: #5f8fc3;
-  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
-  transform: translateX(3px);
+}
+
+.picker__tag.active {
+  background: rgba(201, 220, 233, 0.72);
+  color: #163f8f;
+  border-color: #5f8fc3;
+  box-shadow: 0 0 0 2px rgba(95, 143, 195, 0.24), 0 14px 34px rgba(22, 63, 143, 0.08);
+}
+
+.sub-picker-slide-enter-active,
+.sub-picker-slide-leave-active {
+  transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sub-picker-slide-enter-from,
+.sub-picker-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-10px) scale(0.98);
+}
+
+.resource-picker-slide-enter-active,
+.resource-picker-slide-leave-active {
+  transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.resource-picker-slide-enter-from,
+.resource-picker-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-10px) scale(0.98);
 }
 
 .my-content {
   overflow: hidden;
 }
 
-@media (max-width: 920px) {
-  .my-full-page {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
-  }
-
+@media (max-width: 980px) {
+  .my-full-page,
   .main {
     height: auto;
     min-height: 100vh;
     overflow: visible;
   }
 
-  .topbar {
-    grid-template-columns: 1fr;
-    height: auto;
-  }
-
-  .topbar-left {
+  .topbar,
+  .my-page {
     grid-template-columns: 1fr;
   }
 
   .my-page {
     height: auto;
-    min-height: calc(100vh - 118px);
-    grid-template-columns: 1fr;
     overflow: visible;
   }
 
-  .my-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .resource-picker {
+    position: static;
+    width: calc(100% - 28px);
+    margin: 0 14px;
   }
 
   .my-content {
     overflow: visible;
-  }
-}
-
-@media (max-width: 640px) {
-  .main {
-    padding: 20px;
-  }
-
-  .my-tabs {
-    grid-template-columns: 1fr;
   }
 }
 </style>
