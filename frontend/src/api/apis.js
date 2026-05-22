@@ -10,7 +10,7 @@ export const resolveApiUrl = path => {
   return new URL(String(path).replace(/^\//, ''), API_BASE_URL).toString()
 }
 
-// 鐧诲綍锛氬悗绔?Login_User 鎺ユ敹 username/email/password
+// 登录：后端 Login_User 接收 username/email/password
 export function login(data) {
   return request({
     url: '/user/login_user',
@@ -19,7 +19,7 @@ export function login(data) {
   })
 }
 
-// 娉ㄥ唽锛氬悗绔?Create_User 鎺ユ敹 username/password
+// 注册：后端 Create_User 接收 username/password
 export function register(data) {
   return request({
     url: '/user/create_user',
@@ -28,7 +28,7 @@ export function register(data) {
   })
 }
 
-// 鑾峰彇鐢ㄦ埛璧勬枡锛氬悗绔?Read_User 閫氳繃 token 鑾峰彇 user_id
+// 获取用户资料：后端 Read_User 通过 token 获取 user_id
 export function getUserProfile() {
   return request({
     url: '/user/read_user',
@@ -36,7 +36,7 @@ export function getUserProfile() {
   })
 }
 
-// 鏇存柊涓汉淇℃伅锛氬悗绔?Update_User_Information 鎺ユ敹 username/major/email/phonenum/profile
+// 更新个人信息：后端 Update_User_Information 接收 username/major/email/phonenum/profile
 export function updateUserProfile(data) {
   return request({
     url: '/user/update_user/information',
@@ -45,7 +45,7 @@ export function updateUserProfile(data) {
   })
 }
 
-// 娉ㄩ攢璐︽埛锛氬悗绔?Delete_User 鎺ユ敹 password锛岀敤鎴疯韩浠介€氳繃 token 鑾峰彇
+// 注销账户：后端 Delete_User 接收 password，用户身份通过 token 获取
 export function deleteUser(data) {
   return request({
     url: '/user/delete_user',
@@ -54,7 +54,7 @@ export function deleteUser(data) {
   })
 }
 
-// AI 鑱婂ぉ淇℃伅杩斿洖
+// AI 聊天消息返回
 export function sendChatMessage(data) {
   if (data.chat_group_id) {
     return request.post('/ai_chat/create_msg_into_history', {
@@ -72,12 +72,12 @@ export function sendChatMessage(data) {
   })
 }
 
-// 鑾峰彇鏈€杩戝巻鍙插璇濆垪琛?
+// 获取最近历史对话列表
 export function getConversationList() {
   return request.get('/ai_chat/read_history_group')
 }
 
-// 鑾峰彇鏌愭潯瀵硅瘽鐨勫畬鏁存秷鎭?
+// 获取某条对话的完整消息
 export function getConversationMessages(chatGroupId) {
   return request.get('/ai_chat/read_messages_from_history', {
     params: {
@@ -116,7 +116,7 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
   })
 
   if (!response.ok || !response.body) {
-    throw new Error(`娴佸紡璇锋眰澶辫触锛?{response.status}`)
+    throw new Error(`流式请求失败：${response.status}`)
   }
 
   const reader = response.body.getReader()
@@ -150,7 +150,7 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
         }
 
         if (eventData.error) {
-          onError?.(eventData.error)
+          await onError?.(eventData.error)
           throw new Error(eventData.error)
         }
 
@@ -168,16 +168,16 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
           eventData.previewUrl
 
         if (isFileEvent) {
-          onFile?.(eventData)
+          await onFile?.(eventData)
           continue
         }
 
         if (eventData.content) {
-          onChunk?.(eventData.content)
+          await onChunk?.(eventData.content)
         }
 
         if (eventData.done || eventData.type === 'done' || eventData.event === 'done') {
-          onDone?.(eventData)
+          await onDone?.(eventData)
         }
       }
     }
@@ -212,9 +212,7 @@ export function getStudyResources(params = {}) {
   })
 }
 
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
-//  瀛︿範璧勬簮鐢熸垚锛堟祦寮忥級
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+// ── 学习资源生成（流式）──
 
 export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
@@ -234,7 +232,7 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
   })
 
   if (!response.ok || !response.body) {
-    throw new Error(`璧勬簮鐢熸垚璇锋眰澶辫触锛?{response.status}`)
+    throw new Error(`资源生成请求失败：${response.status}`)
   }
 
   const reader = response.body.getReader()
@@ -301,7 +299,7 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
   }
 }
 
-// 鑾峰彇宸茬敓鎴愮殑璧勬簮鍒楄〃
+// 获取已生成的资源列表
 export function getGeneratedResources() {
   return request.get('/resource/list')
 }
