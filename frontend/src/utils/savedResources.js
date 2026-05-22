@@ -21,7 +21,7 @@ export const readSavedResourceRefs = visibility => {
 }
 
 export const saveGeneratedResourceRef = payload => {
-  const sourceId = String(payload.sourceId || '')
+  const sourceId = String(payload.sourceId || payload.quizId || '')
   if (!sourceId) {
     throw new Error('生成资源缺少 id，暂时不能保存。')
   }
@@ -34,6 +34,12 @@ export const saveGeneratedResourceRef = payload => {
     kind,
     fileType: payload.fileType || 'file',
     category: payload.category || 'reference',
+    quizId: payload.quizId || '',
+    title: payload.title || '',
+    filename: payload.filename || '',
+    content: payload.content || '',
+    previewUrl: payload.previewUrl || '',
+    downloadUrl: payload.downloadUrl || '',
     visibility: payload.visibility || 'private',
     createdAt: new Date().toISOString()
   }
@@ -54,9 +60,26 @@ const normalizeDetail = (detail, ref) => {
     item.filename ||
     item.file_name ||
     item.name ||
+    ref.title ||
+    ref.filename ||
     `${ref.kind === 'image' ? '生成图片' : '生成资源'}-${ref.sourceId}`
   const fileType = item.file_type || item.fileType || item.resource_type || item.resourceType || ref.fileType || 'file'
-  const content = item.preview || item.content || item.text || item.preview_content || item.previewContent || ''
+  const content = item.preview || item.content || item.text || item.preview_content || item.previewContent || ref.content || ''
+  const downloadUrl =
+    item.download_url ||
+    item.downloadUrl ||
+    ref.downloadUrl ||
+    item.url ||
+    (ref.kind === 'image' ? `/image/${ref.sourceId}/download` : ref.quizId ? '' : `/resource/${ref.sourceId}/download`)
+  const previewUrl =
+    item.preview_url ||
+    item.previewUrl ||
+    ref.previewUrl ||
+    item.preview ||
+    item.url ||
+    item.image_url ||
+    item.imageUrl ||
+    ''
 
   return {
     doc_id: `${ref.kind}-${ref.sourceId}`,
@@ -68,14 +91,11 @@ const normalizeDetail = (detail, ref) => {
     category: ref.category || (String(fileType).includes('exercise') ? 'exercise' : 'reference'),
     categoryLabel: '',
     visibility: ref.visibility || 'private',
+    quizId: ref.quizId || '',
     created_at: item.created_at || item.createdAt || ref.createdAt || '',
-    previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || item.preview || item.url || item.image_url || item.imageUrl || ''),
-    downloadUrl: resolveApiUrl(
-      item.download_url ||
-        item.downloadUrl ||
-        item.url ||
-        (ref.kind === 'image' ? `/image/${ref.sourceId}/download` : `/resource/${ref.sourceId}/download`)
-    )
+    filename: ref.filename || title,
+    previewUrl: resolveApiUrl(previewUrl),
+    downloadUrl: resolveApiUrl(downloadUrl)
   }
 }
 
@@ -83,6 +103,7 @@ export const hydrateSavedResourceRefs = async visibility => {
   const refs = readSavedResourceRefs(visibility)
   const settled = await Promise.allSettled(
     refs.map(async ref => {
+      if (ref.quizId) return normalizeDetail({}, ref)
       const detail = ref.kind === 'image'
         ? await getGeneratedImage(ref.sourceId)
         : await getGeneratedResource(ref.sourceId)
@@ -90,7 +111,8 @@ export const hydrateSavedResourceRefs = async visibility => {
     })
   )
 
-  return settled
-    .filter(item => item.status === 'fulfilled')
-    .map(item => item.value)
+  return settled.map((item, index) => {
+    if (item.status === 'fulfilled') return item.value
+    return normalizeDetail({}, refs[index])
+  })
 }

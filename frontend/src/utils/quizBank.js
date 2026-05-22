@@ -146,6 +146,7 @@ export const looksLikeQuizContent = content => {
 }
 
 export const QUIZ_BANK_KEY = SESSION_KEY
+export const QUIZ_ATTEMPTS_KEY = 'zhiban_quiz_attempts'
 
 export const upsertQuizSet = payload => {
   const questions = payload.questions || parseQuizQuestions(payload.content)
@@ -164,6 +165,10 @@ export const upsertQuizSet = payload => {
     filename: payload.filename || '',
     questionCount: questions.length,
     questions,
+    attempts: payload.attempts || [],
+    bestScore: payload.bestScore ?? null,
+    lastScore: payload.lastScore ?? null,
+    lastAttemptAt: payload.lastAttemptAt || '',
     createdAt: payload.createdAt || new Date().toISOString()
   }
 
@@ -177,3 +182,58 @@ export const upsertQuizSet = payload => {
 export const readQuizBank = () => readSessions()
 
 export const getQuizSet = quizId => readSessions().find(item => item.id === quizId) || null
+
+const readAttempts = () => {
+  try {
+    const data = JSON.parse(localStorage.getItem(QUIZ_ATTEMPTS_KEY) || '[]')
+    return Array.isArray(data) ? data : []
+  } catch {
+    return []
+  }
+}
+
+const writeAttempts = attempts => {
+  localStorage.setItem(QUIZ_ATTEMPTS_KEY, JSON.stringify(attempts))
+}
+
+export const readQuizAttempts = quizId => {
+  const attempts = readAttempts()
+  return quizId ? attempts.filter(item => item.quizId === quizId) : attempts
+}
+
+export const recordQuizAttempt = payload => {
+  const quizId = String(payload.quizId || '')
+  if (!quizId) return null
+
+  const attempt = {
+    id: uid('attempt'),
+    quizId,
+    title: payload.title || '',
+    score: Number(payload.score || 0),
+    total: Number(payload.total || 0),
+    percent: Number(payload.percent || 0),
+    answers: payload.answers || {},
+    results: payload.results || {},
+    createdAt: new Date().toISOString()
+  }
+
+  const attempts = [attempt, ...readAttempts()]
+  writeAttempts(attempts)
+
+  const sessions = readSessions()
+  const next = sessions.map(session => {
+    if (session.id !== quizId) return session
+    const sessionAttempts = [attempt, ...(session.attempts || [])]
+    const bestScore = Math.max(Number(session.bestScore || 0), attempt.percent)
+    return {
+      ...session,
+      attempts: sessionAttempts,
+      bestScore,
+      lastScore: attempt.percent,
+      lastAttemptAt: attempt.createdAt
+    }
+  })
+  writeSessions(next)
+  window.dispatchEvent(new CustomEvent('zhiban-quiz-bank-updated', { detail: getQuizSet(quizId) }))
+  return attempt
+}

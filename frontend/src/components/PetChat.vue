@@ -4,6 +4,7 @@ import { resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
 import { looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
+import { saveGeneratedResourceRef } from "../utils/savedResources";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -14,8 +15,6 @@ const emit = defineEmits<{
   "update:expanded": [value: boolean];
   "update:loading": [value: boolean];
 }>();
-
-const SAVED_GENERATED_RESOURCES_KEY = "zhiban_saved_generated_resources";
 const router = useRouter();
 
 // 鈹€鈹€鈹€ Types 鈹€鈹€鈹€
@@ -177,34 +176,49 @@ const savePetResourceToCenter = async (message: PetChatMessage) => {
   if (!message.resourceId || message.centerSaveStatus === "saving" || message.centerSaveStatus === "saved") return;
   message.centerSaveStatus = "saving";
   try {
-    const title = getPetResourceTitle(message);
-    const saved = JSON.parse(localStorage.getItem(SAVED_GENERATED_RESOURCES_KEY) || "[]");
-    const kind = message.resourceKind || "resource";
-    const id = `${kind}-${message.resourceId}`;
-    const record = {
-      id,
-      sourceId: message.resourceId,
-      kind,
+    saveGeneratedResourceRef({
+      sourceId: String(message.resourceId),
+      kind: message.resourceKind || "resource",
       fileType: message.resourceType || "file",
-      title,
-      filename: message.resourceFilename || title,
+      category: "reference",
+      title: getPetResourceTitle(message),
+      filename: message.resourceFilename || getPetResourceTitle(message),
+      content: message.resourceContent || "",
       previewUrl: message.resourcePreviewUrl || "",
       downloadUrl:
         message.resourceDownloadUrl ||
-        (kind === "image"
+        (message.resourceKind === "image"
           ? `/image/${message.resourceId}/download`
           : `/resource/${message.resourceId}/download`),
-      content: message.resourceContent || "",
-      createdAt: new Date().toISOString(),
-    };
-    const next = [record, ...saved.filter((item: any) => item.id !== id)];
-    localStorage.setItem(SAVED_GENERATED_RESOURCES_KEY, JSON.stringify(next));
-    window.dispatchEvent(new CustomEvent("zhiban-generated-resource-saved", { detail: record }));
+      visibility: "private",
+    });
     message.centerSaveStatus = "saved";
   } catch (error: any) {
     console.error("小知资源存入资源中心失败：", error);
     message.centerSaveStatus = "error";
     window.alert(error?.message || "存入资源中心失败，请稍后再试。");
+  }
+};
+
+const savePetQuizToResources = async (message: PetChatMessage) => {
+  if (message.centerSaveStatus === "saving" || message.centerSaveStatus === "saved") return;
+  message.centerSaveStatus = "saving";
+  try {
+    saveGeneratedResourceRef({
+      sourceId: message.quizId || `quiz-${Date.now()}`,
+      kind: "resource",
+      fileType: "exercise",
+      category: "exercise",
+      quizId: message.quizId || "",
+      title: message.content?.replace(/^题目已生成.*?。/, "").trim() || "AI 生成题目",
+      filename: "AI 生成题目",
+      content: message.content || "",
+      visibility: "private",
+    });
+    message.centerSaveStatus = "saved";
+  } catch (error: any) {
+    console.error("保存题目到资源中心失败：", error);
+    message.centerSaveStatus = "error";
   }
 };
 
@@ -417,6 +431,15 @@ const handleChatEnter = (event: KeyboardEvent) => {
           @click="openPetQuiz(message.quizId)"
         >
           开始练习
+        </button>
+        <button
+          v-if="message.role === 'assistant' && message.quizId"
+          type="button"
+          class="pet-chat__save-resource"
+          :disabled="message.centerSaveStatus === 'saving' || message.centerSaveStatus === 'saved'"
+          @click="savePetQuizToResources(message)"
+        >
+          {{ getPetCenterSaveLabel(message) }}
         </button>
       </div>
     </div>

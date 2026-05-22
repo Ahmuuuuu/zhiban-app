@@ -17,13 +17,16 @@
         </div>
         <h2>{{ quiz.title || 'AI 生成题目' }}</h2>
         <p>{{ quiz.filename || 'AI 生成练习题' }}</p>
+        <p v-if="quiz.lastAttemptAt" class="score-line">
+          最近 {{ formatScore(quiz.lastScore) }} 分 / 最好 {{ formatScore(quiz.bestScore) }} 分
+        </p>
         <router-link class="start-btn" :to="`/question-bank/${quiz.id}`">开始练习</router-link>
       </article>
     </section>
 
     <section v-else class="empty-state">
       <h2>还没有生成题目</h2>
-      <p>在 AI 对话或小知对话里让它生成练习题，生成后会出现在这里。</p>
+      <p>在 AI 对话里生成练习题，保存到资源中心后也会出现在这里。</p>
       <router-link class="start-btn" to="/chat">去生成题目</router-link>
     </section>
   </main>
@@ -44,6 +47,11 @@ const formatDate = value => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '刚刚'
   return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+}
+
+const formatScore = value => {
+  const score = Number(value)
+  return Number.isFinite(score) ? score.toFixed(1) : '0.0'
 }
 
 onMounted(() => {
@@ -120,7 +128,7 @@ onUnmounted(() => {
 }
 
 .quiz-card {
-  min-height: 210px;
+  min-height: 230px;
   padding: 18px;
   display: flex;
   flex-direction: column;
@@ -157,6 +165,12 @@ onUnmounted(() => {
   margin: 0;
   color: #5f8fc3;
   line-height: 1.7;
+}
+
+.score-line {
+  color: #163f8f !important;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .start-btn {

@@ -55,6 +55,7 @@ export function generateImage(data: {
   prompt: string;
   aspect_ratio?: string;
   img_count?: number;
+  chat_group_id?: number | string | null;
 }): Promise<unknown>;
 
 export function getImageTaskStatus(taskId: string): Promise<unknown>;
