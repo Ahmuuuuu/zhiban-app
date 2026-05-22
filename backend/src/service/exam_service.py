@@ -14,23 +14,7 @@ from backend.src.utils.database import init_db
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.service.portrait_service import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
-
-
-
-def _parse_json_response(text: str) -> list:
-    """从 LLM 响应中提取 JSON 数组，自动处理 markdown 代码块包裹"""
-    content = text.strip()
-    if content.startswith("```"):
-        lines = content.split("\n")
-        if len(lines) > 1:
-            content = "\n".join(lines[1:])
-        if content.endswith("```"):
-            content = content[:-3]
-    try:
-        data = json.loads(content)
-        return data if isinstance(data, list) else []
-    except json.JSONDecodeError:
-        return []
+from backend.src.utils.json_parser import parse_llm_json
 
 
 def _question_to_dict(q: ExamQuestion) -> dict:
@@ -61,8 +45,8 @@ class ExamService:
     async def generate_and_save(
         topic: str, user_id: int,
         question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
-    ) -> list[dict]:
-        """直接 LLM 出题 → 解析 JSON → 存库"""
+    ) -> dict:
+        """直接 LLM 出题 → 解析 JSON → 存库 → 创建会话，返回 session_id + questions"""
         await init_db()
         types = question_types or ["single_choice"]
         types_str = ", ".join(types)
@@ -103,11 +87,13 @@ class ExamService:
 
         try:
             response = await llm.ainvoke(prompt_text)
-            questions = _parse_json_response(response.content)
+            questions = parse_llm_json(response.content)
+            if not isinstance(questions, list):
+                questions = []
         except Exception:
-            return []
+            return {"session_id": None, "questions": []}
         if not questions:
-            return []
+            return {"session_id": None, "questions": []}
 
         saved = []
         for q in questions:
@@ -122,7 +108,9 @@ class ExamService:
                 user=user,
             )
             saved.append(_question_to_dict(record))
-        return saved
+
+        session_id = str(uuid.uuid4())[:12]
+        return {"session_id": session_id, "questions": saved}
 
     @staticmethod
     async def list_questions(user_id: int, question_type: str | None = None, difficulty: str | None = None, knowledge_tag: str | None = None, page: int = 1, page_size: int = 20) -> dict:
@@ -158,13 +146,15 @@ class ExamService:
         return True
 
     @staticmethod
-    async def submit_answer(question_id: int, user_id: int, user_answer: str, time_spent: int | None = None) -> dict:
+    async def submit_answer(question_id: int, user_id: int, user_answer: str, time_spent: int | None = None, session_id: str | None = None) -> dict:
         question = await ExamQuestion.filter(id=question_id).first()
         if not question:
             raise ValueError("题目不存在")
 
         correct_answer = question.answer
-        if question.question_type in ("single_choice", "true_false"):
+
+        # 判断对错
+        if question.question_type in ("single_choice", "true_false", "fill_blank"):
             is_correct = (user_answer.strip() == correct_answer.strip())
         elif question.question_type == "multi_choice":
             try:
@@ -176,18 +166,22 @@ class ExamService:
             except Exception:
                 is_correct = user_answer.strip().upper() == correct_answer.strip().upper()
         else:
-            is_correct = None
+            is_correct = None  # 简答题不自动判分
 
-        session_id = str(uuid.uuid4())[:12]
+        score = 100.0 if is_correct is True else (0.0 if is_correct is False else None)
+        sid = session_id or str(uuid.uuid4())[:12]
+
         await ExamRecord.create(
             question=question,
             user_id=user_id,
             user_answer=user_answer,
             is_correct=is_correct,
+            score=score,
             time_spent=time_spent,
-            session_id=session_id,
+            session_id=sid,
         )
 
+        # 更新知识点掌握度
         if question.knowledge_tags:
             try:
                 tags = json.loads(question.knowledge_tags)
@@ -213,11 +207,28 @@ class ExamService:
                 mastery.last_practiced_at = datetime.now()
                 await mastery.save()
 
+        # 汇总本轮会话成绩
+        session_records = await ExamRecord.filter(session_id=sid).all()
+        judged = [r for r in session_records if r.is_correct is not None]
+        total_questions = len(session_records)
+        correct_count = sum(1 for r in judged if r.is_correct)
+        judged_count = len(judged)
+        session_score = round(sum(r.score for r in judged) / judged_count, 1) if judged_count else None
+
         return {
             "question_id": question_id,
             "is_correct": is_correct,
+            "score": score,
             "correct_answer": correct_answer if not is_correct else None,
             "analysis": question.analysis if not is_correct else None,
+            "session_id": sid,
+            "session_summary": {
+                "total_questions": total_questions,
+                "correct_count": correct_count,
+                "incorrect_count": judged_count - correct_count,
+                "pending_count": total_questions - judged_count,
+                "score": session_score,
+            },
         }
 
     @staticmethod
@@ -232,11 +243,85 @@ class ExamService:
                 "question": _question_to_dict(r.question) if r.question else None,
                 "user_answer": r.user_answer,
                 "is_correct": r.is_correct,
+                "score": r.score,
                 "time_spent": r.time_spent,
                 "session_id": r.session_id,
                 "created_at": str(r.created_at),
             })
         return {"total": total, "page": page, "page_size": page_size, "items": items}
+
+    @staticmethod
+    async def get_session(session_id: str, user_id: int) -> dict | None:
+        """查询一次练习会话的完整状态：所有答题记录 + 汇总"""
+        records = await (
+            ExamRecord.filter(session_id=session_id, user_id=user_id)
+            .order_by("created_at")
+            .prefetch_related("question")
+            .all()
+        )
+        if not records:
+            return None
+
+        items = []
+        for r in records:
+            items.append({
+                "record_id": r.id,
+                "question": _question_to_dict(r.question) if r.question else None,
+                "user_answer": r.user_answer,
+                "is_correct": r.is_correct,
+                "score": r.score,
+                "time_spent": r.time_spent,
+                "created_at": str(r.created_at),
+            })
+
+        judged = [r for r in records if r.is_correct is not None]
+        correct_count = sum(1 for r in judged if r.is_correct)
+        judged_count = len(judged)
+
+        return {
+            "session_id": session_id,
+            "total_questions": len(records),
+            "correct_count": correct_count,
+            "incorrect_count": judged_count - correct_count,
+            "pending_count": len(records) - judged_count,
+            "score": round(sum(r.score for r in judged) / judged_count, 1) if judged_count else None,
+            "records": items,
+        }
+
+    @staticmethod
+    async def list_sessions(user_id: int) -> list[dict]:
+        """列出用户的所有练习会话摘要"""
+        records = await (
+            ExamRecord.filter(user_id=user_id)
+            .order_by("-created_at")
+            .prefetch_related("question")
+            .all()
+        )
+
+        sessions: dict[str, dict] = {}
+        for r in records:
+            if r.session_id not in sessions:
+                sessions[r.session_id] = {
+                    "session_id": r.session_id,
+                    "total": 0,
+                    "correct": 0,
+                    "judged": 0,
+                    "first_at": str(r.created_at),
+                    "last_at": str(r.created_at),
+                }
+            s = sessions[r.session_id]
+            s["total"] += 1
+            if r.is_correct is True:
+                s["correct"] += 1
+                s["judged"] += 1
+            elif r.is_correct is False:
+                s["judged"] += 1
+            s["last_at"] = str(r.created_at)
+
+        for s in sessions.values():
+            s["score"] = round(s["correct"] / s["judged"] * 100, 1) if s["judged"] else None
+
+        return sorted(sessions.values(), key=lambda x: x["last_at"], reverse=True)
 
     @staticmethod
     async def get_mastery(user_id: int) -> list[dict]:

@@ -209,7 +209,7 @@ class ImageService:
                     _logger.error(f"task_id={task_id} 所有图片下载均失败")
                 return _task_status[task_id]
 
-        except BaseException as e:
+        except Exception as e:
             _task_status[task_id] = {**info, "status": "failed", "error": f"{type(e).__name__}: {e}"}
             _logger.error(f"task_id={task_id} 异常: {type(e).__name__}: {e}")
             return _task_status[task_id]

@@ -1,4 +1,4 @@
-import traceback
+import logging
 
 from fastapi import APIRouter, HTTPException, Depends, Body
 from backend.src.service.portrait_service import PortraitChatHistory_Service
@@ -33,7 +33,7 @@ async def init_portrait(
     except HTTPException:
         raise
     except Exception as error:
-        traceback.print_exc()
+        logging.getLogger(__name__).exception("读取画像失败")
         raise HTTPException(500, f"服务器错误: {type(error).__name__}: {error}")
 
 

@@ -13,7 +13,7 @@ from backend.src.utils.database import init_db
 _FILE_EXT_MAP = {
     "document": "md",
     "ppt": "pptx",
-    "mindmap": "md",
+    "mindmap": "txt",
     "exercise": "md",
     "case": "md",
     "reading": "md",
@@ -116,13 +116,33 @@ class ResourceService:
     async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> list[dict]:
         initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
         topic = initial_state["topic"]
+
         result = await resource_graph.ainvoke(initial_state)
-        return await _save_resources(
+        generated = result.get("generated_resources", {})
+        saved = await _save_resources(
             topic, user_id,
-            result.get("generated_resources", {}),
+            generated,
             result.get("review_passed", False),
             result.get("retry_count", 0),
         )
+
+        # exercise 类型：自动生成对应题库，关联 session_id
+        for i, item in enumerate(saved):
+            if item["resource_type"] == "exercise":
+                try:
+                    from backend.src.service.exam_service import ExamService
+                    exam_result = await ExamService.generate_and_save(
+                        topic, user_id, ["single_choice"], count=5, difficulty="medium"
+                    )
+                    sid = exam_result.get("session_id")
+                    if sid:
+                        await GeneratedResource.filter(id=item["resource_id"]).update(session_id=sid)
+                        saved[i]["session_id"] = sid
+                        saved[i]["question_count"] = len(exam_result.get("questions", []))
+                except Exception:
+                    pass
+
+        return saved
 
     @staticmethod
     async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0):
@@ -189,16 +209,22 @@ class ResourceService:
     @staticmethod
     async def list_resources(user_id: int) -> list[dict]:
         records = await GeneratedResource.filter(user_id=user_id).order_by("-created_at").all()
-        return [
-            {
+        result = []
+        for r in records:
+            ext = _FILE_EXT_MAP.get(r.resource_type, "md")
+            item = {
                 "resource_id": r.id,
                 "topic": r.topic,
                 "resource_type": r.resource_type,
+                "filename": f"{r.topic}_{r.resource_type}.{ext}",
+                "file_type": ext,
+                "preview": r.content[:200] if r.content else "",
+                "download_url": f"/resource/{r.id}/download",
                 "review_passed": r.review_passed,
                 "created_at": str(r.created_at),
             }
-            for r in records
-        ]
+            result.append(item)
+        return result
 
     @staticmethod
     async def download_resource(resource_id: int, user_id: int) -> tuple[bytes, str, str] | None:

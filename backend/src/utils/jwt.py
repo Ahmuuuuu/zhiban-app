@@ -3,7 +3,7 @@ from pathlib import Path
 from jose import jwt, JWTError
 from fastapi import HTTPException, Header, Depends
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 JWT_KEY = os.getenv("JWT_KEY")
@@ -12,7 +12,7 @@ ALGORITHM = os.getenv("ALGORITHM")
 def create_access_token(user_id : int) -> str:
     payload = {
         "sub" : str(user_id),
-        "exp" : datetime.utcnow() + timedelta(hours = 2)
+        "exp" : datetime.now(timezone.utc) + timedelta(hours = 2)
     }
     token = jwt.encode(payload, JWT_KEY, ALGORITHM)
     return token

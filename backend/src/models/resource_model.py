@@ -6,6 +6,7 @@ class GeneratedResource(Model):
     topic = fields.CharField(max_length=255, description="学习主题")
     resource_type = fields.CharField(max_length=32, default="document", description="资源类型")
     content = fields.TextField(description="完整 Markdown 正文")
+    session_id = fields.CharField(max_length=32, null=True, description="关联的答题会话ID（exercise 类型）")
     review_passed = fields.BooleanField(default=False, description="是否通过审核")
     retry_count = fields.IntField(default=0, description="重试次数")
     created_at = fields.DatetimeField(auto_now_add=True)

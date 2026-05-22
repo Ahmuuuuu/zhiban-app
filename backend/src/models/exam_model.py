@@ -32,6 +32,7 @@ class ExamRecord(Model):
     id = fields.IntField(pk=True, description="记录ID")
     user_answer = fields.TextField(null=True, description="用户提交的答案")
     is_correct = fields.BooleanField(null=True, description="是否正确（简答题可为 null）")
+    score = fields.FloatField(null=True, description="得分(0-100)，简答题为 null")
     time_spent = fields.IntField(null=True, description="作答耗时（秒）")
     session_id = fields.CharField(max_length=64, description="一次练习的统一标识")
     created_at = fields.DatetimeField(auto_now_add=True)

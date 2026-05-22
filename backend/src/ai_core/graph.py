@@ -4,18 +4,22 @@ LeaderAgent → [ExecutorAgent × N 多线程并行] → ReviewerAgent
 """
 import asyncio
 import json
+import logging
 from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
 from backend.src.ai_core.llm_config import llm
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
+from backend.src.utils.json_parser import parse_llm_json
+
+logger = logging.getLogger(__name__)
 
 # 资源类型 → 默认 prompt 路径
 PROMPT_MAP = {
     "document": "resource/document",
     "ppt": "resource/ppt",
-    "mindmap": "resource/document",
+    "mindmap": "resource/mindmap",
     "exercise": "resource/exam",
     "case": "resource/document",
     "reading": "resource/document",
@@ -50,11 +54,14 @@ async def leader_node(state: ResourceState) -> dict:
     kb = state.get("kb_context", "")
     prompt_text = fill_prompt(load_prompt("agent/leader"), topic=topic, portrait_context=portrait, kb_context=kb)
 
-    response = await llm.ainvoke(prompt_text)
+    try:
+        response = await llm.ainvoke(prompt_text)
+    except Exception as e:
+        logger.exception("LeaderAgent LLM 调用失败")
+        return {"resource_types": state.get("resource_types", ["document"])}
 
     try:
         content = response.content.strip()
-        # 去掉可能的 markdown 代码块包裹
         if content.startswith("```"):
             content = content.split("\n", 1)[1]
             if content.endswith("```"):
@@ -108,8 +115,12 @@ async def executor_node(state: ResourceState) -> dict:
 
     async def gen_one(rt: str) -> tuple[str, str]:
         async with semaphore:
-            response = await llm.ainvoke(prompts[rt])
-            return rt, response.content
+            try:
+                response = await llm.ainvoke(prompts[rt])
+                return rt, response.content
+            except Exception as e:
+                logger.exception(f"Executor [{rt}] LLM 调用失败")
+                return rt, f"[生成失败: {e}]"
 
     results = await asyncio.gather(*(gen_one(rt) for rt in resource_types))
 
@@ -124,36 +135,75 @@ async def executor_node(state: ResourceState) -> dict:
     }
 
 
+def _parse_review_response(raw: str) -> dict:
+    """解析 reviewer 返回的 JSON，容错处理"""
+    try:
+        result = parse_llm_json(raw)
+        return result if isinstance(result, dict) else {"passed": True, "score": 70, "feedback": raw}
+    except json.JSONDecodeError:
+        return {"passed": True, "score": 70, "feedback": raw}
+
+
 async def reviewer_node(state: ResourceState) -> dict:
-    """ReviewerAgent: 审核所有生成内容"""
+    """ReviewerAgent: 内容审核 + 思维导图结构审核，并行执行"""
     generated = state.get("generated_resources", {})
 
-    parts = []
-    for rt, content in generated.items():
-        parts.append(f"## [{rt}]\n{content[:2000]}...")
-    combined = "\n\n".join(parts)
+    mindmap_content = generated.get("mindmap", "")
+    reviewable = {rt: c for rt, c in generated.items() if rt != "mindmap"}
 
-    prompt_text = fill_prompt(load_prompt("agent/reviewer"), content=combined)
+    async def review_content() -> dict:
+        """审核文档/PPT/题目等内容"""
+        if not reviewable:
+            return {"passed": True, "score": 100, "feedback": ""}
+        try:
+            parts = []
+            for rt, content in reviewable.items():
+                parts.append(f"## [{rt}]\n{content[:2000]}...")
+            combined = "\n\n".join(parts)
+            prompt_text = fill_prompt(load_prompt("agent/reviewer"), content=combined)
+            response = await llm.ainvoke(prompt_text)
+            return _parse_review_response(response.content)
+        except Exception as e:
+            logger.exception("内容审核 LLM 调用失败")
+            return {"passed": True, "score": 0, "feedback": f"审核服务异常: {e}"}
 
-    response = await llm.ainvoke(prompt_text)
+    async def review_mindmap() -> dict:
+        """审核思维导图结构"""
+        if not mindmap_content:
+            return {"passed": True, "score": 100, "feedback": ""}
+        try:
+            prompt_text = fill_prompt(
+                load_prompt("agent/mindmap_reviewer"),
+                mindmap_content=mindmap_content[:3000],
+            )
+            response = await llm.ainvoke(prompt_text)
+            return _parse_review_response(response.content)
+        except Exception as e:
+            logger.exception("思维导图结构审核 LLM 调用失败")
+            return {"passed": True, "score": 0, "feedback": f"审核服务异常: {e}"}
 
-    try:
-        content = response.content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1]
-            if content.endswith("```"):
-                content = content[:-3]
-        result = json.loads(content)
-    except json.JSONDecodeError:
-        result = {"passed": True, "score": 70, "feedback": response.content}
+    # 并行审核
+    content_result, mindmap_result = await asyncio.gather(
+        review_content(), review_mindmap()
+    )
 
-    passed = result.get("passed", False)
-    if isinstance(passed, str):
-        passed = passed.lower() == "true"
+    content_passed = content_result.get("passed", False)
+    mindmap_passed = mindmap_result.get("passed", False)
+    if isinstance(content_passed, str):
+        content_passed = content_passed.lower() == "true"
+    if isinstance(mindmap_passed, str):
+        mindmap_passed = mindmap_passed.lower() == "true"
+
+    # 汇总 feedback
+    feedback_parts = []
+    if not content_passed:
+        feedback_parts.append(f"[内容审核] {content_result.get('feedback', '')}")
+    if not mindmap_passed:
+        feedback_parts.append(f"[结构审核] {mindmap_result.get('feedback', '')}")
 
     return {
-        "review_passed": bool(passed),
-        "review_feedback": result.get("feedback", ""),
+        "review_passed": content_passed and mindmap_passed,
+        "review_feedback": "\n".join(feedback_parts),
     }
 
 
