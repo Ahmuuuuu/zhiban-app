@@ -84,12 +84,11 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { submitExamAnswer } from '../api/apis'
 import { getQuizSet, recordQuizAttempt } from '../utils/quizBank'
 
 const route = useRoute()
-const router = useRouter()
 const quiz = ref(null)
 const questions = ref([])
 const loading = ref(true)

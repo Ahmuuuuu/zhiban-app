@@ -396,13 +396,6 @@ const handleImageError = event => {
 
 const getWordCount = content => String(content || '').replace(/\s/g, '').length
 
-const resourceMetric = resource => {
-  const type = String(resource.type || resource.category || '').toLowerCase()
-  if (resource.quizId || type.includes('exercise') || type.includes('quiz')) return '题库资源'
-  if (resource.downloadUrl) return `${type || 'file'} 文件`
-  return `${getWordCount(resource.content)} 字`
-}
-
 const formatDate = (value, withTime = false) => {
   if (!value) return '未知时间'
 

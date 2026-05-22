@@ -102,13 +102,8 @@ import UserAccountButton from '../components/UserAccountButton.vue'
   overflow: hidden;
 }
 
-.home-cover::before {
-  content: none;
-}
-
 .primary-action,
-.secondary-action,
-.mini-import-btn {
+.secondary-action {
   text-decoration: none;
 }
 
@@ -177,8 +172,7 @@ import UserAccountButton from '../components/UserAccountButton.vue'
 }
 
 .primary-action::after,
-.secondary-action::after,
-.mini-import-btn::after {
+.secondary-action::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -203,15 +197,13 @@ import UserAccountButton from '../components/UserAccountButton.vue'
 }
 
 .primary-action:hover,
-.secondary-action:hover,
-.mini-import-btn:hover {
+.secondary-action:hover {
   transform: translateY(-3px);
   box-shadow: 0 14px 28px rgba(22, 63, 143, 0.16);
 }
 
 .primary-action:hover::after,
-.secondary-action:hover::after,
-.mini-import-btn:hover::after {
+.secondary-action:hover::after {
   transform: translateX(120%);
 }
 
@@ -227,8 +219,7 @@ import UserAccountButton from '../components/UserAccountButton.vue'
 }
 
 .primary-action:active,
-.secondary-action:active,
-.mini-import-btn:active {
+.secondary-action:active {
   transform: translateY(0) scale(0.98);
   box-shadow: none;
 }
@@ -300,30 +291,6 @@ import UserAccountButton from '../components/UserAccountButton.vue'
 }
 
 
-.mini-import-btn {
-  position: relative;
-  overflow: hidden;
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 999px;
-  border: 1px solid #c9dce9;
-  background: #fafafa;
-  color: #163f8f;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  justify-self: end;
-  font-size: 13px;
-  font-weight: 800;
-  transition:
-    transform 0.22s ease,
-    box-shadow 0.22s ease,
-    background 0.22s ease;
-}
-
-.mini-import-btn:hover {
-  background: #c9dce9;
-}
 
 .feature-head {
   display: flex;
