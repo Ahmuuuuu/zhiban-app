@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
-import { nextTick, ref } from "vue";
-import { resolveApiUrl, streamChatMessage } from "../api/apis";
+import { nextTick, ref, watch } from "vue";
+import { getConversationList, getConversationMessages, resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
 import { looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
@@ -34,6 +34,13 @@ type PetChatMessage = {
   centerSaveStatus?: "saving" | "saved" | "error" | "";
 };
 
+type PetHistoryItem = {
+  id: number | string;
+  title: string;
+  lastMessage: string;
+  time: string;
+};
+
 type StreamChatHandlers = {
   onChunk?: (chunk: string) => void | Promise<void>;
   onDone?: (data?: { chat_group_id?: number | string }) => void;
@@ -47,6 +54,7 @@ type StreamChatMessageFn = (
 ) => Promise<void>;
 
 // 鈹€鈹€鈹€ State 鈹€鈹€鈹€
+const PET_HISTORY_KEY = "zhiban_pet_chat_groups";
 const chatExpanded = ref(false);
 const chatInput = ref("");
 const chatLoading = ref(false);
@@ -54,6 +62,9 @@ const chatError = ref("");
 const petChatGroupId = ref<number | string | null>(null);
 const chatFormRef = ref<HTMLFormElement | null>(null);
 const messagesRef = ref<HTMLElement | null>(null);
+const historyOpen = ref(false);
+const historyLoading = ref(false);
+const petHistory = ref<PetHistoryItem[]>([]);
 
 const petMessages = ref<PetChatMessage[]>([
   {
@@ -65,6 +76,135 @@ const petMessages = ref<PetChatMessage[]>([
 
 // 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€
 const sendStreamChatMessage = streamChatMessage as unknown as StreamChatMessageFn;
+
+const readPetHistoryIds = () => {
+  try {
+    const ids = JSON.parse(localStorage.getItem(PET_HISTORY_KEY) || "[]");
+    return Array.isArray(ids) ? ids.map(String) : [];
+  } catch {
+    return [];
+  }
+};
+
+const rememberPetHistoryId = (id?: number | string | null) => {
+  if (!id) return;
+  const value = String(id);
+  const ids = readPetHistoryIds();
+  localStorage.setItem(PET_HISTORY_KEY, JSON.stringify([value, ...ids.filter((item) => item !== value)]));
+};
+
+const getResponseData = (res: any) => res?.data ?? res ?? {};
+
+const stripTypedInstruction = (value: unknown) =>
+  String(value || "").replace(/\n\n【生成类型指令】[\s\S]*$/, "").trim();
+
+const getRecordTime = (record: any) =>
+  record?.created_time || record?.created_at || record?.createTime || record?.updated_at || record?.updateTime || "";
+
+const formatPetTime = (timeString: string) => {
+  if (!timeString) return "";
+  const date = new Date(timeString);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return isToday
+    ? `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+    : `${date.getMonth() + 1}-${date.getDate()}`;
+};
+
+const normalizePetHistoryGroups = (res: any) => {
+  const data = getResponseData(res);
+  const groups = data?.data || data;
+  const knownIds = readPetHistoryIds();
+
+  if (!groups || typeof groups !== "object") return [];
+
+  const entries = Array.isArray(groups)
+    ? groups.map((item: any) => [item.id || item.chat_group_id, [item]])
+    : Object.entries(groups);
+
+  return entries
+    .filter(([groupId]) => !knownIds.length || knownIds.includes(String(groupId)))
+    .map(([groupId, records]: [string, any]) => {
+      const list = Array.isArray(records) ? records : [];
+      const firstRecord = list[0] || {};
+      const lastRecord = list[list.length - 1] || firstRecord;
+      return {
+        id: Number(groupId) || firstRecord.chat_group_id || groupId,
+        title: stripTypedInstruction(firstRecord.req) || `对话 ${groupId}`,
+        lastMessage: stripTypedInstruction(lastRecord.req || lastRecord.res) || "",
+        time: formatPetTime(getRecordTime(lastRecord)),
+      };
+    });
+};
+
+const buildPetMessagesFromHistory = (records: any[], conversationId: number | string) =>
+  records
+    .flatMap((item, index) => {
+      const time = formatPetTime(getRecordTime(item));
+      const req = stripTypedInstruction(item.req);
+      const res = stripTypedInstruction(item.res || item.content || item.answer);
+      return [
+        req ? { id: `${conversationId}-${index}-req`, role: "user", content: req } : null,
+        res ? { id: `${conversationId}-${index}-res`, role: "assistant", content: res } : null,
+      ];
+    })
+    .filter(Boolean) as PetChatMessage[];
+
+const loadPetHistory = async () => {
+  if (!localStorage.getItem("token")) {
+    petHistory.value = [];
+    return;
+  }
+
+  historyLoading.value = true;
+  try {
+    const res = await getConversationList();
+    petHistory.value = normalizePetHistoryGroups(res);
+  } catch (error) {
+    console.error("小知历史加载失败：", error);
+    chatError.value = "小知历史加载失败";
+  } finally {
+    historyLoading.value = false;
+  }
+};
+
+const openPetHistory = async (id: number | string) => {
+  if (historyLoading.value) return;
+  historyLoading.value = true;
+  chatError.value = "";
+  try {
+    const res = await getConversationMessages(id);
+    const data = getResponseData(res);
+    const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+    petChatGroupId.value = id;
+    rememberPetHistoryId(id);
+    petMessages.value = buildPetMessagesFromHistory(list, id);
+    if (!petMessages.value.length) {
+      petMessages.value = [createWelcomeMessage()];
+    }
+    historyOpen.value = false;
+    chatExpanded.value = true;
+    emit("update:expanded", true);
+    await scrollPetMessagesToBottom();
+  } catch (error) {
+    console.error("打开小知历史失败：", error);
+    chatError.value = "小知历史打开失败";
+  } finally {
+    historyLoading.value = false;
+  }
+};
+
+const createNewPetChat = () => {
+  petChatGroupId.value = null;
+  petMessages.value = [createWelcomeMessage()];
+  chatInput.value = "";
+  chatError.value = "";
+  historyOpen.value = false;
+};
 
 const scrollPetMessagesToBottom = async () => {
   await nextTick();
@@ -284,6 +424,11 @@ const sendPetMessage = async () => {
             : assistantMessage.centerSaveStatus;
         },
         onDone: async (eventData: any) => {
+          if (eventData?.chat_group_id) {
+            petChatGroupId.value = eventData.chat_group_id;
+            rememberPetHistoryId(eventData.chat_group_id);
+            void loadPetHistory();
+          }
           const savedResource = Array.isArray(eventData?.resources) ? eventData.resources[0] : null;
           if (!savedResource) return;
           if (isPetExerciseFile(savedResource)) {
@@ -355,6 +500,8 @@ const sendPetMessage = async () => {
         onDone: (data: { chat_group_id?: number | string } = {}) => {
           if (data?.chat_group_id) {
             petChatGroupId.value = data.chat_group_id;
+            rememberPetHistoryId(data.chat_group_id);
+            void loadPetHistory();
           }
           if (receivedChunk) {
             replacePetTextWithQuiz(assistantMessage);
@@ -397,6 +544,18 @@ const handleChatEnter = (event: KeyboardEvent) => {
   event.stopPropagation();
   chatFormRef.value?.requestSubmit();
 };
+
+watch(
+  () => props.modelValue,
+  (visible) => {
+    if (visible) {
+      void loadPetHistory();
+    } else {
+      historyOpen.value = false;
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -414,8 +573,34 @@ const handleChatEnter = (event: KeyboardEvent) => {
       <div>
         <strong>小知</strong>
       </div>
-      <button type="button" aria-label="关闭小知对话" @click="closeChat">×</button>
+      <div class="pet-chat__header-actions">
+        <button type="button" aria-label="小知历史" @click="historyOpen = !historyOpen">历史</button>
+        <button type="button" aria-label="新建小知对话" @click="createNewPetChat">新建</button>
+        <button type="button" aria-label="关闭小知对话" @click="closeChat">×</button>
+      </div>
     </header>
+
+    <aside v-if="historyOpen" class="pet-chat__history">
+      <div class="pet-chat__history-head">
+        <strong>历史对话</strong>
+        <button type="button" :disabled="historyLoading" @click="loadPetHistory">刷新</button>
+      </div>
+      <p v-if="historyLoading" class="pet-chat__history-empty">正在加载...</p>
+      <p v-else-if="!petHistory.length" class="pet-chat__history-empty">暂无小知历史</p>
+      <template v-else>
+        <button
+          v-for="item in petHistory"
+          :key="item.id"
+          type="button"
+          class="pet-chat__history-item"
+          :class="{ active: String(petChatGroupId || '') === String(item.id) }"
+          @click="openPetHistory(item.id)"
+        >
+          <span>{{ item.title }}</span>
+          <small>{{ item.time }}</small>
+        </button>
+      </template>
+    </aside>
 
     <div ref="messagesRef" class="pet-chat__messages">
       <div
@@ -576,21 +761,112 @@ const handleChatEnter = (event: KeyboardEvent) => {
 }
 
 .pet-chat__header button {
-  width: 28px;
+  min-width: 28px;
   height: 28px;
+  padding: 0 9px;
   border: none;
   border-radius: 999px;
   background: rgba(201, 220, 233, 0.46);
   color: #163f8f;
-  font-size: 20px;
+  font-size: 12px;
+  font-weight: 800;
   line-height: 1;
   cursor: pointer;
 }
 
+.pet-chat__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .pet-chat--expanded .pet-chat__header button {
-  width: 38px;
+  min-width: 38px;
   height: 38px;
-  font-size: 24px;
+  font-size: 13px;
+}
+
+.pet-chat__history {
+  max-height: 190px;
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.pet-chat--expanded .pet-chat__history {
+  width: min(100%, 1080px);
+  max-height: 240px;
+  margin: 12px auto 0;
+}
+
+.pet-chat__history-head,
+.pet-chat__history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pet-chat__history-head strong {
+  color: #163f8f;
+  font-size: 13px;
+}
+
+.pet-chat__history-head button,
+.pet-chat__history-item {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pet-chat__history-head button {
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(201, 220, 233, 0.56);
+  color: #163f8f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pet-chat__history-item {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(250, 250, 250, 0.78);
+  color: #163f8f;
+  text-align: left;
+}
+
+.pet-chat__history-item.active,
+.pet-chat__history-item:hover {
+  background: rgba(201, 220, 233, 0.72);
+}
+
+.pet-chat__history-item span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pet-chat__history-item small,
+.pet-chat__history-empty {
+  color: rgba(22, 63, 143, 0.58);
+  font-size: 12px;
+}
+
+.pet-chat__history-empty {
+  margin: 0;
+  padding: 10px 4px;
 }
 
 .pet-chat__messages {
