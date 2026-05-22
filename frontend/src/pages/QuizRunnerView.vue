@@ -82,6 +82,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { submitExamAnswer } from '../api/apis'
 import { getQuizSet, recordQuizAttempt } from '../utils/quizBank'
 
 const route = useRoute()
@@ -93,12 +94,14 @@ const answers = ref({})
 const checked = ref({})
 const results = ref({})
 const finished = ref(false)
+const runSessionId = ref('')
 
 onMounted(() => {
   const id = String(route.params.quizId || '')
   const session = getQuizSet(id)
   quiz.value = session
   questions.value = session?.questions || []
+  runSessionId.value = session?.sessionId || session?.session_id || `quiz-${id}-${Date.now()}`
   loading.value = false
 })
 
@@ -110,14 +113,48 @@ const normalizeAnswer = value =>
     .replace(/^[（(]?([A-D])[\)）.、]?\s*$/i, '$1')
     .toUpperCase()
 
-const checkCurrent = () => {
+const unwrapData = result => result?.data?.data ?? result?.data ?? result
+
+const getBackendQuestionId = question => {
+  const id = Number(question?.question_id || question?.questionId || question?.id)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+const checkCurrent = async () => {
   const question = currentQuestion.value
   if (!question?.id) return
 
-  checked.value[question.id] = true
   const userAnswer = normalizeAnswer(answers.value[question.id])
-  const correctAnswer = normalizeAnswer(question.answer)
+  const backendQuestionId = getBackendQuestionId(question)
 
+  if (backendQuestionId && userAnswer) {
+    try {
+      const result = await submitExamAnswer({
+        question_id: backendQuestionId,
+        answer: userAnswer,
+        time_spent: null,
+        session_id: runSessionId.value
+      })
+      const data = unwrapData(result)
+      checked.value[question.id] = true
+      results.value[question.id] = {
+        is_correct: data?.is_correct,
+        correct_answer: data?.correct_answer || question.answer,
+        analysis: data?.analysis || question.explanation || '',
+        session_id: data?.session_id || runSessionId.value,
+        score: data?.score
+      }
+      if (data?.session_id) {
+        runSessionId.value = data.session_id
+      }
+      return
+    } catch (error) {
+      console.error('提交答题记录失败，使用本地判分：', error)
+    }
+  }
+
+  checked.value[question.id] = true
+  const correctAnswer = normalizeAnswer(question.answer)
   results.value[question.id] = {
     is_correct: correctAnswer ? userAnswer === correctAnswer : Boolean(userAnswer),
     correct_answer: question.answer,
@@ -139,8 +176,8 @@ const percentScore = computed(() => {
   return ((score.value / questions.value.length) * 100).toFixed(1)
 })
 
-const goNext = () => {
-  checkCurrent()
+const goNext = async () => {
+  await checkCurrent()
 
   if (currentIndex.value >= questions.value.length - 1) {
     finished.value = true
@@ -150,6 +187,7 @@ const goNext = () => {
       score: score.value,
       total: questions.value.length,
       percent: Number(percentScore.value),
+      sessionId: runSessionId.value,
       answers: answers.value,
       results: results.value
     })

@@ -71,20 +71,24 @@
               </div>
             </Transition>
 
-            <router-link class="my-tab" to="/mine/situation" @click="resourcePickerOpen = false">
-              <ChartNoAxesColumnIncreasing :size="18" />
-              <span>学习情况</span>
-            </router-link>
-
             <router-link class="my-tab" to="/mine/path" @click="resourcePickerOpen = false">
               <Route :size="18" />
               <span>学习路径</span>
+            </router-link>
+
+            <router-link class="my-tab" to="/mine/situation" @click="resourcePickerOpen = false">
+              <ChartNoAxesColumnIncreasing :size="18" />
+              <span>学习情况</span>
             </router-link>
           </nav>
         </aside>
 
         <div class="my-content">
-          <router-view />
+          <router-view v-slot="{ Component, route: childRoute }">
+            <Transition name="my-content-swap" mode="out-in">
+              <component :is="Component" :key="childRoute.name" />
+            </Transition>
+          </router-view>
         </div>
       </section>
     </main>
@@ -444,6 +448,16 @@ watch(() => route.path, path => {
 
 .my-content {
   overflow: hidden;
+}
+
+.my-content-swap-enter-active,
+.my-content-swap-leave-active {
+  transition: opacity 0.12s ease;
+}
+
+.my-content-swap-enter-from,
+.my-content-swap-leave-to {
+  opacity: 0;
 }
 
 @media (max-width: 980px) {

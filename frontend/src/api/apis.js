@@ -349,7 +349,7 @@ export function generateExamQuestions(data) {
   return request({
     url: '/exam/generate',
     method: 'post',
-    data: { ...data, user_id: Number(localStorage.getItem('user_id')) }
+    data
   })
 }
 
@@ -357,15 +357,14 @@ export function getExamQuestions(params = {}) {
   return request({
     url: '/exam/questions',
     method: 'get',
-    params: { user_id: Number(localStorage.getItem('user_id')), ...params }
+    params
   })
 }
 
 export function getExamQuestion(questionId) {
   return request({
     url: `/exam/questions/${questionId}`,
-    method: 'get',
-    params: { user_id: Number(localStorage.getItem('user_id')) }
+    method: 'get'
   })
 }
 
@@ -373,6 +372,14 @@ export function submitExamAnswer(data) {
   return request({
     url: '/exam/submit',
     method: 'post',
-    data: { ...data, user_id: Number(localStorage.getItem('user_id')) }
+    data
   })
+}
+
+export function getExamSession(sessionId) {
+  return request.get(`/exam/session/${sessionId}`)
+}
+
+export function getExamSessions() {
+  return request.get('/exam/sessions')
 }

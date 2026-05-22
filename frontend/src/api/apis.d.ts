@@ -71,3 +71,25 @@ export function getGeneratedResources(): Promise<unknown>;
 export function getGeneratedResource(resourceId: number | string): Promise<unknown>;
 
 export function deleteGeneratedResource(resourceId: number | string): Promise<unknown>;
+
+export function generateExamQuestions(data: {
+  topic: string;
+  count?: number;
+  difficulty?: string;
+  question_types?: string;
+}): Promise<unknown>;
+
+export function getExamQuestions(params?: Record<string, unknown>): Promise<unknown>;
+
+export function getExamQuestion(questionId: number | string): Promise<unknown>;
+
+export function submitExamAnswer(data: {
+  question_id: number | string;
+  answer: string;
+  time_spent?: number | null;
+  session_id?: string | null;
+}): Promise<unknown>;
+
+export function getExamSession(sessionId: string): Promise<unknown>;
+
+export function getExamSessions(): Promise<unknown>;
