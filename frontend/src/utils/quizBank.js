@@ -53,12 +53,27 @@ const normalizeQuestion = (item, index) => {
     item.question_text ||
     `第 ${index + 1} 题`
 
+  const isMulti =
+    item.multi ||
+    item.is_multi ||
+    item.multiple ||
+    ['multiple', 'multi', 'checkbox'].includes(String(item.type || item.question_type || '').toLowerCase())
+
+  const rawAnswer = item.answer ?? item.correctAnswer ?? item.correct_answer ?? item.correct ?? ''
+  const answerStr = String(rawAnswer || '').trim()
+  const hasMultiple = /[,，、]/.test(answerStr) || /^[A-D]{2,}$/i.test(answerStr)
+
+  const multi = isMulti || hasMultiple
+
   return {
     id: item.id || item.question_id || uid(`question-${index + 1}`),
-    type: options.length ? 'choice' : 'short',
+    type: multi ? 'multiple' : (options.length ? 'choice' : 'short'),
     stem: String(stem).trim(),
     options,
-    answer: normalizeAnswer(item.answer ?? item.correctAnswer ?? item.correct_answer ?? item.correct ?? ''),
+    answer: multi
+      ? answerStr.toUpperCase().replace(/[^A-D,]/g, '').split(/[,，、]+/).filter(Boolean).sort().join(',')
+      : normalizeAnswer(answerStr),
+    multi,
     explanation: String(item.explanation || item.analysis || item.reason || '').trim()
   }
 }

@@ -237,7 +237,7 @@ import {
   getCurrentLearningPath, completeLearningPathNode, generateLearningPath,
   generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, resolveApiUrl
 } from '../api/apis'
-import { upsertQuizSet } from '../utils/quizBank'
+import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 
@@ -297,8 +297,24 @@ const normalizePath = data => {
     stage: path.stage || path.status || '进行中',
     cursor: path.cursor ?? path.current_index ?? path.currentIndex ?? (Array.isArray(nodes) ? nodes.length : 0),
     diagnosis: {
-      weakPoints: path.diagnosis?.weak_points || path.diagnosis?.weakPoints || path.diagnosis?.weak_point || [],
-      latestScore: path.diagnosis?.latest_score ?? path.diagnosis?.latestScore ?? path.diagnosis?.score ?? 0,
+      weakPoints: (path.diagnosis?.weak_points || path.diagnosis?.weakPoints || path.diagnosis?.weak_point || [])
+        .map(w => {
+          if (typeof w === 'string') return w
+          if (w && typeof w === 'object') return w.name || w.topic || w.title || w.tag || w.point || w.description || w.content || JSON.stringify(w)
+          return String(w)
+        })
+        .filter(Boolean),
+      latestScore: (() => {
+        const score = path.diagnosis?.latest_score ?? path.diagnosis?.latestScore ?? path.diagnosis?.score
+        if (score != null) return Number(score)
+        // 如果后端没返回总分数，从 weak_points 的 accuracy 字段取平均值
+        const points = path.diagnosis?.weak_points || path.diagnosis?.weakPoints || path.diagnosis?.weak_point || []
+        const validScores = points.filter(w => w && typeof w === 'object' && typeof w.accuracy === 'number')
+        if (validScores.length) {
+          return Math.round((validScores.reduce((sum, w) => sum + w.accuracy, 0) / validScores.length) * 100)
+        }
+        return 0
+      })(),
       recommendation: path.diagnosis?.recommendation || path.diagnosis?.suggestion || ''
     },
     nodes: (Array.isArray(nodes) ? nodes : []).map(n => ({
@@ -467,8 +483,24 @@ const loadNodeResources = async () => {
 
   if (selectedNode.value.resources?.length > 0) {
     nodeResources.value = normalizeNodeResources(selectedNode.value.resources)
-    nodeQuizData.value = selectedNode.value.quiz || null
-    nodeSessionId.value = selectedNode.value.sessionId || ''
+    // 先查题库缓存，再用节点预载数据
+    const pathId = pathState.value?.pathId
+    const quizBankId = pathId ? `quiz-resource-${pathId}-${selectedNode.value.id}` : ''
+    const existingQuiz = quizBankId ? getQuizSet(quizBankId) : null
+    if (existingQuiz) {
+      nodeQuizData.value = existingQuiz
+      nodeSessionId.value = existingQuiz.sessionId || ''
+    } else if (selectedNode.value.quiz) {
+      const quiz = upsertQuizSet({
+        sourceId: `${pathId}-${selectedNode.value.id}`,
+        title: `${selectedNode.value.title} - 巩固练习`,
+        content: JSON.stringify(selectedNode.value.quiz),
+        fileType: 'exercise',
+        sessionId: selectedNode.value.sessionId || ''
+      })
+      if (quiz) nodeQuizData.value = quiz
+      nodeSessionId.value = selectedNode.value.sessionId || ''
+    }
     showResources.value = true
     return
   }
@@ -483,12 +515,28 @@ const loadNodeResources = async () => {
     const items = data.resources || data.files || data.items || []
     nodeResources.value = normalizeNodeResources(items)
 
-    try {
+    // 查题库缓存 → 节点预载 → 调生成接口
+    const quizBankId = `quiz-resource-${pathId}-${selectedNode.value.id}`
+    const existingQuiz = getQuizSet(quizBankId)
+    if (existingQuiz) {
+      nodeQuizData.value = existingQuiz
+      nodeSessionId.value = existingQuiz.sessionId || ''
+      console.log('[StudyPath] 从题库加载已有题目：', existingQuiz)
+    } else if (selectedNode.value.quiz) {
+      const quiz = upsertQuizSet({
+        sourceId: `${pathId}-${selectedNode.value.id}`,
+        title: `${selectedNode.value.title} - 巩固练习`,
+        content: JSON.stringify(selectedNode.value.quiz),
+        fileType: 'exercise',
+        sessionId: selectedNode.value.sessionId || ''
+      })
+      if (quiz) nodeQuizData.value = quiz
+      nodeSessionId.value = selectedNode.value.sessionId || ''
+    } else {
       const quizRes = await generatePathNodeQuiz(pathId, selectedNode.value.id)
       console.log('[StudyPath] generatePathNodeQuiz 原始响应：', quizRes)
       const quizData = quizRes?.data?.data || quizRes?.data || quizRes || {}
       nodeSessionId.value = quizData.session_id || quizData.sessionId || ''
-      // 尝试多种可能的题目字段名
       const rawQuestions =
         quizData.questions ||
         quizData.question_list ||
@@ -498,8 +546,6 @@ const loadNodeResources = async () => {
         []
       const questions = Array.isArray(rawQuestions) ? rawQuestions : []
       if (questions.length || quizData.content) {
-        // 把整个响应作为 content 传给 upsertQuizSet，
-        // 让 parseQuizQuestions 来自动规范化题目字段名（stem/options/answer/explanation）
         const quiz = upsertQuizSet({
           sourceId: `${pathId}-${selectedNode.value.id}`,
           title: `${selectedNode.value.title} - 巩固练习`,
@@ -512,8 +558,6 @@ const loadNodeResources = async () => {
       } else {
         console.warn('[StudyPath] 后端未返回题目数据，quizData:', quizData)
       }
-    } catch (err) {
-      console.warn('[StudyPath] 生成练习题失败（可选步骤）：', err)
     }
 
     showResources.value = true
@@ -543,7 +587,13 @@ const previewNodeResource = resource => {
 
 const completeNode = async nodeId => {
   try {
-    await completeLearningPathNode(nodeId, nodeSessionId.value)
+    let sessionId = nodeSessionId.value
+    // 如果 sessionId 丢失（如刷新页面后），从题库 localStorage 查找
+    if (!sessionId && pathState.value?.pathId) {
+      const quiz = getQuizSet(`quiz-resource-${pathState.value.pathId}-${nodeId}`)
+      if (quiz?.sessionId) sessionId = quiz.sessionId
+    }
+    await completeLearningPathNode(nodeId, sessionId)
     await fetchCurrentPath()
   } catch (err) {
     error.value = err?.response?.data?.detail || err?.message || '标记完成失败'
