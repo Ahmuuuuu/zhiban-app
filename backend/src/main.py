@@ -12,6 +12,7 @@ from backend.src.router.user_router import router as user_router
 from backend.src.router.admin_router import router as admin_router
 from backend.src.router.exam_router import router as exam_router
 from backend.src.router.path_router import router as path_router
+from backend.src.router.learning_path_router import router as learning_path_router
 app = FastAPI(
     title="AI聊天后端",
     description="Swagger接口文档",
@@ -61,3 +62,4 @@ app.include_router(knowledge_router)
 app.include_router(admin_router)
 app.include_router(exam_router)
 app.include_router(path_router)
+app.include_router(learning_path_router)

@@ -469,3 +469,145 @@ class PathService:
         existing["updated_at"] = str(datetime.now())
         picture.traits = json.dumps(existing, ensure_ascii=False)
         await picture.save()
+
+    # ── 轻量学习路径接口（供前端动态路径动画） ──
+
+    @staticmethod
+    async def get_current_path(user_id: int) -> dict | None:
+        """返回用户当前活跃路径（含节点、进度、诊断）"""
+        progress_record = await UserPathProgress.filter(user_id=user_id)\
+            .order_by("-id").prefetch_related("path", "node").first()
+        if not progress_record or not progress_record.path:
+            return None
+
+        path = progress_record.path
+        path_id = path.id
+
+        progresses = await UserPathProgress.filter(user_id=user_id, path_id=path_id)\
+            .prefetch_related("node").all()
+        progresses.sort(key=lambda p: p.node.order_index if p.node else 0)
+
+        nodes = []
+        current_node_id = None
+        for p in progresses:
+            node = p.node
+            if not node:
+                continue
+            status = p.node_status
+            if status in ("unlocked", "in_progress") and not current_node_id:
+                current_node_id = node.id
+
+            # 组装 summary 文本
+            knowledge_tags = json.loads(node.knowledge_tags) if node.knowledge_tags else []
+            summary = f"学习{node.topic}" + (f"（{', '.join(knowledge_tags[:3])}）" if knowledge_tags else "")
+
+            nodes.append({
+                "id": node.id,
+                "title": node.topic,
+                "type": "quiz" if node.quiz_config else "read",
+                "status": status,
+                "summary": summary,
+                "resource_id": json.loads(p.resource_ids)[0] if p.resource_ids else None,
+                "action_label": "开始测验" if node.quiz_config and status in ("unlocked", "in_progress") else "开始学习",
+            })
+
+        # 诊断
+        mastery_records = await KnowledgeMastery.filter(user_id=user_id).all()
+        weak_points = []
+        latest_scores = []
+        for m in mastery_records:
+            acc = round(m.correct_count / max(m.total_attempts, 1), 2)
+            if acc < 0.6:
+                weak_points.append({"tag": m.knowledge_tag, "accuracy": acc, "level": m.mastery_level})
+            if m.total_attempts > 0:
+                latest_scores.append(acc)
+        best_score = round(max(latest_scores) * 100) if latest_scores else 0
+        latest_score = round(latest_scores[-1] * 100) if latest_scores else 0
+
+        completed = sum(1 for p in progresses if p.node_status == "completed")
+        total = len(progresses)
+
+        diagnosis = {
+            "weak_points": weak_points,
+            "latest_score": latest_score,
+            "best_score": best_score,
+            "recommendation": "继续巩固薄弱知识点" if weak_points else "进度良好，继续保持",
+        }
+
+        # next_action
+        next_action = None
+        if current_node_id:
+            cur_node = next((n for n in nodes if n["id"] == current_node_id), None)
+            if cur_node:
+                next_action = {
+                    "label": cur_node["action_label"],
+                    "type": cur_node["type"],
+                    "target_id": cur_node["id"],
+                }
+
+        return {
+            "path_id": path_id,
+            "goal": path.subject,
+            "stage": f"{completed}/{total}",
+            "progress": round(completed / total * 100) if total else 0,
+            "current_node_id": current_node_id,
+            "nodes": nodes,
+            "next_action": next_action,
+            "diagnosis": diagnosis,
+        }
+
+    @staticmethod
+    async def complete_node(node_id: int, user_id: int, session_id: str) -> dict:
+        """完成节点（提交测验）→ 返回更新后节点 + 新解锁节点"""
+        node = await PathNode.filter(id=node_id).first()
+        if not node:
+            raise ValueError("节点不存在")
+
+        progress = await UserPathProgress.filter(user_id=user_id, node_id=node_id)\
+            .prefetch_related("path").first()
+        if not progress:
+            raise ValueError("未加入该路径")
+
+        path_id = progress.path_id
+
+        # 复用原有测验提交逻辑
+        quiz_result = await PathService.submit_node_quiz(path_id, node_id, user_id, session_id)
+        if "error" in quiz_result:
+            raise ValueError(quiz_result["error"])
+
+        # 当前节点更新后状态
+        updated_progress = await UserPathProgress.filter(user_id=user_id, node_id=node_id)\
+            .prefetch_related("node").first()
+        updated_node = {
+            "id": node_id,
+            "title": node.topic,
+            "status": updated_progress.node_status if updated_progress else "locked",
+            "quiz_passed": quiz_result.get("passed", False),
+            "score": quiz_result.get("score", 0),
+        }
+
+        # 新解锁的节点
+        new_nodes = []
+        next_node = await PathNode.filter(path_id=path_id, order_index=node.order_index + 1).first()
+        if next_node:
+            next_progress = await UserPathProgress.filter(
+                user_id=user_id, path_id=path_id, node_id=next_node.id
+            ).first()
+            if next_progress and next_progress.node_status == "unlocked":
+                knowledge_tags = json.loads(next_node.knowledge_tags) if next_node.knowledge_tags else []
+                new_nodes.append({
+                    "id": next_node.id,
+                    "title": next_node.topic,
+                    "type": "quiz" if next_node.quiz_config else "read",
+                    "status": "unlocked",
+                    "summary": f"学习{next_node.topic}" + (f"（{', '.join(knowledge_tags[:3])}）" if knowledge_tags else ""),
+                    "resource_ids": json.loads(next_progress.resource_ids) if next_progress and next_progress.resource_ids else [],
+                    "action_label": "开始学习",
+                })
+
+        return {
+            "node": updated_node,
+            "new_nodes": new_nodes,
+            "passed": quiz_result.get("passed", False),
+            "score": quiz_result.get("score", 0),
+        }
