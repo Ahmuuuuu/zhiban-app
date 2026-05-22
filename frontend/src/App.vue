@@ -15,7 +15,7 @@
         </div>
       </div>
 
-      <RouterView v-else v-slot="{ Component }" :key="route.fullPath">
+      <RouterView v-else v-slot="{ Component }" :key="pageShellKey">
         <div class="page-transition-shell">
           <component :is="Component" />
         </div>
@@ -37,6 +37,7 @@ const route = useRoute()
 const keepChatPane = ref(route.path === '/chat')
 const isHomeChatRoute = computed(() => route.path === '/' || route.path === '/chat')
 const showChatPane = computed(() => route.path === '/chat' || keepChatPane.value)
+const pageShellKey = computed(() => route.matched[0]?.path || route.path)
 
 watch(
   () => route.path,

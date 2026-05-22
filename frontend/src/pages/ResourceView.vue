@@ -120,7 +120,7 @@ import {
   FileText,
   RefreshCw
 } from 'lucide-vue-next'
-import { getStudyResources } from '../api/apis'
+import { getGeneratedResources, getStudyResources, resolveApiUrl } from '../api/apis'
 import { hydrateSavedResourceRefs } from '../utils/savedResources'
 
 const route = useRoute()
@@ -159,6 +159,34 @@ const normalizeResources = data => {
   }))
 }
 
+const normalizeGeneratedResources = data => {
+  const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
+
+  return list.map(item => {
+    const resourceType = item.resource_type || item.file_type || item.fileType || 'resource'
+    const resourceId = item.resource_id || item.resourceId || item.id
+    const filename = item.filename || `${item.topic || item.title || '生成资源'}_${resourceType}`
+
+    return {
+      doc_id: `generated-${resourceId}`,
+      source: 'generated',
+      sourceId: String(resourceId || ''),
+      title: item.title || item.topic || filename,
+      filename,
+      content: item.preview || item.preview_content || item.content || '',
+      type: resourceType,
+      category: String(resourceType).includes('exercise') ? 'exercise' : 'reference',
+      categoryLabel: String(resourceType).includes('exercise') ? '习题/题库' : 'AI 生成',
+      visibility: item.visibility || 'private',
+      quizId: item.quiz_id || item.quizId || '',
+      sessionId: item.session_id || item.sessionId || '',
+      created_at: item.created_at || item.createdAt || '',
+      previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || ''),
+      downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
+    }
+  })
+}
+
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -174,8 +202,10 @@ const loadResources = async () => {
   try {
     const result = await getStudyResources({ visibility: 'private' })
     const backendResources = normalizeResources(result).filter(item => item.visibility !== 'public')
+    const generatedResult = await getGeneratedResources()
+    const generatedBackendResources = normalizeGeneratedResources(generatedResult)
     const generatedResources = await hydrateSavedResourceRefs('private')
-    resources.value = [...generatedResources, ...backendResources]
+    resources.value = [...generatedResources, ...generatedBackendResources, ...backendResources]
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     errorMessage.value =

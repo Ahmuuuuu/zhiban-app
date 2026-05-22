@@ -159,6 +159,7 @@ export const upsertQuizSet = payload => {
   const session = {
     id: sessionId,
     sourceId: payload.sourceId || '',
+    sessionId: payload.sessionId || payload.session_id || '',
     title: payload.title || 'AI 生成题目',
     content: payload.content || '',
     fileType: payload.fileType || 'exercise',
@@ -208,6 +209,7 @@ export const recordQuizAttempt = payload => {
   const attempt = {
     id: uid('attempt'),
     quizId,
+    sessionId: payload.sessionId || '',
     title: payload.title || '',
     score: Number(payload.score || 0),
     total: Number(payload.total || 0),
