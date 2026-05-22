@@ -42,6 +42,47 @@ async def _extract_topic_from_chat(user_id: int, chat_group_id: int) -> str:
     return response.content.strip()
 
 
+async def _next_chat_group_id(user_id: int) -> int:
+    latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
+    if not latest or not latest.chat_group_id:
+        return 1
+    return latest.chat_group_id + 1
+
+
+async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
+    return chat_group_id if chat_group_id and chat_group_id > 0 else await _next_chat_group_id(user_id)
+
+
+def _resource_history_response(resources: list[dict]) -> str:
+    if not resources:
+        return "资源生成完成，但没有生成可保存的文件。"
+
+    lines = ["已生成学习资源："]
+    for resource in resources:
+        file_type = resource.get("resource_type") or resource.get("file_type") or "resource"
+        topic = resource.get("topic") or "学习资源"
+        resource_id = resource.get("resource_id")
+        ext = _FILE_EXT_MAP.get(file_type, "md")
+        filename = f"{topic}_{file_type}.{ext}"
+        if resource_id:
+            lines.append(f"- [{filename}](/resource/{resource_id}/download)")
+        else:
+            lines.append(f"- {filename}")
+    return "\n".join(lines)
+
+
+async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str, resources: list[dict]) -> None:
+    user = await User.filter(id=user_id).first()
+    if not user:
+        return
+    await ChatHistory.create(
+        user=user,
+        chat_group_id=chat_group_id,
+        req=req,
+        res=_resource_history_response(resources),
+    )
+
+
 async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> dict:
     await init_db()
 
@@ -114,6 +155,7 @@ class ResourceService:
 
     @staticmethod
     async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> list[dict]:
+        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
         initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
         topic = initial_state["topic"]
 
@@ -125,6 +167,8 @@ class ResourceService:
             result.get("review_passed", False),
             result.get("retry_count", 0),
         )
+        await _save_generation_to_history(user_id, chat_group_id, topic, saved)
+        return saved
 
         # exercise 类型：自动生成对应题库，关联 session_id
         for i, item in enumerate(saved):
@@ -147,6 +191,7 @@ class ResourceService:
     @staticmethod
     async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0):
         """节点级流式 — astream 逐节点产出状态，只跑一次 graph，同时推送文件事件"""
+        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
         initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
         topic = initial_state["topic"]
         final_resources = {}
@@ -175,9 +220,11 @@ class ResourceService:
 
         # 流式结束后存库
         saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry)
+        await _save_generation_to_history(user_id, chat_group_id, topic, saved)
         # 在 done 事件中附带 download_url
         done_data = {
             "done": True,
+            "chat_group_id": chat_group_id,
             "resources": [
                 {
                     "resource_id": r["resource_id"],

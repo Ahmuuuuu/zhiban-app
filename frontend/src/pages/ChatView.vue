@@ -941,6 +941,7 @@ const confirmSaveGeneratedResource = async () => {
       kind: message.resourceKind || 'resource',
       fileType: message.fileType,
       category,
+      quizId: message.quizId || '',
       title: fileTitleWithoutExtension(message.filename),
       filename: message.filename,
       previewUrl: message.previewUrl || '',
@@ -1048,6 +1049,22 @@ const scrollToBottom = async () => {
   }
 }
 
+const handleGenerationDone = async eventData => {
+  const chatGroupId = eventData?.chat_group_id || activeConversationId.value
+
+  if (chatGroupId) {
+    activeConversationId.value = chatGroupId
+  }
+
+  if (Array.isArray(eventData?.resources)) {
+    for (const resource of eventData.resources) {
+      await appendFileMessage(resource)
+    }
+  }
+
+  await loadConversationList()
+}
+
 
 //获取对话消息
 const sendMessage = async () => {
@@ -1094,11 +1111,7 @@ const sendMessage = async () => {
         onImage: (imageData) => { appendImageMessage(imageData) },
         onDone: async (eventData) => {
           target.time = getNowTime()
-          if (Array.isArray(eventData?.resources)) {
-            for (const resource of eventData.resources) {
-              await appendFileMessage(resource)
-            }
-          }
+          await handleGenerationDone(eventData)
         },
       })
       await scrollToBottom()
@@ -1114,11 +1127,7 @@ const sendMessage = async () => {
         onImage: (imageData) => { appendImageMessage(imageData) },
         onDone: async (eventData) => {
           target.time = getNowTime()
-          if (Array.isArray(eventData?.resources)) {
-            for (const resource of eventData.resources) {
-              await appendFileMessage(resource)
-            }
-          }
+          await handleGenerationDone(eventData)
         },
       })
       await scrollToBottom()

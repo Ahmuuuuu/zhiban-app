@@ -317,7 +317,8 @@ export function generateImage(data) {
     data: {
       prompt: data.prompt,
       aspect_ratio: data.aspect_ratio || '1:1',
-      img_count: data.img_count || 1
+      img_count: data.img_count || 1,
+      chat_group_id: Number(data.chat_group_id || 0)
     }
   })
 }

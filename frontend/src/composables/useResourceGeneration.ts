@@ -101,6 +101,7 @@ export async function executeGeneration(
         prompt,
         aspect_ratio: tool.aspectRatio || '1:1',
         img_count: tool.imageCount || 1,
+        chat_group_id: Number(chatGroupId || 0),
       })
       const submitData = unwrapResponseData(submitRes)
       const taskId = submitData?.task_id || submitData?.taskId || submitData?.id
@@ -112,7 +113,7 @@ export async function executeGeneration(
           callbacks.onProgress?.(
             immediateImages.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
           )
-          callbacks.onDone?.()
+          callbacks.onDone?.({ chat_group_id: submitData?.chat_group_id || submitData?.chatGroupId })
           return
         }
 
@@ -133,7 +134,7 @@ export async function executeGeneration(
             callbacks.onProgress?.(
               images.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
             )
-            callbacks.onDone?.()
+            callbacks.onDone?.({ chat_group_id: taskInfo.chat_group_id || taskInfo.chatGroupId || submitData?.chat_group_id })
           } else {
             callbacks.onError?.('图片没有下载成功，请稍后重试。')
           }
@@ -154,7 +155,7 @@ export async function executeGeneration(
           return
         }
 
-        callbacks.onProgress?.(`正在生成图片，${i + 1}/30...`)
+        callbacks.onProgress?.(`正在生成图片 ${Math.round(((i + 1) / 30) * 100)}%...`)
       }
 
       callbacks.onError?.('图片生成超时，请稍后重试。')

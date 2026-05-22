@@ -95,6 +95,26 @@
               <span>{{ formatDate(resource.created_at) }}</span>
               <span>{{ getWordCount(resource.content) }} 字</span>
             </footer>
+            <div class="resource-actions">
+              <router-link
+                v-if="resource.quizId"
+                class="resource-action"
+                :to="`/question-bank/${resource.quizId}`"
+                @click.stop
+              >
+                开始练习
+              </router-link>
+              <a
+                v-if="resource.downloadUrl"
+                class="resource-action"
+                :href="resource.downloadUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                @click.stop
+              >
+                下载原文件
+              </a>
+            </div>
           </article>
         </template>
 
@@ -308,6 +328,13 @@ const getExcerpt = content => {
 
 const getWordCount = content => {
   return String(content || '').replace(/\s/g, '').length
+}
+
+const resourceMetric = resource => {
+  const type = String(resource.type || resource.category || '').toLowerCase()
+  if (resource.quizId || type.includes('exercise') || type.includes('quiz')) return '题库资源'
+  if (resource.downloadUrl) return `${type || 'file'} 文件`
+  return `${getWordCount(resource.content)} 字`
 }
 
 const formatDate = (value, withTime = false) => {
@@ -1173,6 +1200,34 @@ onMounted(loadResources)
   line-height: 1.2;
   position: relative;
   z-index: 1;
+}
+
+.resource-actions,
+.resource-fullscreen__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  position: relative;
+  z-index: 2;
+}
+
+.resource-action {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(22, 63, 143, 0.18);
+  border-radius: 999px;
+  background: #163f8f;
+  color: #fafafa;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.resource-action.primary {
+  min-height: 38px;
+  padding: 0 14px;
 }
 
 .placeholder-card {
