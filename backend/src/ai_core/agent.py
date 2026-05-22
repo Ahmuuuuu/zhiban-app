@@ -1,5 +1,5 @@
-import sys
 import json
+import logging
 
 import httpx
 from backend.src.ai_core.llm_config import llm
@@ -163,6 +163,7 @@ class UnifiedChat:
         try:
             action_tools = await self._load_action_tools_async()
         except Exception:
+            logging.getLogger(__name__).exception("加载 action tools 失败")
             action_tools = []
         self._build_agent(action_tools)
         self._action_tools_loaded = True

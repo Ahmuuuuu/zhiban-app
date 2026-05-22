@@ -1,0 +1,112 @@
+"""学习路径路由"""
+
+from fastapi import APIRouter, HTTPException, Depends
+
+from backend.src.service.path_service import PathService
+from backend.src.utils.jwt import get_user_id_from_token
+from backend.src.schemas.path import (
+    GeneratePathRequest,
+    EnrollPathRequest,
+    SubmitNodeQuizRequest,
+    RegeneratePathRequest,
+)
+
+router = APIRouter(prefix="/path", tags=["学习路径"])
+
+
+@router.post("/generate")
+async def generate_path(data: GeneratePathRequest, user_id: int = Depends(get_user_id_from_token)):
+    """AI 生成学习路径"""
+    result = await PathService.generate_path(data.subject, user_id, data.difficulty, data.node_count)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.get("/list")
+async def list_paths(user_id: int = Depends(get_user_id_from_token)):
+    """路径列表"""
+    result = await PathService.list_paths(user_id)
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.get("/{path_id}")
+async def get_path(path_id: int):
+    """路径详情（含所有节点）"""
+    result = await PathService.get_path(path_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="路径不存在")
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/enroll")
+async def enroll_path(data: EnrollPathRequest, user_id: int = Depends(get_user_id_from_token)):
+    """加入路径开始学习"""
+    try:
+        result = await PathService.enroll_path(data.path_id, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.get("/{path_id}/progress")
+async def get_progress(path_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """用户在路径上的整体进度"""
+    result = await PathService.get_progress(path_id, user_id)
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.get("/{path_id}/node/{node_id}")
+async def get_node(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """节点详情（含资源和进度）"""
+    result = await PathService.get_node(path_id, node_id, user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="节点不存在")
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/{path_id}/node/{node_id}/generate-resources")
+async def generate_node_resources(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """手动为节点生成学习资源"""
+    try:
+        result = await PathService.generate_node_resources(path_id, node_id, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/{path_id}/node/{node_id}/generate-quiz")
+async def generate_node_quiz(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """为节点生成测验题目"""
+    try:
+        result = await PathService.generate_node_quiz(path_id, node_id, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/{path_id}/node/{node_id}/submit-quiz")
+async def submit_node_quiz(
+    path_id: int,
+    node_id: int,
+    data: SubmitNodeQuizRequest,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    """提交节点测验 → 评分 → 门禁 → 解锁下一节点"""
+    try:
+        result = await PathService.submit_node_quiz(path_id, node_id, user_id, data.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/regenerate")
+async def regenerate_path(data: RegeneratePathRequest, user_id: int = Depends(get_user_id_from_token)):
+    """基于最新画像重建路径"""
+    try:
+        result = await PathService.regenerate_path(data.path_id, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return {"code": 200, "msg": "success", "data": result}

@@ -1,3 +1,5 @@
+from tortoise.exceptions import IntegrityError
+
 from backend.src.models.usermodel import User
 from backend.src.models.portraitmodel import User_picture
 from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
@@ -17,8 +19,10 @@ class UserService():
             user.picture = picture
             await user.save()
             return user, "注册成功"
-        except Exception:
+        except IntegrityError:
             return None, "用户名重复"
+        except Exception as e:
+            return None, f"注册失败：{e}"
 
     @staticmethod
     async def login_user(data : Login_User):
@@ -84,5 +88,7 @@ class UserService():
         if not user:
             return None, "未查找到用户"
         else :
+            if not verify_password(data.password, user.password):
+                return None, "密码错误"
             await user.delete()
             return user, "删除成功"

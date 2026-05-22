@@ -6,6 +6,10 @@ import os
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 database = os.getenv("database")
+# 连接池参数：默认最小5、最大20
+if "mysql://" in database and "minsize" not in database:
+    sep = "&" if "?" in database else "?"
+    database = f"{database}{sep}minsize=5&maxsize=20"
 
 #幂等初始化连接数据库，防止数据库重复连接
 _DB_INITIALIZED = False
@@ -16,7 +20,7 @@ async def init_db():
         return 
     await Tortoise.init(
         db_url=database,
-        modules={"models": ["backend.src.models.usermodel", "backend.src.models.chat_history_model", "backend.src.models.portraitmodel", "backend.src.models.knowledgemodel", "backend.src.models.resource_model", "backend.src.models.agent_skill_model", "backend.src.models.image_model", "backend.src.models.exam_model"]}
+        modules={"models": ["backend.src.models.usermodel", "backend.src.models.chat_history_model", "backend.src.models.portraitmodel", "backend.src.models.knowledgemodel", "backend.src.models.resource_model", "backend.src.models.agent_skill_model", "backend.src.models.image_model", "backend.src.models.exam_model", "backend.src.models.path_model"]}
     )
     await Tortoise.generate_schemas()
     _DB_INITIALIZED = True

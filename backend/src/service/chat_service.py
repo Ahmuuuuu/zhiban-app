@@ -104,7 +104,13 @@ class ChatService:
             gid = record.chat_group_id
             if gid not in group_history:
                 group_history[gid] = []
-            group_history[gid].append(record)
+            group_history[gid].append({
+                "user_id": record.user_id,
+                "chat_group_id": record.chat_group_id,
+                "req": record.req,
+                "res": record.res,
+                "created_time": str(record.created_at) if record.created_at else None,
+            })
         return group_history, "返回群组字典成功"
 
     @staticmethod
@@ -120,5 +126,5 @@ class ChatService:
         records = await ChatHistory.filter(user__id=user_id, chat_group_id=chat_group_id).all()
         if not records:
             return None, None, "未查找到该聊天组"
-        await ChatHistory.delete(records)
+        await ChatHistory.filter(user__id=user_id, chat_group_id=chat_group_id).delete()
         return user_id, chat_group_id, "删除成功"

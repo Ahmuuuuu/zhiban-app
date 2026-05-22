@@ -4,10 +4,16 @@ BGE 模型仍从本地加载（开源模型，不包含用户数据）
 """
 import os
 import json
+import hashlib
+import asyncio
 from pathlib import Path
+from dotenv import load_dotenv
 
-# 国内网络：HuggingFace 镜像加速
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+HF_ENDPOINT = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
+if HF_ENDPOINT:
+    os.environ.setdefault("HF_ENDPOINT", HF_ENDPOINT)
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -18,20 +24,31 @@ from backend.src.models.knowledgemodel import KnowledgeVector
 # BGE 模型本地缓存路径 — 第一次会自动下载到这里，后续离线加载
 MODEL_DIR = str(Path(__file__).parent.parent / "ai_core" / "knowledge_base" / "bge_model")
 _embed_model = None
+_embed_lock = asyncio.Lock()
 
 
-def _get_embed_model():
+async def _get_embed_model_async():
+    """异步加载 BGE 模型（避免阻塞事件循环）"""
     global _embed_model
     if _embed_model is not None:
         return _embed_model
 
-    local_path = Path(MODEL_DIR)
-    if local_path.exists() and any(local_path.iterdir()):
-        _embed_model = SentenceTransformer(str(local_path))
-    else:
-        _embed_model = SentenceTransformer("BAAI/bge-small-zh-v1.5")
-        _embed_model.save(str(local_path))
-    return _embed_model
+    async with _embed_lock:
+        if _embed_model is not None:
+            return _embed_model
+        local_path = Path(MODEL_DIR)
+        if local_path.exists() and any(local_path.iterdir()):
+            _embed_model = await asyncio.to_thread(SentenceTransformer, str(local_path))
+        else:
+            _embed_model = await asyncio.to_thread(SentenceTransformer, "BAAI/bge-small-zh-v1.5")
+            await asyncio.to_thread(_embed_model.save, str(local_path))
+        return _embed_model
+
+
+async def _encode_async(text: str) -> np.ndarray:
+    """异步编码文本为向量（在线程池中执行）"""
+    model = await _get_embed_model_async()
+    return await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
 
 
 async def search(query: str, top_k: int = 5, user_id: int = None, category: str = None) -> str:
@@ -42,8 +59,7 @@ async def search(query: str, top_k: int = 5, user_id: int = None, category: str 
     - category: 限定分类，如 "exercise" / "textbook"
     """
     try:
-        model = _get_embed_model()
-        query_vec = model.encode(query, normalize_embeddings=True)
+        query_vec = await _encode_async(query)
 
         if user_id:
             qs = KnowledgeVector.filter(Q(visibility="public") | Q(user_id=user_id))
@@ -93,9 +109,8 @@ async def ingest(
         if len(content.strip()) < 50:
             return "内容过短（<50字），未入库"
 
-        model = _get_embed_model()
-        doc_id = str(hash(title + content[:100]))
-        vector = model.encode(content, normalize_embeddings=True)
+        doc_id = hashlib.sha256((title + content[:100]).encode()).hexdigest()[:16]
+        vector = await _encode_async(content)
 
         existing = await KnowledgeVector.filter(doc_id=doc_id).first()
         if existing:
@@ -192,9 +207,9 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
 
 async def get_by_id(doc_id: str) -> dict | None:
     """根据 doc_id 获取单条知识库记录"""
-    record = await KnowledgeVector.filter(doc_id=doc_id).first().values(
+    record = await KnowledgeVector.filter(doc_id=doc_id).values(
         "doc_id", "title", "content", "category", "user_id", "visibility", "created_at"
-    )
+    ).first()
     return record
 
 
@@ -233,9 +248,8 @@ async def update(
         if content is not None:
             if len(content.strip()) < 50:
                 return "内容过短（<50字），更新失败"
-            model = _get_embed_model()
-            new_doc_id = str(hash(title or record.title + content[:100]))
-            vector = model.encode(content, normalize_embeddings=True)
+            new_doc_id = hashlib.sha256((title or record.title + content[:100]).encode()).hexdigest()[:16]
+            vector = await _encode_async(content)
             record.doc_id = new_doc_id
             record.content = content
             record.embedding = json.dumps(vector.tolist())

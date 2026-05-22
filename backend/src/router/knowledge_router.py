@@ -1,4 +1,4 @@
-import traceback
+import logging
 from pathlib import Path
 import tempfile
 import os
@@ -93,7 +93,7 @@ async def upload_document(
         }
 
     except Exception as e:
-        traceback.print_exc()
+        logging.getLogger(__name__).exception("知识库上传失败")
         raise HTTPException(500, f"上传失败: {type(e).__name__}: {e}")
 
     finally:
