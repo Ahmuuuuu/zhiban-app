@@ -83,9 +83,16 @@
           >
             <div class="card-top">
               <span class="type-mark">
-                <FileText :size="18" />
+                <FileImage v-if="resource.type === 'image'" :size="18" />
+                <Presentation v-else-if="isPptResource(resource)" :size="18" />
+                <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
+                <FileText v-else :size="18" />
               </span>
               <span class="visibility">{{ resource.categoryLabel || '公开资源' }}</span>
+            </div>
+
+            <div v-if="resource.type === 'image' && resource.previewUrl" class="image-thumb">
+              <img :src="resource.previewUrl" :alt="resource.title" loading="lazy" @error="handleImageError($event)" />
             </div>
 
             <h2>{{ resource.title || '未命名资料' }}</h2>
@@ -93,27 +100,26 @@
 
             <footer>
               <span>{{ formatDate(resource.created_at) }}</span>
-              <span>{{ getWordCount(resource.content) }} 字</span>
+              <span v-if="resource.type === 'image'">图片</span>
+              <span v-else>{{ getWordCount(resource.content) }} 字</span>
             </footer>
             <div class="resource-actions">
-              <router-link
-                v-if="resource.quizId"
+              <button
+                v-if="isQuizResource(resource)"
                 class="resource-action"
-                :to="`/question-bank/${resource.quizId}`"
-                @click.stop
+                type="button"
+                @click.stop="startResourceQuiz(resource)"
               >
                 开始练习
-              </router-link>
-              <a
+              </button>
+              <button
                 v-if="resource.downloadUrl"
                 class="resource-action"
-                :href="resource.downloadUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-                @click.stop
+                type="button"
+                @click.stop="downloadResource(resource)"
               >
                 下载原文件
-              </a>
+              </button>
             </div>
           </article>
         </template>
@@ -167,7 +173,38 @@
           </div>
 
           <div class="resource-fullscreen__content">
-            <p>{{ selectedResource.content || '暂无正文内容' }}</p>
+            <template v-if="selectedResource.type === 'image' && selectedResource.previewUrl">
+              <img
+                class="preview-image"
+                :src="selectedResource.previewUrl"
+                :alt="selectedResource.title"
+                @error="handleImageError"
+              />
+            </template>
+            <template v-else-if="isPptResource(selectedResource) || isMindmapResource(selectedResource)">
+              <div v-if="selectedResource.previewUrl" class="file-preview-wrap">
+                <img
+                  class="preview-image"
+                  :src="selectedResource.previewUrl"
+                  :alt="selectedResource.title"
+                  @error="handleImageError"
+                />
+              </div>
+              <div class="file-placeholder-block">
+                <Presentation v-if="isPptResource(selectedResource)" :size="48" />
+                <GitBranch v-else :size="48" />
+                <p>{{ selectedResource.title || (isPptResource(selectedResource) ? 'PPT 文件' : '思维导图') }}</p>
+                <button
+                  v-if="selectedResource.downloadUrl"
+                  class="file-download-btn"
+                  type="button"
+                  @click="downloadResource(selectedResource)"
+                >
+                  下载{{ isPptResource(selectedResource) ? ' PPT 文件' : '思维导图' }}
+                </button>
+              </div>
+            </template>
+            <p v-else>{{ selectedResource.content || '暂无正文内容' }}</p>
           </div>
         </article>
       </section>
@@ -177,16 +214,21 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   AlertCircle,
+  FileImage,
+  Presentation,
   FileText,
+  GitBranch,
   RefreshCw,
   Search
 } from 'lucide-vue-next'
-import { getGeneratedResources, getStudyResources, resolveApiUrl } from '../api/apis'
-import { hydrateSavedResourceRefs } from '../utils/savedResources'
+import { downloadWithToken, getGeneratedImages, getGeneratedResource, getGeneratedResources, getStudyResources, resolveApiUrl } from '../api/apis'
+import { upsertQuizSet } from '../utils/quizBank'
 import UserAccountButton from '../components/UserAccountButton.vue'
 
+const router = useRouter()
 const resources = ref([])
 const selectedResource = ref(null)
 const previewOpen = ref(false)
@@ -242,22 +284,49 @@ const normalizeGeneratedResources = data => {
     const resourceId = item.resource_id || item.resourceId || item.id
     const filename = item.filename || `${item.topic || item.title || '生成资源'}_${resourceType}`
 
+    const isQuiz = String(resourceType).includes('exercise') || String(resourceType).includes('quiz')
+
     return {
       doc_id: `generated-${resourceId}`,
       source: 'generated',
       sourceId: String(resourceId || ''),
-      title: item.title || item.topic || filename,
+      title: item.title || item.topic || fileTitleWithoutExtension(filename),
       filename,
-      content: item.preview || item.preview_content || item.content || '',
+      content: isQuiz ? '这是一套生成题目，进入题库后开始练习。' : (item.preview || item.preview_content || item.content || ''),
       type: resourceType,
-      category: String(resourceType).includes('exercise') ? 'exercise' : 'reference',
-      categoryLabel: String(resourceType).includes('exercise') ? '习题/题库' : 'AI 生成',
+      category: isQuiz ? 'exercise' : 'reference',
+      categoryLabel: isQuiz ? '习题/题库' : 'AI 生成',
       visibility: item.visibility || 'private',
       quizId: item.quiz_id || item.quizId || '',
       sessionId: item.session_id || item.sessionId || '',
       created_at: item.created_at || item.createdAt || '',
       previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || ''),
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
+    }
+  })
+}
+
+const normalizeGeneratedImages = data => {
+  const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : data?.images || data?.image_list || []
+  return (Array.isArray(list) ? list : []).map(item => {
+    const imageId = String(item.image_id || item.imageId || item.id || '')
+    const url = item.url || item.image_url || item.imageUrl || item.preview_url || item.previewUrl || ''
+    return {
+      doc_id: `image-${imageId}`,
+      source: 'generated',
+      sourceId: imageId,
+      title: item.title || item.prompt || fileTitleWithoutExtension(item.filename || item.file_name || item.name || ''),
+      filename: item.filename || item.file_name || item.name || `image-${imageId || Date.now()}.jpg`,
+      content: item.prompt || item.content || item.preview || '',
+      type: 'image',
+      category: 'reference',
+      categoryLabel: 'AI 生成图片',
+      visibility: 'private',
+      quizId: '',
+      sessionId: '',
+      created_at: item.created_at || item.createdAt || '',
+      previewUrl: resolveApiUrl(url),
+      downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || url || (imageId ? `/image/${imageId}/download` : ''))
     }
   })
 }
@@ -271,8 +340,9 @@ const loadResources = async () => {
     const backendResources = normalizeResources(result).filter(item => item.visibility === 'public')
     const generatedResult = await getGeneratedResources()
     const generatedBackendResources = normalizeGeneratedResources(generatedResult)
-    const generatedResources = await hydrateSavedResourceRefs('public')
-    resources.value = [...generatedResources, ...generatedBackendResources, ...backendResources]
+    const imageResult = await getGeneratedImages()
+    const imageResources = normalizeGeneratedImages(imageResult)
+    resources.value = [...imageResources, ...generatedBackendResources, ...backendResources]
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     if (error?.response?.status === 401) {
@@ -312,6 +382,64 @@ const openResourcePreview = resource => {
 
 const closeResourcePreview = () => {
   previewOpen.value = false
+}
+
+const fileTitleWithoutExtension = filename => String(filename || '生成资源').replace(/\.[^.\\/]+$/, '')
+
+const isQuizResource = resource => {
+  const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
+  return Boolean(resource?.quizId) || text.includes('exercise') || text.includes('quiz') || text.includes('question') || text.includes('exam') || text.includes('题')
+}
+
+const isPptResource = resource => {
+  const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
+  return text.includes('ppt') || text.includes('pptx') || text.includes('slide') || text.includes('演示')
+}
+
+const isMindmapResource = resource => {
+  const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
+  return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('脑图') || text.includes('思维导图')
+}
+
+const downloadResource = async resource => {
+  try {
+    await downloadWithToken(resource.downloadUrl, resource.filename || `${resource.title || 'resource'}.md`)
+  } catch (error) {
+    console.error('下载资源失败：', error)
+    window.alert('下载失败，请确认登录状态和后端服务是否正常。')
+  }
+}
+
+const startResourceQuiz = async resource => {
+  if (resource.quizId) {
+    router.push(`/question-bank/${resource.quizId}`)
+    return
+  }
+
+  if (!resource.sourceId) return
+
+  try {
+    const detail = await getGeneratedResource(resource.sourceId)
+    const data = detail?.data || detail || {}
+    const quiz = upsertQuizSet({
+      sourceId: resource.sourceId,
+      sessionId: data.session_id || resource.sessionId || '',
+      title: resource.title,
+      filename: resource.filename,
+      fileType: resource.type || 'exercise',
+      content: data.content || resource.content || ''
+    })
+
+    if (!quiz) {
+      window.alert('这套题暂时没有拿到完整题目内容，请让后端在资源详情里返回完整 content。')
+      return
+    }
+
+    router.push(`/question-bank/${quiz.id}`)
+  } catch (error) {
+    console.error('打开题库资源失败：', error)
+    window.alert('题目加载失败，请稍后再试。')
+  }
 }
 
 const matchesCategory = resource => {
@@ -354,6 +482,10 @@ watch(filteredResources, list => {
 const getExcerpt = content => {
   const text = String(content || '').replace(/\s+/g, ' ').trim()
   return text ? text.slice(0, 118) : '暂无正文内容'
+}
+
+const handleImageError = event => {
+  event.target.style.display = 'none'
 }
 
 const getWordCount = content => {
@@ -846,6 +978,69 @@ onMounted(loadResources)
   word-break: break-word;
 }
 
+.preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+  border-radius: 12px;
+}
+
+.image-thumb {
+  height: 100px;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(237, 249, 252, 0.6);
+}
+
+.image-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.file-preview-wrap {
+  margin-bottom: 16px;
+}
+
+.file-placeholder-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px 20px;
+  color: #5f8fc3;
+  text-align: center;
+}
+
+.file-placeholder-block p {
+  margin: 0;
+  font-size: 15px;
+  color: #5f8fc3;
+}
+
+.file-download-btn {
+  min-height: 42px;
+  padding: 0 24px;
+  border: none;
+  border-radius: 18px;
+  background: #163f8f;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.file-download-btn:hover {
+  background: #1a4da8;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1253,6 +1448,8 @@ onMounted(loadResources)
   text-decoration: none;
   font-size: 12px;
   font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
 }
 
 .resource-action.primary {

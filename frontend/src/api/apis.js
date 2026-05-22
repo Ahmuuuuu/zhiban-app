@@ -10,6 +10,30 @@ export const resolveApiUrl = path => {
   return new URL(String(path).replace(/^\//, ''), API_BASE_URL).toString()
 }
 
+export async function downloadWithToken(url, filename = 'download') {
+  const href = resolveApiUrl(url)
+  const token = localStorage.getItem('token')
+  const response = await fetch(href, {
+    headers: {
+      ...(token ? { token } : {})
+    }
+  })
+
+  if (!response.ok) {
+    throw new Error(`下载失败：${response.status}`)
+  }
+
+  const blob = await response.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
 // 登录：后端 Login_User 接收 username/email/password
 export function login(data) {
   return request({
@@ -380,4 +404,56 @@ export function getExamSession(sessionId) {
 
 export function getExamSessions() {
   return request.get('/exam/sessions')
+}
+
+// ── 学习路径 API ──
+
+export function getCurrentLearningPath() {
+  return request.get('/learning_path/current')
+}
+
+export function completeLearningPathNode(nodeId, sessionId) {
+  return request({
+    url: `/learning_path/nodes/${nodeId}/complete`,
+    method: 'post',
+    data: {
+      session_id: sessionId
+    }
+  })
+}
+
+export function generateLearningPath(data) {
+  return request({
+    url: '/path/generate',
+    method: 'post',
+    data
+  })
+}
+
+export function getLearningPaths() {
+  return request.get('/path/list')
+}
+
+export function enrollLearningPath(pathId) {
+  return request({
+    url: '/path/enroll',
+    method: 'post',
+    data: {
+      path_id: pathId
+    }
+  })
+}
+
+export function generatePathNodeResources(pathId, nodeId) {
+  return request({
+    url: `/path/${pathId}/node/${nodeId}/generate-resources`,
+    method: 'post'
+  })
+}
+
+export function generatePathNodeQuiz(pathId, nodeId) {
+  return request({
+    url: `/path/${pathId}/node/${nodeId}/generate-quiz`,
+    method: 'post'
+  })
 }
