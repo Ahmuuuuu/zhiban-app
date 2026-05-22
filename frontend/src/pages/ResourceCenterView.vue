@@ -492,13 +492,6 @@ const getWordCount = content => {
   return String(content || '').replace(/\s/g, '').length
 }
 
-const resourceMetric = resource => {
-  const type = String(resource.type || resource.category || '').toLowerCase()
-  if (resource.quizId || type.includes('exercise') || type.includes('quiz')) return '题库资源'
-  if (resource.downloadUrl) return `${type || 'file'} 文件`
-  return `${getWordCount(resource.content)} 字`
-}
-
 const formatDate = (value, withTime = false) => {
   if (!value) return '未知时间'
 
@@ -538,7 +531,6 @@ onMounted(loadResources)
   gap: 18px;
 }
 
-.back-btn,
 .icon-btn,
 .import-link {
   border: 1px solid #c9dce9;
@@ -553,7 +545,6 @@ onMounted(loadResources)
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
-.back-btn,
 .import-link {
   height: 42px;
   padding: 0 14px;
@@ -567,7 +558,6 @@ onMounted(loadResources)
   height: 42px;
 }
 
-.back-btn:hover,
 .icon-btn:hover,
 .import-link:hover {
   background: #c9dce9;
@@ -577,10 +567,7 @@ onMounted(loadResources)
 }
 
 .header-actions,
-.resource-tools,
 .card-top,
-.preview-title,
-.preview-meta,
 .resource-card footer {
   display: flex;
   align-items: center;
@@ -590,23 +577,10 @@ onMounted(loadResources)
   gap: 10px;
 }
 
-.eyebrow {
-  margin: 0 0 6px;
-  color: #5f8fc3;
-  font-size: 12px;
-  font-weight: 800;
-}
-
 .center-header h1 {
   margin: 0;
   font-size: 30px;
   line-height: 1.15;
-}
-
-.center-header p:last-child {
-  margin: 8px 0 0;
-  color: #5f8fc3;
-  font-size: 14px;
 }
 
 .search-field {
@@ -646,17 +620,7 @@ onMounted(loadResources)
   gap: 10px;
 }
 
-.resource-layout {
-  min-height: 0;
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.62fr);
-  gap: 18px;
-  overflow: hidden;
-}
-
-.resource-list,
-.resource-grid {
+.resource-list {
   min-height: 0;
   overflow-y: auto;
   display: grid;
@@ -666,8 +630,7 @@ onMounted(loadResources)
   padding-right: 4px;
 }
 
-.resource-card,
-.preview-panel {
+.resource-card {
   border: 1px solid #c9dce9;
   border-radius: 8px;
   background: #fafafa;
@@ -710,13 +673,7 @@ onMounted(loadResources)
   flex-shrink: 0;
 }
 
-.type-mark.large {
-  width: 44px;
-  height: 44px;
-}
-
-.visibility,
-.preview-meta span {
+.visibility {
   background: #c9dce9;
   color: #163f8f;
   font-size: 12px;
@@ -770,64 +727,6 @@ onMounted(loadResources)
   gap: 5px;
 }
 
-.preview-panel {
-  min-height: 0;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  overflow: hidden;
-}
-
-.preview-title {
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.preview-title h2 {
-  margin: 0;
-  color: #163f8f;
-  font-size: 20px;
-  line-height: 1.35;
-}
-
-.preview-title p {
-  margin: 5px 0 0;
-  color: #5f8fc3;
-  font-size: 13px;
-}
-
-.preview-meta {
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.preview-meta span {
-  min-height: 28px;
-  padding: 5px 9px;
-  border-radius: 8px;
-  word-break: break-all;
-}
-
-.preview-content {
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-  border: 1px solid #c9dce9;
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 18px;
-}
-
-.preview-content p {
-  margin: 0;
-  color: #163f8f;
-  font-size: 14px;
-  line-height: 1.9;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 .empty-state {
   flex: 1;
   min-height: 320px;
@@ -876,19 +775,16 @@ onMounted(loadResources)
   height: 16px;
 }
 
-.resource-list::-webkit-scrollbar,
-.preview-content::-webkit-scrollbar {
+.resource-list::-webkit-scrollbar {
   width: 9px;
 }
 
-.resource-list::-webkit-scrollbar-track,
-.preview-content::-webkit-scrollbar-track {
+.resource-list::-webkit-scrollbar-track {
   background: #c9dce9;
   border-radius: 999px;
 }
 
-.resource-list::-webkit-scrollbar-thumb,
-.preview-content::-webkit-scrollbar-thumb {
+.resource-list::-webkit-scrollbar-thumb {
   background: #163f8f;
   border: 2px solid #c9dce9;
   border-radius: 999px;
@@ -1050,28 +946,6 @@ onMounted(loadResources)
 @keyframes shimmer {
   to {
     background-position: -220% 0;
-  }
-}
-
-@media (max-width: 980px) {
-  .resource-center-page {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
-  }
-
-  .center-header,
-  .resource-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .resource-layout,
-  .resource-list {
-    overflow: visible;
-  }
-
-  .preview-panel {
-    min-height: 460px;
   }
 }
 
