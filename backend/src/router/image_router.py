@@ -27,6 +27,7 @@ async def generate_image(
             user_id=user_id,
             aspect_ratio=data.aspect_ratio,
             img_count=data.img_count,
+            chat_group_id=data.chat_group_id,
         )
         return {"code": 200, "msg": "任务已提交", "data": result}
     except RuntimeError as e:

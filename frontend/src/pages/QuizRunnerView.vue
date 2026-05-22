@@ -82,7 +82,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { getQuizSet } from '../utils/quizBank'
+import { getQuizSet, recordQuizAttempt } from '../utils/quizBank'
 
 const route = useRoute()
 const quiz = ref(null)
@@ -144,6 +144,15 @@ const goNext = () => {
 
   if (currentIndex.value >= questions.value.length - 1) {
     finished.value = true
+    recordQuizAttempt({
+      quizId: quiz.value?.id,
+      title: quiz.value?.title,
+      score: score.value,
+      total: questions.value.length,
+      percent: Number(percentScore.value),
+      answers: answers.value,
+      results: results.value
+    })
     return
   }
 

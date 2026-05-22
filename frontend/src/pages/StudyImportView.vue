@@ -684,4 +684,95 @@ const submitMaterial = async () => {
     padding: 18px;
   }
 }
+
+/* Resource-center aligned skin */
+.import-page {
+  background:
+    radial-gradient(ellipse 72% 44% at 10% 0%, rgba(209, 244, 250, 0.46), transparent 70%),
+    linear-gradient(135deg, #fafafa 0%, rgb(237, 249, 252) 52%, #fafafa 100%);
+}
+
+.topbar {
+  min-height: 82px;
+  padding: 22px 34px 14px;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.topbar h1 {
+  font-size: 28px;
+  font-weight: 900;
+}
+
+.topbar p {
+  color: rgba(22, 63, 143, 0.66);
+  font-weight: 700;
+}
+
+.import-workspace {
+  padding: 20px 34px 30px;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 32px;
+}
+
+.upload-panel,
+.preview-panel {
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 28px;
+  background: rgba(250, 250, 250, 0.78);
+  box-shadow:
+    0 14px 34px rgba(22, 63, 143, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+
+.drop-zone {
+  border-right: 1px solid rgba(201, 220, 233, 0.72);
+  background:
+    linear-gradient(135deg, rgba(250, 250, 250, 0.92), rgba(237, 249, 252, 0.84)),
+    #fafafa;
+}
+
+.drop-zone.dragging,
+.drop-zone.ready {
+  background:
+    linear-gradient(135deg, rgba(250, 250, 250, 0.96), rgba(201, 220, 233, 0.74)),
+    #fafafa;
+}
+
+.upload-mark,
+.primary-btn,
+.submit-btn {
+  background: #163f8f;
+  color: #fafafa;
+}
+
+.primary-btn,
+.ghost-btn,
+.submit-btn,
+.meta-form input,
+.meta-form textarea,
+.visibility-group,
+.category-group,
+.preview-box,
+.empty-preview,
+.status-message {
+  border-radius: 18px;
+}
+
+.meta-form input,
+.meta-form textarea,
+.visibility-group,
+.category-group,
+.preview-box,
+.empty-preview {
+  border-color: rgba(201, 220, 233, 0.82);
+  background: rgba(250, 250, 250, 0.76);
+}
+
+.preview-box,
+.empty-preview {
+  background: rgba(237, 249, 252, 0.58);
+}
 </style>

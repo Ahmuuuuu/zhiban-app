@@ -53,10 +53,49 @@ def _make_auth_url(path: str, api_key: str, api_secret: str) -> str:
 SAVE_DIR = Path(__file__).parent.parent.parent / "static" / "images"
 
 
+async def _next_chat_group_id(user_id: int) -> int:
+    from backend.src.models.chat_history_model import ChatHistory
+
+    latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
+    if not latest or not latest.chat_group_id:
+        return 1
+    return latest.chat_group_id + 1
+
+
+async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
+    return chat_group_id if chat_group_id and chat_group_id > 0 else await _next_chat_group_id(user_id)
+
+
+async def _save_image_history(info: dict, images: list[dict]) -> None:
+    if info.get("history_saved"):
+        return
+
+    from backend.src.models.chat_history_model import ChatHistory
+    from backend.src.models.usermodel import User
+
+    user = await User.filter(id=info.get("user_id")).first()
+    if not user:
+        return
+
+    lines = ["已生成图片："]
+    for image in images:
+        label = image.get("filename") or "生成图片"
+        url = image.get("url") or ""
+        lines.append(f"- [{label}]({url})" if url else f"- {label}")
+
+    await ChatHistory.create(
+        user=user,
+        chat_group_id=info.get("chat_group_id"),
+        req=info.get("prompt", ""),
+        res="\n".join(lines),
+    )
+    info["history_saved"] = True
+
+
 class ImageService:
 
     @staticmethod
-    async def submit(prompt: str, user_id: int, aspect_ratio: str = "1:1", img_count: int = 1) -> dict:
+    async def submit(prompt: str, user_id: int, aspect_ratio: str = "1:1", img_count: int = 1, chat_group_id: int = 0) -> dict:
         """提交生成任务到讯飞，立即返回 task_id"""
         from backend.src.models.usermodel import User
 
@@ -65,6 +104,8 @@ class ImageService:
         user = await User.filter(id=user_id).first()
         if not user:
             raise RuntimeError("用户不存在")
+
+        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
 
         prompt_json = json.dumps({
             "image": [],
@@ -110,13 +151,14 @@ class ImageService:
             "status": "processing",
             "prompt": prompt,
             "user_id": user_id,
+            "chat_group_id": chat_group_id,
             "aspect_ratio": aspect_ratio,
             "img_count": img_count,
             "created_at": str(datetime.now()),
         }
 
         _logger.info(f"图片任务已提交 task_id={task_id}")
-        return {"task_id": task_id, "status": "processing"}
+        return {"task_id": task_id, "status": "processing", "chat_group_id": chat_group_id}
 
     @staticmethod
     async def poll_once(task_id: str) -> dict | None:
@@ -202,6 +244,7 @@ class ImageService:
                     })
 
                 if images:
+                    await _save_image_history(info, images)
                     _task_status[task_id] = {**info, "status": "done", "images": images}
                     _logger.info(f"task_id={task_id} 完成 {len(images)} 张图片")
                 else:
