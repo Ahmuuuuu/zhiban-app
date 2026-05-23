@@ -1,6 +1,10 @@
+import logging
+
 from tortoise.exceptions import IntegrityError
 
 from backend.src.models.usermodel import User
+
+logger = logging.getLogger(__name__)
 from backend.src.models.portraitmodel import User_picture
 from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
 from backend.src.utils.pwintohash import get_password_hash, verify_password
@@ -22,7 +26,8 @@ class UserService():
         except IntegrityError:
             return None, "用户名重复"
         except Exception as e:
-            return None, f"注册失败：{e}"
+            logger.exception("用户注册失败 username=%s", data.username)
+            return None, "注册失败，请稍后重试"
 
     @staticmethod
     async def login_user(data : Login_User):

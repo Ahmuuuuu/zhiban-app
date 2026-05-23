@@ -1,19 +1,18 @@
-"""题库服务 — 生成、答题、掌握度追踪"""
+"""题库服务 — 生成(走graph)、答题、掌握度追踪"""
 
 import json
+import logging
 import uuid
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
+
 from tortoise.expressions import Q
 
-from backend.src.ai_core.llm_config import llm
 from backend.src.models.exam_model import ExamQuestion, ExamRecord, KnowledgeMastery
+from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
-from backend.src.models.agent_skill_model import AgentSkill
 from backend.src.utils.database import init_db
-from backend.src.utils.prompt_loader import load_prompt, fill_prompt
-from backend.src.service.portrait_service import format_portrait
-from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.json_parser import parse_llm_json
 
 
@@ -42,59 +41,11 @@ def _question_to_dict(q: ExamQuestion) -> dict:
 class ExamService:
 
     @staticmethod
-    async def generate_and_save(
-        topic: str, user_id: int,
-        question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
-    ) -> dict:
-        """直接 LLM 出题 → 解析 JSON → 存库 → 创建会话，返回 session_id + questions"""
-        await init_db()
-        types = question_types or ["single_choice"]
-        types_str = ", ".join(types)
-
-        portrait_context = "暂无画像数据"
-        kb_context = "暂无相关知识库资料"
-        custom_prompt = None
-
-        user = await User.filter(id=user_id).first()
-        if user:
-            picture = await user.picture
-            if picture:
-                portrait_context = "\n".join(format_portrait(picture, show_missing=False))
-
-        try:
-            kb_result = await kb_search(topic, top_k=5, user_id=user_id)
-            if kb_result and "暂无" not in kb_result:
-                kb_context = kb_result
-        except Exception:
-            pass
-
-        # 查自定义出题 skill
-        skill = await AgentSkill.filter(user_id=user_id, resource_type="exam", enabled=True).first()
-        if skill and skill.system_prompt:
-            custom_prompt = skill.system_prompt
-
-        template = custom_prompt or load_prompt("resource/exam")
-        prompt_text = fill_prompt(
-            template,
-            topic=topic,
-            question_types=types_str,
-            count=str(count),
-            difficulty=difficulty,
-            portrait_context=portrait_context,
-            kb_context=kb_context,
-            feedback="",
-        )
-
-        try:
-            response = await llm.ainvoke(prompt_text)
-            questions = parse_llm_json(response.content)
-            if not isinstance(questions, list):
-                questions = []
-        except Exception:
-            return {"session_id": None, "questions": []}
+    async def _save_questions(questions: list[dict], user, difficulty: str, node_id: int | None = None) -> tuple[str, list[dict]]:
+        """将解析好的题目存库 + 创建 ExamRecord 占位，返回 (session_id, questions)"""
         if not questions:
-            return {"session_id": None, "questions": []}
-
+            return str(uuid.uuid4())[:12], []
+        session_id = str(uuid.uuid4())[:12]
         saved = []
         for q in questions:
             record = await ExamQuestion.create(
@@ -107,10 +58,134 @@ class ExamService:
                 knowledge_tags=json.dumps(q.get("knowledge_tags", []), ensure_ascii=False),
                 user=user,
             )
+            # 创建占位记录，使 session 立即可查询
+            await ExamRecord.create(
+                question=record,
+                user_id=user.id,
+                session_id=session_id,
+                node_id=node_id,
+            )
             saved.append(_question_to_dict(record))
+        return session_id, saved
 
-        session_id = str(uuid.uuid4())[:12]
-        return {"session_id": session_id, "questions": saved}
+    @staticmethod
+    async def generate_and_save(
+        topic: str, user_id: int,
+        question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
+        node_id: int | None = None,
+    ) -> dict:
+        """走 graph 出题（Leader→Executor→Reviewer→retry）→ 存库 → 返回 session_id + questions"""
+        await init_db()
+
+        user = await User.filter(id=user_id).first()
+        if not user:
+            return {"session_id": None, "questions": []}
+
+        from backend.src.service.resource_service import ResourceService  # deferred: circular exam<->resource
+
+        types = question_types or ["single_choice", "multi_choice", "true_false"]
+        types_str = ", ".join(types)
+
+        saved_resources = await ResourceService.generate_and_save(
+            topic=topic, user_id=user_id, resource_types=["exercise"],
+            exam_question_types=types_str, exam_count=count, exam_difficulty=difficulty,
+        )
+
+        for r in saved_resources:
+            if r.get("resource_type") == "exercise":
+                content = r.get("content", "")
+                try:
+                    questions = parse_llm_json(content)
+                    if not isinstance(questions, list):
+                        questions = []
+                except Exception:
+                    logger.exception("题目 JSON 解析失败 resource_id=%s", r.get("resource_id"))
+                    questions = []
+                if not questions:
+                    return {"session_id": None, "questions": []}
+
+                # 按题型/数量/难度过滤
+                types = question_types or ["single_choice"]
+                filtered = [q for q in questions if q.get("question_type") in types]
+                filtered = [q for q in filtered if q.get("difficulty", "medium") == difficulty]
+                filtered = filtered[:count]
+
+                session_id, saved = await ExamService._save_questions(filtered, user, difficulty, node_id=node_id)
+                return {"session_id": session_id, "questions": saved}
+
+        return {"session_id": None, "questions": []}
+
+    @staticmethod
+    async def generate_and_save_stream(
+        topic: str, user_id: int,
+        question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
+        node_id: int | None = None,
+    ):
+        """流式走 graph 出题 → SSE 推送进度 → 存库 → 返回 session"""
+        await init_db()
+
+        user = await User.filter(id=user_id).first()
+        if not user:
+            yield f"data: {json.dumps({'type': 'error', 'detail': '用户不存在'}, ensure_ascii=False)}\n\n"
+            return
+
+        from backend.src.service.resource_service import ResourceService  # deferred: circular exam<->resource
+
+        types = question_types or ["single_choice", "multi_choice", "true_false"]
+        types_str = ", ".join(types)
+
+        yield f"data: {json.dumps({'type': 'status', 'msg': '正在分析知识点并生成题目...'}, ensure_ascii=False)}\n\n"
+
+        async for event in ResourceService.generate_stream(
+            topic=topic, user_id=user_id, resource_types=["exercise"],
+            chat_group_id=0,
+            exam_question_types=types_str, exam_count=count, exam_difficulty=difficulty,
+        ):
+            if isinstance(event, str) and event.startswith("data:"):
+                data_str = event[5:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    payload = json.loads(data_str)
+                    if payload.get("type") == "file":
+                        rt = payload.get("file_type", "")
+                        if rt == "exercise":
+                            yield f"data: {json.dumps({'type': 'progress', 'msg': '题目内容已生成，正在审核...'}, ensure_ascii=False)}\n\n"
+                    elif "review_passed" in payload:
+                        passed = payload.get("review_passed", True)
+                        yield f"data: {json.dumps({'type': 'progress', 'msg': f'审核{"通过" if passed else "未通过，重新生成"}...'}, ensure_ascii=False)}\n\n"
+                except json.JSONDecodeError:
+                    pass
+
+        # 查已保存的 exercise 资源，解析题目并保存
+        saved_resources = await GeneratedResource.filter(
+            user_id=user_id, topic=topic, resource_type="exercise"
+        ).order_by("-created_at").limit(1).all()
+
+        session_id = None
+        saved_questions = []
+        for r in saved_resources:
+            if r.content:
+                try:
+                    questions = parse_llm_json(r.content)
+                    if not isinstance(questions, list):
+                        questions = []
+                except Exception:
+                    logger.exception("题目 JSON 解析失败 resource_id=%s", r.id)
+                    questions = []
+                if questions:
+                    filtered = [q for q in questions if q.get("question_type") in types]
+                    filtered = [q for q in filtered if q.get("difficulty", "medium") == difficulty]
+                    filtered = filtered[:count]
+                    if filtered:
+                        session_id, saved_questions = await ExamService._save_questions(
+                            filtered, user, difficulty, node_id=node_id
+                        )
+                        yield f"data: {json.dumps({'type': 'progress', 'msg': f'已保存 {len(saved_questions)} 道题目'}, ensure_ascii=False)}\n\n"
+                break
+
+        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'quiz_config': {'count': count, 'threshold': 0.7}, 'question_count': len(saved_questions)}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
 
     @staticmethod
     async def list_questions(user_id: int, question_type: str | None = None, difficulty: str | None = None, knowledge_tag: str | None = None, page: int = 1, page_size: int = 20) -> dict:
@@ -146,7 +221,7 @@ class ExamService:
         return True
 
     @staticmethod
-    async def submit_answer(question_id: int, user_id: int, user_answer: str, time_spent: int | None = None, session_id: str | None = None) -> dict:
+    async def submit_answer(question_id: int, user_id: int, user_answer: str, time_spent: int | None = None, session_id: str | None = None, node_id: int | None = None) -> dict:
         question = await ExamQuestion.filter(id=question_id).first()
         if not question:
             raise ValueError("题目不存在")
@@ -154,7 +229,9 @@ class ExamService:
         correct_answer = question.answer
 
         # 判断对错
-        if question.question_type in ("single_choice", "true_false", "fill_blank"):
+        if question.question_type == "true_false":
+            is_correct = user_answer.strip().upper() == correct_answer.strip().upper()
+        elif question.question_type in ("single_choice", "fill_blank"):
             is_correct = (user_answer.strip() == correct_answer.strip())
         elif question.question_type == "multi_choice":
             try:
@@ -171,6 +248,12 @@ class ExamService:
         score = 100.0 if is_correct is True else (0.0 if is_correct is False else None)
         sid = session_id or str(uuid.uuid4())[:12]
 
+        # 从已有占位记录继承 node_id（如果未显式传入）
+        if node_id is None and session_id:
+            placeholder = await ExamRecord.filter(session_id=session_id, question_id=question_id, user_answer__isnull=True).first()
+            if placeholder and placeholder.node_id:
+                node_id = placeholder.node_id
+
         await ExamRecord.create(
             question=question,
             user_id=user_id,
@@ -179,13 +262,15 @@ class ExamService:
             score=score,
             time_spent=time_spent,
             session_id=sid,
+            node_id=node_id,
         )
 
         # 更新知识点掌握度
         if question.knowledge_tags:
             try:
                 tags = json.loads(question.knowledge_tags)
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("知识点标签 JSON 解析失败 question_id=%s", question_id)
                 tags = []
             for tag in tags:
                 mastery, _ = await KnowledgeMastery.get_or_create(
