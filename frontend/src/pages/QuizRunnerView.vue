@@ -85,7 +85,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { submitExamAnswer } from '../api/apis'
+import { submitExamAnswer, completeLearningPathNode } from '../api/apis'
 import { getQuizSet, recordQuizAttempt } from '../utils/quizBank'
 
 const route = useRoute()
@@ -99,6 +99,7 @@ const results = ref({})
 const finished = ref(false)
 const runSessionId = ref('')
 const fromPage = ref(route.query.from || '')
+const nodeId = ref(route.query.nodeId || '')
 
 const backLink = computed(() => {
   return fromPage.value === 'path' ? '/mine/path' : { path: '/mine/resources', query: { category: 'quiz' } }
@@ -223,6 +224,15 @@ const goNext = async () => {
       answers: answers.value,
       results: results.value
     })
+    // 来自学习路径：自动完成节点并解锁下一章
+    if (fromPage.value === 'path' && nodeId.value) {
+      try {
+        await completeLearningPathNode(Number(nodeId.value), runSessionId.value)
+        console.log('[QuizRunner] 节点自动完成成功')
+      } catch (e) {
+        console.error('[QuizRunner] 自动完成节点失败:', e)
+      }
+    }
     return
   }
 

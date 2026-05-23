@@ -570,37 +570,43 @@ watch(
     @keydown.stop
   >
     <header class="pet-chat__header">
-      <div>
+      <div class="pet-chat__title">
         <strong>小知</strong>
       </div>
-      <div class="pet-chat__header-actions">
+      <div v-if="chatExpanded" class="pet-chat__header-actions">
         <button type="button" aria-label="小知历史" @click="historyOpen = !historyOpen">历史</button>
         <button type="button" aria-label="新建小知对话" @click="createNewPetChat">新建</button>
         <button type="button" aria-label="关闭小知对话" @click="closeChat">×</button>
       </div>
+      <button v-else type="button" class="pet-chat__close-compact" aria-label="关闭小知对话" @click="closeChat">×</button>
     </header>
 
-    <aside v-if="historyOpen" class="pet-chat__history">
-      <div class="pet-chat__history-head">
-        <strong>历史对话</strong>
-        <button type="button" :disabled="historyLoading" @click="loadPetHistory">刷新</button>
-      </div>
-      <p v-if="historyLoading" class="pet-chat__history-empty">正在加载...</p>
-      <p v-else-if="!petHistory.length" class="pet-chat__history-empty">暂无小知历史</p>
-      <template v-else>
-        <button
-          v-for="item in petHistory"
-          :key="item.id"
-          type="button"
-          class="pet-chat__history-item"
-          :class="{ active: String(petChatGroupId || '') === String(item.id) }"
-          @click="openPetHistory(item.id)"
-        >
-          <span>{{ item.title }}</span>
-          <small>{{ item.time }}</small>
-        </button>
-      </template>
-    </aside>
+    <Transition name="pet-history-slide">
+      <aside v-if="chatExpanded && historyOpen" class="pet-chat__history">
+        <div class="pet-chat__history-head">
+          <strong>历史对话</strong>
+          <div>
+            <button type="button" :disabled="historyLoading" @click="loadPetHistory">刷新</button>
+            <button type="button" @click="historyOpen = false">收起</button>
+          </div>
+        </div>
+        <p v-if="historyLoading" class="pet-chat__history-empty">正在加载...</p>
+        <p v-else-if="!petHistory.length" class="pet-chat__history-empty">暂无小知历史</p>
+        <template v-else>
+          <button
+            v-for="item in petHistory"
+            :key="item.id"
+            type="button"
+            class="pet-chat__history-item"
+            :class="{ active: String(petChatGroupId || '') === String(item.id) }"
+            @click="openPetHistory(item.id)"
+          >
+            <span>{{ item.title }}</span>
+            <small>{{ item.time }}</small>
+          </button>
+        </template>
+      </aside>
+    </Transition>
 
     <div ref="messagesRef" class="pet-chat__messages">
       <div
@@ -743,7 +749,7 @@ watch(
   padding: 0 0 18px;
 }
 
-.pet-chat__header div {
+.pet-chat__title {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -780,6 +786,10 @@ watch(
   gap: 6px;
 }
 
+.pet-chat__close-compact {
+  width: 28px;
+}
+
 .pet-chat--expanded .pet-chat__header button {
   min-width: 38px;
   height: 38px;
@@ -787,21 +797,34 @@ watch(
 }
 
 .pet-chat__history {
-  max-height: 190px;
-  margin: 10px 0 0;
-  padding: 10px;
+  position: absolute;
+  left: clamp(18px, 3vw, 42px);
+  top: 92px;
+  bottom: 42px;
+  z-index: 4;
+  width: min(320px, calc(100vw - 42px));
+  padding: 14px;
   border: 1px solid rgba(201, 220, 233, 0.72);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.7);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 20px 56px rgba(22, 63, 143, 0.16);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
   overflow-y: auto;
   display: grid;
+  align-content: start;
   gap: 8px;
 }
 
-.pet-chat--expanded .pet-chat__history {
-  width: min(100%, 1080px);
-  max-height: 240px;
-  margin: 12px auto 0;
+.pet-history-slide-enter-active,
+.pet-history-slide-leave-active {
+  transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pet-history-slide-enter-from,
+.pet-history-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-22px);
 }
 
 .pet-chat__history-head,
@@ -810,6 +833,11 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.pet-chat__history-head div {
+  display: flex;
+  gap: 6px;
 }
 
 .pet-chat__history-head strong {
