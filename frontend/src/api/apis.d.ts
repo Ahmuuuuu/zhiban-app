@@ -1,5 +1,7 @@
 export function resolveApiUrl(path: string): string;
 
+export function downloadWithToken(url: string, filename?: string): Promise<void>;
+
 export function login(data: unknown): Promise<unknown>;
 
 export function register(data: unknown): Promise<unknown>;
@@ -93,3 +95,21 @@ export function submitExamAnswer(data: {
 export function getExamSession(sessionId: string): Promise<unknown>;
 
 export function getExamSessions(): Promise<unknown>;
+
+export function getCurrentLearningPath(): Promise<unknown>;
+
+export function completeLearningPathNode(nodeId: number | string, sessionId: string): Promise<unknown>;
+
+export function generateLearningPath(data: {
+  subject: string;
+  difficulty?: string;
+  node_count?: number;
+}): Promise<unknown>;
+
+export function getLearningPaths(): Promise<unknown>;
+
+export function enrollLearningPath(pathId: number | string): Promise<unknown>;
+
+export function generatePathNodeResources(pathId: number | string, nodeId: number | string): Promise<unknown>;
+
+export function generatePathNodeQuiz(pathId: number | string, nodeId: number | string): Promise<unknown>;

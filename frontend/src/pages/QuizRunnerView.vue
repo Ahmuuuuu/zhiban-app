@@ -1,7 +1,7 @@
 <template>
   <main class="quiz-runner-page">
     <header class="runner-header">
-      <router-link class="soft-btn" to="/question-bank">返回题库</router-link>
+      <router-link class="soft-btn" :to="backLink">{{ fromPage === 'path' ? '返回学习路径' : '返回题库' }}</router-link>
       <div>
         <p>Quiz</p>
         <h1>{{ quiz?.title || '做题' }}</h1>
@@ -17,7 +17,7 @@
       <article v-if="!finished" class="question-panel">
         <div class="question-meta">
           <span>第 {{ currentIndex + 1 }} 题</span>
-          <span>{{ currentQuestion.options?.length ? '选择题' : '简答题' }}</span>
+          <span>{{ currentQuestion.multi ? '多选题' : currentQuestion.options?.length ? '选择题' : '简答题' }}</span>
         </div>
 
         <h2>{{ currentQuestion.stem }}</h2>
@@ -27,12 +27,13 @@
             v-for="option in currentQuestion.options"
             :key="option.key"
             type="button"
-            :class="{ selected: answers[currentQuestion.id] === option.key }"
-            @click="answers[currentQuestion.id] = option.key"
+            :class="{ selected: isOptionSelected(currentQuestion.id, option.key) }"
+            @click="toggleOption(currentQuestion.id, option.key)"
           >
             <strong>{{ option.key }}</strong>
             <span>{{ option.text }}</span>
           </button>
+          <small v-if="currentQuestion.multi" class="multi-hint">可多选</small>
         </div>
 
         <textarea
@@ -43,7 +44,9 @@
 
         <div v-if="checked[currentQuestion.id]" class="judge" :class="{ wrong: !isCurrentCorrect }">
           <strong>{{ isCurrentCorrect ? '回答正确' : '回答错误' }}</strong>
-          <span v-if="!isCurrentCorrect">正确答案：{{ currentQuestion.answer || '等待老师判定' }}</span>
+          <span v-if="!isCurrentCorrect">
+            正确答案：{{ currentQuestion.multi ? (currentQuestion.answer || '').split(',').join('、') : currentQuestion.answer || '等待老师判定' }}
+          </span>
           <p v-if="currentQuestion.explanation">{{ currentQuestion.explanation }}</p>
         </div>
 
@@ -68,24 +71,25 @@
             </strong>
           </div>
         </div>
-        <router-link class="primary-btn" to="/question-bank">回到题库</router-link>
+        <router-link class="primary-btn" :to="backLink">{{ fromPage === 'path' ? '返回学习路径' : '回到题库' }}</router-link>
       </article>
     </section>
 
     <section v-else class="empty-state">
       <h2>没有找到这套题</h2>
-      <router-link class="primary-btn" to="/question-bank">回到题库</router-link>
+      <router-link class="primary-btn" :to="backLink">{{ fromPage === 'path' ? '返回学习路径' : '回到题库' }}</router-link>
     </section>
   </main>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { submitExamAnswer } from '../api/apis'
 import { getQuizSet, recordQuizAttempt } from '../utils/quizBank'
 
 const route = useRoute()
+const router = useRouter()
 const quiz = ref(null)
 const questions = ref([])
 const loading = ref(true)
@@ -95,6 +99,11 @@ const checked = ref({})
 const results = ref({})
 const finished = ref(false)
 const runSessionId = ref('')
+const fromPage = ref(route.query.from || '')
+
+const backLink = computed(() => {
+  return fromPage.value === 'path' ? '/mine/path' : { path: '/mine/resources', query: { category: 'quiz' } }
+})
 
 onMounted(() => {
   const id = String(route.params.quizId || '')
@@ -107,11 +116,35 @@ onMounted(() => {
 
 const currentQuestion = computed(() => questions.value[currentIndex.value] || {})
 
-const normalizeAnswer = value =>
-  String(value || '')
+const isOptionSelected = (questionId, key) => {
+  const ans = answers.value[questionId]
+  return Array.isArray(ans) ? ans.includes(key) : ans === key
+}
+
+const toggleOption = (questionId, key) => {
+  const q = questions.value.find(q => q.id === questionId)
+  if (!q?.multi) {
+    answers.value[questionId] = key
+    return
+  }
+  if (!Array.isArray(answers.value[questionId])) {
+    answers.value[questionId] = []
+  }
+  const idx = answers.value[questionId].indexOf(key)
+  if (idx > -1) {
+    answers.value[questionId].splice(idx, 1)
+  } else {
+    answers.value[questionId].push(key)
+  }
+}
+
+const normalizeAnswer = value => {
+  if (Array.isArray(value)) return value.map(k => k.toUpperCase().trim()).filter(Boolean).sort().join(',')
+  return String(value || '')
     .trim()
     .replace(/^[（(]?([A-D])[\)）.、]?\s*$/i, '$1')
     .toUpperCase()
+}
 
 const unwrapData = result => result?.data?.data ?? result?.data ?? result
 
@@ -331,6 +364,14 @@ const goNext = async () => {
 .options button.selected {
   border-color: #163f8f;
   background: #edf9fc;
+}
+
+.multi-hint {
+  display: block;
+  margin-top: 6px;
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 textarea {

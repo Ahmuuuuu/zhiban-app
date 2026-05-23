@@ -9,7 +9,6 @@ import StudySituation from '../pages/StudySituation.vue'
 import StudyImportView from '../pages/StudyImportView.vue'
 import MyStudyView from '../pages/MyStudyView.vue'
 import MyProfile from '../pages/MyAccount/MyProfile.vue'
-import QuestionBankView from '../pages/QuestionBankView.vue'
 import QuizRunnerView from '../pages/QuizRunnerView.vue'
 
 const router = createRouter({
@@ -33,7 +32,10 @@ const router = createRouter({
     {
       path: '/question-bank',
       name: 'questionBank',
-      component: QuestionBankView
+      redirect: {
+        path: '/mine/resources',
+        query: { category: 'quiz' }
+      }
     },
     {
       path: '/question-bank/:quizId',

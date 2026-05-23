@@ -133,7 +133,11 @@
             </div>
           </div>
 
-          <pre v-if="message.content" class="file-preview">{{ message.content }}</pre>
+          <div v-if="message.fileType === 'image' && message.previewUrl" class="file-image-preview">
+            <img :src="message.previewUrl" :alt="message.filename" loading="lazy" @error="e => e.target.style.display = 'none'" />
+          </div>
+
+          <pre v-else-if="message.content" class="file-preview">{{ message.content }}</pre>
 
           <div v-else class="file-placeholder">
             文件已生成，等待后端提供可预览内容。
@@ -250,7 +254,7 @@
             </label>
           </div>
           <div class="save-dialog__actions">
-            <button type="button" @click="closeSaveDialog">取消</button>
+            <button type="button"  class="primary" @click="closeSaveDialog">取消</button>
             <button type="button" class="primary" @click="confirmSaveGeneratedResource">保存</button>
           </div>
         </article>
@@ -262,6 +266,7 @@
 <script setup>
 import { computed, ref, nextTick, onMounted } from 'vue'
 import {
+  downloadWithToken,
   streamChatMessage,
   getConversationList,
   getConversationMessages,
@@ -729,9 +734,77 @@ const tryParseJson = value => {
   }
 }
 
+const parseResourceHistoryMessage = value => {
+  const text = String(value || '')
+
+  // 匹配 /resource/{id}/download 或 /image/{id}/download 格式
+  const resourceMatch = text.match(/\[([^\]]+)\]\((\/(?:resource|image)\/(\d+)\/download)\)/)
+  if (resourceMatch) {
+    const filename = resourceMatch[1]
+    const downloadUrl = resourceMatch[2]
+    const resourceId = resourceMatch[3]
+    const lower = filename.toLowerCase()
+    const fileType = lower.includes('exercise') || lower.includes('quiz') || lower.includes('题')
+      ? 'exercise'
+      : lower.includes('ppt')
+        ? 'ppt'
+        : lower.includes('mind')
+          ? 'mindmap'
+          : 'document'
+
+    return {
+      file_id: resourceId,
+      file_type: fileType,
+      filename,
+      download_url: downloadUrl,
+      content: ''
+    }
+  }
+
+  // 匹配 markdown 图片 ![](url)，支持任意 URL 格式
+  const imageMatch = text.match(/!\[([^\]]*)\]\(([^)]+)\)/)
+  if (imageMatch) {
+    const filename = imageMatch[1] || '图片'
+    const url = imageMatch[2]
+    return {
+      file_id: url,
+      file_type: 'image',
+      resourceKind: 'image',
+      filename: /\.\w+$/.test(filename) ? filename : `${filename}.jpg`,
+      preview_url: url,
+      download_url: url,
+      content: ''
+    }
+  }
+
+  // 匹配 [文件名](图片链接) 格式 — 后端可能存为链接而非图片标记
+  const linkMatch = text.match(/\[([^\]]+)\]\(([^)]+)\)/)
+  if (linkMatch) {
+    const url = linkMatch[2]
+    if (/\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(url)) {
+      return {
+        file_id: url,
+        file_type: 'image',
+        resourceKind: 'image',
+        filename: /\.\w+$/.test(linkMatch[1]) ? linkMatch[1] : `${linkMatch[1]}.jpg`,
+        preview_url: url,
+        download_url: url,
+        content: ''
+      }
+    }
+  }
+
+  return null
+}
+
 const normalizeHistoryAssistantMessage = (item, id, time) => {
   const rawContent = item.res || item.content || item.answer || ''
   const parsed = typeof rawContent === 'string' ? tryParseJson(rawContent) : rawContent
+  const resourceHistory = parseResourceHistoryMessage(rawContent)
+
+  if (resourceHistory) {
+    return { ...normalizeFileMessage(resourceHistory), id, time }
+  }
 
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const hasFileShape =
@@ -983,27 +1056,7 @@ const downloadGeneratedFile = async message => {
   if (!message?.downloadUrl) return
 
   try {
-    const token = localStorage.getItem('token')
-    const response = await fetch(message.downloadUrl, {
-      headers: {
-        ...(token ? { token } : {})
-      }
-    })
-
-    if (!response.ok) {
-      throw new Error(`下载失败：${response.status}`)
-    }
-
-    const blob = await response.blob()
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-
-    link.href = url
-    link.download = getDownloadName(message)
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
+    await downloadWithToken(message.downloadUrl, getDownloadName(message))
   } catch (error) {
     console.error('下载生成文件失败：', error)
     window.alert('下载失败，请确认登录状态和后端服务是否正常。')
@@ -1015,6 +1068,7 @@ const fileExtension = type => {
 
   if (normalizedType.includes('ppt')) return 'pptx'
   if (normalizedType.includes('image')) return 'jpg'
+  if (normalizedType.includes('mindmap') || normalizedType.includes('mind')) return 'xmind'
   if (normalizedType.includes('txt') || normalizedType.includes('document')) return 'txt'
   if (normalizedType.includes('pdf')) return 'pdf'
   return 'file'
@@ -1025,6 +1079,7 @@ const fileTypeLabel = type => {
 
   if (normalizedType.includes('ppt')) return 'PPT 文件'
   if (normalizedType.includes('image')) return '图片'
+  if (normalizedType.includes('mind')) return '思维导图'
   if (normalizedType.includes('txt')) return 'TXT 文档'
   if (normalizedType.includes('document')) return '学习文档'
   if (normalizedType.includes('pdf')) return 'PDF 文件'
@@ -1036,6 +1091,7 @@ const fileIcon = type => {
 
   if (normalizedType.includes('ppt')) return '📊'
   if (normalizedType.includes('image')) return '🖼️'
+  if (normalizedType.includes('mind')) return '🧠'
   if (normalizedType.includes('txt') || normalizedType.includes('document')) return '📄'
   if (normalizedType.includes('pdf')) return '📕'
   return '📁'
@@ -1766,6 +1822,24 @@ onMounted(() => {
   font-size: 12px;
 }
 
+.file-image-preview {
+  margin: 14px 0 0;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 300px;
+  background: rgba(237, 249, 252, 0.6);
+}
+
+.file-image-preview img {
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
 .file-preview {
   max-height: 260px;
   margin: 14px 0 0;
@@ -2209,7 +2283,7 @@ textarea::placeholder {
 
 .save-dialog__actions .primary {
   background: var(--primary);
-  color: #fff;
+  color: #123b86
 }
 
 .markdown-body :deep(table) {

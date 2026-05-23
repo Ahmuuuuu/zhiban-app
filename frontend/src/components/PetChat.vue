@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 import { resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
@@ -53,6 +53,7 @@ const chatLoading = ref(false);
 const chatError = ref("");
 const petChatGroupId = ref<number | string | null>(null);
 const chatFormRef = ref<HTMLFormElement | null>(null);
+const messagesRef = ref<HTMLElement | null>(null);
 
 const petMessages = ref<PetChatMessage[]>([
   {
@@ -64,6 +65,13 @@ const petMessages = ref<PetChatMessage[]>([
 
 // 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€
 const sendStreamChatMessage = streamChatMessage as unknown as StreamChatMessageFn;
+
+const scrollPetMessagesToBottom = async () => {
+  await nextTick();
+  const el = messagesRef.value;
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+};
 
 const escapeHtml = (value: string) =>
   String(value || "")
@@ -309,12 +317,13 @@ const sendPetMessage = async () => {
     await sendStreamChatMessage(
       { user_req: text, chat_group_id: petChatGroupId.value },
       {
-        onChunk: (chunk: string) => {
+        onChunk: async (chunk: string) => {
           if (!receivedChunk) {
             assistantMessage.content = "";
             receivedChunk = true;
           }
           assistantMessage.content += chunk;
+          await scrollPetMessagesToBottom();
         },
         onFile: async (fileData: any) => {
           if (isPetExerciseFile(fileData)) {
@@ -350,6 +359,7 @@ const sendPetMessage = async () => {
           if (receivedChunk) {
             replacePetTextWithQuiz(assistantMessage);
           }
+          void scrollPetMessagesToBottom();
         },
       },
     );
@@ -407,7 +417,7 @@ const handleChatEnter = (event: KeyboardEvent) => {
       <button type="button" aria-label="关闭小知对话" @click="closeChat">×</button>
     </header>
 
-    <div class="pet-chat__messages">
+    <div ref="messagesRef" class="pet-chat__messages">
       <div
         v-for="message in petMessages"
         :key="message.id"
