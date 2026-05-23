@@ -47,6 +47,13 @@ class ExamRecord(Model):
         related_name="exam_records",
         on_delete=fields.CASCADE,
     )
+    node = fields.ForeignKeyField(
+        "models.PathNode",
+        related_name="exam_records",
+        null=True,
+        on_delete=fields.SET_NULL,
+        description="所属学习路径节点（非路径题目为 null）",
+    )
 
     class Meta:
         table = "exam_records"

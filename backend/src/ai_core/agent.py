@@ -17,7 +17,7 @@ from backend.src.ai_core.tools.image import generate_image
 from backend.src.ai_core.tools.exam import generate_exam_questions
 from backend.src.ai_core.tools.history import get_used_history
 from backend.src.utils.prompt_loader import load_prompt
-from pydantic import create_model
+from pydantic import create_model, Field as PydanticField
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import StructuredTool
@@ -68,8 +68,6 @@ class UnifiedChat:
     @staticmethod
     def _make_http_tool(skill: dict):
         """将 HTTP 类型的 action skill 包装成 LangChain StructuredTool"""
-        from pydantic import Field as PydanticField
-
         config = json.loads(skill["action_config"]) if isinstance(skill["action_config"], str) else skill["action_config"]
         safe_name = skill["name"].replace("-", "_").replace(" ", "_")
 

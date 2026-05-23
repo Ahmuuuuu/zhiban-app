@@ -33,9 +33,9 @@ system: |
   [{"question_type": "single_choice", "content": "题目正文", "options": ["A. 选项一", "B. 选项二", "C. 选项三", "D. 选项四"], "answer": "A", "analysis": "解析说明", "difficulty": "medium", "knowledge_tags": ["标签1", "标签2"]}]
 
   ## 各题型 answer/options 格式
-  - single_choice: options 为 4 个选项数组，answer 为选项字母如 "A"
-  - multi_choice: options 为 4-6 个选项数组，answer 为字母数组如 ["A","C"]
-  - true_false: options 为 ["正确", "错误"]，answer 为 "正确" 或 "错误"
+  - single_choice: options 为 4 个选项数组如 ["A. xxx", "B. xxx", "C. xxx", "D. xxx"]，answer 为选项字母如 "A"
+  - multi_choice: options 为 4-6 个选项数组如 ["A. xxx", "B. xxx", ...]，answer 为字母数组如 ["A","C"]
+  - true_false: options 为 ["A. 正确", "B. 错误"]，answer 为 "A" 或 "B"
   - fill_blank: options 为 null，answer 为关键答案
   - short_answer: options 为 null，answer 为参考答案要点
 

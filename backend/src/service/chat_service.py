@@ -1,10 +1,24 @@
 import json
+from collections import OrderedDict
 
 from backend.src.ai_core.agent import UnifiedChat
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 
-chat_instances: dict[str, UnifiedChat] = {}
+_MAX_CHAT_INSTANCES = 100
+
+_chat_instances: OrderedDict[str, UnifiedChat] = OrderedDict()
+
+
+def _get_or_create_chat(user_id: int, chat_group_id: int) -> UnifiedChat:
+    instance_key = f"unified_{user_id}_{chat_group_id}"
+    if instance_key not in _chat_instances:
+        if len(_chat_instances) >= _MAX_CHAT_INSTANCES:
+            _chat_instances.popitem(last=False)
+        _chat_instances[instance_key] = UnifiedChat(user_id=user_id)
+    else:
+        _chat_instances.move_to_end(instance_key)
+    return _chat_instances[instance_key]
 
 
 async def get_max_chat_group(user_id: int):
@@ -22,10 +36,7 @@ class ChatService:
         if not user:
             return None, "未查找到用户"
         chat_group_id = await get_max_chat_group(user_id)
-        instance_key = f"unified_{user_id}_{chat_group_id}"
-        if instance_key not in chat_instances:
-            chat_instances[instance_key] = UnifiedChat(user_id=user_id)
-        bot = chat_instances[instance_key]
+        bot = _get_or_create_chat(user_id, chat_group_id)
         res = await bot.chat(user_req)
         message = await ChatHistory.create(
             user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=res,
@@ -37,10 +48,7 @@ class ChatService:
         user = await User.filter(id=user_id).first()
         if not user:
             return None, "未查找到用户"
-        instance_key = f"unified_{user_id}_{chat_group_id}"
-        if instance_key not in chat_instances:
-            chat_instances[instance_key] = UnifiedChat(user_id=user_id)
-        bot = chat_instances[instance_key]
+        bot = _get_or_create_chat(user_id, chat_group_id)
         res = await bot.chat(user_req)
         message = await ChatHistory.create(
             user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=res,
@@ -52,11 +60,7 @@ class ChatService:
     @staticmethod
     async def _stream_chat(user_id: int, chat_group_id: int, user_req: str):
         """流式对话核心逻辑"""
-        instance_key = f"unified_{user_id}_{chat_group_id}"
-        if instance_key not in chat_instances:
-            chat_instances[instance_key] = UnifiedChat(user_id=user_id)
-
-        bot = chat_instances[instance_key]
+        bot = _get_or_create_chat(user_id, chat_group_id)
         full_response = ""
         async for chunk in bot.stream(user_req):
             if isinstance(chunk, dict):

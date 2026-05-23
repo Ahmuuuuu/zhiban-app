@@ -1,11 +1,20 @@
 """学习路径服务 — 生成、资源、测验、进度追踪"""
 
 import json
+import logging
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
+
+import asyncio
+
 from backend.src.ai_core.llm_config import llm
+from tortoise.expressions import Q
+
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
-from backend.src.models.exam_model import ExamRecord
+from backend.src.models.exam_model import ExamRecord, KnowledgeMastery
+from backend.src.models.resource_model import GeneratedResource
+from backend.src.models.portraitmodel import User_picture
 from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
@@ -38,7 +47,7 @@ class PathService:
             if kb_result and "暂无" not in kb_result:
                 kb_context = kb_result
         except Exception:
-            pass
+            logger.exception("知识库搜索失败 subject=%s user_id=%s", subject, user_id)
 
         template = load_prompt("path/path_generation")
         prompt_text = fill_prompt(
@@ -57,6 +66,7 @@ class PathService:
             if not isinstance(result, dict):
                 result = {}
         except Exception:
+            logger.exception("LLM 路径生成调用失败 subject=%s", subject)
             return {"error": "路径生成失败"}
 
         nodes_data = result.get("nodes", [])
@@ -72,6 +82,7 @@ class PathService:
         )
 
         nodes = []
+        created_nodes = []
         for nd in nodes_data:
             node = await PathNode.create(
                 path=path,
@@ -82,6 +93,7 @@ class PathService:
                 resource_types=json.dumps(nd.get("resource_types", ["document"]), ensure_ascii=False),
                 quiz_config=json.dumps(nd.get("quiz_config", {"count": 3, "threshold": 0.7}), ensure_ascii=False),
             )
+            created_nodes.append(node)
             nodes.append({
                 "node_id": node.id,
                 "topic": node.topic,
@@ -92,18 +104,72 @@ class PathService:
                 "quiz_config": json.loads(node.quiz_config) if node.quiz_config else {},
             })
 
+        # 自动 enroll 创建者：初始化进度 + 首节点解锁
+        sorted_nodes = sorted(created_nodes, key=lambda n: n.order_index)
+        progress_list = []
+        first_node = None
+        for i, node in enumerate(sorted_nodes):
+            has_prereqs = node.prerequisites and json.loads(node.prerequisites)
+            status = "unlocked" if (i == 0 and not has_prereqs) else "locked"
+            await UserPathProgress.create(
+                user_id=user_id,
+                path=path,
+                node=node,
+                node_status=status,
+            )
+            progress_list.append({"node_id": node.id, "topic": node.topic, "status": status})
+            if status == "unlocked":
+                first_node = node
+
+        # 共享信号量：限制同时跑 graph 的节点数，防止 LLM 限流
+        graph_sem = asyncio.Semaphore(3)
+
+        # 异步并行：所有节点同时生成学习资源 + 测验题目
+        async def generate_for_node(node):
+            async with graph_sem:
+                async def gen_resources():
+                    try:
+                        r = await PathService.generate_node_resources(path.id, node.id, user_id)
+                        return r.get("resource_ids", [])
+                    except Exception:
+                        logging.getLogger("path_service").exception(
+                            f"节点 {node.id}({node.topic}) 资源生成失败"
+                        )
+                        return []
+
+                async def gen_quiz():
+                    try:
+                        q = await PathService.generate_node_quiz(path.id, node.id, user_id)
+                        return q.get("session_id"), q.get("questions", [])
+                    except Exception:
+                        logger.exception("节点测验生成失败 node_id=%s topic=%s", node.id, node.topic)
+                        return None, []
+
+                res_ids, (session_id, questions) = await asyncio.gather(gen_resources(), gen_quiz())
+                return {
+                    "node_id": node.id,
+                    "resource_ids": res_ids,
+                    "session_id": session_id,
+                    "quiz_count": len(questions),
+                }
+
+        # 全部节点并行生成
+        results = await asyncio.gather(*[generate_for_node(n) for n in sorted_nodes])
+        node_results = {r["node_id"]: r for r in results}
+
         return {
             "path_id": path.id,
             "subject": path.subject,
             "difficulty": path.difficulty,
             "node_count": path.node_count,
             "nodes": nodes,
+            "progress": progress_list,
+            "node_results": node_results,
         }
 
     @staticmethod
     async def list_paths(user_id: int | None = None) -> list[dict]:
         """列出所有公开路径"""
-        from tortoise.expressions import Q
 
         qs = LearningPath.filter(Q(is_public=True))
         if user_id:
@@ -190,7 +256,7 @@ class PathService:
                 res_result = await PathService.generate_node_resources(path_id, first_node.id, user_id)
                 resources = res_result.get("resource_ids", [])
             except Exception:
-                pass
+                logger.exception("自动生成首节点资源失败 path_id=%s node_id=%s", path_id, first_node.id)
 
         return {"path_id": path_id, "progress": created, "first_node_resources": resources}
 
@@ -244,7 +310,6 @@ class PathService:
         resource_ids = json.loads(progress.resource_ids) if progress and progress.resource_ids else []
         resources = []
         if resource_ids:
-            from backend.src.models.resource_model import GeneratedResource
             res_records = await GeneratedResource.filter(id__in=resource_ids).all()
             resources = [
                 {"resource_id": r.id, "topic": r.topic, "resource_type": r.resource_type}
@@ -268,7 +333,7 @@ class PathService:
 
     @staticmethod
     async def generate_node_resources(path_id: int, node_id: int, user_id: int) -> dict:
-        """为节点生成学习资源"""
+        """为节点获取学习资源 — 已有则复用，没有则生成"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
         if not node:
             raise ValueError("节点不存在")
@@ -278,33 +343,49 @@ class PathService:
             raise ValueError("未加入该路径")
 
         resource_types = json.loads(node.resource_types) if node.resource_types else ["document"]
-        try:
-            saved = await ResourceService.generate_and_save(
-                topic=node.topic,
-                user_id=user_id,
-                resource_types=resource_types,
-            )
-        except Exception:
-            return {"node_id": node_id, "resource_ids": [], "generated_count": 0}
 
-        generated_ids = [r.get("resource_id") or r.get("id") for r in saved if r]
-        existing = json.loads(progress.resource_ids) if progress.resource_ids else []
-        existing.extend(generated_ids)
-        progress.resource_ids = json.dumps(existing, ensure_ascii=False)
+        # 并行查已有资源
+
+        async def check_existing(rt: str):
+            r = await GeneratedResource.filter(
+                user_id=user_id, topic=node.topic, resource_type=rt,
+            ).first()
+            return (rt, r.id) if r else (rt, None)
+
+        checks = await asyncio.gather(*[check_existing(rt) for rt in resource_types])
+        existing_ids = [rid for _, rid in checks if rid is not None]
+        missing_types = [rt for rt, rid in checks if rid is None]
+
+        # 只对缺失的类型生成新资源
+        generated_ids = []
+        if missing_types:
+            try:
+                saved = await ResourceService.generate_and_save(
+                    topic=node.topic,
+                    user_id=user_id,
+                    resource_types=missing_types,
+                )
+                generated_ids = [r.get("resource_id") or r.get("id") for r in saved if r]
+            except Exception:
+                logger.exception("ResourceService.generate_and_save 失败 topic=%s types=%s", node.topic, missing_types)
+
+        all_ids = existing_ids + generated_ids
+        update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
         if progress.node_status == "unlocked":
-            progress.node_status = "in_progress"
-            progress.started_at = datetime.now()
-        await progress.save()
+            update_fields["node_status"] = "in_progress"
+            update_fields["started_at"] = datetime.now()
+        await UserPathProgress.filter(id=progress.id).update(**update_fields)
 
         return {
             "node_id": node_id,
-            "resource_ids": generated_ids,
+            "resource_ids": all_ids,
             "generated_count": len(generated_ids),
+            "reused_count": len(existing_ids),
         }
 
     @staticmethod
     async def generate_node_quiz(path_id: int, node_id: int, user_id: int) -> dict:
-        """为节点生成测验题目"""
+        """为节点获取测验题目 — 已有则复用，没有则生成"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
         if not node:
             raise ValueError("节点不存在")
@@ -314,23 +395,98 @@ class PathService:
             raise ValueError("未加入该路径")
 
         quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 3, "threshold": 0.7}
+
+        # 已有预生成的 session → 直接复用
+        if progress.quiz_session_id:
+            existing = await ExamService.get_session(progress.quiz_session_id, user_id)
+            if existing and existing.get("total_questions", 0) > 0:
+                return {
+                    "node_id": node_id,
+                    "session_id": progress.quiz_session_id,
+                    "questions": existing.get("records", []),
+                    "quiz_config": quiz_config,
+                    "reused": True,
+                }
+
+        # 没有则生成
         count = quiz_config.get("count", 3)
         difficulty = "medium"
-
         result = await ExamService.generate_and_save(
             topic=node.topic,
             user_id=user_id,
             question_types=["single_choice", "multi_choice", "true_false"],
             count=count,
             difficulty=difficulty,
+            node_id=node_id,
         )
+
+        sid = result.get("session_id")
+        if sid:
+            await UserPathProgress.filter(id=progress.id).update(quiz_session_id=sid)
 
         return {
             "node_id": node_id,
-            "session_id": result.get("session_id"),
+            "session_id": sid,
             "questions": result.get("questions", []),
             "quiz_config": quiz_config,
+            "reused": False,
         }
+
+    @staticmethod
+    async def generate_node_quiz_stream(path_id: int, node_id: int, user_id: int):
+        """流式为节点生成测验题目 → SSE 推送进度"""
+        node = await PathNode.filter(id=node_id, path_id=path_id).first()
+        if not node:
+            yield f"data: {json.dumps({'type': 'error', 'detail': '节点不存在'}, ensure_ascii=False)}\n\n"
+            return
+
+        progress = await UserPathProgress.filter(user_id=user_id, path_id=path_id, node_id=node_id).first()
+        if not progress:
+            yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径'}, ensure_ascii=False)}\n\n"
+            return
+
+        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 3, "threshold": 0.7}
+
+        # 已有预生成的 session → 秒返
+        if progress.quiz_session_id:
+            existing = await ExamService.get_session(progress.quiz_session_id, user_id)
+            if existing and existing.get("total_questions", 0) > 0:
+                yield f"data: {json.dumps({'type': 'status', 'msg': '复用已有测验题目'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'session_id': progress.quiz_session_id, 'quiz_config': quiz_config, 'question_count': existing.get('total_questions', 0), 'reused': True}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+        count = quiz_config.get("count", 3)
+        difficulty = "medium"
+
+        # 流式生成并透传事件，截获 done 写 quiz_session_id
+        async for event in ExamService.generate_and_save_stream(
+            topic=node.topic,
+            user_id=user_id,
+            question_types=["single_choice", "multi_choice", "true_false"],
+            count=count,
+            difficulty=difficulty,
+            node_id=node_id,
+        ):
+            if isinstance(event, str) and event.startswith("data:"):
+                data_str = event[5:].strip()
+                if data_str == "[DONE]":
+                    yield event
+                    continue
+                try:
+                    payload = json.loads(data_str)
+                    if payload.get("type") == "done":
+                        session_id = payload.get("session_id")
+                        if session_id:
+                            await UserPathProgress.filter(id=progress.id).update(quiz_session_id=session_id)
+                        payload["quiz_config"] = quiz_config
+                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                        continue
+                    yield event
+                except json.JSONDecodeError:
+                    yield event
+            else:
+                yield event
 
     @staticmethod
     async def submit_node_quiz(path_id: int, node_id: int, user_id: int, session_id: str) -> dict:
@@ -343,8 +499,8 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        # 从 session 汇总成绩
-        records = await ExamRecord.filter(session_id=session_id, user_id=user_id).all()
+        # 从 session 汇总成绩（同时按 node_id 过滤，防止串题）
+        records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).all()
         judged = [r for r in records if r.is_correct is not None]
         if not judged:
             return {"error": "该会话无已判分的答题记录"}
@@ -431,12 +587,11 @@ class PathService:
         try:
             await PathService.generate_node_resources(path_id, next_node.id, user_id)
         except Exception:
-            pass
+            logger.exception("自动生成下一节点资源失败 path_id=%s node_id=%s", path_id, next_node.id)
 
     @staticmethod
     async def _update_portrait_from_mastery(user_id: int):
-        """汇总知识掌握度 → 更新画像 traits"""
-        from backend.src.models.exam_model import KnowledgeMastery
+        """汇总知识掌握度 → 同步更新画像 traits"""
 
         records = await KnowledgeMastery.filter(user_id=user_id).all()
         if not records:
@@ -447,7 +602,13 @@ class PathService:
             for r in records
         ]
 
-        from backend.src.models.portraitmodel import User_picture
+        # 分化强项/弱项
+        strengths = [m["tag"] for m in mastery_data if m["level"] in ("mastered", "proficient")]
+        weaknesses = [m["tag"] for m in mastery_data if m["level"] == "beginner"]
+        avg_accuracy = round(sum(m["accuracy"] for m in mastery_data) / len(mastery_data), 2)
+        level_map = {"beginner": 1, "learning": 2, "proficient": 3, "mastered": 4}
+        avg_level = sum(level_map.get(m["level"], 1) for m in mastery_data) / len(mastery_data)
+        knowbase = round(min(avg_level, 5), 1)
 
         user = await User.filter(id=user_id).prefetch_related("picture").first()
         if not user:
@@ -462,11 +623,33 @@ class PathService:
         if picture.traits:
             try:
                 existing = json.loads(picture.traits)
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("画像 traits JSON 解析失败 user_id=%s", user_id)
                 existing = {}
 
+        # 保留原始数据
         existing["knowledge_mastery"] = mastery_data
         existing["updated_at"] = str(datetime.now())
+
+        # 同步核心画像维度
+        existing["knowbase"] = {
+            "value": str(knowbase),
+            "confidence": min(0.95, 0.3 + avg_accuracy * 0.5),
+            "source": "agent_inferred",
+        }
+        if strengths:
+            existing["strengths"] = {
+                "value": "、".join(strengths[:5]),
+                "confidence": 0.85,
+                "source": "agent_inferred",
+            }
+        if weaknesses:
+            existing["weaknesses"] = {
+                "value": "、".join(weaknesses[:5]),
+                "confidence": 0.75,
+                "source": "agent_inferred",
+            }
+
         picture.traits = json.dumps(existing, ensure_ascii=False)
         await picture.save()
 
@@ -508,6 +691,7 @@ class PathService:
                 "status": status,
                 "summary": summary,
                 "resource_id": json.loads(p.resource_ids)[0] if p.resource_ids else None,
+                "session_id": p.quiz_session_id,
                 "action_label": "开始测验" if node.quiz_config and status in ("unlocked", "in_progress") else "开始学习",
             })
 
@@ -593,7 +777,15 @@ class PathService:
             next_progress = await UserPathProgress.filter(
                 user_id=user_id, path_id=path_id, node_id=next_node.id
             ).first()
-            if next_progress and next_progress.node_status == "unlocked":
+            if next_progress and next_progress.node_status in ("unlocked", "in_progress"):
+                # 确保下一节点的 quiz 已预生成
+                quiz_session_id = None
+                if next_node.quiz_config:
+                    try:
+                        quiz_result = await PathService.generate_node_quiz(path_id, next_node.id, user_id)
+                        quiz_session_id = quiz_result.get("session_id")
+                    except Exception:
+                        logger.exception("下一节点测验预生成失败 path_id=%s node_id=%s", path_id, next_node.id)
                 knowledge_tags = json.loads(next_node.knowledge_tags) if next_node.knowledge_tags else []
                 new_nodes.append({
                     "id": next_node.id,
@@ -602,6 +794,7 @@ class PathService:
                     "status": "unlocked",
                     "summary": f"学习{next_node.topic}" + (f"（{', '.join(knowledge_tags[:3])}）" if knowledge_tags else ""),
                     "resource_ids": json.loads(next_progress.resource_ids) if next_progress and next_progress.resource_ids else [],
+                    "session_id": quiz_session_id,
                     "action_label": "开始学习",
                 })
 
