@@ -670,6 +670,21 @@ class PathService:
             .prefetch_related("node").all()
         progresses.sort(key=lambda p: p.node.order_index if p.node else 0)
 
+        # 批量收集所有资源 ID → 一次查询
+        all_resource_ids = []
+        resource_ids_map = {}
+        for p in progresses:
+            if p.resource_ids:
+                rids = json.loads(p.resource_ids)
+                resource_ids_map[p.node_id] = rids
+                all_resource_ids.extend(rids)
+
+        resources_map = {}
+        if all_resource_ids:
+            res_records = await GeneratedResource.filter(id__in=all_resource_ids).all()
+            for r in res_records:
+                resources_map[r.id] = r
+
         nodes = []
         current_node_id = None
         for p in progresses:
@@ -684,13 +699,28 @@ class PathService:
             knowledge_tags = json.loads(node.knowledge_tags) if node.knowledge_tags else []
             summary = f"学习{node.topic}" + (f"（{', '.join(knowledge_tags[:3])}）" if knowledge_tags else "")
 
+            # 当前节点的学习资源列表
+            node_resources = []
+            for rid in resource_ids_map.get(node.id, []):
+                r = resources_map.get(rid)
+                if r:
+                    ext = {"document": "md", "ppt": "pptx", "mindmap": "txt", "exercise": "md"}.get(r.resource_type, "md")
+                    node_resources.append({
+                        "id": r.id,
+                        "title": r.topic,
+                        "resource_type": r.resource_type,
+                        "file_type": ext,
+                        "filename": f"{r.topic}_{r.resource_type}.{ext}",
+                        "download_url": f"/resource/{r.id}/download",
+                    })
+
             nodes.append({
                 "id": node.id,
                 "title": node.topic,
                 "type": "quiz" if node.quiz_config else "read",
                 "status": status,
                 "summary": summary,
-                "resource_id": json.loads(p.resource_ids)[0] if p.resource_ids else None,
+                "resources": node_resources,
                 "session_id": p.quiz_session_id,
                 "action_label": "开始测验" if node.quiz_config and status in ("unlocked", "in_progress") else "开始学习",
             })

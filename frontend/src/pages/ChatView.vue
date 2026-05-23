@@ -388,7 +388,7 @@ const selectedResourceToolName = computed(() => {
 const inputPlaceholder = computed(() => {
   return selectedResourceTool.value
     ? `请描述你想要的（${selectedResourceToolName.value}）`
-    : 'Ask anything...'
+    : 'Create something you want...'
 })
 
 const stripTypedResourceInstruction = value => {
@@ -1103,11 +1103,6 @@ const fileIcon = type => {
   if (normalizedType.includes('txt') || normalizedType.includes('document')) return '📄'
   if (normalizedType.includes('pdf')) return '📕'
   return '📁'
-}
-
-const isMindmapFile = message => {
-  const text = String(`${message?.fileType || ''} ${message?.filename || ''} ${message?.title || ''}`).toLowerCase()
-  return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('mind') || text.includes('xmind') || text.includes('思维') || text.includes('导图')
 }
 
 const scrollToBottom = async () => {
@@ -1851,16 +1846,6 @@ onMounted(() => {
   max-height: 300px;
   object-fit: contain;
   border-radius: 8px;
-}
-
-.chat-mindmap-preview {
-  margin-top: 14px;
-  min-height: 320px;
-}
-
-.chat-mindmap-preview :deep(.mindmap-canvas) {
-  height: 360px;
-  min-height: 320px;
 }
 
 .file-preview {
