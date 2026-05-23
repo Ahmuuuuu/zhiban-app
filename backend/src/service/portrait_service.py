@@ -115,6 +115,14 @@ def format_portrait(picture, show_missing: bool = False) -> list[str]:
         marker = " ✓" if conf >= CONFIDENCE_MAX else ""
         lines.append(f"{label}：{val}（置信度 {conf}）{marker}")
 
+    # 知识点掌握度（给智能体出题/推荐用）
+    mastery = traits.get("knowledge_mastery")
+    if mastery and isinstance(mastery, list) and len(mastery) > 0:
+        lines.append("\n【知识点掌握度】")
+        for m in mastery:
+            level_cn = {"beginner": "入门", "learning": "学习中", "proficient": "熟练", "mastered": "已掌握"}.get(m.get("level"), m.get("level"))
+            lines.append(f"  - {m.get('tag')}：{level_cn}（正确率 {m.get('accuracy', 0)}）")
+
     if picture.profile_summary:
         lines.append(f"画像总结：{picture.profile_summary}")
 

@@ -41,6 +41,12 @@ class ResourceState(TypedDict):
     review_feedback: str
     review_passed: bool
     retry_count: int
+    # exam 参数（exercise 类型使用）
+    exam_question_types: str            # "single_choice, multi_choice, true_false"
+    exam_count: str                     # "5"
+    exam_difficulty: str                # "medium"
+    # reviewer 逐题结果
+    reviewer_questions: list[dict]      # [{index, passed, score, feedback}, ...]
 
 
 # ═══════════════════════════════════════
@@ -61,14 +67,9 @@ async def leader_node(state: ResourceState) -> dict:
         return {"resource_types": state.get("resource_types", ["document"])}
 
     try:
-        content = response.content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1]
-            if content.endswith("```"):
-                content = content[:-3]
-        plan = json.loads(content)
+        plan = parse_llm_json(response.content)
     except json.JSONDecodeError:
-        plan = {"resource_types": ["document"], "topic": topic, "outline": content}
+        plan = {"resource_types": ["document"], "topic": topic, "outline": response.content.strip()}
 
     # 用户已指定资源类型则尊重用户选择，否则由 Leader 决定
     requested = state.get("resource_types", ["document"])
@@ -105,9 +106,9 @@ async def executor_node(state: ResourceState) -> dict:
             portrait_context=portrait,
             kb_context=kb,
             feedback=feedback,
-            count="5",
-            question_types="single_choice",
-            difficulty="medium",
+            count=state.get("exam_count", "5"),
+            question_types=state.get("exam_question_types", "single_choice, multi_choice, true_false"),
+            difficulty=state.get("exam_difficulty", "medium"),
         )
 
     # 信号量限制最大并发数，防止 DeepSeek 限流
@@ -136,74 +137,91 @@ async def executor_node(state: ResourceState) -> dict:
 
 
 def _parse_review_response(raw: str) -> dict:
-    """解析 reviewer 返回的 JSON，容错处理"""
+    """解析 reviewer 返回的 JSON，容错处理。
+    支持新格式（逐题）和旧格式（整批），统一返回含 questions 字段的 dict。"""
     try:
         result = parse_llm_json(raw)
-        return result if isinstance(result, dict) else {"passed": True, "score": 70, "feedback": raw}
+        if not isinstance(result, dict):
+            return {"passed": True, "score": 70, "feedback": raw, "questions": []}
+        # exercise 新格式：包含逐题结果
+        if "questions" in result and isinstance(result["questions"], list):
+            return {
+                "passed": result.get("overall_passed", True),
+                "score": result.get("overall_score", 70),
+                "feedback": result.get("overall_feedback", ""),
+                "questions": result["questions"],
+            }
+        # 旧格式兼容（其他资源类型）
+        return {
+            "passed": result.get("passed", True),
+            "score": result.get("score", 70),
+            "feedback": result.get("feedback", ""),
+            "questions": [],
+        }
     except json.JSONDecodeError:
-        return {"passed": True, "score": 70, "feedback": raw}
+        return {"passed": True, "score": 70, "feedback": raw, "questions": []}
+
+
+# 资源类型 → 专用审核员
+_REVIEWER_MAP = {
+    "document": "agent/reviewer_document",
+    "case": "agent/reviewer_document",
+    "reading": "agent/reviewer_document",
+    "ppt": "agent/reviewer_ppt",
+    "exercise": "agent/reviewer_exam",
+    "mindmap": "agent/mindmap_reviewer",
+}
 
 
 async def reviewer_node(state: ResourceState) -> dict:
-    """ReviewerAgent: 内容审核 + 思维导图结构审核，并行执行"""
+    """ReviewerAgent: 每种资源类型由专用审核员独立审查，并行执行"""
     generated = state.get("generated_resources", {})
 
-    mindmap_content = generated.get("mindmap", "")
-    reviewable = {rt: c for rt, c in generated.items() if rt != "mindmap"}
-
-    async def review_content() -> dict:
-        """审核文档/PPT/题目等内容"""
-        if not reviewable:
+    async def review_one(rt: str, content: str) -> dict:
+        reviewer_path = _REVIEWER_MAP.get(rt, "agent/reviewer_document")
+        if not content:
             return {"passed": True, "score": 100, "feedback": ""}
         try:
-            parts = []
-            for rt, content in reviewable.items():
-                parts.append(f"## [{rt}]\n{content[:2000]}...")
-            combined = "\n\n".join(parts)
-            prompt_text = fill_prompt(load_prompt("agent/reviewer"), content=combined)
-            response = await llm.ainvoke(prompt_text)
-            return _parse_review_response(response.content)
-        except Exception as e:
-            logger.exception("内容审核 LLM 调用失败")
-            return {"passed": True, "score": 0, "feedback": f"审核服务异常: {e}"}
-
-    async def review_mindmap() -> dict:
-        """审核思维导图结构"""
-        if not mindmap_content:
-            return {"passed": True, "score": 100, "feedback": ""}
-        try:
+            content_snippet = content[:3000]
             prompt_text = fill_prompt(
-                load_prompt("agent/mindmap_reviewer"),
-                mindmap_content=mindmap_content[:3000],
+                load_prompt(reviewer_path),
+                content=content_snippet,
+                topic=state.get("topic", ""),
+                kb_context=state.get("kb_context", "暂无相关知识库资料"),
             )
             response = await llm.ainvoke(prompt_text)
-            return _parse_review_response(response.content)
+            result = _parse_review_response(response.content)
+            logger.info(f"[审核] {rt}: passed={result.get('passed')} score={result.get('score')}")
+            return result
         except Exception as e:
-            logger.exception("思维导图结构审核 LLM 调用失败")
-            return {"passed": True, "score": 0, "feedback": f"审核服务异常: {e}"}
+            logger.exception(f"[审核] {rt} 失败")
+            return {"passed": True, "score": 0, "feedback": f"审核异常: {e}"}
 
-    # 并行审核
-    content_result, mindmap_result = await asyncio.gather(
-        review_content(), review_mindmap()
-    )
+    tasks = [review_one(rt, content) for rt, content in generated.items()]
+    if not tasks:
+        return {"review_passed": True, "review_feedback": ""}
 
-    content_passed = content_result.get("passed", False)
-    mindmap_passed = mindmap_result.get("passed", False)
-    if isinstance(content_passed, str):
-        content_passed = content_passed.lower() == "true"
-    if isinstance(mindmap_passed, str):
-        mindmap_passed = mindmap_passed.lower() == "true"
+    results = await asyncio.gather(*tasks)
 
-    # 汇总 feedback
+    # 汇总
     feedback_parts = []
-    if not content_passed:
-        feedback_parts.append(f"[内容审核] {content_result.get('feedback', '')}")
-    if not mindmap_passed:
-        feedback_parts.append(f"[结构审核] {mindmap_result.get('feedback', '')}")
+    all_passed = True
+    question_results = []
+    for (rt, _), result in zip(generated.items(), results):
+        passed = result.get("passed", False)
+        if isinstance(passed, str):
+            passed = passed.lower() == "true"
+        if not passed:
+            all_passed = False
+            feedback_parts.append(f"[{rt}] {result.get('feedback', '')}")
+        # 收集 per-question 审核结果（exercise 类型）
+        for q in result.get("questions", []):
+            question_results.append(q)
 
     return {
-        "review_passed": content_passed and mindmap_passed,
+        "review_passed": all_passed,
         "review_feedback": "\n".join(feedback_parts),
+        "reviewer_questions": question_results,
     }
 
 

@@ -1,4 +1,7 @@
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 from backend.src.ai_core.graph import resource_graph
 from backend.src.utils.prompt_loader import fill_prompt
@@ -8,8 +11,21 @@ from backend.src.models.agent_skill_model import AgentSkill
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
+from backend.src.utils.json_parser import parse_llm_json
+from backend.src.utils.mindmap import parse_mindmap_text
 
 # 资源类型 → 文件扩展名映射
+def _format_mindmap_content(content: str | None) -> str | dict | None:
+    """mindmap 类型将缩进文本转为 JSON 树，其他类型原样返回"""
+    if not content:
+        return content
+    try:
+        return parse_mindmap_text(content)
+    except Exception:
+        logger.exception("思维导图 JSON 转换失败")
+        return content
+
+
 _FILE_EXT_MAP = {
     "document": "md",
     "ppt": "pptx",
@@ -83,7 +99,7 @@ async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str
     )
 
 
-async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> dict:
+async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium") -> dict:
     await init_db()
 
     # 没传 topic 但有 chat_group_id → 从聊天记录自动提取
@@ -103,7 +119,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         if kb_result and "暂无" not in kb_result:
             kb_context = kb_result
     except Exception:
-        pass
+        logger.exception("知识库搜索失败 topic=%s", topic)
 
     custom_prompts = {}
     skills = await AgentSkill.filter(user_id=user_id, enabled=True).all()
@@ -122,6 +138,9 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         "review_feedback": "",
         "review_passed": False,
         "retry_count": 0,
+        "exam_question_types": exam_question_types,
+        "exam_count": str(exam_count),
+        "exam_difficulty": exam_difficulty,
     }
 
 
@@ -154,9 +173,9 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
 class ResourceService:
 
     @staticmethod
-    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> list[dict]:
+    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium") -> list[dict]:
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty)
         topic = initial_state["topic"]
 
         result = await resource_graph.ainvoke(initial_state)
@@ -168,31 +187,44 @@ class ResourceService:
             result.get("retry_count", 0),
         )
         await _save_generation_to_history(user_id, chat_group_id, topic, saved)
-        return saved
 
-        # exercise 类型：自动生成对应题库，关联 session_id
+        # exercise 类型：解析 graph 输出的 JSON 题目 → 按 reviewer 逐题审核过滤 → 存 ExamQuestion 表
+        reviewer_questions = result.get("reviewer_questions", [])
+        question_quality = {q.get("index"): q.get("passed", True) for q in reviewer_questions} if reviewer_questions else {}
+
         for i, item in enumerate(saved):
             if item["resource_type"] == "exercise":
                 try:
-                    from backend.src.service.exam_service import ExamService
-                    exam_result = await ExamService.generate_and_save(
-                        topic, user_id, ["single_choice"], count=5, difficulty="medium"
-                    )
-                    sid = exam_result.get("session_id")
-                    if sid:
-                        await GeneratedResource.filter(id=item["resource_id"]).update(session_id=sid)
-                        saved[i]["session_id"] = sid
-                        saved[i]["question_count"] = len(exam_result.get("questions", []))
+                    from backend.src.service.exam_service import ExamService  # deferred: circular exam<->resource
+
+                    user = await User.filter(id=user_id).first()
+                    if user:
+                        questions = parse_llm_json(item.get("content", ""))
+                        if isinstance(questions, list) and questions:
+                            # 用 reviewer 逐题审核结果过滤掉 passed=false 的题
+                            if question_quality:
+                                questions = [q for idx, q in enumerate(questions) if question_quality.get(idx, True)]
+                            if questions:
+                                sid, _ = await ExamService._save_questions(questions, user, "medium")
+                                if sid:
+                                    await GeneratedResource.filter(id=item["resource_id"]).update(session_id=sid)
+                                    saved[i]["session_id"] = sid
+                                    saved[i]["question_count"] = len(questions)
                 except Exception:
-                    pass
+                    logger.exception("exercise 题目解析/存库失败 resource_id=%s", item.get("resource_id"))
+
+        # mindmap 类型：缩进文本转为 JSON 树
+        for item in saved:
+            if item["resource_type"] == "mindmap":
+                item["content"] = _format_mindmap_content(item.get("content"))
 
         return saved
 
     @staticmethod
-    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0):
+    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium"):
         """节点级流式 — astream 逐节点产出状态，只跑一次 graph，同时推送文件事件"""
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty)
         topic = initial_state["topic"]
         final_resources = {}
         final_passed = False
@@ -202,7 +234,13 @@ class ResourceService:
         def _file_event(rt: str, content: str) -> str:
             ext = _FILE_EXT_MAP.get(rt, "md")
             filename = f"{topic}_{rt}.{ext}"
-            return f"data: {json.dumps({'type': 'file', 'file_type': rt, 'filename': filename, 'content': content}, ensure_ascii=False)}\n\n"
+            event_content = content
+            if rt == "mindmap":
+                try:
+                    event_content = parse_mindmap_text(content)
+                except Exception:
+                    logger.exception("SSE 思维导图 JSON 转换失败")
+            return f"data: {json.dumps({'type': 'file', 'file_type': rt, 'filename': filename, 'content': event_content}, ensure_ascii=False)}\n\n"
 
         async for chunk in resource_graph.astream(initial_state, stream_mode="values"):
             resources = chunk.get("generated_resources", {})
@@ -243,11 +281,14 @@ class ResourceService:
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:
             return None
+        content = record.content
+        if record.resource_type == "mindmap":
+            content = _format_mindmap_content(content)
         return {
             "resource_id": record.id,
             "topic": record.topic,
             "resource_type": record.resource_type,
-            "content": record.content,
+            "content": content,
             "review_passed": record.review_passed,
             "retry_count": record.retry_count,
             "created_at": str(record.created_at),
@@ -259,13 +300,19 @@ class ResourceService:
         result = []
         for r in records:
             ext = _FILE_EXT_MAP.get(r.resource_type, "md")
+            preview = r.content[:200] if r.content else ""
+            if r.resource_type == "mindmap" and r.content:
+                try:
+                    preview = parse_mindmap_text(r.content)
+                except Exception:
+                    logger.exception("思维导图预览 JSON 转换失败 resource_id=%s", r.id)
             item = {
                 "resource_id": r.id,
                 "topic": r.topic,
                 "resource_type": r.resource_type,
                 "filename": f"{r.topic}_{r.resource_type}.{ext}",
                 "file_type": ext,
-                "preview": r.content[:200] if r.content else "",
+                "preview": preview,
                 "download_url": f"/resource/{r.id}/download",
                 "review_passed": r.review_passed,
                 "created_at": str(r.created_at),
@@ -282,7 +329,7 @@ class ResourceService:
         filename = f"{record.topic}_{record.resource_type}.{ext}"
         if record.resource_type == "ppt":
             try:
-                from backend.src.utils.pptx_generator import markdown_to_pptx
+                from backend.src.utils.pptx_generator import markdown_to_pptx  # deferred: optional python-pptx dependency
             except ImportError:
                 raise ImportError("PPT 导出需要安装 python-pptx 依赖")
             content_bytes = markdown_to_pptx(record.content)

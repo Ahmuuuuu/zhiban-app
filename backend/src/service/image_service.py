@@ -15,6 +15,10 @@ from urllib.parse import urlencode
 from dotenv import load_dotenv
 import httpx
 
+from backend.src.models.chat_history_model import ChatHistory
+from backend.src.models.usermodel import User
+from backend.src.models.image_model import GeneratedImage
+
 
 HOST = "cn-huadong-1.xf-yun.com"
 CREATE_PATH = "/v1/private/s3fd61810/create"
@@ -54,8 +58,6 @@ SAVE_DIR = Path(__file__).parent.parent.parent / "static" / "images"
 
 
 async def _next_chat_group_id(user_id: int) -> int:
-    from backend.src.models.chat_history_model import ChatHistory
-
     latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
     if not latest or not latest.chat_group_id:
         return 1
@@ -69,9 +71,6 @@ async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
 async def _save_image_history(info: dict, images: list[dict]) -> None:
     if info.get("history_saved"):
         return
-
-    from backend.src.models.chat_history_model import ChatHistory
-    from backend.src.models.usermodel import User
 
     user = await User.filter(id=info.get("user_id")).first()
     if not user:
@@ -97,8 +96,6 @@ class ImageService:
     @staticmethod
     async def submit(prompt: str, user_id: int, aspect_ratio: str = "1:1", img_count: int = 1, chat_group_id: int = 0) -> dict:
         """提交生成任务到讯飞，立即返回 task_id"""
-        from backend.src.models.usermodel import User
-
         app_id, api_key, api_secret = _load_env()
 
         user = await User.filter(id=user_id).first()
@@ -205,8 +202,6 @@ class ImageService:
                     return dict(info)
 
                 # 下载图片并存库
-                from backend.src.models.usermodel import User
-                from backend.src.models.image_model import GeneratedImage
 
                 user = await User.filter(id=info.get("user_id")).first()
                 if not user:
