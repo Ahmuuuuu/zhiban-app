@@ -49,6 +49,14 @@ class PathService:
         except Exception:
             logger.exception("知识库搜索失败 subject=%s user_id=%s", subject, user_id)
 
+        mastery_records = await KnowledgeMastery.filter(user_id=user_id).all()
+        if mastery_records:
+            lines = []
+            for m in mastery_records:
+                acc = round(m.correct_count / max(m.total_attempts, 1), 2)
+                lines.append(f"- {m.knowledge_tag}: {m.mastery_level}（准确率 {acc}，练习 {m.total_attempts} 次）")
+            mastery_context = "已掌握知识点：\n" + "\n".join(lines)
+
         template = load_prompt("path/path_generation")
         prompt_text = fill_prompt(
             template,
