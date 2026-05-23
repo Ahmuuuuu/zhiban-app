@@ -1,8 +1,14 @@
-from fastapi import FastAPI
+import logging
+import traceback
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from backend.src.utils.database import init_db, close_db
+
+logger = logging.getLogger("api")
 from backend.src.router.chat_router import router as chat_router
 from backend.src.router.portrait_router import router as portrait_router
 from backend.src.router.resource_router import router as resource_router
@@ -27,6 +33,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局异常处理：记录完整 traceback，返回统一 500"""
+    logger.exception("未处理异常 %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "服务器内部错误"},
+    )
 
 # 静态文件服务（图片生成等）
 static_dir = Path(__file__).parent.parent / "static"
