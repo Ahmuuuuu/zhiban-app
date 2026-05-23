@@ -1,13 +1,69 @@
 import json
+import logging
 from collections import OrderedDict
 
 from backend.src.ai_core.agent import UnifiedChat
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 
+logger = logging.getLogger(__name__)
+
 _MAX_CHAT_INSTANCES = 100
 
 _chat_instances: OrderedDict[str, UnifiedChat] = OrderedDict()
+
+
+async def _build_path_context(user_id: int) -> str:
+    """构建当前学习路径的上下文文本，注入聊天 prompt"""
+    try:
+        from backend.src.service.path_service import PathService
+        current = await PathService.get_current_path(user_id)
+        if not current:
+            return ""
+        nodes = current.get("nodes", [])
+        completed = [n["title"] for n in nodes if n.get("status") == "completed"]
+        current_node = next((n for n in nodes if n.get("status") in ("unlocked", "in_progress")), None)
+        lines = [
+            f"用户正在学习路径「{current['goal']}」，进度 {current['progress']}%。",
+        ]
+        if current_node:
+            lines.append(f"当前节点：「{current_node['title']}」，类型：{current_node.get('type', 'read')}。")
+        if completed:
+            lines.append(f"已完成节点：{' → '.join(completed)}。")
+        weak_points = current.get("diagnosis", {}).get("weak_points", [])
+        if weak_points:
+            lines.append(f"薄弱知识点：{', '.join(w['tag'] if isinstance(w, dict) else str(w) for w in weak_points)}。")
+        return "\n".join(lines)
+    except Exception:
+        logger.exception("构建路径上下文失败 user_id=%s", user_id)
+        return ""
+
+
+async def _build_portrait_context(user_id: int) -> str:
+    """构建用户画像 + 知识点掌握度的上下文文本"""
+    try:
+        from backend.src.service.portrait_service import PortraitService
+        portrait = await PortraitService.read_portrait(user_id)
+        if not portrait or not portrait.get("traits"):
+            return ""
+        traits = portrait["traits"]
+        lines = []
+        for key, label in [
+            ("strengths", "强项"), ("weaknesses", "弱项"), ("interest", "兴趣"),
+            ("knowbase", "知识基础"), ("learning_pace", "学习节奏"), ("commonmis", "常见误区"),
+        ]:
+            val = traits.get(key)
+            if val and isinstance(val, dict) and val.get("value"):
+                lines.append(f"- {label}：{val['value']}")
+        mastery = traits.get("knowledge_mastery")
+        if mastery and isinstance(mastery, list):
+            tags = [f"{m.get('tag', '')}({m.get('level', '')})" for m in mastery[:8] if m.get("tag")]
+            if tags:
+                lines.append(f"- 知识点掌握度：{'、'.join(tags)}")
+        return "用户画像：\n" + "\n".join(lines) if lines else ""
+    except Exception:
+        logger.exception("构建画像上下文失败 user_id=%s", user_id)
+        return ""
 
 
 def _get_or_create_chat(user_id: int, chat_group_id: int) -> UnifiedChat:
@@ -37,7 +93,9 @@ class ChatService:
             return None, "未查找到用户"
         chat_group_id = await get_max_chat_group(user_id)
         bot = _get_or_create_chat(user_id, chat_group_id)
-        res = await bot.chat(user_req)
+        path_context = await _build_path_context(user_id)
+        portrait_context = await _build_portrait_context(user_id)
+        res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context)
         message = await ChatHistory.create(
             user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=res,
         )
@@ -49,7 +107,9 @@ class ChatService:
         if not user:
             return None, "未查找到用户"
         bot = _get_or_create_chat(user_id, chat_group_id)
-        res = await bot.chat(user_req)
+        path_context = await _build_path_context(user_id)
+        portrait_context = await _build_portrait_context(user_id)
+        res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context)
         message = await ChatHistory.create(
             user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=res,
         )
@@ -61,8 +121,10 @@ class ChatService:
     async def _stream_chat(user_id: int, chat_group_id: int, user_req: str):
         """流式对话核心逻辑"""
         bot = _get_or_create_chat(user_id, chat_group_id)
+        path_context = await _build_path_context(user_id)
+        portrait_context = await _build_portrait_context(user_id)
         full_response = ""
-        async for chunk in bot.stream(user_req):
+        async for chunk in bot.stream(user_req, path_context=path_context, portrait_context=portrait_context):
             if isinstance(chunk, dict):
                 if chunk.get("type") == "content":
                     full_response += chunk["content"]
