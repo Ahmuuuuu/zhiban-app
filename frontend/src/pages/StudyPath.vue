@@ -190,7 +190,7 @@
                         <span>{{ nodeQuizData.questionCount || 0 }} 道题</span>
                       </div>
                     </div>
-                    <router-link class="quiz-action-btn" :to="`/question-bank/${nodeQuizData.id}?from=path`">
+                    <router-link class="quiz-action-btn" :to="`/question-bank/${nodeQuizData.id}?from=path&nodeId=${selectedNode.id}`">
                       开始练习
                     </router-link>
                   </div>
@@ -202,15 +202,6 @@
               </div>
 
               <div class="card-actions">
-                <button
-                  class="complete-btn"
-                  type="button"
-                  :disabled="selectedNode.status === 'done' || selectedNode.status === 'locked'"
-                  @click="completeNode(selectedNode.id)"
-                >
-                  {{ selectedNode.status === 'done' ? '已完成' : selectedNode.status === 'locked' ? '未解锁' : '标记完成' }}
-                </button>
-
                 <button
                   class="start-btn"
                   type="button"
@@ -234,7 +225,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText } from 'lucide-vue-next'
 import {
-  getCurrentLearningPath, completeLearningPathNode, generateLearningPath,
+  getCurrentLearningPath, generateLearningPath,
   generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, resolveApiUrl
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
@@ -582,21 +573,6 @@ const downloadNodeResource = async resource => {
 const previewNodeResource = resource => {
   if (resource.previewUrl) {
     window.open(resource.previewUrl, '_blank', 'noopener,noreferrer')
-  }
-}
-
-const completeNode = async nodeId => {
-  try {
-    let sessionId = nodeSessionId.value
-    // 如果 sessionId 丢失（如刷新页面后），从题库 localStorage 查找
-    if (!sessionId && pathState.value?.pathId) {
-      const quiz = getQuizSet(`quiz-resource-${pathState.value.pathId}-${nodeId}`)
-      if (quiz?.sessionId) sessionId = quiz.sessionId
-    }
-    await completeLearningPathNode(nodeId, sessionId)
-    await fetchCurrentPath()
-  } catch (err) {
-    error.value = err?.response?.data?.detail || err?.message || '标记完成失败'
   }
 }
 

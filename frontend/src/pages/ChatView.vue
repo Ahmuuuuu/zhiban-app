@@ -137,6 +137,13 @@
             <img :src="message.previewUrl" :alt="message.filename" loading="lazy" @error="e => e.target.style.display = 'none'" />
           </div>
 
+          <MindmapPreview
+            v-else-if="isMindmapFile(message) && message.content"
+            class="chat-mindmap-preview"
+            :content="message.content"
+            :title="message.filename"
+          />
+
           <pre v-else-if="message.content" class="file-preview">{{ message.content }}</pre>
 
           <div v-else class="file-placeholder">
@@ -274,6 +281,7 @@ import {
 } from '../api/apis'
 import { detectGenerationIntent, executeGeneration } from '../composables/useResourceGeneration'
 import UserAccountButton from '../components/UserAccountButton.vue'
+import MindmapPreview from '../components/MindmapPreview.vue'
 import {
   FileText,
   GitBranch,
@@ -1097,6 +1105,11 @@ const fileIcon = type => {
   return '📁'
 }
 
+const isMindmapFile = message => {
+  const text = String(`${message?.fileType || ''} ${message?.filename || ''} ${message?.title || ''}`).toLowerCase()
+  return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('mind') || text.includes('xmind') || text.includes('思维') || text.includes('导图')
+}
+
 const scrollToBottom = async () => {
   await nextTick()
 
@@ -1838,6 +1851,16 @@ onMounted(() => {
   max-height: 300px;
   object-fit: contain;
   border-radius: 8px;
+}
+
+.chat-mindmap-preview {
+  margin-top: 14px;
+  min-height: 320px;
+}
+
+.chat-mindmap-preview :deep(.mindmap-canvas) {
+  height: 360px;
+  min-height: 320px;
 }
 
 .file-preview {

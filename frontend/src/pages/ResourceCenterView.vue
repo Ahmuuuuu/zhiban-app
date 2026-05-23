@@ -96,7 +96,7 @@
             </div>
 
             <h2>{{ resource.title || '未命名资料' }}</h2>
-            <p>{{ getExcerpt(resource.content) }}</p>
+            <p>{{ getResourceExcerpt(resource) }}</p>
 
             <footer>
               <span>{{ formatDate(resource.created_at) }}</span>
@@ -181,7 +181,23 @@
                 @error="handleImageError"
               />
             </template>
-            <template v-else-if="isPptResource(selectedResource) || isMindmapResource(selectedResource)">
+            <template v-else-if="isMindmapResource(selectedResource)">
+              <MindmapPreview
+                :content="selectedResource.fullContent || selectedResource.content"
+                :title="selectedResource.title"
+              />
+              <div class="resource-fullscreen__actions">
+                <button
+                  v-if="selectedResource.downloadUrl"
+                  class="file-download-btn"
+                  type="button"
+                  @click="downloadResource(selectedResource)"
+                >
+                  下载思维导图
+                </button>
+              </div>
+            </template>
+            <template v-else-if="isPptResource(selectedResource)">
               <div v-if="selectedResource.previewUrl" class="file-preview-wrap">
                 <img
                   class="preview-image"
@@ -227,6 +243,7 @@ import {
 import { downloadWithToken, getGeneratedImages, getGeneratedResource, getGeneratedResources, getStudyResources, resolveApiUrl } from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
 import UserAccountButton from '../components/UserAccountButton.vue'
+import MindmapPreview from '../components/MindmapPreview.vue'
 
 const router = useRouter()
 const resources = ref([])
@@ -284,7 +301,9 @@ const normalizeGeneratedResources = data => {
     const resourceId = item.resource_id || item.resourceId || item.id
     const filename = item.filename || `${item.topic || item.title || '生成资源'}_${resourceType}`
 
-    const isQuiz = String(resourceType).includes('exercise') || String(resourceType).includes('quiz')
+    const resourceText = String(`${resourceType} ${filename} ${item.topic || ''} ${item.title || ''}`).toLowerCase()
+    const isQuiz = resourceText.includes('exercise') || resourceText.includes('quiz')
+    const isMindmap = resourceText.includes('mindmap') || resourceText.includes('mind_map') || resourceText.includes('mind-map') || resourceText.includes('xmind')
 
     return {
       doc_id: `generated-${resourceId}`,
@@ -293,9 +312,10 @@ const normalizeGeneratedResources = data => {
       title: item.title || item.topic || fileTitleWithoutExtension(filename),
       filename,
       content: isQuiz ? '这是一套生成题目，进入题库后开始练习。' : (item.preview || item.preview_content || item.content || ''),
-      type: resourceType,
-      category: isQuiz ? 'exercise' : 'reference',
+      type: isMindmap ? 'mindmap' : resourceType,
+      category: isQuiz ? 'exercise' : isMindmap ? 'mindmap' : 'reference',
       categoryLabel: isQuiz ? '习题/题库' : 'AI 生成',
+      categoryLabel: isMindmap ? '思维导图' : (isQuiz ? '习题/题库' : 'AI 生成'),
       visibility: item.visibility || 'private',
       quizId: item.quiz_id || item.quizId || '',
       sessionId: item.session_id || item.sessionId || '',
@@ -375,9 +395,28 @@ const hotResources = computed(() => {
   return resources.value.slice(0, 5)
 })
 
-const openResourcePreview = resource => {
+const openResourcePreview = async resource => {
   selectedResource.value = resource
   previewOpen.value = true
+
+  if (resource?.source === 'generated' && resource?.sourceId && !resource?.fullContent) {
+    try {
+      const detail = await getGeneratedResource(resource.sourceId)
+      const data = detail?.data || detail || {}
+      const fullContent = data.content || data.preview || resource.content || ''
+      selectedResource.value = {
+        ...resource,
+        content: fullContent,
+        fullContent,
+        filename: data.filename || resource.filename,
+        type: isMindmapResource(resource) ? 'mindmap' : (data.resource_type || data.file_type || resource.type),
+        sessionId: data.session_id || resource.sessionId || '',
+        downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl)
+      }
+    } catch (error) {
+      console.error('加载资源详情失败：', error)
+    }
+  }
 }
 
 const closeResourcePreview = () => {
@@ -482,6 +521,11 @@ watch(filteredResources, list => {
 const getExcerpt = content => {
   const text = String(content || '').replace(/\s+/g, ' ').trim()
   return text ? text.slice(0, 118) : '暂无正文内容'
+}
+
+const getResourceExcerpt = resource => {
+  if (isMindmapResource(resource)) return '点击查看可视化思维导图'
+  return getExcerpt(resource?.content)
 }
 
 const handleImageError = event => {
