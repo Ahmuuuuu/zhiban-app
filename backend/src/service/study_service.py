@@ -4,7 +4,6 @@ import logging
 from datetime import date, datetime, timedelta
 
 from backend.src.models.study_model import StudySession, ResourceReadStatus
-from backend.src.models.usermodel import User
 from backend.src.models.exam_model import KnowledgeMastery, ExamRecord
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.path_model import LearningPath, UserPathProgress
@@ -91,11 +90,11 @@ class StudyService:
             for r in progress_records:
                 if r.node_status in ("unlocked", "in_progress"):
                     node = next((n for n in (p.nodes or []) if n.id == r.node_id), None)
-                    current = node.title if node else None
+                    current = node.topic if node else None
                     break
             paths.append({
                 "path_id": p.id,
-                "goal": p.goal or p.subject or "",
+                "goal": p.subject or "",
                 "progress": round(completed_nodes / max(total_nodes, 1), 2),
                 "total_nodes": total_nodes,
                 "completed_nodes": completed_nodes,

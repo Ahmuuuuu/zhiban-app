@@ -21,9 +21,9 @@ NARRATABLE_TYPES = {"ppt", "document", "case", "reading", "mindmap"}
 
 def clean_for_tts(text: str) -> str:
     """清洗 markdown 文本，去掉不适合朗读的格式"""
-    text = re.sub(r"```[\s\S]*?```", "，代码示例见课件，", text)
+    text = re.sub(r"```[\s\S]*?```", "，代码示例请见原文，", text)
     text = re.sub(r"`([^`]+)`", r"\1", text)
-    text = re.sub(r"\$\$[\s\S]*?\$\$", "，公式见课件，", text)
+    text = re.sub(r"\$\$[\s\S]*?\$\$", "，公式请见原文，", text)
     text = re.sub(r"\$([^$]+)\$", r"\1", text)
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"\*(.+?)\*", r"\1", text)
@@ -83,7 +83,7 @@ def parse_slides(markdown: str) -> list[dict]:
     return slides
 
 
-def parse_text_sections(markdown: str, resource_type: str = "document") -> list[dict]:
+def parse_text_sections(markdown: str) -> list[dict]:
     """将非 PPT 的文本类内容拆分为可朗读的章节
 
     策略（按优先级）：
@@ -150,7 +150,7 @@ def parse_by_type(markdown: str, resource_type: str) -> list[dict]:
     """根据资源类型选择解析策略"""
     if resource_type == "ppt":
         return parse_slides(markdown)
-    return parse_text_sections(markdown, resource_type)
+    return parse_text_sections(markdown)
 
 
 async def generate_audio(text: str, output_path: str, voice: str = "zh-CN-XiaoxiaoNeural", rate: str = "+0%"):

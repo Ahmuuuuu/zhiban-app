@@ -1,6 +1,6 @@
 """视频/语音旁白路由 — 支持 ppt/document/case/reading/mindmap 文字类资源 CRUD"""
 
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 from backend.src.service.narration_service import narrate_resource, list_narrations, get_narration, delete_narration
@@ -34,7 +34,7 @@ async def list_all_narrations(user_id: int = Depends(get_user_id_from_token)):
 
 @router.get("/narrations/{narration_id}")
 async def get_narration_detail(narration_id: int, user_id: int = Depends(get_user_id_from_token)):
-    """获取单个旁白详情（含每页音频）"""
+    """获取单个旁白详情（含每段音频）"""
     result = await get_narration(narration_id, user_id)
     if not result:
         raise HTTPException(status_code=404, detail="旁白记录不存在")
