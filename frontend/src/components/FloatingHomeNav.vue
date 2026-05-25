@@ -1,9 +1,11 @@
-<template>
+﻿<template>
   <header class="floating-nav" :class="{ 'entering-chat': enteringChat }">
     <nav class="nav-links">
       <a href="#/chat" @click.prevent="goChat">资源生成</a>
-      <router-link to="/resources">资源</router-link>
-      <router-link to="/mine">我的</router-link>
+      <router-link to="/resources">资源中心</router-link>
+      <router-link to="/learning-resources">学习资源</router-link>
+      <router-link to="/learning-path">学习路径</router-link>
+      <router-link to="/learning-situation">学习情况</router-link>
     </nav>
 
   </header>
@@ -42,7 +44,7 @@ watch(
   top: 22px;
   left: 28px;
   z-index: 20;
-  width: 254px;
+  width: 500px;
   max-width: calc(100% - 40px);
   min-height: 62px;
   padding: 10px 12px;
@@ -113,6 +115,11 @@ watch(
   transform: translateY(17px) scale(0.88);
 }
 
+.floating-nav.entering-chat .nav-links a:nth-child(n + 4) {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .nav-links a {
   text-decoration: none;
 }
@@ -124,18 +131,24 @@ watch(
   justify-content: flex-start;
   gap: 8px;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav-links::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-links a {
   min-height: 38px;
-  padding: 0 13px;
+  padding: 0 11px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.56);
   background:
     radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.82), transparent 45%),
     rgba(255, 255, 255, 0.36);
   color: #163f8f;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;

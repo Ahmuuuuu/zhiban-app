@@ -1105,6 +1105,17 @@ const fileIcon = type => {
   return '📁'
 }
 
+const isMindmapFile = message => {
+  const text = String(`${message?.fileType || ''} ${message?.filename || ''} ${message?.title || ''}`).toLowerCase()
+  return text.includes('mindmap') ||
+    text.includes('mind_map') ||
+    text.includes('mind-map') ||
+    text.includes('mind') ||
+    text.includes('xmind') ||
+    text.includes('思维') ||
+    text.includes('导图')
+}
+
 const scrollToBottom = async () => {
   await nextTick()
 

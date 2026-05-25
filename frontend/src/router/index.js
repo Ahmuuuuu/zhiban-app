@@ -33,7 +33,7 @@ const router = createRouter({
       path: '/question-bank',
       name: 'questionBank',
       redirect: {
-        path: '/mine/resources',
+        path: '/learning-resources',
         query: { category: 'quiz' }
       }
     },
@@ -44,31 +44,43 @@ const router = createRouter({
     },
     {
       path: '/spath',
-      redirect: '/mine/path'
+      redirect: '/learning-path'
     },
     {
       path: '/situation',
-      redirect: '/mine/situation'
+      redirect: '/learning-situation'
+    },
+    {
+      path: '/learning-resources',
+      name: 'learningResources',
+      component: ResourceView
+    },
+    {
+      path: '/learning-path',
+      name: 'learningPath',
+      component: StudyPath
+    },
+    {
+      path: '/learning-situation',
+      name: 'learningSituation',
+      component: StudySituation
     },
     {
       path: '/mine',
       component: MyStudyView,
-      redirect: '/mine/resources',
+      redirect: '/learning-resources',
       children: [
         {
           path: 'resources',
-          name: 'mineResources',
-          component: ResourceView
+          redirect: '/learning-resources'
         },
         {
           path: 'situation',
-          name: 'mineSituation',
-          component: StudySituation
+          redirect: '/learning-situation'
         },
         {
           path: 'path',
-          name: 'minePath',
-          component: StudyPath
+          redirect: '/learning-path'
         }
       ]
     },

@@ -102,7 +102,7 @@ const fromPage = ref(route.query.from || '')
 const nodeId = ref(route.query.nodeId || '')
 
 const backLink = computed(() => {
-  return fromPage.value === 'path' ? '/mine/path' : { path: '/mine/resources', query: { category: 'quiz' } }
+  return fromPage.value === 'path' ? '/learning-path' : { path: '/learning-resources', query: { category: 'quiz' } }
 })
 
 onMounted(() => {
