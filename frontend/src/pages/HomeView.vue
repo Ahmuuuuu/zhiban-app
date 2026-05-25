@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <main class="home-cover">
     <FloatingHomeNav />
 
@@ -18,7 +18,7 @@
 
         <div class="hero-actions">
           <router-link class="primary-action" to="/chat">开始 AI 对话</router-link>
-          <router-link class="secondary-action" to="/mine/resources">查看我的资源</router-link>
+          <router-link class="secondary-action" to="/learning-resources">查看学习资源</router-link>
         </div>
       </div>
 
@@ -52,7 +52,7 @@
           </div>
         </router-link>
       
-        <router-link class="feature-card wide-card" to="/mine/path">
+        <router-link class="feature-card wide-card" to="/learning-path">
           <div class="feature-head">
             <img src="../assets/pic/todolist.svg" alt="" />
             <span>学习路径规划</span>
@@ -64,7 +64,7 @@
           </div>
         </router-link>
 
-         <router-link class="feature-card status-card" to="/mine/situation">
+         <router-link class="feature-card status-card" to="/learning-situation">
           <div class="feature-head">
             <img src="../assets/pic/xuexiqingkuang.svg" alt="" />
             <span>学习情况分析</span>
@@ -454,3 +454,5 @@ import UserAccountButton from '../components/UserAccountButton.vue'
   }
 }
 </style>
+
+

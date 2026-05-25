@@ -1,10 +1,13 @@
-<template>
+﻿<template>
   <main class="study-panel">
     <header class="panel-header">
-      <div>
+      <div class="header-title-row">
+        <router-link class="home-pill" to="/">返回首页</router-link>
+        <div>
         <p class="eyebrow">Study Path</p>
-        <h1>学习路径</h1>
-        <p>跟着当前节点往前走，完成一步后路线会自动延伸出新的学习任务。</p>
+          <h1>学习路径</h1>
+          <p>跟着当前节点往前走，完成一步后路线会自动延伸出新的学习任务。</p>
+        </div>
       </div>
 
       <button v-if="pathState" class="reset-btn" type="button" @click="resetPath">
@@ -48,7 +51,7 @@
             :disabled="generating"
           />
           <button class="generate-btn" type="submit" :disabled="!topicInput.trim() || generating">
-            <template v-if="generating">生成中…</template>
+            <template v-if="generating">生成中...</template>
             <template v-else>生成学习路径</template>
           </button>
         </form>
@@ -93,6 +96,76 @@
               </div>
               <h2>{{ node.title }}</h2>
               <p>{{ node.summary }}</p>
+            </div>
+
+            <div class="node-branches" @click.stop>
+              <section class="node-branch">
+                <div class="branch-line"></div>
+                <article class="branch-card">
+                  <div class="branch-head">
+                    <FileText :size="16" />
+                    <strong>学习资料</strong>
+                  </div>
+
+                  <div v-if="node._resLoading" class="branch-loading">加载中...</div>
+
+                  <template v-else-if="node._resources?.length">
+                    <button
+                      v-for="resource in node._resources"
+                      :key="resource.id"
+                      class="branch-resource"
+                      type="button"
+                      @click="previewNodeResource(resource)"
+                    >
+                      <span class="branch-resource__icon">
+                        <FileImage v-if="isImageResource(resource)" :size="15" />
+                        <Presentation v-else-if="isPptResource(resource)" :size="15" />
+                        <GitBranch v-else-if="isMindmapResource(resource)" :size="15" />
+                        <FileText v-else :size="15" />
+                      </span>
+                      <span>{{ resource.title }}</span>
+                    </button>
+                  </template>
+
+                  <button
+                    v-else
+                    class="branch-action"
+                    type="button"
+                    :disabled="node.status === 'locked'"
+                    @click="ensureNodeResources(node, 'resources')"
+                  >
+                    生成资料
+                  </button>
+
+                  <div class="branch-divider"></div>
+
+                  <div class="branch-head">
+                    <Check :size="16" />
+                    <strong>学习检测</strong>
+                  </div>
+
+                  <div v-if="node._quizLoading" class="branch-loading">加载中...</div>
+
+                  <template v-else-if="node._quiz">
+                    <div class="branch-quiz">
+                      <span>{{ node._quiz.questionCount || 0 }} 道题</span>
+                      <router-link class="branch-action primary" :to="`/question-bank/${node._quiz.id}?from=path&nodeId=${node.id}`">
+                        开始检测
+                      </router-link>
+                    </div>
+                  </template>
+
+                  <button
+                    v-else
+                    class="branch-action"
+                    type="button"
+                    :disabled="node.status === 'locked'"
+                    @click="ensureNodeResources(node, 'quiz')"
+                  >
+                    生成检测
+                  </button>
+                </article>
+              </section>
             </div>
           </article>
         </div>
@@ -218,6 +291,38 @@
         </section>
       </Transition>
     </Teleport>
+
+    <Teleport to="body">
+      <section v-if="previewResource" class="resource-preview-overlay" @click.self="closeResourcePreview">
+        <article class="resource-preview-panel">
+          <header>
+            <div>
+              <span>{{ previewResource.typeLabel }}</span>
+              <h2>{{ previewResource.title }}</h2>
+            </div>
+            <button type="button" aria-label="关闭预览" @click="closeResourcePreview">&times;</button>
+          </header>
+
+          <div class="resource-preview-body">
+            <img
+              v-if="isImageResource(previewResource) && previewResource.previewUrl"
+              :src="previewResource.previewUrl"
+              :alt="previewResource.title"
+            />
+            <MindmapPreview
+              v-else-if="isMindmapResource(previewResource) && previewResource.content"
+              :content="previewResource.content"
+              :title="previewResource.title"
+            />
+            <pre v-else>{{ previewResource.content || '暂无可预览内容，可以下载原文件查看。' }}</pre>
+          </div>
+
+          <footer v-if="previewResource.downloadUrl">
+            <button type="button" @click="downloadNodeResource(previewResource)">下载原文件</button>
+          </footer>
+        </article>
+      </section>
+    </Teleport>
   </main>
 </template>
 
@@ -229,6 +334,7 @@ import {
   generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, resolveApiUrl
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
+import MindmapPreview from '../components/MindmapPreview.vue'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 
@@ -253,6 +359,7 @@ const nodeResources = ref([])
 const resourcesLoading = ref(false)
 const nodeQuizData = ref(null)
 const nodeSessionId = ref('')
+const previewResource = ref(null)
 
 const normalizeStatus = s => {
   const map = {
@@ -273,7 +380,7 @@ const normalizeStatus = s => {
 const normalizePath = data => {
   // 后端可能有多层包装
   const raw = data?.data || data || {}
-  // 有可能路径整体包在 path / learning_path 字段下
+  // 路径整体可能包在 path / learning_path 字段里
   const path = raw.path || raw.learning_path || raw.learningPath || raw
   // 节点字段名可能有多种命名
   const nodes = path.nodes || path.node_list || path.nodeList || path.learning_nodes || path.learningNodes || []
@@ -298,7 +405,7 @@ const normalizePath = data => {
       latestScore: (() => {
         const score = path.diagnosis?.latest_score ?? path.diagnosis?.latestScore ?? path.diagnosis?.score
         if (score != null) return Number(score)
-        // 如果后端没返回总分数，从 weak_points 的 accuracy 字段取平均值
+        // 如果后端没有返回总分数，就从 weak_points 的 accuracy 字段取平均值
         const points = path.diagnosis?.weak_points || path.diagnosis?.weakPoints || path.diagnosis?.weak_point || []
         const validScores = points.filter(w => w && typeof w === 'object' && typeof w.accuracy === 'number')
         if (validScores.length) {
@@ -328,12 +435,13 @@ const normalizePath = data => {
   }
 }
 
-const fetchCurrentPath = async () => {
-  loading.value = true
+const fetchCurrentPath = async (options = {}) => {
+  const silent = Boolean(options.silent)
+  if (!silent) loading.value = true
   error.value = ''
   try {
     const result = await getCurrentLearningPath()
-    console.log('[StudyPath] API 返回原始数据：', result)
+    console.log('[StudyPath] current path:', result)
     pathState.value = normalizePath(result)
     savePathToCache(pathState.value)
   } catch (err) {
@@ -354,7 +462,7 @@ const fetchCurrentPath = async () => {
       }
     }
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -363,12 +471,14 @@ const generateNewPath = async () => {
   generating.value = true
   error.value = ''
   try {
-    console.log('[StudyPath] 生成路径，发送数据：', { subject: topicInput.value.trim() })
+    console.log('[StudyPath] generate path payload:', { subject: topicInput.value.trim() })
     const result = await generateLearningPath({ subject: topicInput.value.trim() })
-    console.log('[StudyPath] 生成路径返回：', result)
-    pathState.value = normalizePath(result)
-    savePathToCache(pathState.value)
+    console.log('[StudyPath] generated path:', result)
+    const generatedPath = normalizePath(result)
+    pathState.value = generatedPath
+    savePathToCache(generatedPath)
     topicInput.value = ''
+    await fetchCurrentPath({ silent: true })
   } catch (err) {
     error.value = err?.response?.data?.detail || err?.message || '生成学习路径失败，请稍后再试。'
   } finally {
@@ -441,6 +551,89 @@ const normalizeNodeResources = resources =>
     }
   })
 
+
+const buildNodeQuiz = (node, quizData = null) => {
+  const pathId = pathState.value?.pathId
+  if (!pathId || !node?.id) return null
+
+  let existingQuiz = getQuizSet(`quiz-resource-${pathId}-${node.id}`)
+  if (existingQuiz?.questions?.[0]?.question && typeof existingQuiz.questions[0].question === 'object') {
+    existingQuiz = null
+  }
+  if (existingQuiz) return existingQuiz
+
+  const data = quizData || node.quiz
+  if (!data) return null
+
+  const rawQuestions =
+    data.questions ||
+    data.question_list ||
+    data.questionList ||
+    data.items ||
+    data.exam_questions ||
+    []
+  const questions = Array.isArray(rawQuestions) ? rawQuestions.map(q => q.question || q) : []
+
+  if (!questions.length && !data.content && !node.quiz) return null
+
+  return upsertQuizSet({
+    sourceId: `${pathId}-${node.id}`,
+    title: `${node.title} - 巩固练习`,
+    content: JSON.stringify(questions.length ? { questions } : data),
+    fileType: 'exercise',
+    sessionId: data.session_id || data.sessionId || node.sessionId || ''
+  })
+}
+
+const ensureNodeResources = async (node, target = 'all') => {
+  if (!node || node.status === 'locked') return
+
+  // 优先使用后端预加载的资源
+  if (!node._resources && node.resources?.length) {
+    node._resources = normalizeNodeResources(node.resources)
+  }
+
+  const pathId = pathState.value?.pathId
+  const shouldLoadResources = target === 'all' || target === 'resources'
+  const shouldLoadQuiz = target === 'all' || target === 'quiz'
+
+  if (shouldLoadResources && !node._resources?.length && pathId) {
+    node._resLoading = true
+    try {
+      const res = await generatePathNodeResources(pathId, node.id)
+      const data = res?.data?.data || res?.data || res || {}
+      const items = data.resources || data.files || data.items || []
+      node._resources = normalizeNodeResources(items)
+      node._resLoading = false
+    } catch (err) {
+      node._resLoading = false
+      console.error('[StudyPath] generate node resources failed:', err)
+      error.value = err?.response?.data?.detail || err?.message || '生成学习资料失败'
+    }
+  }
+
+  if (shouldLoadQuiz && !node._quiz && pathId) {
+    const localQuiz = buildNodeQuiz(node)
+    if (localQuiz) {
+      node._quiz = localQuiz
+      return
+    }
+
+    node._quizLoading = true
+    try {
+      const quizRes = await generatePathNodeQuiz(pathId, node.id)
+      const quizData = quizRes?.data?.data || quizRes?.data || quizRes || {}
+      const quiz = buildNodeQuiz(node, quizData)
+      node._quiz = quiz
+      node._quizLoading = false
+    } catch (err) {
+      node._quizLoading = false
+      console.error('[StudyPath] generate node quiz failed:', err)
+      error.value = err?.response?.data?.detail || err?.message || '生成学习检测失败'
+    }
+  }
+}
+
 const openNode = async node => {
   selectedNode.value = node
   cardFlipped.value = false
@@ -506,7 +699,7 @@ const loadNodeResources = async () => {
     const items = data.resources || data.files || data.items || []
     nodeResources.value = normalizeNodeResources(items)
 
-    // 查题库缓存 → 节点预载 → 调生成接口
+    // 查题库缓存 -> 节点预载 -> 调生成接口
     const quizBankId = `quiz-resource-${pathId}-${selectedNode.value.id}`
     const existingQuiz = getQuizSet(quizBankId)
     if (existingQuiz) {
@@ -525,7 +718,7 @@ const loadNodeResources = async () => {
       nodeSessionId.value = selectedNode.value.sessionId || ''
     } else {
       const quizRes = await generatePathNodeQuiz(pathId, selectedNode.value.id)
-      console.log('[StudyPath] generatePathNodeQuiz 原始响应：', quizRes)
+      console.log('[StudyPath] generatePathNodeQuiz response:', quizRes)
       const quizData = quizRes?.data?.data || quizRes?.data || quizRes || {}
       nodeSessionId.value = quizData.session_id || quizData.sessionId || ''
       const rawQuestions =
@@ -544,7 +737,7 @@ const loadNodeResources = async () => {
           fileType: 'exercise',
           sessionId: nodeSessionId.value
         })
-        console.log('[StudyPath] upsertQuizSet 结果：', quiz)
+        console.log('[StudyPath] upsertQuizSet result:', quiz)
         if (quiz) nodeQuizData.value = quiz
       } else {
         console.warn('[StudyPath] 后端未返回题目数据，quizData:', quizData)
@@ -553,7 +746,7 @@ const loadNodeResources = async () => {
 
     showResources.value = true
   } catch (err) {
-    console.error('[StudyPath] 生成学习资源失败：', err)
+    console.error('[StudyPath] generate learning resources failed:', err)
     error.value = err?.response?.data?.detail || err?.message || '生成学习资料失败'
   } finally {
     resourcesLoading.value = false
@@ -565,15 +758,17 @@ const downloadNodeResource = async resource => {
   try {
     await downloadWithToken(resource.downloadUrl, resource.filename || `${resource.title || 'resource'}.md`)
   } catch (err) {
-    console.error('[StudyPath] 下载资源失败：', err)
+    console.error('[StudyPath] download resource failed:', err)
     window.alert('下载失败，请确认登录状态和后端服务是否正常。')
   }
 }
 
 const previewNodeResource = resource => {
-  if (resource.previewUrl) {
-    window.open(resource.previewUrl, '_blank', 'noopener,noreferrer')
-  }
+  previewResource.value = resource
+}
+
+const closeResourcePreview = () => {
+  previewResource.value = null
 }
 
 const resetPath = () => {
@@ -584,6 +779,7 @@ const resetPath = () => {
   nodeResources.value = []
   nodeQuizData.value = null
   nodeSessionId.value = ''
+  previewResource.value = null
   clearPathCache()
 }
 
@@ -607,6 +803,28 @@ onMounted(fetchCurrentPath)
   justify-content: space-between;
   gap: 18px;
   align-items: flex-start;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.home-pill {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #163f8f;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  box-shadow: 0 12px 28px rgba(22, 63, 143, 0.08);
 }
 
 .eyebrow {
@@ -971,7 +1189,243 @@ onMounted(fetchCurrentPath)
   }
 }
 
-/* ── Inline node resources (inside overlay) ── */
+/* 鈹€鈹€ Node branches (inline resources + quiz) 鈹€鈹€ */
+
+.node-branches {
+  grid-column: 2;
+  margin: -4px 0 4px;
+}
+
+.node-branch {
+  position: relative;
+  padding-top: 18px;
+}
+
+.branch-line {
+  position: absolute;
+  left: 24px;
+  top: 0;
+  width: 2px;
+  height: 18px;
+  background: rgba(95, 143, 195, 0.42);
+}
+
+.branch-card {
+  min-height: 98px;
+  padding: 12px;
+  border: 1px solid rgba(201, 220, 233, 0.78);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 12px 28px rgba(22, 63, 143, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.branch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #163f8f;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.branch-resource {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid rgba(22, 63, 143, 0.12);
+  border-radius: 12px;
+  background: rgba(237, 249, 252, 0.68);
+  color: #163f8f;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.branch-resource span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-resource__icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: #c9dce9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.branch-action {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #163f8f;
+  text-decoration: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.branch-action.primary {
+  border-color: #163f8f;
+  background: #163f8f;
+  color: #ffffff;
+}
+
+.branch-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.branch-loading {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.branch-quiz {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: rgba(22, 63, 143, 0.72);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.branch-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: rgba(201, 220, 233, 0.6);
+}
+
+/* 鈹€鈹€ Resource preview overlay 鈹€鈹€ */
+
+.resource-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(12, 28, 58, 0.32);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.resource-preview-panel {
+  width: min(880px, 100%);
+  max-height: min(760px, 90vh);
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 28px 80px rgba(22, 63, 143, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.resource-preview-panel header,
+.resource-preview-panel footer {
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.7);
+}
+
+.resource-preview-panel footer {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(201, 220, 233, 0.7);
+  border-bottom: none;
+}
+
+.resource-preview-panel header span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.resource-preview-panel header h2 {
+  margin: 4px 0 0;
+  color: #163f8f;
+  font-size: 24px;
+}
+
+.resource-preview-panel header button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(201, 220, 233, 0.9);
+  border-radius: 14px;
+  background: #fafafa;
+  color: #163f8f;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.resource-preview-panel footer button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: #163f8f;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.resource-preview-body {
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+}
+
+.resource-preview-body img {
+  display: block;
+  max-width: 100%;
+  max-height: 620px;
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: 18px;
+}
+
+.resource-preview-body pre {
+  margin: 0;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(237, 249, 252, 0.68);
+  color: #163f8f;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.8;
+  font-family: inherit;
+}
+
+/* 鈹€鈹€ Inline node resources (inside overlay) 鈹€鈹€ */
 
 .node-resources-section {
   margin-top: 4px;
@@ -1128,7 +1582,7 @@ onMounted(fetchCurrentPath)
   background: #1a4da8;
 }
 
-/* ── Loading skeleton ── */
+/* 鈹€鈹€ Loading skeleton 鈹€鈹€ */
 
 .skeleton-card,
 .skeleton-block {
@@ -1170,7 +1624,7 @@ onMounted(fetchCurrentPath)
   }
 }
 
-/* ── Notice ── */
+/* 鈹€鈹€ Notice 鈹€鈹€ */
 
 .notice {
   min-height: 48px;
@@ -1183,7 +1637,7 @@ onMounted(fetchCurrentPath)
   gap: 10px;
 }
 
-/* ── Empty / generate state ── */
+/* 鈹€鈹€ Empty / generate state 鈹€鈹€ */
 
 .empty-path {
   min-height: 260px;
@@ -1294,3 +1748,5 @@ onMounted(fetchCurrentPath)
   }
 }
 </style>
+
+

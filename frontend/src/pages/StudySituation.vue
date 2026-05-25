@@ -1,10 +1,13 @@
-<template>
+﻿<template>
   <main class="study-panel">
     <header class="panel-header">
-      <div>
+      <div class="header-title-row">
+        <router-link class="home-pill" to="/">返回首页</router-link>
+        <div>
         <p class="eyebrow">Study Status</p>
         <h1>学习情况</h1>
         <p>汇总近期学习状态，帮助你快速看到进度、活跃度和待加强内容。</p>
+        </div>
       </div>
     </header>
 
@@ -51,6 +54,28 @@ const statusItems = [
   display: flex;
   justify-content: space-between;
   gap: 18px;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.home-pill {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #163f8f;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  box-shadow: 0 12px 28px rgba(22, 63, 143, 0.08);
 }
 
 .eyebrow {
@@ -149,3 +174,4 @@ const statusItems = [
   }
 }
 </style>
+

@@ -272,7 +272,7 @@ const deleteAccount = async () => {
 
     localStorage.removeItem('token')
     localStorage.removeItem('user_id')
-    router.push('/mine/resources')
+    router.push('/learning-resources')
   } catch (error) {
     errorMessage.value =
       error?.response?.data?.detail ||
