@@ -1,4 +1,4 @@
-"""EdgeTTS 工具 — 文本转语音、PPT 幻灯片解析"""
+"""EdgeTTS 工具 — 文本转语音、幻灯片/文档章节解析"""
 
 import logging
 import re
@@ -15,24 +15,21 @@ VOICES = [
     "zh-CN-YunyangNeural",    # 男声，新闻播报
 ]
 
+# 支持生成旁白的资源类型
+NARRATABLE_TYPES = {"ppt", "document", "case", "reading", "mindmap"}
+
 
 def clean_for_tts(text: str) -> str:
     """清洗 markdown 文本，去掉不适合朗读的格式"""
-    # 代码块 → 占位
     text = re.sub(r"```[\s\S]*?```", "，代码示例见课件，", text)
-    # 行内代码
     text = re.sub(r"`([^`]+)`", r"\1", text)
-    # LaTeX 公式
     text = re.sub(r"\$\$[\s\S]*?\$\$", "，公式见课件，", text)
     text = re.sub(r"\$([^$]+)\$", r"\1", text)
-    # Markdown 格式符 — 去掉 **bold** *italic* # headers
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"\*(.+?)\*", r"\1", text)
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^[-*]\s+", "", text, flags=re.MULTILINE)
-    # 链接
     text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
-    # 多余空白和标点
     text = re.sub(r"\n+", "，", text)
     text = re.sub(r"，{2,}", "，", text)
     text = re.sub(r"，$", "", text)
@@ -40,7 +37,7 @@ def clean_for_tts(text: str) -> str:
 
 
 def parse_slides(markdown: str) -> list[dict]:
-    """解析 PPT markdown，返回每页的 {title, text, notes}"""
+    """解析 PPT markdown，返回每页的 {title, text, notes, duration_ms}"""
     raw_slides = re.split(r"\n---\n", markdown.strip())
     slides = []
 
@@ -80,11 +77,80 @@ def parse_slides(markdown: str) -> list[dict]:
         if notes:
             text += "。" + "，".join(notes)
 
-        # 估算时长（中文约 4 字/秒）
         duration_ms = int(len(text) / 4 * 1000)
         slides.append({"title": title, "text": text, "notes": "\n".join(notes), "duration_ms": duration_ms})
 
     return slides
+
+
+def parse_text_sections(markdown: str, resource_type: str = "document") -> list[dict]:
+    """将非 PPT 的文本类内容拆分为可朗读的章节
+
+    策略（按优先级）：
+    1. 有 ## 标题 → 按 ## 标题切分
+    2. 有 # 标题 → 按 # 标题切分
+    3. 都没有 → 每 300 字切一段
+    """
+    content = markdown.strip()
+    if not content:
+        return []
+
+    sections: list[dict] = []
+
+    # 按二级标题切分
+    parts = re.split(r"\n(?=## )", content)
+    if len(parts) <= 1:
+        parts = re.split(r"\n(?=# )", content)
+
+    if len(parts) > 1:
+        for i, part in enumerate(parts):
+            part = part.strip()
+            if not part:
+                continue
+            lines = part.split("\n")
+            title = lines[0].lstrip("#").strip()
+            body = clean_for_tts("\n".join(lines[1:]))
+            text = f"{title}。" + body if body else title
+            sections.append({
+                "title": title,
+                "text": text,
+                "notes": "",
+                "duration_ms": int(len(text) / 4 * 1000),
+            })
+    else:
+        # 无标题，按字符数切分
+        cleaned = clean_for_tts(content)
+        chunk_size = 300
+        start = 0
+        i = 0
+        while start < len(cleaned):
+            end = min(start + chunk_size, len(cleaned))
+            if end < len(cleaned):
+                # 尽量在句号或逗号处断句
+                for sep in ["。", "，", "；"]:
+                    last = cleaned.rfind(sep, start, end)
+                    if last > start + chunk_size // 2:
+                        end = last + 1
+                        break
+            chunk = cleaned[start:end].strip("，。")
+            if chunk:
+                sections.append({
+                    "title": f"第{i + 1}段",
+                    "text": chunk,
+                    "notes": "",
+                    "duration_ms": int(len(chunk) / 4 * 1000),
+                })
+                i += 1
+            start = end
+
+    return sections
+
+
+def parse_by_type(markdown: str, resource_type: str) -> list[dict]:
+    """根据资源类型选择解析策略"""
+    if resource_type == "ppt":
+        return parse_slides(markdown)
+    return parse_text_sections(markdown, resource_type)
 
 
 async def generate_audio(text: str, output_path: str, voice: str = "zh-CN-XiaoxiaoNeural", rate: str = "+0%"):
