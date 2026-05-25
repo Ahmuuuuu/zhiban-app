@@ -1,9 +1,12 @@
-<template>
+﻿<template>
   <main class="resource-page">
     <header class="resource-header">
-      <div class="title-block">
+      <div class="header-title-row">
+        <router-link class="home-pill" to="/">返回首页</router-link>
+        <div class="title-block">
         <p>My Resources</p>
         <h1>我的学习资源</h1>
+        </div>
       </div>
 
       <div class="header-actions">
@@ -100,7 +103,7 @@
               <span>{{ selectedResource.categoryLabel || '学习资源' }}</span>
               <h2>{{ selectedResource.title || '未命名资源' }}</h2>
             </div>
-            <button type="button" aria-label="关闭预览" @click="closeResourcePreview">×</button>
+            <button type="button" aria-label="关闭预览" @click="closeResourcePreview">&times;</button>
           </header>
 
           <div class="resource-fullscreen__meta">
@@ -238,7 +241,6 @@ const normalizeGeneratedResources = data => {
       content: isQuiz ? '这是一套生成题目，进入题库后开始练习。' : (item.preview || item.preview_content || item.content || ''),
       type: isMindmap ? 'mindmap' : resourceType,
       category: isQuiz ? 'exercise' : isMindmap ? 'mindmap' : 'reference',
-      categoryLabel: isQuiz ? '习题/题库' : 'AI 生成',
       categoryLabel: isMindmap ? '思维导图' : (isQuiz ? '习题/题库' : 'AI 生成'),
       visibility: item.visibility || 'private',
       quizId: item.quiz_id || item.quizId || '',
@@ -346,12 +348,12 @@ const isQuizResource = resource => {
 
 const isPptResource = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  return text.includes('ppt') || text.includes('pptx') || text.includes('slide') || text.includes('演示')
+  return text.includes('ppt') || text.includes('pptx') || text.includes('slide') || text.includes('婕旂ず')
 }
 
 const isMindmapResource = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('脑图') || text.includes('思维导图')
+  return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('xmind') || text.includes('脑图') || text.includes('思维导图')
 }
 
 const downloadResource = async resource => {
@@ -441,10 +443,10 @@ const handleImageError = event => {
 const getWordCount = content => String(content || '').replace(/\s/g, '').length
 
 const formatDate = (value, withTime = false) => {
-  if (!value) return '未知时间'
+  if (!value) return '鏈煡鏃堕棿'
 
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '未知时间'
+  if (Number.isNaN(date.getTime())) return '鏈煡鏃堕棿'
 
   return date.toLocaleString('zh-CN', {
     year: 'numeric',
@@ -475,6 +477,27 @@ onMounted(loadResources)
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.home-pill {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #163f8f;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  box-shadow: 0 12px 28px rgba(22, 63, 143, 0.08);
 }
 
 .title-block p {
@@ -930,3 +953,4 @@ onMounted(loadResources)
   }
 }
 </style>
+

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
    <!-- 左侧侧边栏 -->
       <aside class="sidebar">
         <div class="logo-area">
@@ -36,16 +36,16 @@
         
          
 
-        <!-- //学习路径 -->
+        <!-- //学习资源 -->
          <nav class="menu">
-          <router-link to="/mine" class="menu-item">
+          <router-link to="/learning-resources" class="menu-item">
 
              <div
            
             
           >
             <span class="menu-icon"><img src="../assets/pic/other.svg" ></span>
-            <span>我的</span>
+            <span>学习资源</span>
           </div>
           </router-link>
          
@@ -182,3 +182,4 @@ export default {
   background: linear-gradient(135deg, #d9c7b8, #f3e7dd);
 }
 </style>
+
