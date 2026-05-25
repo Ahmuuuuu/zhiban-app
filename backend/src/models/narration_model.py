@@ -11,7 +11,7 @@ class Narration(Model):
         on_delete=fields.CASCADE,
     )
     voice = fields.CharField(max_length=64, description="EdgeTTS 语音名称")
-    slides_json = fields.JSONField(description="逐页旁白 [{index, title, text, audio_url, duration_ms}]")
+    slides_json = fields.JSONField(description="逐段旁白 [{index, title, text, audio_url, duration_ms}]")
     created_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:

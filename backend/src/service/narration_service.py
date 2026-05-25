@@ -1,4 +1,4 @@
-"""语音旁白服务 — 对 PPT 资源调用 EdgeTTS 逐页生成旁白 (CRUD)"""
+"""语音旁白服务 — 对文字类资源调用 EdgeTTS 逐段生成旁白 (CRUD)"""
 
 import logging
 from pathlib import Path
@@ -10,15 +10,15 @@ logger = logging.getLogger(__name__)
 
 
 async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural", force_regenerate: bool = False):
-    """对某个 PPT 资源逐页生成旁白，已有则直接返回，无则生成写入 DB
+    """对某个文字类资源逐段生成旁白，已有则直接返回，无则生成写入 DB
 
     Args:
-        resource_id: PPT 资源 ID
+        resource_id: 资源 ID
         voice: EdgeTTS 语音名称
         force_regenerate: 是否强制重新生成（删除旧音频 + 旧记录）
 
     Returns:
-        {"slides": [...], "resource_id": int, "voice": str, "cached": bool}
+        {"sections": [...], "narration_id": int, "resource_id": int, "voice": str, "cached": bool}
     """
     from backend.src.models.resource_model import GeneratedResource
     from backend.src.models.narration_model import Narration
@@ -42,7 +42,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     existing = await Narration.filter(resource_id=resource_id, voice=voice).first()
     if existing:
         return {
-            "slides": existing.slides_json,
+            "sections": existing.slides_json,
             "narration_id": existing.id,
             "resource_id": resource_id,
             "voice": voice,
@@ -89,7 +89,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
 
     return {
         "narration_id": record.id,
-        "slides": results,
+        "sections": results,
         "resource_id": resource_id,
         "voice": voice,
         "cached": False,
@@ -99,7 +99,6 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
 async def list_narrations(user_id: int) -> list[dict]:
     """列出某个用户的所有旁白记录"""
     from backend.src.models.narration_model import Narration
-    from backend.src.models.resource_model import GeneratedResource
 
     records = await Narration.filter(resource__user_id=user_id).prefetch_related("resource").order_by("-created_at").all()
     return [

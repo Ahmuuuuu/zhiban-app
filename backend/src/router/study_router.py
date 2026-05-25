@@ -1,6 +1,6 @@
 """学习统计路由"""
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 
 from backend.src.service.study_service import StudyService
 from backend.src.utils.jwt import get_user_id_from_token
