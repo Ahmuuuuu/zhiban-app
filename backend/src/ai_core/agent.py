@@ -166,19 +166,21 @@ class UnifiedChat:
         self._build_agent(action_tools)
         self._action_tools_loaded = True
 
-    async def chat(self, message: str, resource_context: str = "") -> str:
+    async def chat(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = "") -> str:
         await self._ensure_action_tools()
         response = await self._raw_executor.ainvoke({
             "input": message,
             "history": list(self._history),
             "current_user_id": str(self.user_id),
             "resource_context": resource_context,
+            "path_context": path_context,
+            "portrait_context": portrait_context,
         })
         self._history.append(HumanMessage(content=message))
         self._history.append(AIMessage(content=response["output"]))
         return response["output"]
 
-    async def stream(self, message: str, resource_context: str = ""):
+    async def stream(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = ""):
         """逐 token 流式输出 — 包含工具调用事件"""
         await self._ensure_action_tools()
 
@@ -191,6 +193,8 @@ class UnifiedChat:
                     "history": list(self._history),
                     "current_user_id": str(self.user_id),
                     "resource_context": resource_context,
+                    "path_context": path_context,
+                    "portrait_context": portrait_context,
                 },
                 version="v2",
             ):
@@ -221,6 +225,8 @@ class UnifiedChat:
                     "history": list(self._history),
                     "current_user_id": str(self.user_id),
                     "resource_context": resource_context,
+                    "path_context": path_context,
+                    "portrait_context": portrait_context,
                 },
                 version="v1",
             ):

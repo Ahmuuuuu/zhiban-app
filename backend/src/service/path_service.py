@@ -129,41 +129,32 @@ class PathService:
             if status == "unlocked":
                 first_node = node
 
-        # 共享信号量：限制同时跑 graph 的节点数，防止 LLM 限流
-        graph_sem = asyncio.Semaphore(3)
+        # 只为首个解锁节点预生成资源 + 测验，其余按需懒加载
+        node_results = {}
+        if first_node:
+            async def gen_resources():
+                try:
+                    r = await PathService.generate_node_resources(path.id, first_node.id, user_id)
+                    return r.get("resource_ids", [])
+                except Exception:
+                    logger.exception(f"首节点 {first_node.id}({first_node.topic}) 资源生成失败")
+                    return []
 
-        # 异步并行：所有节点同时生成学习资源 + 测验题目
-        async def generate_for_node(node):
-            async with graph_sem:
-                async def gen_resources():
-                    try:
-                        r = await PathService.generate_node_resources(path.id, node.id, user_id)
-                        return r.get("resource_ids", [])
-                    except Exception:
-                        logging.getLogger("path_service").exception(
-                            f"节点 {node.id}({node.topic}) 资源生成失败"
-                        )
-                        return []
+            async def gen_quiz():
+                try:
+                    q = await PathService.generate_node_quiz(path.id, first_node.id, user_id)
+                    return q.get("session_id"), q.get("questions", [])
+                except Exception:
+                    logger.exception("首节点测验生成失败 node_id=%s topic=%s", first_node.id, first_node.topic)
+                    return None, []
 
-                async def gen_quiz():
-                    try:
-                        q = await PathService.generate_node_quiz(path.id, node.id, user_id)
-                        return q.get("session_id"), q.get("questions", [])
-                    except Exception:
-                        logger.exception("节点测验生成失败 node_id=%s topic=%s", node.id, node.topic)
-                        return None, []
-
-                res_ids, (session_id, questions) = await asyncio.gather(gen_resources(), gen_quiz())
-                return {
-                    "node_id": node.id,
-                    "resource_ids": res_ids,
-                    "session_id": session_id,
-                    "quiz_count": len(questions),
-                }
-
-        # 全部节点并行生成
-        results = await asyncio.gather(*[generate_for_node(n) for n in sorted_nodes])
-        node_results = {r["node_id"]: r for r in results}
+            res_ids, (session_id, questions) = await asyncio.gather(gen_resources(), gen_quiz())
+            node_results[first_node.id] = {
+                "node_id": first_node.id,
+                "resource_ids": res_ids,
+                "session_id": session_id,
+                "quiz_count": len(questions),
+            }
 
         return {
             "path_id": path.id,

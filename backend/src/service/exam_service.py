@@ -292,6 +292,13 @@ class ExamService:
                 mastery.last_practiced_at = datetime.now()
                 await mastery.save()
 
+        # 每次答题后同步画像
+        from backend.src.service.path_service import PathService
+        try:
+            await PathService._update_portrait_from_mastery(user_id)
+        except Exception:
+            logger.exception("答题后画像同步失败 user_id=%s", user_id)
+
         # 汇总本轮会话成绩
         session_records = await ExamRecord.filter(session_id=sid).all()
         judged = [r for r in session_records if r.is_correct is not None]
