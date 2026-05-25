@@ -45,13 +45,14 @@ const normalizeQuestion = (item, index) => {
     })
     : []
 
-  const stem =
-    item.stem ||
-    item.question ||
-    item.content ||
-    item.title ||
-    item.question_text ||
-    `第 ${index + 1} 题`
+  // 只用字符串类型的值作为题干，跳过 object（如 record 包装格式 {question: {...}}）
+  const stem = (() => {
+    for (const key of ['stem', 'question', 'content', 'title', 'question_text']) {
+      const val = item[key]
+      if (typeof val === 'string') return val
+    }
+    return `第 ${index + 1} 题`
+  })()
 
   const isMulti =
     item.multi ||
@@ -92,7 +93,11 @@ const parseJsonQuestions = content => {
       const parsed = JSON.parse(candidate)
       const list = Array.isArray(parsed) ? parsed : parsed.questions || parsed.items || parsed.data || []
       if (Array.isArray(list) && list.length) {
-        return list.map(normalizeQuestion).filter(item => item.stem)
+        // 解包 record 包装格式 {record_id, question: {...}} → {...}
+        const unwrapped = list.map(item =>
+          item.question && typeof item.question === 'object' ? item.question : item
+        )
+        return unwrapped.map(normalizeQuestion).filter(item => item.stem)
       }
     } catch {
       // Try next candidate.
@@ -197,7 +202,27 @@ export const upsertQuizSet = payload => {
 
 export const readQuizBank = () => readSessions()
 
-export const getQuizSet = quizId => readSessions().find(item => item.id === quizId) || null
+export const getQuizSet = quizId => {
+  const session = readSessions().find(item => item.id === quizId) || null
+  // 清理已缓存的老格式垃圾数据（record 包装 → stem 成了 [object Object]）
+  if (session?.questions?.length) {
+    const clean = session.questions.filter(q => q.stem && q.stem !== '[object Object]')
+    if (clean.length !== session.questions.length) {
+      const sessions = readSessions()
+      if (clean.length === 0) {
+        // 全部损坏，移除整个 session，让上游重新生成
+        const next = sessions.filter(s => s.id !== session.id)
+        writeSessions(next)
+        return null
+      }
+      session.questions = clean
+      session.questionCount = clean.length
+      const next = sessions.map(s => s.id === session.id ? session : s)
+      writeSessions(next)
+    }
+  }
+  return session
+}
 
 const readAttempts = () => {
   try {

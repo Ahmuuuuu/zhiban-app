@@ -68,30 +68,30 @@ watch(
   min-height: 100vh;
   overflow: hidden;
   background:
-    radial-gradient(ellipse 118% 82% at -24% 58%, rgba(255, 255, 255, 0.42) 0 34%, rgba(255, 255, 255, 0.2) 58%, transparent 86%),
-    radial-gradient(ellipse 88% 62% at 14% 18%, rgba(185, 222, 249, 0.36) 0 30%, rgba(185, 222, 249, 0.14) 56%, transparent 84%),
-    radial-gradient(ellipse 72% 44% at 84% 18%, rgba(255, 255, 255, 0.26) 0 28%, rgba(255, 255, 255, 0.1) 52%, transparent 78%),
-    radial-gradient(ellipse 86% 38% at 48% 88%, rgba(255, 255, 255, 0.28) 0 28%, rgba(255, 255, 255, 0.12) 52%, transparent 82%),
-    linear-gradient(155deg, #174d9b 0%, #438bd2 26%, #a8d7f6 62%, #f2fbff 100%);
+    radial-gradient(ellipse 72% 44% at 10% 0%, rgba(209, 244, 250, 0.46), transparent 70%),
+    linear-gradient(135deg, #fafafa 0%, rgb(237, 249, 252) 52%, #fafafa 100%);
 }
 
 .app-shell::before {
-  content: "";
-  position: fixed;
-  left: -32vw;
-  right: -20vw;
-  bottom: -28vh;
-  height: 68vh;
-  pointer-events: none;
-  z-index: 0;
+  display: none;
+}
+
+.home-chat-shell,
+.route-slide-pane,
+.page-transition-shell,
+.home-cover,
+.chat-page,
+.my-full-page,
+.question-bank-page,
+.quiz-runner-page,
+.profile-page,
+.resource-center-page,
+.resource-page,
+.import-page,
+.study-panel {
   background:
-    radial-gradient(ellipse 42% 66% at 4% 48%, rgba(255, 255, 255, 0.8) 0 34%, rgba(255, 255, 255, 0.28) 62%, transparent 88%),
-    radial-gradient(ellipse 40% 70% at 24% 32%, rgba(255, 255, 255, 0.74) 0 34%, rgba(255, 255, 255, 0.24) 62%, transparent 88%),
-    radial-gradient(ellipse 40% 58% at 52% 44%, rgba(255, 255, 255, 0.62) 0 32%, rgba(255, 255, 255, 0.18) 58%, transparent 86%),
-    radial-gradient(ellipse 36% 62% at 76% 34%, rgba(255, 255, 255, 0.68) 0 30%, rgba(255, 255, 255, 0.2) 56%, transparent 84%),
-    radial-gradient(ellipse 32% 52% at 94% 52%, rgba(255, 255, 255, 0.62) 0 28%, rgba(255, 255, 255, 0.18) 54%, transparent 82%);
-  filter: blur(30px);
-  opacity: 0.66;
+    radial-gradient(ellipse 72% 44% at 10% 0%, rgba(209, 244, 250, 0.46), transparent 70%),
+    linear-gradient(135deg, #fafafa 0%, rgb(237, 249, 252) 52%, #fafafa 100%) !important;
 }
 
 .app-shell > * {
