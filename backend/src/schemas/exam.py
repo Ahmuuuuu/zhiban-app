@@ -1,3 +1,4 @@
+from typing import Optional, Union, List
 from pydantic import BaseModel, Field
 
 
@@ -12,6 +13,6 @@ class GenerateExamRequest(BaseModel):
 class SubmitAnswerRequest(BaseModel):
     """提交答案"""
     question_id: int = Field(description="题目 ID")
-    answer: str = Field(description="用户答案")
-    time_spent: int | None = Field(default=None, description="作答耗时（秒）")
-    session_id: str | None = Field(default=None, description="练习会话 ID，不传则自动生成")
+    answer: Union[str, List[str]] = Field(description="用户答案（单选/判断为字符串，多选为数组）")
+    time_spent: Optional[int] = Field(default=None, description="作答耗时（秒）")
+    session_id: Optional[str] = Field(default=None, description="练习会话 ID，不传则自动生成")

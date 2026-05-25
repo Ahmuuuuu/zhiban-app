@@ -19,3 +19,4 @@ python-pptx
 httpx
 ddgs
 pdfminer.six
+edge-tts

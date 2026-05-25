@@ -1,8 +1,11 @@
-"""画像服务 — 初始化、读取、格式化、置信度计算"""
+"""画像服务 — 初始化、读取、格式化、置信度计算、再生"""
 
 import json
+import logging
 from backend.src.models.usermodel import User
 from backend.src.models.portraitmodel import User_picture
+
+logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════
 #  维度与标签映射（原 portrait_utils）
@@ -196,3 +199,59 @@ class PortraitChatHistory_Service:
             "profile_summary": picture.profile_summary,
         }
         return data, "获取画像成功"
+
+    @staticmethod
+    async def regenerate_portrait(user_id: int) -> dict:
+        """调用 LLM 生成画像自然语言摘要，并推断认知风格/学习目标"""
+        user = await User.filter(id=user_id).first()
+        if not user:
+            raise ValueError("用户不存在")
+        picture = await user.picture
+        if not picture:
+            raise ValueError("画像不存在，请先初始化")
+
+        portrait_lines = format_portrait(picture, show_missing=True)
+        portrait_text = "\n".join(portrait_lines)
+
+        from backend.src.ai_core.llm_config import llm
+
+        prompt = f"""你是一个学习画像分析师。根据以下用户画像数据，完成两件事：
+
+1. 用一段流畅的中文（80-150字）总结该学习者的整体情况，包括知识水平、学习特点、待提升方向。
+2. 推断最可能的学习目标(learning_goal)：exam/competition/certification/interest/job 之一。
+3. 推断最可能的认知风格(cognition)：visual/auditory/read-write/practical 之一。
+
+{portrait_text}
+
+请严格按JSON格式输出，不要加任何额外文字：
+{{"profile_summary": "...", "learning_goal": "...", "cognition": "..."}}"""
+
+        try:
+            response = await llm.ainvoke(prompt)
+            raw = response.content.strip()
+            from backend.src.utils.json_parser import parse_llm_json
+            result = parse_llm_json(raw)
+        except Exception:
+            logger.exception("LLM 画像摘要生成失败 user_id=%s", user_id)
+            raise RuntimeError("画像摘要生成失败，请稍后重试")
+
+        summary = result.get("profile_summary", "")
+        learning_goal = result.get("learning_goal", "")
+        cognition = result.get("cognition", "")
+
+        if summary:
+            picture.profile_summary = summary
+        if learning_goal and not picture.learning_goal:
+            picture.learning_goal = learning_goal
+        if cognition and not picture.cognition:
+            picture.cognition = cognition
+        await picture.save()
+
+        data = {
+            "cognition": picture.cognition,
+            "learning_goal": picture.learning_goal,
+            "personality_tags": picture.personality_tags,
+            "traits": parse_traits(picture.traits),
+            "profile_summary": picture.profile_summary,
+        }
+        return data
