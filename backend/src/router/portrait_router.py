@@ -48,3 +48,19 @@ async def read_portrait(user_id: int = Depends(get_user_id_from_token)):
         raise
     except Exception:
         raise HTTPException(500, "服务器错误")
+
+
+@router.post("/regenerate")
+async def regenerate_portrait(user_id: int = Depends(get_user_id_from_token)):
+    """调用 LLM 重新生成画像摘要 + 推断认知风格/学习目标"""
+    try:
+        data = await PortraitChatHistory_Service.regenerate_portrait(user_id)
+        return {"code": 200, "msg": "画像已更新", "data": data}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger = logging.getLogger(__name__)
+        logger.exception("画像再生失败")
+        raise HTTPException(500, "服务器错误")

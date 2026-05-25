@@ -188,8 +188,16 @@ class ExamService:
         yield "data: [DONE]\n\n"
 
     @staticmethod
-    async def list_questions(user_id: int, question_type: str | None = None, difficulty: str | None = None, knowledge_tag: str | None = None, page: int = 1, page_size: int = 20) -> dict:
-        qs = ExamQuestion.filter(Q(is_public=True) | Q(user_id=user_id))
+    async def list_questions(user_id: int, question_type: str | None = None, difficulty: str | None = None, knowledge_tag: str | None = None, node_id: int | None = None, page: int = 1, page_size: int = 20) -> dict:
+        if node_id:
+            # 仅返回该节点关联的题目（通过 ExamRecord 绑定）
+            record_qs = ExamRecord.filter(node_id=node_id).values_list("question_id", flat=True)
+            question_ids = [rid async for rid in record_qs]
+            if not question_ids:
+                return {"total": 0, "page": page, "page_size": page_size, "items": []}
+            qs = ExamQuestion.filter(id__in=question_ids)
+        else:
+            qs = ExamQuestion.filter(Q(is_public=True) | Q(user_id=user_id))
         if question_type:
             qs = qs.filter(question_type=question_type)
         if difficulty:
@@ -292,7 +300,7 @@ class ExamService:
                 mastery.last_practiced_at = datetime.now()
                 await mastery.save()
 
-        # 每次答题后同步画像
+        # 同步画像（会话提交时 path_service.submit_node_quiz 也会触发，此处确保非路径答题也能更新）
         from backend.src.service.path_service import PathService
         try:
             await PathService._update_portrait_from_mastery(user_id)
@@ -324,8 +332,10 @@ class ExamService:
         }
 
     @staticmethod
-    async def get_records(user_id: int, page: int = 1, page_size: int = 20) -> dict:
+    async def get_records(user_id: int, node_id: int | None = None, page: int = 1, page_size: int = 20) -> dict:
         qs = ExamRecord.filter(user_id=user_id)
+        if node_id:
+            qs = qs.filter(node_id=node_id)
         total = await qs.count()
         records = await qs.order_by("-created_at").offset((page - 1) * page_size).limit(page_size).prefetch_related("question").all()
         items = []
