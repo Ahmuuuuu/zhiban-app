@@ -74,6 +74,25 @@ export function getGeneratedResource(resourceId: number | string): Promise<unkno
 
 export function deleteGeneratedResource(resourceId: number | string): Promise<unknown>;
 
+export function getAgentSkills(): Promise<unknown>;
+
+export function getAgentSkill(resourceType: string): Promise<unknown>;
+
+export function upsertAgentSkill(data: {
+  resource_type: string;
+  name: string;
+  system_prompt: string;
+}): Promise<unknown>;
+
+export function upsertAgentActionSkill(data: {
+  name: string;
+  action_type: string;
+  action_config: Record<string, unknown>;
+  tool_description: string;
+}): Promise<unknown>;
+
+export function deleteAgentSkill(resourceType: string): Promise<unknown>;
+
 export function generateExamQuestions(data: {
   topic: string;
   count?: number;

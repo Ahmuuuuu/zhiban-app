@@ -384,6 +384,14 @@ const normalizePath = data => {
   const path = raw.path || raw.learning_path || raw.learningPath || raw
   // 节点字段名可能有多种命名
   const nodes = path.nodes || path.node_list || path.nodeList || path.learning_nodes || path.learningNodes || []
+  const progressList = raw.progress || path.progress || []
+  const progressMap = new Map(
+    (Array.isArray(progressList) ? progressList : []).map(p => [
+      String(p.node_id || p.nodeId || p.id || ''),
+      p
+    ])
+  )
+  const nodeResults = raw.node_results || raw.nodeResults || path.node_results || path.nodeResults || {}
 
   if (!Array.isArray(nodes)) {
     console.warn('[StudyPath] 未找到节点数组，后端返回结构：', { data, raw, path, nodes })
@@ -391,7 +399,7 @@ const normalizePath = data => {
 
   return {
     pathId: String(path.id || path.path_id || path.pathId || raw.id || raw.path_id || raw.pathId || ''),
-    goal: path.goal || path.title || path.topic || '学习路径',
+    goal: path.goal || path.title || path.topic || path.subject || raw.subject || '学习路径',
     stage: path.stage || path.status || '进行中',
     cursor: path.cursor ?? path.current_index ?? path.currentIndex ?? (Array.isArray(nodes) ? nodes.length : 0),
     diagnosis: {
@@ -415,23 +423,39 @@ const normalizePath = data => {
       })(),
       recommendation: path.diagnosis?.recommendation || path.diagnosis?.suggestion || ''
     },
-    nodes: (Array.isArray(nodes) ? nodes : []).map(n => ({
-      id: String(n.id || n.node_id || n.nodeId || ''),
+    nodes: (Array.isArray(nodes) ? nodes : []).map(n => {
+      const nodeId = String(n.id || n.node_id || n.nodeId || '')
+      const progress = progressMap.get(nodeId) || {}
+      const nodeResult = nodeResults[nodeId] || nodeResults[Number(nodeId)] || {}
+      const resourceTypes = n.resource_types || n.resourceTypes || []
+      const resourceIds = n.resource_ids || n.resourceIds || nodeResult.resource_ids || nodeResult.resourceIds || []
+      return {
+      id: nodeId,
       title: n.title || n.name || n.topic || '',
       type: n.type || n.node_type || n.nodeType || 'read',
       summary: n.summary || n.description || n.desc || n.intro || '',
       description: n.description || n.detail || n.content || n.summary || '',
       estimatedMinutes: n.estimated_minutes ?? n.estimatedMinutes ?? n.duration ?? n.estimated_time ?? 15,
       rule: n.rule || n.completion_rule || n.completionRule || n.condition || '',
-      status: normalizeStatus(n.status || n.state),
+      status: normalizeStatus(n.status || n.state || progress.status || progress.node_status),
+      resourceTypes: Array.isArray(resourceTypes) ? resourceTypes : [],
       resources: (() => {
         const rawResources = n.resources || n.node_resources || n.learning_resources || n.learningResources || []
-        return Array.isArray(rawResources) ? rawResources : []
+        if (Array.isArray(rawResources) && rawResources.length) return rawResources
+        return Array.isArray(resourceIds)
+          ? resourceIds.map((id, index) => ({
+            resource_id: id,
+            resource_type: Array.isArray(resourceTypes) ? resourceTypes[index] || resourceTypes[0] : 'document',
+            topic: n.title || n.name || n.topic || '',
+            download_url: `/resource/${id}/download`
+          }))
+          : []
       })(),
       quiz: n.quiz || n.node_quiz || null,
       quizId: n.quiz_id || n.quizId || null,
-      sessionId: n.session_id || n.sessionId || ''
-    }))
+      sessionId: n.session_id || n.sessionId || nodeResult.session_id || nodeResult.sessionId || progress.session_id || progress.sessionId || ''
+    }
+    })
   }
 }
 
@@ -478,7 +502,6 @@ const generateNewPath = async () => {
     pathState.value = generatedPath
     savePathToCache(generatedPath)
     topicInput.value = ''
-    await fetchCurrentPath({ silent: true })
   } catch (err) {
     error.value = err?.response?.data?.detail || err?.message || '生成学习路径失败，请稍后再试。'
   } finally {
@@ -535,21 +558,75 @@ const isPptResource = r => String(r?.type || r?.fileType || r?.title || r?.filen
 
 const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('mind')
 
-const normalizeNodeResources = resources =>
-  (Array.isArray(resources) ? resources : []).map((r, i) => {
-    const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || 'file'
+const normalizeNodeResources = (resources, node = null) =>
+  (Array.isArray(resources) ? resources : []).map((item, i) => {
+    const r = typeof item === 'object' && item !== null ? item : { resource_id: item }
+    const resourceId = r.id || r.resource_id || r.resourceId || r.file_id || r.fileId || ''
+    const fallbackType = node?.resourceTypes?.[i] || node?.resourceTypes?.[0] || 'document'
+    const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || fallbackType
+    const title = r.title || r.topic || r.filename || r.file_name || r.name || node?.title || `学习资料 ${i + 1}`
     return {
-      id: r.id || r.resource_id || r.resourceId || r.file_id || r.fileId || `res-${i}`,
-      title: r.title || r.filename || r.file_name || r.name || `学习资料 ${i + 1}`,
-      filename: r.filename || r.file_name || r.name || '',
+      id: resourceId || `res-${i}`,
+      title,
+      filename: r.filename || r.file_name || r.name || `${title}_${fileType}`,
       type: fileType,
       fileType,
       typeLabel: fileTypeLabel(fileType),
       content: r.content || r.preview || r.text || '',
       previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || ''),
-      downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || ''),
+      downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || (resourceId ? `/resource/${resourceId}/download` : '')),
     }
   })
+
+const getResponseData = res => res?.data?.data || res?.data || res || {}
+
+const extractResourceItems = (data, node = null) => {
+  const raw = getResponseData(data)
+  const directItems =
+    raw.resources ||
+    raw.files ||
+    raw.items ||
+    raw.resource_list ||
+    raw.resourceList ||
+    raw.generated_resources ||
+    raw.generatedResources ||
+    []
+
+  if (Array.isArray(directItems) && directItems.length) {
+    return directItems
+  }
+
+  const ids = raw.resource_ids || raw.resourceIds || raw.ids || []
+  return Array.isArray(ids)
+    ? ids.map((id, index) => ({
+      resource_id: id,
+      resource_type: node?.resourceTypes?.[index] || node?.resourceTypes?.[0] || 'document',
+      topic: node?.title || `学习资料 ${index + 1}`,
+      download_url: `/resource/${id}/download`
+    }))
+    : []
+}
+
+const patchNodeState = (node, patch = {}) => {
+  if (!node?.id || !pathState.value?.nodes) return
+
+  Object.assign(node, patch)
+  let updatedNode = null
+  pathState.value = {
+    ...pathState.value,
+    nodes: pathState.value.nodes.map(item => {
+      if (item.id !== node.id) return item
+      updatedNode = { ...item, ...patch }
+      return updatedNode
+    })
+  }
+
+  if (updatedNode && selectedNode.value?.id === node.id) {
+    selectedNode.value = updatedNode
+  }
+
+  savePathToCache(pathState.value)
+}
 
 
 const buildNodeQuiz = (node, quizData = null) => {
@@ -590,7 +667,7 @@ const ensureNodeResources = async (node, target = 'all') => {
 
   // 优先使用后端预加载的资源
   if (!node._resources && node.resources?.length) {
-    node._resources = normalizeNodeResources(node.resources)
+    patchNodeState(node, { _resources: normalizeNodeResources(node.resources, node) })
   }
 
   const pathId = pathState.value?.pathId
@@ -598,15 +675,18 @@ const ensureNodeResources = async (node, target = 'all') => {
   const shouldLoadQuiz = target === 'all' || target === 'quiz'
 
   if (shouldLoadResources && !node._resources?.length && pathId) {
-    node._resLoading = true
+    patchNodeState(node, { _resLoading: true })
     try {
       const res = await generatePathNodeResources(pathId, node.id)
-      const data = res?.data?.data || res?.data || res || {}
-      const items = data.resources || data.files || data.items || []
-      node._resources = normalizeNodeResources(items)
-      node._resLoading = false
+      const resources = normalizeNodeResources(extractResourceItems(res, node), node)
+      patchNodeState(node, {
+        resources,
+        _resources: resources,
+        _resLoading: false,
+        status: node.status === 'available' ? 'current' : node.status
+      })
     } catch (err) {
-      node._resLoading = false
+      patchNodeState(node, { _resLoading: false })
       console.error('[StudyPath] generate node resources failed:', err)
       error.value = err?.response?.data?.detail || err?.message || '生成学习资料失败'
     }
@@ -615,19 +695,23 @@ const ensureNodeResources = async (node, target = 'all') => {
   if (shouldLoadQuiz && !node._quiz && pathId) {
     const localQuiz = buildNodeQuiz(node)
     if (localQuiz) {
-      node._quiz = localQuiz
+      patchNodeState(node, { _quiz: localQuiz })
       return
     }
 
-    node._quizLoading = true
+    patchNodeState(node, { _quizLoading: true })
     try {
       const quizRes = await generatePathNodeQuiz(pathId, node.id)
-      const quizData = quizRes?.data?.data || quizRes?.data || quizRes || {}
+      const quizData = getResponseData(quizRes)
       const quiz = buildNodeQuiz(node, quizData)
-      node._quiz = quiz
-      node._quizLoading = false
+      patchNodeState(node, {
+        quiz: quizData,
+        sessionId: quizData.session_id || quizData.sessionId || node.sessionId || '',
+        _quiz: quiz,
+        _quizLoading: false
+      })
     } catch (err) {
-      node._quizLoading = false
+      patchNodeState(node, { _quizLoading: false })
       console.error('[StudyPath] generate node quiz failed:', err)
       error.value = err?.response?.data?.detail || err?.message || '生成学习检测失败'
     }
@@ -637,6 +721,10 @@ const ensureNodeResources = async (node, target = 'all') => {
 const openNode = async node => {
   selectedNode.value = node
   cardFlipped.value = false
+  showResources.value = false
+  nodeResources.value = normalizeNodeResources(node._resources?.length ? node._resources : node.resources, node)
+  nodeQuizData.value = node._quiz || buildNodeQuiz(node)
+  nodeSessionId.value = nodeQuizData.value?.sessionId || node.sessionId || ''
   await nextTick()
   window.requestAnimationFrame(() => {
     cardFlipped.value = true
@@ -666,7 +754,11 @@ const loadNodeResources = async () => {
   }
 
   if (selectedNode.value.resources?.length > 0) {
-    nodeResources.value = normalizeNodeResources(selectedNode.value.resources)
+    nodeResources.value = normalizeNodeResources(selectedNode.value.resources, selectedNode.value)
+    patchNodeState(selectedNode.value, {
+      resources: nodeResources.value,
+      _resources: nodeResources.value
+    })
     // 先查题库缓存，再用节点预载数据
     const pathId = pathState.value?.pathId
     const quizBankId = pathId ? `quiz-resource-${pathId}-${selectedNode.value.id}` : ''
@@ -674,6 +766,7 @@ const loadNodeResources = async () => {
     if (existingQuiz) {
       nodeQuizData.value = existingQuiz
       nodeSessionId.value = existingQuiz.sessionId || ''
+      patchNodeState(selectedNode.value, { _quiz: existingQuiz })
     } else if (selectedNode.value.quiz) {
       const quiz = upsertQuizSet({
         sourceId: `${pathId}-${selectedNode.value.id}`,
@@ -684,6 +777,7 @@ const loadNodeResources = async () => {
       })
       if (quiz) nodeQuizData.value = quiz
       nodeSessionId.value = selectedNode.value.sessionId || ''
+      if (quiz) patchNodeState(selectedNode.value, { _quiz: quiz })
     }
     showResources.value = true
     return
@@ -695,9 +789,13 @@ const loadNodeResources = async () => {
   resourcesLoading.value = true
   try {
     const res = await generatePathNodeResources(pathId, selectedNode.value.id)
-    const data = res?.data?.data || res?.data || res || {}
-    const items = data.resources || data.files || data.items || []
-    nodeResources.value = normalizeNodeResources(items)
+    nodeResources.value = normalizeNodeResources(extractResourceItems(res, selectedNode.value), selectedNode.value)
+    patchNodeState(selectedNode.value, {
+      resources: nodeResources.value,
+      _resources: nodeResources.value,
+      _resLoading: false,
+      status: selectedNode.value.status === 'available' ? 'current' : selectedNode.value.status
+    })
 
     // 查题库缓存 -> 节点预载 -> 调生成接口
     const quizBankId = `quiz-resource-${pathId}-${selectedNode.value.id}`
@@ -705,6 +803,7 @@ const loadNodeResources = async () => {
     if (existingQuiz) {
       nodeQuizData.value = existingQuiz
       nodeSessionId.value = existingQuiz.sessionId || ''
+      patchNodeState(selectedNode.value, { _quiz: existingQuiz })
       console.log('[StudyPath] 从题库加载已有题目：', existingQuiz)
     } else if (selectedNode.value.quiz) {
       const quiz = upsertQuizSet({
@@ -716,10 +815,11 @@ const loadNodeResources = async () => {
       })
       if (quiz) nodeQuizData.value = quiz
       nodeSessionId.value = selectedNode.value.sessionId || ''
+      if (quiz) patchNodeState(selectedNode.value, { _quiz: quiz })
     } else {
       const quizRes = await generatePathNodeQuiz(pathId, selectedNode.value.id)
       console.log('[StudyPath] generatePathNodeQuiz response:', quizRes)
-      const quizData = quizRes?.data?.data || quizRes?.data || quizRes || {}
+      const quizData = getResponseData(quizRes)
       nodeSessionId.value = quizData.session_id || quizData.sessionId || ''
       const rawQuestions =
         quizData.questions ||
@@ -738,7 +838,14 @@ const loadNodeResources = async () => {
           sessionId: nodeSessionId.value
         })
         console.log('[StudyPath] upsertQuizSet result:', quiz)
-        if (quiz) nodeQuizData.value = quiz
+        if (quiz) {
+          nodeQuizData.value = quiz
+          patchNodeState(selectedNode.value, {
+            quiz: quizData,
+            sessionId: nodeSessionId.value,
+            _quiz: quiz
+          })
+        }
       } else {
         console.warn('[StudyPath] 后端未返回题目数据，quizData:', quizData)
       }
