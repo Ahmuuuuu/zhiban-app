@@ -110,21 +110,33 @@
                   <div v-if="node._resLoading" class="branch-loading">加载中...</div>
 
                   <template v-else-if="node._resources?.length">
-                    <button
+                    <div
                       v-for="resource in node._resources"
                       :key="resource.id"
-                      class="branch-resource"
-                      type="button"
-                      @click="previewNodeResource(resource)"
+                      class="branch-resource-row"
                     >
-                      <span class="branch-resource__icon">
-                        <FileImage v-if="isImageResource(resource)" :size="15" />
-                        <Presentation v-else-if="isPptResource(resource)" :size="15" />
-                        <GitBranch v-else-if="isMindmapResource(resource)" :size="15" />
-                        <FileText v-else :size="15" />
-                      </span>
-                      <span>{{ resource.title }}</span>
-                    </button>
+                      <button
+                        class="branch-resource"
+                        type="button"
+                        @click="previewNodeResource(resource)"
+                      >
+                        <span class="branch-resource__icon">
+                          <FileImage v-if="isImageResource(resource)" :size="15" />
+                          <Presentation v-else-if="isPptResource(resource)" :size="15" />
+                          <GitBranch v-else-if="isMindmapResource(resource)" :size="15" />
+                          <FileText v-else :size="15" />
+                        </span>
+                        <span>{{ resource.title }}</span>
+                      </button>
+                      <button
+                        v-if="canPreviewResource(resource)"
+                        class="branch-mini-action"
+                        type="button"
+                        @click="previewNodeResource(resource)"
+                      >
+                        预览
+                      </button>
+                    </div>
                   </template>
 
                   <button
@@ -149,7 +161,7 @@
                   <template v-else-if="node._quiz">
                     <div class="branch-quiz">
                       <span>{{ node._quiz.questionCount || 0 }} 道题</span>
-                      <router-link class="branch-action primary" :to="`/question-bank/${node._quiz.id}?from=path&nodeId=${node.id}`">
+                      <router-link class="branch-action primary" :to="pathQuizLink(node._quiz, node)">
                         开始检测
                       </router-link>
                     </div>
@@ -245,8 +257,8 @@
                       />
                     </div>
 
-                    <div v-if="resource.previewUrl || resource.downloadUrl" class="file-actions">
-                      <button v-if="resource.previewUrl" type="button" @click.stop="previewNodeResource(resource)">
+                    <div v-if="canPreviewResource(resource) || resource.downloadUrl" class="file-actions">
+                      <button v-if="canPreviewResource(resource)" type="button" @click.stop="previewNodeResource(resource)">
                         预览
                       </button>
                       <button v-if="resource.downloadUrl" type="button" @click.stop="downloadNodeResource(resource)">
@@ -263,7 +275,7 @@
                         <span>{{ nodeQuizData.questionCount || 0 }} 道题</span>
                       </div>
                     </div>
-                    <router-link class="quiz-action-btn" :to="`/question-bank/${nodeQuizData.id}?from=path&nodeId=${selectedNode.id}`">
+                    <router-link class="quiz-action-btn" :to="pathQuizLink(nodeQuizData, selectedNode)">
                       开始练习
                     </router-link>
                   </div>
@@ -300,25 +312,51 @@
               <span>{{ previewResource.typeLabel }}</span>
               <h2>{{ previewResource.title }}</h2>
             </div>
-            <button type="button" aria-label="关闭预览" @click="closeResourcePreview">&times;</button>
+            <div class="resource-preview-tools">
+              <button
+                v-if="canNarrateResource(previewResource)"
+                class="resource-preview-icon-btn"
+                type="button"
+                :title="isNarrationPlaying(previewResource) ? '暂停朗读' : '朗读资源'"
+                :disabled="isNarrationLoading(previewResource)"
+                @click="toggleNarration(previewResource)"
+              >
+                <PauseCircle v-if="isNarrationPlaying(previewResource)" :size="17" />
+                <Volume2 v-else :size="17" />
+              </button>
+              <button type="button" aria-label="关闭预览" @click="closeResourcePreview">&times;</button>
+            </div>
           </header>
 
           <div class="resource-preview-body">
+            <div v-if="previewLoading" class="resources-loading">
+              正在加载预览...
+            </div>
             <img
-              v-if="isImageResource(previewResource) && previewResource.previewUrl"
+              v-else-if="isImageResource(previewResource) && previewResource.previewUrl"
               :src="previewResource.previewUrl"
               :alt="previewResource.title"
+            />
+            <PptPreview
+              v-else-if="isPptResource(previewResource) && previewResource.slides?.length"
+              :slides="previewResource.slides"
+              :title="previewResource.title"
             />
             <MindmapPreview
               v-else-if="isMindmapResource(previewResource) && previewResource.content"
               :content="previewResource.content"
               :title="previewResource.title"
             />
+            <article
+              v-else-if="previewResource.content"
+              class="resource-markdown markdown-body"
+              v-html="renderMarkdown(previewResource.content)"
+            ></article>
             <pre v-else>{{ previewResource.content || '暂无可预览内容，可以下载原文件查看。' }}</pre>
           </div>
 
           <footer v-if="previewResource.downloadUrl">
-            <button type="button" @click="downloadNodeResource(previewResource)">下载原文件</button>
+            <button v-if="previewResource.downloadUrl" type="button" @click="downloadNodeResource(previewResource)">下载原文件</button>
           </footer>
         </article>
       </section>
@@ -327,14 +365,16 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
-import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2 } from 'lucide-vue-next'
 import {
   getCurrentLearningPath, generateLearningPath,
-  generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, resolveApiUrl
+  generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, resolveApiUrl
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
+import PptPreview from '../components/PptPreview.vue'
+import { useResourceNarration } from '../composables/useResourceNarration'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 
@@ -354,12 +394,21 @@ const error = ref('')
 const pathState = ref(null)
 const topicInput = ref('')
 const generating = ref(false)
+const generationRunId = ref(0)
 const showResources = ref(false)
 const nodeResources = ref([])
 const resourcesLoading = ref(false)
 const nodeQuizData = ref(null)
 const nodeSessionId = ref('')
 const previewResource = ref(null)
+const previewLoading = ref(false)
+const {
+  canNarrateResource,
+  toggleNarration,
+  isNarrationLoading,
+  isNarrationPlaying,
+  stopCurrentAudio
+} = useResourceNarration()
 
 const normalizeStatus = s => {
   const map = {
@@ -373,6 +422,7 @@ const normalizeStatus = s => {
     todo: 'locked',
     available: 'available',
     unlocked: 'available',
+    open: 'available',
   }
   return map[s] || s || 'locked'
 }
@@ -384,6 +434,14 @@ const normalizePath = data => {
   const path = raw.path || raw.learning_path || raw.learningPath || raw
   // 节点字段名可能有多种命名
   const nodes = path.nodes || path.node_list || path.nodeList || path.learning_nodes || path.learningNodes || []
+  const progressList = raw.progress || path.progress || []
+  const progressMap = new Map(
+    (Array.isArray(progressList) ? progressList : []).map(p => [
+      String(p.node_id || p.nodeId || p.id || ''),
+      p
+    ])
+  )
+  const nodeResults = raw.node_results || raw.nodeResults || path.node_results || path.nodeResults || {}
 
   if (!Array.isArray(nodes)) {
     console.warn('[StudyPath] 未找到节点数组，后端返回结构：', { data, raw, path, nodes })
@@ -391,7 +449,7 @@ const normalizePath = data => {
 
   return {
     pathId: String(path.id || path.path_id || path.pathId || raw.id || raw.path_id || raw.pathId || ''),
-    goal: path.goal || path.title || path.topic || '学习路径',
+    goal: path.goal || path.title || path.topic || path.subject || raw.subject || '学习路径',
     stage: path.stage || path.status || '进行中',
     cursor: path.cursor ?? path.current_index ?? path.currentIndex ?? (Array.isArray(nodes) ? nodes.length : 0),
     diagnosis: {
@@ -415,23 +473,39 @@ const normalizePath = data => {
       })(),
       recommendation: path.diagnosis?.recommendation || path.diagnosis?.suggestion || ''
     },
-    nodes: (Array.isArray(nodes) ? nodes : []).map(n => ({
-      id: String(n.id || n.node_id || n.nodeId || ''),
+    nodes: (Array.isArray(nodes) ? nodes : []).map(n => {
+      const nodeId = String(n.id || n.node_id || n.nodeId || '')
+      const progress = progressMap.get(nodeId) || {}
+      const nodeResult = nodeResults[nodeId] || nodeResults[Number(nodeId)] || {}
+      const resourceTypes = n.resource_types || n.resourceTypes || []
+      const resourceIds = n.resource_ids || n.resourceIds || nodeResult.resource_ids || nodeResult.resourceIds || []
+      return {
+      id: nodeId,
       title: n.title || n.name || n.topic || '',
       type: n.type || n.node_type || n.nodeType || 'read',
       summary: n.summary || n.description || n.desc || n.intro || '',
       description: n.description || n.detail || n.content || n.summary || '',
       estimatedMinutes: n.estimated_minutes ?? n.estimatedMinutes ?? n.duration ?? n.estimated_time ?? 15,
       rule: n.rule || n.completion_rule || n.completionRule || n.condition || '',
-      status: normalizeStatus(n.status || n.state),
+      status: normalizeStatus(n.status || n.state || progress.status || progress.node_status),
+      resourceTypes: Array.isArray(resourceTypes) ? resourceTypes : [],
       resources: (() => {
         const rawResources = n.resources || n.node_resources || n.learning_resources || n.learningResources || []
-        return Array.isArray(rawResources) ? rawResources : []
+        if (Array.isArray(rawResources) && rawResources.length) return rawResources
+        return Array.isArray(resourceIds)
+          ? resourceIds.map((id, index) => ({
+            resource_id: id,
+            resource_type: Array.isArray(resourceTypes) ? resourceTypes[index] || resourceTypes[0] : 'document',
+            topic: n.title || n.name || n.topic || '',
+            download_url: `/resource/${id}/download`
+          }))
+          : []
       })(),
       quiz: n.quiz || n.node_quiz || null,
       quizId: n.quiz_id || n.quizId || null,
-      sessionId: n.session_id || n.sessionId || ''
-    }))
+      sessionId: n.session_id || n.sessionId || nodeResult.session_id || nodeResult.sessionId || progress.session_id || progress.sessionId || ''
+    }
+    })
   }
 }
 
@@ -442,8 +516,7 @@ const fetchCurrentPath = async (options = {}) => {
   try {
     const result = await getCurrentLearningPath()
     console.log('[StudyPath] current path:', result)
-    pathState.value = normalizePath(result)
-    savePathToCache(pathState.value)
+    setPathState(normalizePath(result))
   } catch (err) {
     if (err?.response?.status === 404) {
       const cached = loadPathFromCache()
@@ -468,21 +541,57 @@ const fetchCurrentPath = async (options = {}) => {
 
 const generateNewPath = async () => {
   if (!topicInput.value.trim() || generating.value) return
+  const subject = topicInput.value.trim()
+  const runId = generationRunId.value + 1
+  generationRunId.value = runId
   generating.value = true
   error.value = ''
+
+  const generatePromise = generateLearningPath({ subject })
+    .then(result => ({ type: 'generated', result }))
+    .catch(err => ({ type: 'error', err }))
+
+  const currentPromise = waitForGeneratedPath(runId, subject)
+
   try {
-    console.log('[StudyPath] generate path payload:', { subject: topicInput.value.trim() })
-    const result = await generateLearningPath({ subject: topicInput.value.trim() })
-    console.log('[StudyPath] generated path:', result)
-    const generatedPath = normalizePath(result)
-    pathState.value = generatedPath
-    savePathToCache(generatedPath)
-    topicInput.value = ''
-    await fetchCurrentPath({ silent: true })
+    console.log('[StudyPath] generate path payload:', { subject })
+    const firstResult = await Promise.race([generatePromise, currentPromise])
+    if (runId !== generationRunId.value) return
+
+    if (firstResult?.type === 'current') {
+      topicInput.value = ''
+      generatePromise.then(done => {
+        if (runId !== generationRunId.value || done?.type !== 'generated') return
+        const generatedPath = normalizePath(done.result)
+        if (generatedPath?.nodes?.length) setPathState(generatedPath)
+      })
+      return
+    }
+
+    if (firstResult?.type === 'generated') {
+      console.log('[StudyPath] generated path:', firstResult.result)
+      const generatedPath = normalizePath(firstResult.result)
+      if (generatedPath?.nodes?.length) {
+        setPathState(generatedPath)
+      } else {
+        await recoverGeneratedPathFromCurrent()
+      }
+      topicInput.value = ''
+      refreshGeneratedPathInBackground()
+      return
+    }
+
+    throw firstResult?.err || new Error('生成学习路径失败')
   } catch (err) {
+    const recovered = await recoverGeneratedPathFromCurrent()
+    if (recovered) {
+      topicInput.value = ''
+      return
+    }
+
     error.value = err?.response?.data?.detail || err?.message || '生成学习路径失败，请稍后再试。'
   } finally {
-    generating.value = false
+    if (runId === generationRunId.value) generating.value = false
   }
 }
 
@@ -510,6 +619,16 @@ const statusLabel = status => ({
   locked: '待解锁'
 }[status] || '待开始')
 
+const pathQuizLink = (quiz, node) => {
+  const query = new URLSearchParams({
+    from: 'path',
+    nodeId: String(node?.id || '')
+  })
+  const sessionId = quiz?.sessionId || quiz?.session_id || node?.sessionId || node?.session_id || ''
+  if (sessionId) query.set('sessionId', String(sessionId))
+  return `/question-bank/${quiz?.id}?${query.toString()}`
+}
+
 const typeLabel = type => ({
   read: '资料阅读',
   quiz: '练习题',
@@ -531,39 +650,464 @@ const fileTypeLabel = type => {
 
 const isImageResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('image')
 
-const isPptResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('ppt')
+const isPptResource = r => /ppt|powerpoint|presentation|slide/.test(String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase())
 
 const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('mind')
 
-const normalizeNodeResources = resources =>
-  (Array.isArray(resources) ? resources : []).map((r, i) => {
-    const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || 'file'
+const canPreviewResource = resource => {
+  return Boolean(resource?.previewUrl || resource?.content || resource?.id || resource?.downloadUrl)
+}
+
+const escapeHtml = value => {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+const isImageResourceUrl = url => /\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(String(url || ''))
+
+const parsePptSlidesFromContent = content => {
+  const text = String(content || '').trim()
+  if (!text) return []
+
+  try {
+    const parsed = JSON.parse(text)
+    const list = Array.isArray(parsed) ? parsed : parsed.slides || parsed.pages || parsed.items || []
+    if (Array.isArray(list) && list.length) {
+      return list.map((slide, index) => ({
+        index,
+        title: slide.title || slide.heading || `第 ${index + 1} 页`,
+        text: slide.text || slide.content || slide.body || '',
+        notes: slide.notes || slide.speaker_notes || ''
+      }))
+    }
+  } catch {
+    // fall through to plain-text parsing
+  }
+
+  const blocks = text
+    .replace(/^```(?:json|markdown|md)?\s*/i, '')
+    .replace(/```$/i, '')
+    .split(/\n\s*---+\s*\n|(?=\n\s*#{1,3}\s+)/)
+    .map(block => block.trim())
+    .filter(Boolean)
+
+  return blocks.map((block, index) => {
+    const lines = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const titleLine = lines.find(line => /^#{1,3}\s+/.test(line)) || lines[0] || `第 ${index + 1} 页`
+    const title = titleLine.replace(/^#{1,3}\s+/, '').replace(/^第?\s*\d+\s*[页章、.：:-]?\s*/, '').trim()
+    const body = lines
+      .filter(line => line !== titleLine)
+      .map(line => line.replace(/^[-*•]\s+/, '').trim())
+      .filter(Boolean)
+      .join('\n')
+
     return {
-      id: r.id || r.resource_id || r.resourceId || r.file_id || r.fileId || `res-${i}`,
-      title: r.title || r.filename || r.file_name || r.name || `学习资料 ${i + 1}`,
-      filename: r.filename || r.file_name || r.name || '',
+      index,
+      title: title || `第 ${index + 1} 页`,
+      text: body,
+      notes: ''
+    }
+  }).filter(slide => slide.title || slide.text)
+}
+
+const renderInlineMarkdown = value => {
+  let text = escapeHtml(value)
+
+  text = text.replace(/`([^`]+)`/g, '<code>$1</code>')
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>')
+  text = text.replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+  text = text.replace(/_([^_\n]+)_/g, '<em>$1</em>')
+  text = text.replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g, (_, label, url) => {
+    const href = escapeHtml(resolveApiUrl(url))
+    return `<a class="md-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="md-generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`
+  })
+  text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/)[^\s)]+)\)/g, (_, label, url) => {
+    const href = escapeHtml(resolveApiUrl(url))
+
+    if (!/^mailto:/i.test(url) && isImageResourceUrl(url)) {
+      return `<a class="md-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="md-generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`
+    }
+
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`
+  })
+
+  return text
+}
+
+const isTableSeparator = line => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+
+const renderTable = tableLines => {
+  const rows = tableLines.map(line => {
+    return line
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map(cell => renderInlineMarkdown(cell.trim()))
+  })
+
+  const header = rows[0] || []
+  const body = rows.slice(2)
+
+  return `
+    <div class="md-table-wrap">
+      <table>
+        <thead><tr>${header.map(cell => `<th>${cell}</th>`).join('')}</tr></thead>
+        <tbody>${body.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>
+  `
+}
+
+const renderMarkdown = content => {
+  const text = String(content || '').trim()
+  if (!text) return ''
+
+  const lines = text.split(/\r?\n/)
+  const html = []
+  let paragraph = []
+  let listItems = []
+  let listType = ''
+  let codeLines = []
+  let inCodeBlock = false
+  let codeLanguage = ''
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    html.push(`<p>${paragraph.map(renderInlineMarkdown).join('<br>')}</p>`)
+    paragraph = []
+  }
+
+  const flushList = () => {
+    if (!listItems.length) return
+    const tag = listType === 'ol' ? 'ol' : 'ul'
+    html.push(`<${tag}>${listItems.map(item => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${tag}>`)
+    listItems = []
+    listType = ''
+  }
+
+  const flushCode = () => {
+    const languageLabel = codeLanguage ? `<span>${escapeHtml(codeLanguage)}</span>` : ''
+    html.push(`<div class="md-code-block">${languageLabel}<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre></div>`)
+    codeLines = []
+    codeLanguage = ''
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index]
+    const line = rawLine.trim()
+
+    if (line.startsWith('```')) {
+      if (inCodeBlock) {
+        flushCode()
+        inCodeBlock = false
+      } else {
+        flushParagraph()
+        flushList()
+        inCodeBlock = true
+        codeLanguage = line.replace(/^```/, '').trim()
+      }
+      continue
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(rawLine)
+      continue
+    }
+
+    if (!line) {
+      flushParagraph()
+      flushList()
+      continue
+    }
+
+    if (line.includes('|') && lines[index + 1] && isTableSeparator(lines[index + 1])) {
+      flushParagraph()
+      flushList()
+      const tableLines = [rawLine, lines[index + 1]]
+      index += 2
+      while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
+        tableLines.push(lines[index])
+        index += 1
+      }
+      index -= 1
+      html.push(renderTable(tableLines))
+      continue
+    }
+
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/)
+    if (headingMatch) {
+      flushParagraph()
+      flushList()
+      const level = Math.min(headingMatch[1].length + 2, 6)
+      html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`)
+      continue
+    }
+
+    const blockquoteMatch = line.match(/^>\s?(.+)$/)
+    if (blockquoteMatch) {
+      flushParagraph()
+      flushList()
+      html.push(`<blockquote>${renderInlineMarkdown(blockquoteMatch[1])}</blockquote>`)
+      continue
+    }
+
+    const orderedMatch = line.match(/^\d+\.\s+(.+)$/)
+    const unorderedMatch = line.match(/^[-*]\s+(.+)$/)
+
+    if (orderedMatch || unorderedMatch) {
+      flushParagraph()
+      const currentType = orderedMatch ? 'ol' : 'ul'
+
+      if (listType && listType !== currentType) {
+        flushList()
+      }
+
+      listType = currentType
+      listItems.push((orderedMatch?.[1] || unorderedMatch?.[1] || '').trim())
+      continue
+    }
+
+    flushList()
+    paragraph.push(rawLine)
+  }
+
+  if (inCodeBlock) flushCode()
+  flushParagraph()
+  flushList()
+
+  return html.join('')
+}
+
+const normalizeNodeResources = (resources, node = null) =>
+  (Array.isArray(resources) ? resources : []).map((item, i) => {
+    const r = typeof item === 'object' && item !== null ? item : { resource_id: item }
+    const resourceId = r.id || r.resource_id || r.resourceId || r.file_id || r.fileId || ''
+    const fallbackType = node?.resourceTypes?.[i] || node?.resourceTypes?.[0] || 'document'
+    const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || fallbackType
+    const title = r.title || r.topic || r.filename || r.file_name || r.name || node?.title || `学习资料 ${i + 1}`
+    return {
+      id: resourceId || `res-${i}`,
+      resourceId,
+      title,
+      filename: r.filename || r.file_name || r.name || `${title}_${fileType}`,
       type: fileType,
       fileType,
       typeLabel: fileTypeLabel(fileType),
       content: r.content || r.preview || r.text || '',
+      slides: Array.isArray(r.slides) ? r.slides : [],
       previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || ''),
-      downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || ''),
+      downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || (resourceId ? `/resource/${resourceId}/download` : '')),
     }
   })
+
+const getResponseData = res => res?.data?.data || res?.data || res || {}
+
+const extractResourceItems = (data, node = null) => {
+  const raw = getResponseData(data)
+  const directItems =
+    raw.resources ||
+    raw.files ||
+    raw.items ||
+    raw.resource_list ||
+    raw.resourceList ||
+    raw.generated_resources ||
+    raw.generatedResources ||
+    []
+
+  if (Array.isArray(directItems) && directItems.length) {
+    return directItems
+  }
+
+  const ids = raw.resource_ids || raw.resourceIds || raw.ids || []
+  return Array.isArray(ids)
+    ? ids.map((id, index) => ({
+      resource_id: id,
+      resource_type: node?.resourceTypes?.[index] || node?.resourceTypes?.[0] || 'document',
+      topic: node?.title || `学习资料 ${index + 1}`,
+      download_url: `/resource/${id}/download`
+    }))
+    : []
+}
+
+const hashText = value => {
+  const text = String(value || '')
+  let hash = 0
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash).toString(36)
+}
+
+const getNodeQuizSourceId = (node, data = null) => {
+  const pathId = pathState.value?.pathId
+  const raw = data || node?.quiz || {}
+  const backendId =
+    raw.resource_id ||
+    raw.resourceId ||
+    raw.quiz_id ||
+    raw.quizId ||
+    raw.exam_id ||
+    raw.examId ||
+    raw.session_id ||
+    raw.sessionId ||
+    node?.quizId ||
+    node?.sessionId ||
+    ''
+  const fallbackFingerprint = hashText(`${node?.title || ''}:${JSON.stringify(raw)}`)
+  return backendId
+    ? `${pathId}-${node.id}-${backendId}`
+    : `${pathId}-${node.id}-${fallbackFingerprint}`
+}
+
+const getNodeQuizSet = (node, data = null) => {
+  const sourceId = getNodeQuizSourceId(node, data)
+  return sourceId ? getQuizSet(`quiz-resource-${sourceId}`) : null
+}
+
+const patchNodeState = (node, patch = {}) => {
+  if (!node?.id || !pathState.value?.nodes) return
+
+  Object.assign(node, patch)
+  let updatedNode = null
+  pathState.value = {
+    ...pathState.value,
+    nodes: pathState.value.nodes.map(item => {
+      if (item.id !== node.id) return item
+      updatedNode = { ...item, ...patch }
+      return updatedNode
+    })
+  }
+
+  if (updatedNode && selectedNode.value?.id === node.id) {
+    selectedNode.value = updatedNode
+  }
+
+  savePathToCache(pathState.value)
+}
+
+const hydratePathForRender = state => {
+  if (!state) return null
+
+  let hasCurrentNode = state.nodes?.some(node => node.status === 'current')
+  let promotedCurrent = false
+
+  return {
+    ...state,
+    diagnosis: {
+      weakPoints: [],
+      latestScore: 0,
+      recommendation: '',
+      ...(state.diagnosis || {})
+    },
+    nodes: (state.nodes || []).map((node, index) => {
+      const resources = node._resources?.length
+        ? node._resources
+        : normalizeNodeResources(node.resources || [], node)
+      const shouldPromote =
+        !hasCurrentNode &&
+        !promotedCurrent &&
+        (node.status === 'available' || node.status === 'unlocked' || (index === 0 && node.status !== 'locked'))
+
+      if (shouldPromote) {
+        promotedCurrent = true
+        hasCurrentNode = true
+      }
+
+      return {
+        ...node,
+        status: shouldPromote ? 'current' : node.status,
+        resources,
+        _resources: resources
+      }
+    })
+  }
+}
+
+const setPathState = state => {
+  const hydrated = hydratePathForRender(state)
+  pathState.value = hydrated
+  if (hydrated) savePathToCache(hydrated)
+}
+
+const delay = ms => new Promise(resolve => window.setTimeout(resolve, ms))
+
+const recoverGeneratedPathFromCurrent = async () => {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      if (attempt > 0) await delay(900)
+      const result = await getCurrentLearningPath()
+      const recovered = normalizePath(result)
+      if (recovered?.nodes?.length) {
+        setPathState(recovered)
+        error.value = ''
+        return true
+      }
+    } catch (currentErr) {
+      console.warn('[StudyPath] recover current path failed:', currentErr)
+    }
+  }
+
+  return false
+}
+
+const waitForGeneratedPath = async (runId, subject) => {
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    if (runId !== generationRunId.value) return { type: 'stale' }
+
+    try {
+      if (attempt > 0) await delay(1000)
+      const result = await getCurrentLearningPath()
+      const currentPath = normalizePath(result)
+      const matchesSubject =
+        !subject ||
+        currentPath.goal?.includes(subject) ||
+        currentPath.nodes?.some(node => node.title?.includes(subject) || node.summary?.includes(subject))
+
+      if (currentPath?.nodes?.length && matchesSubject) {
+        setPathState(currentPath)
+        error.value = ''
+        return { type: 'current', result: currentPath }
+      }
+    } catch (err) {
+      console.warn('[StudyPath] wait current path failed:', err)
+    }
+  }
+
+  return { type: 'timeout' }
+}
+
+const refreshGeneratedPathInBackground = async () => {
+  try {
+    await delay(1200)
+    const result = await getCurrentLearningPath()
+    const refreshed = normalizePath(result)
+    if (refreshed?.nodes?.length) {
+      setPathState(refreshed)
+    }
+  } catch (err) {
+    console.warn('[StudyPath] background refresh path failed:', err)
+  }
+}
 
 
 const buildNodeQuiz = (node, quizData = null) => {
   const pathId = pathState.value?.pathId
   if (!pathId || !node?.id) return null
 
-  let existingQuiz = getQuizSet(`quiz-resource-${pathId}-${node.id}`)
+  const data = quizData || node.quiz
+  if (!data) return null
+
+  let existingQuiz = getNodeQuizSet(node, data)
   if (existingQuiz?.questions?.[0]?.question && typeof existingQuiz.questions[0].question === 'object') {
     existingQuiz = null
   }
   if (existingQuiz) return existingQuiz
-
-  const data = quizData || node.quiz
-  if (!data) return null
 
   const rawQuestions =
     data.questions ||
@@ -577,7 +1121,7 @@ const buildNodeQuiz = (node, quizData = null) => {
   if (!questions.length && !data.content && !node.quiz) return null
 
   return upsertQuizSet({
-    sourceId: `${pathId}-${node.id}`,
+    sourceId: getNodeQuizSourceId(node, data),
     title: `${node.title} - 巩固练习`,
     content: JSON.stringify(questions.length ? { questions } : data),
     fileType: 'exercise',
@@ -590,7 +1134,7 @@ const ensureNodeResources = async (node, target = 'all') => {
 
   // 优先使用后端预加载的资源
   if (!node._resources && node.resources?.length) {
-    node._resources = normalizeNodeResources(node.resources)
+    patchNodeState(node, { _resources: normalizeNodeResources(node.resources, node) })
   }
 
   const pathId = pathState.value?.pathId
@@ -598,15 +1142,18 @@ const ensureNodeResources = async (node, target = 'all') => {
   const shouldLoadQuiz = target === 'all' || target === 'quiz'
 
   if (shouldLoadResources && !node._resources?.length && pathId) {
-    node._resLoading = true
+    patchNodeState(node, { _resLoading: true })
     try {
       const res = await generatePathNodeResources(pathId, node.id)
-      const data = res?.data?.data || res?.data || res || {}
-      const items = data.resources || data.files || data.items || []
-      node._resources = normalizeNodeResources(items)
-      node._resLoading = false
+      const resources = normalizeNodeResources(extractResourceItems(res, node), node)
+      patchNodeState(node, {
+        resources,
+        _resources: resources,
+        _resLoading: false,
+        status: node.status === 'available' ? 'current' : node.status
+      })
     } catch (err) {
-      node._resLoading = false
+      patchNodeState(node, { _resLoading: false })
       console.error('[StudyPath] generate node resources failed:', err)
       error.value = err?.response?.data?.detail || err?.message || '生成学习资料失败'
     }
@@ -615,19 +1162,23 @@ const ensureNodeResources = async (node, target = 'all') => {
   if (shouldLoadQuiz && !node._quiz && pathId) {
     const localQuiz = buildNodeQuiz(node)
     if (localQuiz) {
-      node._quiz = localQuiz
+      patchNodeState(node, { _quiz: localQuiz })
       return
     }
 
-    node._quizLoading = true
+    patchNodeState(node, { _quizLoading: true })
     try {
       const quizRes = await generatePathNodeQuiz(pathId, node.id)
-      const quizData = quizRes?.data?.data || quizRes?.data || quizRes || {}
+      const quizData = getResponseData(quizRes)
       const quiz = buildNodeQuiz(node, quizData)
-      node._quiz = quiz
-      node._quizLoading = false
+      patchNodeState(node, {
+        quiz: quizData,
+        sessionId: quizData.session_id || quizData.sessionId || node.sessionId || '',
+        _quiz: quiz,
+        _quizLoading: false
+      })
     } catch (err) {
-      node._quizLoading = false
+      patchNodeState(node, { _quizLoading: false })
       console.error('[StudyPath] generate node quiz failed:', err)
       error.value = err?.response?.data?.detail || err?.message || '生成学习检测失败'
     }
@@ -637,6 +1188,10 @@ const ensureNodeResources = async (node, target = 'all') => {
 const openNode = async node => {
   selectedNode.value = node
   cardFlipped.value = false
+  showResources.value = false
+  nodeResources.value = normalizeNodeResources(node._resources?.length ? node._resources : node.resources, node)
+  nodeQuizData.value = node._quiz || buildNodeQuiz(node)
+  nodeSessionId.value = nodeQuizData.value?.sessionId || node.sessionId || ''
   await nextTick()
   window.requestAnimationFrame(() => {
     cardFlipped.value = true
@@ -666,17 +1221,21 @@ const loadNodeResources = async () => {
   }
 
   if (selectedNode.value.resources?.length > 0) {
-    nodeResources.value = normalizeNodeResources(selectedNode.value.resources)
+    nodeResources.value = normalizeNodeResources(selectedNode.value.resources, selectedNode.value)
+    patchNodeState(selectedNode.value, {
+      resources: nodeResources.value,
+      _resources: nodeResources.value
+    })
     // 先查题库缓存，再用节点预载数据
     const pathId = pathState.value?.pathId
-    const quizBankId = pathId ? `quiz-resource-${pathId}-${selectedNode.value.id}` : ''
-    const existingQuiz = quizBankId ? getQuizSet(quizBankId) : null
+    const existingQuiz = pathId ? getNodeQuizSet(selectedNode.value) : null
     if (existingQuiz) {
       nodeQuizData.value = existingQuiz
       nodeSessionId.value = existingQuiz.sessionId || ''
+      patchNodeState(selectedNode.value, { _quiz: existingQuiz })
     } else if (selectedNode.value.quiz) {
       const quiz = upsertQuizSet({
-        sourceId: `${pathId}-${selectedNode.value.id}`,
+        sourceId: getNodeQuizSourceId(selectedNode.value),
         title: `${selectedNode.value.title} - 巩固练习`,
         content: JSON.stringify(selectedNode.value.quiz),
         fileType: 'exercise',
@@ -684,6 +1243,7 @@ const loadNodeResources = async () => {
       })
       if (quiz) nodeQuizData.value = quiz
       nodeSessionId.value = selectedNode.value.sessionId || ''
+      if (quiz) patchNodeState(selectedNode.value, { _quiz: quiz })
     }
     showResources.value = true
     return
@@ -695,20 +1255,24 @@ const loadNodeResources = async () => {
   resourcesLoading.value = true
   try {
     const res = await generatePathNodeResources(pathId, selectedNode.value.id)
-    const data = res?.data?.data || res?.data || res || {}
-    const items = data.resources || data.files || data.items || []
-    nodeResources.value = normalizeNodeResources(items)
+    nodeResources.value = normalizeNodeResources(extractResourceItems(res, selectedNode.value), selectedNode.value)
+    patchNodeState(selectedNode.value, {
+      resources: nodeResources.value,
+      _resources: nodeResources.value,
+      _resLoading: false,
+      status: selectedNode.value.status === 'available' ? 'current' : selectedNode.value.status
+    })
 
     // 查题库缓存 -> 节点预载 -> 调生成接口
-    const quizBankId = `quiz-resource-${pathId}-${selectedNode.value.id}`
-    const existingQuiz = getQuizSet(quizBankId)
+    const existingQuiz = getNodeQuizSet(selectedNode.value)
     if (existingQuiz) {
       nodeQuizData.value = existingQuiz
       nodeSessionId.value = existingQuiz.sessionId || ''
+      patchNodeState(selectedNode.value, { _quiz: existingQuiz })
       console.log('[StudyPath] 从题库加载已有题目：', existingQuiz)
     } else if (selectedNode.value.quiz) {
       const quiz = upsertQuizSet({
-        sourceId: `${pathId}-${selectedNode.value.id}`,
+        sourceId: getNodeQuizSourceId(selectedNode.value),
         title: `${selectedNode.value.title} - 巩固练习`,
         content: JSON.stringify(selectedNode.value.quiz),
         fileType: 'exercise',
@@ -716,10 +1280,11 @@ const loadNodeResources = async () => {
       })
       if (quiz) nodeQuizData.value = quiz
       nodeSessionId.value = selectedNode.value.sessionId || ''
+      if (quiz) patchNodeState(selectedNode.value, { _quiz: quiz })
     } else {
       const quizRes = await generatePathNodeQuiz(pathId, selectedNode.value.id)
       console.log('[StudyPath] generatePathNodeQuiz response:', quizRes)
-      const quizData = quizRes?.data?.data || quizRes?.data || quizRes || {}
+      const quizData = getResponseData(quizRes)
       nodeSessionId.value = quizData.session_id || quizData.sessionId || ''
       const rawQuestions =
         quizData.questions ||
@@ -731,14 +1296,21 @@ const loadNodeResources = async () => {
       const questions = Array.isArray(rawQuestions) ? rawQuestions : []
       if (questions.length || quizData.content) {
         const quiz = upsertQuizSet({
-          sourceId: `${pathId}-${selectedNode.value.id}`,
+          sourceId: getNodeQuizSourceId(selectedNode.value, quizData),
           title: `${selectedNode.value.title} - 巩固练习`,
           content: JSON.stringify(questions.length ? { questions } : quizData),
           fileType: 'exercise',
           sessionId: nodeSessionId.value
         })
         console.log('[StudyPath] upsertQuizSet result:', quiz)
-        if (quiz) nodeQuizData.value = quiz
+        if (quiz) {
+          nodeQuizData.value = quiz
+          patchNodeState(selectedNode.value, {
+            quiz: quizData,
+            sessionId: nodeSessionId.value,
+            _quiz: quiz
+          })
+        }
       } else {
         console.warn('[StudyPath] 后端未返回题目数据，quizData:', quizData)
       }
@@ -763,12 +1335,90 @@ const downloadNodeResource = async resource => {
   }
 }
 
-const previewNodeResource = resource => {
+const getResourceIdFromUrl = url => {
+  const match = String(url || '').match(/\/resource\/([^/?#]+)(?:\/download)?/i)
+  return match?.[1] || ''
+}
+
+const mergePreviewResource = (resource, detail) => {
+  const data = getResponseData(detail)
+  const resourceId = data.resource_id || data.resourceId || data.id || resource.resourceId || resource.id || ''
+  const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || resource.fileType || resource.type
+  const title = data.title || data.topic || data.filename || data.name || resource.title
+
+  const content = data.content || data.preview || data.text || resource.content || ''
+  const slides = Array.isArray(data.slides) && data.slides.length
+    ? data.slides
+    : (isPptResource({ ...resource, type: fileType, fileType, title, filename: data.filename || data.file_name || resource.filename || title })
+      ? parsePptSlidesFromContent(content)
+      : resource.slides || [])
+
+  return {
+    ...resource,
+    id: resourceId || resource.id,
+    resourceId: resourceId || resource.resourceId,
+    title,
+    filename: data.filename || data.file_name || resource.filename || title,
+    type: fileType,
+    fileType,
+    typeLabel: fileTypeLabel(fileType),
+    content,
+    slides,
+    narration: data.narration || resource.narration || null,
+    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.url || resource.previewUrl || ''),
+    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
+  }
+}
+
+const updateResourceInNodes = resource => {
+  if (!resource?.id || !pathState.value?.nodes) return
+
+  pathState.value = {
+    ...pathState.value,
+    nodes: pathState.value.nodes.map(node => ({
+      ...node,
+      resources: (node.resources || []).map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item),
+      _resources: (node._resources || []).map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item)
+    }))
+  }
+
+  if (selectedNode.value) {
+    const updatedNode = pathState.value.nodes.find(node => node.id === selectedNode.value.id)
+    if (updatedNode) selectedNode.value = updatedNode
+  }
+
+  nodeResources.value = nodeResources.value.map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item)
+  savePathToCache(pathState.value)
+}
+
+const previewNodeResource = async resource => {
   previewResource.value = resource
+  previewLoading.value = false
+
+  const resourceId = resource.resourceId || resource.id || getResourceIdFromUrl(resource.downloadUrl)
+  if (!resourceId || resource.slides?.length || (!isPptResource(resource) && (resource.content || resource.previewUrl))) return
+
+  previewLoading.value = true
+  try {
+    const detail = await getGeneratedResource(resourceId)
+    const merged = mergePreviewResource(resource, detail)
+    previewResource.value = merged
+    updateResourceInNodes(merged)
+  } catch (err) {
+    console.error('[StudyPath] load resource preview failed:', err)
+    previewResource.value = {
+      ...resource,
+      content: '预览加载失败，可以先下载原文件查看。'
+    }
+  } finally {
+    previewLoading.value = false
+  }
 }
 
 const closeResourcePreview = () => {
+  stopCurrentAudio()
   previewResource.value = null
+  previewLoading.value = false
 }
 
 const resetPath = () => {
@@ -783,7 +1433,17 @@ const resetPath = () => {
   clearPathCache()
 }
 
-onMounted(fetchCurrentPath)
+const mountStudyPath = async () => {
+  await fetchCurrentPath()
+  if (window.sessionStorage.getItem('zhiban_path_needs_refresh') === '1') {
+    window.sessionStorage.removeItem('zhiban_path_needs_refresh')
+    await delay(600)
+    await fetchCurrentPath({ silent: true })
+  }
+}
+
+onMounted(mountStudyPath)
+onBeforeUnmount(stopCurrentAudio)
 </script>
 
 <style scoped>
@@ -1231,6 +1891,13 @@ onMounted(fetchCurrentPath)
   font-weight: 900;
 }
 
+.branch-resource-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
 .branch-resource {
   width: 100%;
   min-height: 34px;
@@ -1265,6 +1932,19 @@ onMounted(fetchCurrentPath)
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.branch-mini-action {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #163f8f;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .branch-action {
@@ -1375,6 +2055,12 @@ onMounted(fetchCurrentPath)
   font-size: 24px;
 }
 
+.resource-preview-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .resource-preview-panel header button {
   width: 38px;
   height: 38px;
@@ -1423,6 +2109,254 @@ onMounted(fetchCurrentPath)
   word-break: break-word;
   line-height: 1.8;
   font-family: inherit;
+}
+
+.ppt-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.ppt-slide {
+  min-height: 430px;
+  padding: 28px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(237, 249, 252, 0.78), rgba(255, 255, 255, 0.96) 42%),
+    #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ppt-slide__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ppt-slide h3 {
+  margin: 0;
+  color: #163f8f;
+  font-size: 30px;
+  line-height: 1.25;
+}
+
+.ppt-slide__content {
+  color: rgba(22, 63, 143, 0.78);
+  font-size: 16px;
+}
+
+.ppt-slide__notes {
+  margin-top: auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(201, 220, 233, 0.24);
+  color: rgba(22, 63, 143, 0.72);
+}
+
+.ppt-slide__notes span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ppt-slide__notes p {
+  margin: 5px 0 0;
+  line-height: 1.65;
+}
+
+.ppt-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ppt-controls > button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 999px;
+  background: #fff;
+  color: #163f8f;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.resource-preview-panel header .resource-preview-icon-btn {
+  font-size: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.resource-preview-panel header .resource-preview-icon-btn:disabled {
+  opacity: 0.56;
+  cursor: wait;
+}
+
+.ppt-controls > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ppt-dots {
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ppt-dots button {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(95, 143, 195, 0.32);
+  cursor: pointer;
+}
+
+.ppt-dots button.active {
+  background: #163f8f;
+}
+
+.resource-markdown {
+  color: #163f8f;
+  line-height: 1.8;
+  font-size: 14px;
+}
+
+.markdown-body :deep(p) {
+  margin: 0;
+}
+
+.markdown-body :deep(p + p),
+.markdown-body :deep(p + ul),
+.markdown-body :deep(p + ol),
+.markdown-body :deep(ul + p),
+.markdown-body :deep(ol + p),
+.markdown-body :deep(.md-table-wrap + p),
+.markdown-body :deep(.md-code-block + p) {
+  margin-top: 12px;
+}
+
+.markdown-body :deep(h3),
+.markdown-body :deep(h4),
+.markdown-body :deep(h5),
+.markdown-body :deep(h6) {
+  margin: 16px 0 8px;
+  padding-left: 10px;
+  border-left: 3px solid #5f8fc3;
+  color: #163f8f;
+  line-height: 1.45;
+}
+
+.markdown-body :deep(h3:first-child),
+.markdown-body :deep(h4:first-child),
+.markdown-body :deep(h5:first-child),
+.markdown-body :deep(h6:first-child) {
+  margin-top: 0;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 10px 0 0;
+  padding-left: 22px;
+}
+
+.markdown-body :deep(li) {
+  margin: 5px 0;
+}
+
+.markdown-body :deep(blockquote) {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid #5f8fc3;
+  border-radius: 8px;
+  background: rgba(237, 249, 252, 0.68);
+}
+
+.markdown-body :deep(code) {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(237, 249, 252, 0.85);
+  color: #163f8f;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 0.92em;
+}
+
+.markdown-body :deep(.md-code-block) {
+  margin-top: 12px;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 12px;
+  background: rgba(237, 249, 252, 0.58);
+  overflow: hidden;
+}
+
+.markdown-body :deep(.md-code-block span) {
+  display: block;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.markdown-body :deep(.md-code-block pre) {
+  margin: 0;
+  padding: 14px;
+  background: transparent;
+  white-space: pre-wrap;
+}
+
+.markdown-body :deep(a) {
+  color: #163f8f;
+  font-weight: 900;
+}
+
+.markdown-body :deep(.md-generated-image) {
+  display: block;
+  width: min(100%, 420px);
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.markdown-body :deep(.md-table-wrap) {
+  margin-top: 12px;
+  overflow-x: auto;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 10px;
+}
+
+.markdown-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  padding: 9px 11px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.56);
+  border-right: 1px solid rgba(201, 220, 233, 0.56);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body :deep(th) {
+  background: rgba(237, 249, 252, 0.78);
+  font-weight: 900;
 }
 
 /* 鈹€鈹€ Inline node resources (inside overlay) 鈹€鈹€ */
