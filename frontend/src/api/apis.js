@@ -212,6 +212,10 @@ export function getPortrait() {
   return request.get('/ai_portrait/read_portrait')
 }
 
+export function getPortraitRadar() {
+  return request.get('/ai_portrait/radar')
+}
+
 export function initPortrait(data) {
   return request({
     url: '/ai_portrait/init_portrait',
@@ -501,6 +505,14 @@ export function generateLearningPath(data) {
 
 export function getLearningPaths() {
   return request.get('/path/list')
+}
+
+export function getLearningPathDetail(pathId) {
+  return request.get(`/path/${pathId}`)
+}
+
+export function getLearningPathProgress(pathId) {
+  return request.get(`/path/${pathId}/progress`)
 }
 
 export function enrollLearningPath(pathId) {

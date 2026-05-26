@@ -96,11 +96,11 @@ watch(
   z-index: 3;
   transform: none;
   background:
-    radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.94), transparent 45%),
-    rgba(255, 255, 255, 0.72);
+    radial-gradient(circle at 18% 10%, rgba(95, 143, 195, 0.34), transparent 45%),
+    rgba(10, 38, 92, 0.9);
   box-shadow:
-    0 12px 24px rgba(22, 63, 143, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.86);
+    0 12px 24px rgba(10, 38, 92, 0.24),
+    inset 0 1px 0 rgba(250, 250, 250, 0.2);
 }
 
 .floating-nav.entering-chat .nav-links a:nth-child(2) {
@@ -143,11 +143,11 @@ watch(
   min-height: 38px;
   padding: 0 11px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(22, 63, 143, 0.92);
   background:
-    radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.82), transparent 45%),
-    rgba(255, 255, 255, 0.36);
-  color: #163f8f;
+    radial-gradient(circle at 18% 10%, rgba(95, 143, 195, 0.32), transparent 45%),
+    #163f8f;
+  color: #ffffff;
   font-size: 13px;
   font-weight: 700;
   display: inline-flex;
@@ -165,13 +165,13 @@ watch(
 .nav-links a:hover,
 .nav-links a.router-link-active {
   background:
-    radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.9), transparent 45%),
-    rgba(255, 255, 255, 0.58);
-  border-color: rgba(255, 255, 255, 0.82);
+    radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.2), transparent 45%),
+    #1a4da8;
+  border-color: rgba(22, 63, 143, 0.96);
   transform: translateY(-2px);
   box-shadow:
-    0 8px 18px rgba(22, 63, 143, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+    0 8px 18px rgba(10, 38, 92, 0.24),
+    inset 0 1px 0 rgba(250, 250, 250, 0.22);
 }
 
 .nav-links a:active {
