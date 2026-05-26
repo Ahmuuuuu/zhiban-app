@@ -9,6 +9,9 @@ class GeneratedResource(Model):
     session_id = fields.CharField(max_length=32, null=True, description="关联的答题会话ID（exercise 类型）")
     review_passed = fields.BooleanField(default=False, description="是否通过审核")
     retry_count = fields.IntField(default=0, description="重试次数")
+    view_count = fields.IntField(default=0, description="查看次数")
+    download_count = fields.IntField(default=0, description="下载次数")
+    last_viewed_at = fields.DatetimeField(null=True, description="最近查看时间")
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

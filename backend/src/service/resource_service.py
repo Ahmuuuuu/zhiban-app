@@ -362,6 +362,10 @@ class ResourceService:
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:
             return None
+        # 追踪查看
+        record.view_count += 1
+        record.last_viewed_at = datetime.now()
+        await record.save()
         content = record.content
         if record.resource_type == "mindmap":
             content = _format_mindmap_content(content)
@@ -434,6 +438,8 @@ class ResourceService:
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:
             return None
+        record.download_count += 1
+        await record.save()
         ext = _FILE_EXT_MAP.get(record.resource_type, "md")
         filename = f"{record.topic}_{record.resource_type}.{ext}"
         if record.resource_type == "ppt":

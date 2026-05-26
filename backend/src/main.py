@@ -1,7 +1,7 @@
 import logging
 import traceback
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -60,7 +60,10 @@ async def hello():
 
 @app.get("/debug/token/{user_id}")
 async def debug_token(user_id: int):
-    """调试用：输入用户 ID 直接返回 token"""
+    """调试用：输入用户 ID 直接返回 token（仅 DEBUG=true 时可用）"""
+    import os
+    if os.getenv("DEBUG", "").lower() not in ("true", "1", "yes"):
+        raise HTTPException(status_code=404, detail="Not Found")
     from backend.src.utils.jwt import create_access_token
     return {"user_id": user_id, "token": create_access_token(user_id)}
 
