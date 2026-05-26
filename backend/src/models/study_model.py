@@ -29,3 +29,16 @@ class ResourceReadStatus(Model):
     class Meta:
         table = "resource_read_status"
         unique_together = [("user_id", "resource_id")]
+
+
+class ResourceCollection(Model):
+    """资源收藏"""
+    id = fields.IntField(pk=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    user = fields.ForeignKeyField("models.User", related_name="resource_collections", on_delete=fields.CASCADE)
+    resource = fields.ForeignKeyField("models.GeneratedResource", related_name="collections", on_delete=fields.CASCADE)
+
+    class Meta:
+        table = "resource_collections"
+        unique_together = [("user_id", "resource_id")]
