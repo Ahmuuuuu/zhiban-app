@@ -42,8 +42,8 @@ async def _build_path_context(user_id: int) -> str:
 async def _build_portrait_context(user_id: int) -> str:
     """构建用户画像 + 知识点掌握度的上下文文本"""
     try:
-        from backend.src.service.portrait_service import PortraitService
-        portrait = await PortraitService.read_portrait(user_id)
+        from backend.src.service.portrait_service import PortraitChatHistory_Service
+        portrait, _ = await PortraitChatHistory_Service.read_portrait(user_id)
         if not portrait or not portrait.get("traits"):
             return ""
         traits = portrait["traits"]

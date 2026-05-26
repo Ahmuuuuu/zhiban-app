@@ -1,5 +1,7 @@
 """题库路由"""
 
+import json
+
 from fastapi import APIRouter, Query, HTTPException, Depends
 
 from backend.src.service.exam_service import ExamService
@@ -23,11 +25,12 @@ async def list_questions(
     question_type: str | None = None,
     difficulty: str | None = None,
     knowledge_tag: str | None = None,
+    node_id: int | None = None,
     page: int = 1,
     page_size: int = 20,
 ):
-    """题目列表（分页+筛选）"""
-    result = await ExamService.list_questions(user_id, question_type, difficulty, knowledge_tag, page, page_size)
+    """题目列表（分页+筛选），传 node_id 仅返回该节点关联的题目"""
+    result = await ExamService.list_questions(user_id, question_type, difficulty, knowledge_tag, node_id, page, page_size)
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -53,7 +56,8 @@ async def delete_question(question_id: int, user_id: int = Depends(get_user_id_f
 async def submit_answer(data: SubmitAnswerRequest, user_id: int = Depends(get_user_id_from_token)):
     """提交答案"""
     try:
-        result = await ExamService.submit_answer(data.question_id, user_id, data.answer, data.time_spent, data.session_id)
+        answer = json.dumps(data.answer, ensure_ascii=False) if isinstance(data.answer, list) else data.answer
+        result = await ExamService.submit_answer(data.question_id, user_id, answer, data.time_spent, data.session_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"code": 200, "msg": "success", "data": result}
@@ -62,11 +66,12 @@ async def submit_answer(data: SubmitAnswerRequest, user_id: int = Depends(get_us
 @router.get("/records")
 async def get_records(
     user_id: int = Depends(get_user_id_from_token),
+    node_id: int | None = None,
     page: int = 1,
     page_size: int = 20,
 ):
-    """答题记录"""
-    result = await ExamService.get_records(user_id, page, page_size)
+    """答题记录，传 node_id 仅返回该节点关联的记录"""
+    result = await ExamService.get_records(user_id, node_id, page, page_size)
     return {"code": 200, "msg": "success", "data": result}
 
 
