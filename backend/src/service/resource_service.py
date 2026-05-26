@@ -149,6 +149,13 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
                 radar_data = None
             portrait_context = "\n".join(format_portrait(picture, show_missing=False, radar_data=radar_data))
 
+    learning_guidance = ""
+    try:
+        from backend.src.service.portrait_service import build_learning_guidance
+        learning_guidance = await build_learning_guidance(user_id)
+    except Exception:
+        logger.exception("学习指导生成失败 user_id=%s", user_id)
+
     kb_context = "暂无相关知识库资料"
     try:
         kb_result = await kb_search(topic, top_k=5, user_id=user_id)
@@ -169,6 +176,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         "resource_types": resource_types,
         "portrait_context": portrait_context,
         "kb_context": kb_context,
+        "learning_guidance": learning_guidance,
         "custom_prompts": custom_prompts,
         "generated_resources": {},
         "review_feedback": "",

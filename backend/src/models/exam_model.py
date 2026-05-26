@@ -13,6 +13,7 @@ class ExamQuestion(Model):
     analysis = fields.TextField(null=True, description="解析")
     difficulty = fields.CharField(max_length=16, default="medium", description="难度: easy/medium/hard")
     knowledge_tags = fields.TextField(null=True, description="知识点标签 JSON 数组")
+    point_value = fields.IntField(null=True, description="题目分值(null则按难度自动计算)")
     is_public = fields.BooleanField(default=True, description="是否全员可见")
     created_at = fields.DatetimeField(auto_now_add=True)
 

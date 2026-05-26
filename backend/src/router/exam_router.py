@@ -91,6 +91,13 @@ async def list_sessions(user_id: int = Depends(get_user_id_from_token)):
     return {"code": 200, "msg": "success", "data": result}
 
 
+@router.get("/statistics")
+async def get_statistics(user_id: int = Depends(get_user_id_from_token)):
+    """用户整体答题统计（按难度/题型/知识点正确率 + 总分）"""
+    result = await ExamService.get_statistics(user_id)
+    return {"code": 200, "msg": "success", "data": result}
+
+
 @router.get("/mastery")
 async def get_mastery(user_id: int = Depends(get_user_id_from_token)):
     """知识点掌握度"""

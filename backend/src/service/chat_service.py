@@ -67,6 +67,14 @@ async def _build_portrait_context(user_id: int) -> str:
                 lines.append(PortraitRadarService.format_for_prompt(radar))
         except Exception:
             pass
+        # 学习指导
+        try:
+            from backend.src.service.portrait_service import build_learning_guidance
+            guidance = await build_learning_guidance(user_id)
+            if guidance:
+                lines.append(guidance)
+        except Exception:
+            pass
         return "用户画像：\n" + "\n".join(lines) if lines else ""
     except Exception:
         logger.exception("构建画像上下文失败 user_id=%s", user_id)

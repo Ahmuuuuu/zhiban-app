@@ -319,7 +319,7 @@ class PortraitRadarService:
         # 广度 — 已覆盖知识标签种类数（上限 20 种 = 100 分）
         mastery_records = await KnowledgeMastery.filter(user_id=user_id).all()
         tag_count = len(mastery_records)
-        breadth = min(100, round(tag_count / 20 * 100))
+        breadth = min(100, round(tag_count / 50 * 100))
 
         # 坚持 — 近 30 天活跃天数占比
         from datetime import timezone as tz
@@ -386,3 +386,128 @@ class PortraitRadarService:
             bar = "█" * (d["score"] // 10) + "░" * (10 - d["score"] // 10)
             lines.append(f"  {d['label']}：{bar} {d['score']}")
         return "\n".join(lines)
+
+    @staticmethod
+    async def sync_to_portrait(user_id: int) -> None:
+        """雷达分数反哺画像 traits（strengths/weaknesses）"""
+        from backend.src.models.portrait_radar_model import PortraitRadar
+
+        radar = await PortraitRadar.filter(user_id=user_id).first()
+        if not radar:
+            return
+
+        user = await User.filter(id=user_id).first()
+        if not user:
+            return
+        picture = await user.picture
+        if not picture:
+            picture = await User_picture.create()
+            user.picture = picture
+            await user.save()
+
+        traits = parse_traits(picture.traits)
+        scores = {
+            "记忆": radar.memory, "理解": radar.understanding, "应用": radar.application,
+            "分析": radar.analysis, "广度": radar.breadth, "坚持": radar.persistence,
+        }
+
+        strengths = [f"{k}({v})" for k, v in scores.items() if v >= 70]
+        weaknesses = [f"{k}({v})" for k, v in scores.items() if v < 50]
+
+        if strengths:
+            traits["strengths"] = build_trait_entry(
+                "、".join(strengths), "agent_inferred", traits.get("strengths")
+            )
+        if weaknesses:
+            traits["weaknesses"] = build_trait_entry(
+                "、".join(weaknesses), "agent_inferred", traits.get("weaknesses")
+            )
+
+        picture.traits = dump_traits(traits)
+        await picture.save()
+
+
+async def build_learning_guidance(user_id: int) -> str:
+    """读雷达+画像+掌握度，输出显式的 LLM 学习指导文本"""
+    try:
+        radar_data = await PortraitRadarService.get(user_id)
+    except Exception:
+        return ""
+    if not radar_data or not radar_data.get("dimensions"):
+        return ""
+
+    dims = {d["key"]: d["score"] for d in radar_data["dimensions"]}
+    levels = {}
+    for key, score in dims.items():
+        if score >= 80:
+            levels[key] = "优秀"
+        elif score >= 60:
+            levels[key] = "尚可"
+        elif score >= 40:
+            levels[key] = "薄弱，需重点训练"
+        else:
+            levels[key] = "严重不足"
+
+    labels = {"memory": "记忆(简单题)", "understanding": "理解(中等题)", "application": "应用(困难题)",
+              "analysis": "分析(多选题)", "breadth": "广度(知识覆盖)", "persistence": "坚持(活跃度)"}
+
+    lines = []
+    # 一、能力分析
+    lines.append("## 学习者能力分析")
+    for key, label in labels.items():
+        score = dims.get(key, 0)
+        level = levels.get(key, "未知")
+        lines.append(f"- {label}: {score}分 — {level}")
+
+    # 二、学习策略建议
+    lines.append("\n## 学习策略建议")
+    weak = [(k, v) for k, v in dims.items() if v < 50]
+    moderate = [(k, v) for k, v in dims.items() if 50 <= v < 70]
+    strong = [(k, v) for k, v in dims.items() if v >= 70]
+    if weak:
+        w_labels = [labels.get(k, k) for k, _ in weak]
+        lines.append(f"- 薄弱环节：{'、'.join(w_labels)} → 优先分配学习资源")
+    if moderate:
+        m_labels = [labels.get(k, k) for k, _ in moderate]
+        lines.append(f"- 巩固方向：{'、'.join(m_labels)} → 保持练习频率")
+    if strong:
+        s_labels = [labels.get(k, k) for k, _ in strong]
+        lines.append(f"- 优势利用：{'、'.join(s_labels)} → 可作为学习加速器")
+
+    # 三、出题指导
+    lines.append("\n## 出题指导")
+    mem, und, app = dims.get("memory", 50), dims.get("understanding", 50), dims.get("application", 50)
+    total_gap = max((100 - mem) + (100 - und) + (100 - app), 1)
+    easy_pct = max(15, round((100 - mem) / total_gap * 100))
+    medium_pct = round((100 - und) / total_gap * 100)
+    hard_pct = min(50, 100 - easy_pct - medium_pct)
+    medium_pct = 100 - easy_pct - hard_pct  # 确保加起来 = 100
+    lines.append(f"- 建议难度配比：easy {easy_pct}% / medium {medium_pct}% / hard {hard_pct}%")
+    if dims.get("analysis", 50) < 60:
+        lines.append("- 分析能力不足：增加多选题比例")
+    if dims.get("application", 50) < 50:
+        lines.append("- 应用能力薄弱：每道困难题附带详细解析")
+
+    # 弱项知识点
+    from backend.src.models.exam_model import KnowledgeMastery
+    mastery_records = await KnowledgeMastery.filter(user_id=user_id).all()
+    weak_tags = [m.knowledge_tag for m in mastery_records if m.correct_count / max(m.total_attempts, 1) < 0.5]
+    if weak_tags:
+        lines.append(f"- 弱项知识点优先出题：{'、'.join(weak_tags[:8])}")
+
+    # 四、学习资料指导
+    lines.append("\n## 学习资料指导")
+    if dims.get("memory", 50) < 60:
+        lines.append("- 从基础概念讲起，循序渐进，每节附小结")
+    if dims.get("understanding", 50) < 60:
+        lines.append("- 增加对比分析和概念辨析内容")
+    if dims.get("application", 50) < 50:
+        lines.append("- 每节附实践练习和例题讲解")
+    if dims.get("analysis", 50) < 60:
+        lines.append("- 增加案例分析和归纳总结模块")
+    if dims.get("breadth", 50) < 50:
+        lines.append("- 引入跨领域连接和拓展阅读")
+    if dims.get("persistence", 50) < 30:
+        lines.append("- 内容拆分为小块，降低单次学习时长")
+
+    return "\n".join(lines)
