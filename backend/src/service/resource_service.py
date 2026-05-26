@@ -142,7 +142,12 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
     if user:
         picture = await user.picture
         if picture:
-            portrait_context = "\n".join(format_portrait(picture, show_missing=False))
+            from backend.src.service.portrait_service import PortraitRadarService
+            try:
+                radar_data = await PortraitRadarService.get(user_id)
+            except Exception:
+                radar_data = None
+            portrait_context = "\n".join(format_portrait(picture, show_missing=False, radar_data=radar_data))
 
     kb_context = "暂无相关知识库资料"
     try:
@@ -299,7 +304,9 @@ class ResourceService:
                     yield f"data: {json.dumps(done_data, ensure_ascii=False)}\n\n"
                     yield "data: [DONE]\n\n"
                 await _save_generation_to_history(user_id, chat_group_id, topic, cached)
-                return _replay_cache()
+                async for item in _replay_cache():
+                    yield item
+                return
 
         initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty)
         topic = initial_state["topic"]
