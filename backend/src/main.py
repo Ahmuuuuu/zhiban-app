@@ -19,6 +19,8 @@ from backend.src.router.admin_router import router as admin_router
 from backend.src.router.exam_router import router as exam_router
 from backend.src.router.path_router import router as path_router
 from backend.src.router.learning_path_router import router as learning_path_router
+from backend.src.router.video_router import router as video_router
+from backend.src.router.study_router import router as study_router
 app = FastAPI(
     title="AI聊天后端",
     description="Swagger接口文档",
@@ -56,6 +58,13 @@ async def hello():
     return {"hello": "user"}
 
 
+@app.get("/debug/token/{user_id}")
+async def debug_token(user_id: int):
+    """调试用：输入用户 ID 直接返回 token"""
+    from backend.src.utils.jwt import create_access_token
+    return {"user_id": user_id, "token": create_access_token(user_id)}
+
+
 @app.on_event("startup")
 async def startup():
     await init_db()
@@ -79,3 +88,5 @@ app.include_router(admin_router)
 app.include_router(exam_router)
 app.include_router(path_router)
 app.include_router(learning_path_router)
+app.include_router(video_router)
+app.include_router(study_router)

@@ -170,9 +170,10 @@ class PathService:
     async def list_paths(user_id: int | None = None) -> list[dict]:
         """列出所有公开路径"""
 
-        qs = LearningPath.filter(Q(is_public=True))
         if user_id:
-            qs = qs | LearningPath.filter(user_id=user_id, is_public=False)
+            qs = LearningPath.filter(Q(is_public=True) | Q(user_id=user_id, is_public=False))
+        else:
+            qs = LearningPath.filter(is_public=True)
         paths = await qs.order_by("-created_at").prefetch_related("nodes").all()
 
         result = []
@@ -323,6 +324,7 @@ class PathService:
             "prerequisites": json.loads(node.prerequisites) if node.prerequisites else [],
             "resource_types": json.loads(node.resource_types) if node.resource_types else [],
             "quiz_config": json.loads(node.quiz_config) if node.quiz_config else {},
+            "quiz_session_id": progress.quiz_session_id if progress else None,
             "progress": {
                 "status": progress.node_status if progress else "not_enrolled",
                 "quiz_passed": progress.quiz_passed if progress else False,
@@ -567,6 +569,87 @@ class PathService:
             "path_id": new_path_id,
             "regenerated": True,
             "nodes": result["nodes"],
+        }
+
+    @staticmethod
+    async def update_node(path_id: int, node_id: int, user_id: int, **fields) -> dict:
+        """更新节点属性：topic, knowledge_tags, resource_types, quiz_config, order_index 等"""
+        node = await PathNode.filter(id=node_id, path_id=path_id).first()
+        if not node:
+            raise ValueError("节点不存在")
+
+        allowed = {"topic", "knowledge_tags", "resource_types", "quiz_config", "order_index"}
+        updates = {}
+        for k, v in fields.items():
+            if k in allowed and v is not None:
+                updates[k] = json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else v
+
+        if updates:
+            await PathNode.filter(id=node_id).update(**updates)
+            await node.refresh_from_db()
+
+        return {
+            "node_id": node.id,
+            "topic": node.topic,
+            "knowledge_tags": json.loads(node.knowledge_tags) if node.knowledge_tags else [],
+            "resource_types": json.loads(node.resource_types) if node.resource_types else [],
+            "quiz_config": json.loads(node.quiz_config) if node.quiz_config else {},
+            "order_index": node.order_index,
+        }
+
+    @staticmethod
+    async def delete_node(path_id: int, node_id: int) -> bool:
+        """删除节点（后续节点的 order_index 自动前移）"""
+        node = await PathNode.filter(id=node_id, path_id=path_id).first()
+        if not node:
+            return False
+        deleted_order = node.order_index
+        await node.delete()
+
+        # 后续节点前移
+        later = await PathNode.filter(path_id=path_id, order_index__gt=deleted_order).all()
+        for n in later:
+            n.order_index -= 1
+            await n.save()
+
+        # 更新路径的 node_count
+        count = await PathNode.filter(path_id=path_id).count()
+        await LearningPath.filter(id=path_id).update(node_count=count)
+
+        return True
+
+    @staticmethod
+    async def add_node(path_id: int, topic: str, user_id: int, **fields) -> dict:
+        """在路径末尾追加一个新节点"""
+        path = await LearningPath.filter(id=path_id).first()
+        if not path:
+            raise ValueError("路径不存在")
+
+        max_order = await PathNode.filter(path_id=path_id).order_by("-order_index").first()
+        next_order = (max_order.order_index + 1) if max_order else 1
+
+        node = await PathNode.create(
+            path=path,
+            topic=topic,
+            knowledge_tags=json.dumps(fields.get("knowledge_tags", []), ensure_ascii=False),
+            order_index=fields.get("order_index", next_order),
+            prerequisites=json.dumps(fields.get("prerequisites", []), ensure_ascii=False),
+            resource_types=json.dumps(fields.get("resource_types", ["document"]), ensure_ascii=False),
+            quiz_config=json.dumps(fields.get("quiz_config", {"count": 3, "threshold": 0.7}), ensure_ascii=False),
+        )
+
+        await LearningPath.filter(id=path_id).update(node_count=await PathNode.filter(path_id=path_id).count())
+
+        # 为新节点自动生成资源
+        try:
+            await PathService.generate_node_resources(path_id, node.id, user_id)
+        except Exception:
+            logger.exception("新节点资源生成失败 node_id=%s", node.id)
+
+        return {
+            "node_id": node.id,
+            "topic": node.topic,
+            "order_index": node.order_index,
         }
 
     # ── 内部辅助 ──
