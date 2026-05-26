@@ -72,7 +72,38 @@ export function getGeneratedResources(): Promise<unknown>;
 
 export function getGeneratedResource(resourceId: number | string): Promise<unknown>;
 
+export function narrateResource(
+  resourceId: number | string,
+  options?: {
+    voice?: string;
+    force_regenerate?: boolean;
+  },
+): Promise<unknown>;
+
+export function getNarration(narrationId: number | string): Promise<unknown>;
+
+export function getNarrationVoices(): Promise<unknown>;
+
 export function deleteGeneratedResource(resourceId: number | string): Promise<unknown>;
+
+export function getAgentSkills(): Promise<unknown>;
+
+export function getAgentSkill(resourceType: string): Promise<unknown>;
+
+export function upsertAgentSkill(data: {
+  resource_type: string;
+  name: string;
+  system_prompt: string;
+}): Promise<unknown>;
+
+export function upsertAgentActionSkill(data: {
+  name: string;
+  action_type: string;
+  action_config: Record<string, unknown>;
+  tool_description: string;
+}): Promise<unknown>;
+
+export function deleteAgentSkill(resourceType: string): Promise<unknown>;
 
 export function generateExamQuestions(data: {
   topic: string;

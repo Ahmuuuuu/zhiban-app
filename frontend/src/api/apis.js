@@ -332,6 +332,75 @@ export function getGeneratedResource(resourceId) {
   return request.get(`/resource/${resourceId}`)
 }
 
+export function narrateResource(resourceId, options = {}) {
+  return request({
+    url: '/video/narrate',
+    method: 'post',
+    data: {
+      resource_id: Number(resourceId),
+      voice: options.voice || 'zh-CN-XiaoxiaoNeural',
+      force_regenerate: Boolean(options.force_regenerate)
+    }
+  })
+}
+
+export function getNarration(narrationId) {
+  return request.get(`/video/narrations/${narrationId}`)
+}
+
+export function getNarrationVoices() {
+  return request.get('/video/voices')
+}
+
+// ── 个人智能体 Skill API ──
+
+export function getAgentSkills() {
+  return request.get('/resource/skill/list')
+}
+
+export function getAgentSkill(resourceType) {
+  return request.get(`/resource/skill/${encodeURIComponent(resourceType)}`)
+}
+
+export function upsertAgentSkill(data) {
+  return request({
+    url: '/resource/skill/upsert',
+    method: 'post',
+    data
+  })
+}
+
+const requestFirstAvailable = async requests => {
+  let lastError = null
+
+  for (const makeRequest of requests) {
+    try {
+      return await makeRequest()
+    } catch (error) {
+      lastError = error
+      const status = error?.response?.status
+      if (status && ![404, 405].includes(status)) {
+        throw error
+      }
+    }
+  }
+
+  throw lastError
+}
+
+export function upsertAgentActionSkill(data) {
+  return requestFirstAvailable([
+    () => request({ url: '/agent/skills/action', method: 'post', data }),
+    () => request({ url: '/resource/skill/action/upsert', method: 'post', data }),
+    () => request({ url: '/resource/skill/action', method: 'post', data }),
+    () => request({ url: '/resource/skill/upsert_action', method: 'post', data })
+  ])
+}
+
+export function deleteAgentSkill(resourceType) {
+  return request.delete(`/resource/skill/${encodeURIComponent(resourceType)}`)
+}
+
 export function generateImage(data) {
   return request({
     url: '/image/generate',

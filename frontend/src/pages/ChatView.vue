@@ -8,6 +8,9 @@
         <button class="menu-btn" type="button" aria-label="打开最近对话" @click="showHistoryPanel = !showHistoryPanel">
           <Menu :size="34" stroke-width="1.25" />
         </button>
+        <button class="menu-btn" type="button" aria-label="管理个人智能体 Skill" title="管理个人智能体 Skill" @click="openSkillPanel">
+          <Bot :size="31" stroke-width="1.35" />
+        </button>
       </div>
       <UserAccountButton variant="home" logged-out-meta="点击登录" />
     </header>
@@ -144,6 +147,10 @@
             :title="message.filename"
           />
 
+          <div v-else-if="isPptFile(message)" class="file-placeholder">
+            PPT 已生成，可以打开幻灯片预览。
+          </div>
+
           <pre v-else-if="message.content" class="file-preview">{{ message.content }}</pre>
 
           <div v-else class="file-placeholder">
@@ -151,7 +158,10 @@
           </div>
 
           <div v-if="message.previewUrl || message.downloadUrl || message.fileId || message.content" class="file-actions">
-            <a v-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
+            <button v-if="isPptFile(message) && canOpenPptPreview(message)" type="button" @click="openPptPreview(message)">
+              {{ pptPreview.loading && pptPreview.messageId === message.id ? '加载中...' : '预览' }}
+            </button>
+            <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
             <button
               type="button"
@@ -200,6 +210,10 @@
         <Plus :size="17" stroke-width="1.7" />
         开启新对话
       </button>
+      <button type="button" @click="showAgentSkillListInChat">
+        <Bot :size="17" stroke-width="1.7" />
+        能力列表
+      </button>
     </div>
 
     <textarea
@@ -246,6 +260,32 @@
     </main>
 
     <Teleport to="body">
+      <section v-if="pptPreview.visible" class="ppt-dialog" @click.self="closePptPreview">
+        <article class="ppt-dialog__panel">
+          <header class="ppt-dialog__header">
+            <div>
+              <span>PPT Preview</span>
+              <h2>{{ pptPreview.title }}</h2>
+            </div>
+            <button type="button" aria-label="关闭 PPT 预览" @click="closePptPreview">
+              <X :size="20" />
+            </button>
+          </header>
+
+          <div class="ppt-dialog__body">
+            <div v-if="pptPreview.loading" class="ppt-dialog__loading">正在加载 PPT 预览...</div>
+            <PptPreview
+              v-else-if="pptPreview.slides.length"
+              :slides="pptPreview.slides"
+              :title="pptPreview.title"
+            />
+            <div v-else class="ppt-dialog__loading">暂无可预览的幻灯片内容。</div>
+          </div>
+        </article>
+      </section>
+    </Teleport>
+
+    <Teleport to="body">
       <section v-if="saveDialog.visible" class="save-dialog" @click.self="closeSaveDialog">
         <article class="save-dialog__panel">
           <h2>保存生成资源</h2>
@@ -267,6 +307,121 @@
         </article>
       </section>
     </Teleport>
+
+    <Teleport to="body">
+      <section v-if="skillPanel.visible" class="skill-dialog" @click.self="closeSkillPanel">
+        <article class="skill-dialog__panel">
+          <header class="skill-dialog__header">
+            <div>
+              <span>Personal Agent</span>
+              <h2>智能体 Skill</h2>
+            </div>
+            <button type="button" aria-label="关闭 Skill 管理" @click="closeSkillPanel">
+              <X :size="20" />
+            </button>
+          </header>
+
+          <div class="skill-dialog__body">
+            <aside class="skill-list-pane">
+              <div class="skill-list-head">
+                <strong>已配置</strong>
+                <button type="button" @click="startCreateSkill">
+                  <Plus :size="15" />
+                  新建
+                </button>
+              </div>
+
+              <p v-if="skillPanel.loading" class="skill-empty">正在加载...</p>
+              <p v-else-if="!agentSkills.length" class="skill-empty">暂无自定义 Skill</p>
+
+              <template v-else>
+                <article
+                  v-for="skill in agentSkills"
+                  :key="skill.skill_id || skill.resource_type || skill.name"
+                  class="skill-list-item"
+                  :class="{ active: selectedSkillKey === skillKey(skill) }"
+                  @click="editSkill(skill)"
+                >
+                  <span>
+                    <strong>{{ skill.name }}</strong>
+                    <small>{{ skillLabel(skill) }}</small>
+                  </span>
+                  <button
+                    class="skill-delete-btn"
+                    type="button"
+                    aria-label="删除 Skill"
+                    @click.stop="removeSkill(skill)"
+                  >
+                    <Trash2 :size="15" />
+                  </button>
+                </article>
+              </template>
+            </aside>
+
+            <form class="skill-editor" @submit.prevent="saveSkill">
+              <div class="skill-editor__top">
+                <div>
+                  <span>{{ skillFormMode === 'create' ? 'Create' : 'Edit' }}</span>
+                  <h3>{{ skillFormMode === 'create' ? '新建智能体能力' : '编辑智能体能力' }}</h3>
+                </div>
+                <button type="submit" :disabled="skillPanel.saving || !canSaveSkill">
+                  <Save :size="16" />
+                  保存
+                </button>
+              </div>
+
+              <label>
+                <span>能力名称</span>
+                <input v-model.trim="skillForm.name" type="text" placeholder="例如：check_weather" />
+              </label>
+
+              <label>
+                <span>能力描述</span>
+                <input v-model.trim="skillForm.tool_description" type="text" placeholder="例如：当用户询问某地天气时，调用该能力查询实时天气。" />
+              </label>
+
+              <div class="skill-form-grid">
+                <label>
+                  <span>调用方式</span>
+                  <select v-model="skillForm.action_config.method">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                  </select>
+                </label>
+
+                <label>
+                  <span>动作类型</span>
+                  <select v-model="skillForm.action_type">
+                    <option value="http">HTTP</option>
+                  </select>
+                </label>
+              </div>
+
+              <label>
+                <span>接口地址</span>
+                <input v-model.trim="skillForm.action_config.url" type="text" placeholder="https://api.example.com/weather?city={{city}}" />
+              </label>
+
+              <label class="skill-prompt-field">
+                <span>参数说明 JSON</span>
+                <textarea
+                  v-model="skillParamsText"
+                  rows="8"
+                  placeholder='{"city":"城市名称，例如 Beijing"}'
+                ></textarea>
+              </label>
+
+              <button class="skill-example-btn" type="button" @click="fillWeatherSkillExample">
+                <CloudSun :size="16" />
+                填入天气能力示例
+              </button>
+
+              <p v-if="skillPanel.error" class="skill-error">{{ skillPanel.error }}</p>
+            </form>
+          </div>
+        </article>
+      </section>
+    </Teleport>
   </div>
 </template>
 
@@ -274,14 +429,20 @@
 import { computed, ref, nextTick, onMounted } from 'vue'
 import {
   downloadWithToken,
+  deleteAgentSkill,
+  getAgentSkill,
+  getAgentSkills,
   streamChatMessage,
   getConversationList,
   getConversationMessages,
+  getGeneratedResource,
+  upsertAgentActionSkill,
   resolveApiUrl
 } from '../api/apis'
 import { detectGenerationIntent, executeGeneration } from '../composables/useResourceGeneration'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
+import PptPreview from '../components/PptPreview.vue'
 import {
   FileText,
   GitBranch,
@@ -294,7 +455,12 @@ import {
   Plus,
   Presentation,
   CircleHelp,
+  Bot,
+  CloudSun,
+  Save,
   SendHorizontal,
+  Trash2,
+  X,
   Video
 } from 'lucide-vue-next'
 import petHeroImage from '../assets/pic/zhiban-pet-base.png'
@@ -343,6 +509,12 @@ const resourceTools = [
     resourceTypes: ['document']
   },
   {
+    label: 'skill',
+    icon: Bot,
+    prompt: '帮我学习并创建一个智能体能力：',
+    agentSkillMode: true
+  },
+  {
     label: 'mindmap',
     icon: GitBranch,
     prompt: '帮我生成一份思维导图：',
@@ -378,6 +550,7 @@ const selectedResourceToolName = computed(() => {
     ppt: 'PPT',
     word: 'Word',
     video: '视频',
+    skill: '智能体能力',
     mindmap: '思维导图',
     quiz: '题目'
   }
@@ -394,6 +567,32 @@ const inputPlaceholder = computed(() => {
 const stripTypedResourceInstruction = value => {
   return String(value || '').replace(/\n\n【生成类型指令】[\s\S]*$/, '')
 }
+
+const stripAgentSkillInstruction = value => {
+  return String(value || '').replace(/\n\n【智能体能力指令】[\s\S]*$/, '')
+}
+
+const stripInternalInstructions = value => stripAgentSkillInstruction(stripTypedResourceInstruction(value))
+
+const isAgentSkillCreateIntent = value => {
+  const text = String(value || '')
+  return /(学|学习|创建|添加|新增|接入|掌握|教你|给你).{0,12}(技能|能力|工具|智能体)/.test(text) ||
+    /(技能|能力|工具|智能体).{0,12}(学|学习|创建|添加|新增|接入|掌握)/.test(text)
+}
+
+const isAgentSkillListIntent = value => {
+  const text = String(value || '')
+  return /(查看|看看|列出|显示|有什么|有哪些).{0,12}(技能|能力|工具|智能体)/.test(text) ||
+    /(技能|能力|工具|智能体).{0,12}(列表|清单|有哪些|有什么)/.test(text)
+}
+
+const withAgentSkillInstruction = value => `${value}
+
+【智能体能力指令】
+如果用户要求你学习、创建、添加、接入某个可执行能力，请优先使用 create_action_skill 创建动作 Skill，而不是只给文字建议。
+创建动作 Skill 前必须确认或找到真实可用的 HTTP API。action_type 使用 "http"。
+action_config 必须是 JSON 字符串，包含 url、method、params；url 中动态参数使用 {{参数名}} 占位。
+如果用户要求查看已有能力，请调用 list_skills。`
 
 const handleAddFile = () => {
   showAddMenu.value = false
@@ -419,9 +618,224 @@ const saveDialog = ref({
   visibility: 'private',
   message: null
 })
+const skillPanel = ref({
+  visible: false,
+  loading: false,
+  saving: false,
+  error: ''
+})
+const agentSkills = ref([])
+const selectedSkillKey = ref('')
+const skillFormMode = ref('create')
+const skillForm = ref({
+  name: '',
+  action_type: 'http',
+  action_config: {
+    method: 'GET',
+    url: ''
+  },
+  tool_description: ''
+})
+const skillParamsText = ref('{\n  "city": "城市名称，例如 Beijing"\n}')
+
+const canSaveSkill = computed(() => {
+  return Boolean(
+    skillForm.value.name.trim() &&
+    skillForm.value.tool_description.trim() &&
+    skillForm.value.action_config.url.trim()
+  )
+})
 
 const getResponseData = (res) => {
   return res?.data ?? res ?? {}
+}
+
+const skillKey = skill => {
+  if (skill?.resource_type) return skill.resource_type
+  if (skill?.skill_type === 'action' && skill?.name) return `action:${skill.name}`
+  return skill?.name || ''
+}
+
+const skillLabel = skill => {
+  if (skill?.skill_type === 'action') return `动作 Skill · ${skill.action_type || 'action'}`
+  return `生成 Skill · ${skill.resource_type || 'resource'}`
+}
+
+const formatAgentSkillList = skills => {
+  if (!skills.length) return '你现在还没有学会额外的智能体能力。'
+
+  return [
+    `当前已学会 ${skills.length} 个智能体能力：`,
+    ...skills.map(skill => `- ${skill.name}：${skill.tool_description || skill.action_type || '可执行能力'}`)
+  ].join('\n')
+}
+
+const resetSkillForm = () => {
+  selectedSkillKey.value = ''
+  skillFormMode.value = 'create'
+  skillForm.value = {
+    name: '',
+    action_type: 'http',
+    action_config: {
+      method: 'GET',
+      url: ''
+    },
+    tool_description: ''
+  }
+  skillParamsText.value = '{\n  "city": "城市名称，例如 Beijing"\n}'
+}
+
+const loadAgentSkills = async () => {
+  skillPanel.value.loading = true
+  skillPanel.value.error = ''
+  try {
+    agentSkills.value = normalizeList(await getAgentSkills()).filter(skill => skill.skill_type === 'action')
+  } catch (err) {
+    console.error('[ChatView] load agent skills failed:', err)
+    skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 加载失败'
+  } finally {
+    skillPanel.value.loading = false
+  }
+}
+
+const openSkillPanel = async () => {
+  skillPanel.value.visible = true
+  resetSkillForm()
+  await loadAgentSkills()
+}
+
+const showAgentSkillListInChat = async () => {
+  showAddMenu.value = false
+  await loadAgentSkills()
+  messages.value.push({
+    id: Date.now(),
+    role: 'assistant',
+    type: 'text',
+    content: formatAgentSkillList(agentSkills.value),
+    time: getNowTime()
+  })
+  await scrollToBottom()
+}
+
+const closeSkillPanel = () => {
+  skillPanel.value.visible = false
+  skillPanel.value.error = ''
+}
+
+const startCreateSkill = () => {
+  skillPanel.value.error = ''
+  resetSkillForm()
+}
+
+const editSkill = async skill => {
+  const key = skillKey(skill)
+  selectedSkillKey.value = key
+  skillPanel.value.error = ''
+
+  if (skill.skill_type !== 'action') {
+    skillPanel.value.error = '这里管理的是智能体动作能力，不编辑资源生成 Skill。'
+    return
+  }
+
+  skillFormMode.value = 'edit'
+  skillForm.value = {
+    name: skill.name || '',
+    action_type: skill.action_type || 'http',
+    action_config: {
+      method: 'GET',
+      url: ''
+    },
+    tool_description: skill.tool_description || ''
+  }
+
+  try {
+    const detailEnvelope = getResponseData(await getAgentSkill(key))
+    const detail = detailEnvelope?.data || detailEnvelope
+    const actionConfig = typeof detail.action_config === 'string'
+      ? JSON.parse(detail.action_config || '{}')
+      : detail.action_config || {}
+    skillForm.value = {
+      name: detail.name || skill.name || '',
+      action_type: detail.action_type || skill.action_type || 'http',
+      action_config: {
+        method: actionConfig.method || 'GET',
+        url: actionConfig.url || ''
+      },
+      tool_description: detail.tool_description || skill.tool_description || ''
+    }
+    skillParamsText.value = JSON.stringify(actionConfig.params || {}, null, 2)
+  } catch (err) {
+    console.error('[ChatView] load agent skill failed:', err)
+    skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 详情加载失败'
+  }
+}
+
+const saveSkill = async () => {
+  if (!canSaveSkill.value || skillPanel.value.saving) return
+
+  skillPanel.value.saving = true
+  skillPanel.value.error = ''
+  try {
+    let params = {}
+    try {
+      params = JSON.parse(skillParamsText.value || '{}')
+    } catch {
+      skillPanel.value.error = '参数说明 JSON 格式不正确'
+      return
+    }
+
+    await upsertAgentActionSkill({
+      name: skillForm.value.name.trim(),
+      action_type: skillForm.value.action_type,
+      action_config: {
+        method: skillForm.value.action_config.method,
+        url: skillForm.value.action_config.url.trim(),
+        params
+      },
+      tool_description: skillForm.value.tool_description.trim()
+    })
+    await loadAgentSkills()
+    selectedSkillKey.value = `action:${skillForm.value.name.trim()}`
+    skillFormMode.value = 'edit'
+  } catch (err) {
+    console.error('[ChatView] save agent skill failed:', err)
+    skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 保存失败'
+  } finally {
+    skillPanel.value.saving = false
+  }
+}
+
+const fillWeatherSkillExample = () => {
+  skillForm.value = {
+    name: 'check_weather',
+    action_type: 'http',
+    action_config: {
+      method: 'GET',
+      url: 'https://api.open-meteo.com/v1/forecast?latitude={{latitude}}&longitude={{longitude}}&current_weather=true'
+    },
+    tool_description: '当用户询问某地天气时，先确定地点经纬度，再调用该能力查询当前天气。'
+  }
+  skillParamsText.value = JSON.stringify({
+    latitude: '地点纬度，例如 39.9042',
+    longitude: '地点经度，例如 116.4074'
+  }, null, 2)
+}
+
+const removeSkill = async skill => {
+  const key = skillKey(skill)
+  if (!key) return
+  const confirmed = window.confirm(`确定删除「${skill.name || key}」吗？`)
+  if (!confirmed) return
+
+  skillPanel.value.error = ''
+  try {
+    await deleteAgentSkill(key)
+    if (selectedSkillKey.value === key) resetSkillForm()
+    await loadAgentSkills()
+  } catch (err) {
+    console.error('[ChatView] delete agent skill failed:', err)
+    skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 删除失败'
+  }
 }
 
 const normalizeList = (res) => {
@@ -450,7 +864,7 @@ const buildMessagesFromHistory = (records, conversationId) => {
           id: `${conversationId}-${id}-req`,
           role: 'user',
           type: 'text',
-          content: stripTypedResourceInstruction(item.req),
+          content: stripInternalInstructions(item.req),
           time
         },
         assistantMessage
@@ -477,8 +891,8 @@ const normalizeHistoryGroups = (res) => {
 
     return {
       id: Number(groupId) || firstRecord.chat_group_id || groupId,
-      title: stripTypedResourceInstruction(firstRecord.req) || `对话 ${groupId}`,
-      lastMessage: stripTypedResourceInstruction(lastRecord.req) || lastRecord.res || '',
+      title: stripInternalInstructions(firstRecord.req) || `对话 ${groupId}`,
+      lastMessage: stripInternalInstructions(lastRecord.req) || lastRecord.res || '',
       time: formatTime(getRecordTime(lastRecord))
     }
   })
@@ -702,6 +1116,14 @@ const getNowTime = () => {
 
 // 初始空状态展示草图里的学习资源引导
 const messages = ref([])
+const pptPreview = ref({
+  visible: false,
+  loading: false,
+  messageId: '',
+  title: '',
+  slides: []
+})
+
 const normalizeFileMessage = data => {
   const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || 'file'
   const rawFilename =
@@ -719,6 +1141,8 @@ const normalizeFileMessage = data => {
     fileType,
     filename,
     content: data.content || data.text || data.preview_content || data.previewContent || '',
+    slides: Array.isArray(data.slides) ? data.slides : [],
+    narration: data.narration || null,
     fileId,
     resourceKind: data.resourceKind || data.kind || 'resource',
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.preview || ''),
@@ -858,8 +1282,133 @@ const normalizeHistoryAssistantMessage = (item, id, time) => {
     id,
     role: 'assistant',
     type: 'text',
-    content: stripTypedResourceInstruction(rawContent),
+    content: stripInternalInstructions(rawContent),
     time
+  }
+}
+
+const isPptFile = fileData => {
+  return String(fileData?.fileType || fileData?.file_type || fileData?.resource_type || fileData?.filename || '')
+    .toLowerCase()
+    .match(/ppt|powerpoint|presentation|slide/)
+}
+
+const getFileResourceId = fileData => {
+  const directId = fileData?.fileId || fileData?.file_id || fileData?.resourceId || fileData?.resource_id || ''
+  if (directId) return directId
+  const match = String(fileData?.downloadUrl || fileData?.download_url || fileData?.previewUrl || fileData?.preview_url || '')
+    .match(/\/resource\/([^/?#]+)(?:\/download)?/i)
+  return match?.[1] || ''
+}
+
+const canOpenPptPreview = message => {
+  return Boolean(message?.slides?.length || message?.content || getFileResourceId(message))
+}
+
+const parsePptSlidesFromContent = content => {
+  const text = String(content || '').trim()
+  if (!text) return []
+
+  try {
+    const parsed = JSON.parse(text)
+    const list = Array.isArray(parsed) ? parsed : parsed.slides || parsed.pages || parsed.items || []
+    if (Array.isArray(list) && list.length) {
+      return list.map((slide, index) => ({
+        index,
+        title: slide.title || slide.heading || `第 ${index + 1} 页`,
+        text: slide.text || slide.content || slide.body || '',
+        notes: slide.notes || slide.speaker_notes || ''
+      }))
+    }
+  } catch {
+    // fall through to markdown/plain-text parsing
+  }
+
+  const blocks = text
+    .replace(/^```(?:json|markdown|md)?\s*/i, '')
+    .replace(/```$/i, '')
+    .split(/\n\s*---+\s*\n|(?=\n\s*#{1,3}\s+)/)
+    .map(block => block.trim())
+    .filter(Boolean)
+
+  return blocks.map((block, index) => {
+    const lines = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const titleLine = lines.find(line => /^#{1,3}\s+/.test(line)) || lines[0] || `第 ${index + 1} 页`
+    const title = titleLine.replace(/^#{1,3}\s+/, '').replace(/^第?\s*\d+\s*[页章、.：:-]?\s*/, '').trim()
+    const body = lines
+      .filter(line => line !== titleLine)
+      .map(line => line.replace(/^[-*•]\s+/, '').trim())
+      .filter(Boolean)
+      .join('\n')
+
+    return {
+      index,
+      title: title || `第 ${index + 1} 页`,
+      text: body,
+      notes: ''
+    }
+  }).filter(slide => slide.title || slide.text)
+}
+
+const hydratePptPreview = async message => {
+  const resourceId = getFileResourceId(message)
+  if (message.slides?.length) return message.slides
+
+  if (resourceId) {
+    const res = await getGeneratedResource(resourceId)
+    const data = getResponseData(res)?.data || getResponseData(res)
+    const content = data.content || message.content || ''
+    const slides = Array.isArray(data.slides) && data.slides.length
+      ? data.slides
+      : parsePptSlidesFromContent(content)
+
+    Object.assign(message, {
+      content,
+      slides,
+      narration: data.narration || message.narration || null
+    })
+
+    return slides
+  }
+
+  const slides = parsePptSlidesFromContent(message.content)
+  Object.assign(message, { slides })
+  return slides
+}
+
+const openPptPreview = async message => {
+  pptPreview.value = {
+    visible: true,
+    loading: true,
+    messageId: message.id,
+    title: message.filename || 'PPT 预览',
+    slides: message.slides || []
+  }
+
+  try {
+    const slides = await hydratePptPreview(message)
+    pptPreview.value = {
+      ...pptPreview.value,
+      loading: false,
+      slides: slides || []
+    }
+  } catch (err) {
+    console.error('[ChatView] load ppt preview failed:', err)
+    pptPreview.value = {
+      ...pptPreview.value,
+      loading: false,
+      slides: parsePptSlidesFromContent(message.content)
+    }
+  }
+}
+
+const closePptPreview = () => {
+  pptPreview.value = {
+    visible: false,
+    loading: false,
+    messageId: '',
+    title: '',
+    slides: []
   }
 }
 
@@ -869,7 +1418,7 @@ const appendQuizMessage = async fileData => {
   const filename = fileData.filename || fileData.file_name || fileData.name || 'AI 生成题目'
   const existingQuiz = sourceId
     ? messages.value.find(item => item.type === 'quiz' && item.sourceId === sourceId)
-    : messages.value.find(item => item.type === 'quiz' && !item.sourceId && item.fileType === fileType)
+    : null
   const quiz = await upsertQuizSet({
     id: existingQuiz?.quizId,
     sourceId,
@@ -1150,6 +1699,8 @@ const sendMessage = async () => {
   showAddMenu.value = false
   const activeTool = selectedResourceTool.value
   const backendText = activeTool?.prompt ? `${activeTool.prompt}${text}` : text
+  const shouldHandleAgentSkills = Boolean(activeTool?.agentSkillMode) || isAgentSkillCreateIntent(text) || isAgentSkillListIntent(text)
+  const chatRequestText = shouldHandleAgentSkills ? withAgentSkillInstruction(backendText) : text
   const loadingMessageId = Date.now() + 1
 
   messages.value.push({
@@ -1212,7 +1763,7 @@ const sendMessage = async () => {
     let hasReceivedChunk = false
 
     await streamChatMessage({
-      user_req: text,
+      user_req: chatRequestText,
       chat_group_id: activeConversationId.value
     }, {
       onChunk: async chunk => {
@@ -1247,6 +1798,10 @@ const sendMessage = async () => {
         if (target && hasReceivedChunk) {
           await replaceTextWithQuizMessage(target, 'AI 生成题目')
         }
+
+        if (shouldHandleAgentSkills) {
+          await loadAgentSkills()
+        }
       }
     })
 
@@ -1256,6 +1811,9 @@ const sendMessage = async () => {
 
     await scrollToBottom()
     await loadConversationList()
+    if (shouldHandleAgentSkills && isAgentSkillListIntent(text)) {
+      await showAgentSkillListInChat()
+    }
 
   } catch (error) {
     console.error(error)
@@ -2225,6 +2783,251 @@ textarea::placeholder {
   border-radius: 8px;
 }
 
+.skill-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 4300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(12, 28, 58, 0.3);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.skill-dialog__panel {
+  width: min(920px, 100%);
+  max-height: min(760px, 92vh);
+  border: 1px solid rgba(201, 220, 233, 0.85);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 24px 70px rgba(22, 63, 143, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.skill-dialog__header {
+  min-height: 74px;
+  padding: 16px 18px 14px 22px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.skill-dialog__header span,
+.skill-editor__top span,
+.skill-editor label span {
+  color: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.skill-dialog__header h2,
+.skill-editor__top h3 {
+  margin: 4px 0 0;
+  color: var(--primary);
+}
+
+.skill-dialog__header h2 {
+  font-size: 22px;
+}
+
+.skill-dialog__header button,
+.skill-list-head button,
+.skill-editor__top button,
+.skill-delete-btn {
+  min-height: 36px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.skill-dialog__header button {
+  width: 38px;
+  padding: 0;
+}
+
+.skill-dialog__body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  flex: 1;
+}
+
+.skill-list-pane {
+  min-height: 0;
+  padding: 16px;
+  border-right: 1px solid rgba(201, 220, 233, 0.72);
+  overflow-y: auto;
+}
+
+.skill-list-head {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.skill-list-head strong {
+  color: var(--primary);
+}
+
+.skill-list-head button {
+  padding: 0 12px;
+}
+
+.skill-empty,
+.skill-error {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.skill-error {
+  color: #b13d3d;
+}
+
+.skill-list-item {
+  min-height: 62px;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid rgba(201, 220, 233, 0.76);
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.skill-list-item.active,
+.skill-list-item:hover {
+  border-color: rgba(95, 143, 195, 0.55);
+  background: rgba(237, 249, 252, 0.78);
+}
+
+.skill-list-item span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.skill-list-item strong,
+.skill-list-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-list-item small {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.skill-delete-btn {
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.skill-editor {
+  min-height: 0;
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.skill-editor__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.skill-editor__top button {
+  min-width: 92px;
+  padding: 0 14px;
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.skill-editor__top button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.skill-editor label {
+  display: grid;
+  gap: 7px;
+}
+
+.skill-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.skill-editor input,
+.skill-editor select,
+.skill-editor textarea {
+  width: 100%;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--primary);
+  font: inherit;
+  outline: none;
+}
+
+.skill-editor input,
+.skill-editor select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.skill-editor textarea {
+  min-height: 220px;
+  max-height: none;
+  padding: 12px;
+  resize: vertical;
+  line-height: 1.65;
+}
+
+.skill-example-btn {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 8px;
+  background: rgba(237, 249, 252, 0.78);
+  color: var(--primary);
+  font: inherit;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
 .save-dialog {
   position: fixed;
   inset: 0;
@@ -2235,6 +3038,80 @@ textarea::placeholder {
   background: rgba(12, 28, 58, 0.28);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+}
+
+.ppt-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 4300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(12, 28, 58, 0.34);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.ppt-dialog__panel {
+  width: min(1120px, 96vw);
+  max-height: 92vh;
+  border: 1px solid rgba(201, 220, 233, 0.85);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 28px 90px rgba(22, 63, 143, 0.24);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ppt-dialog__header {
+  min-height: 68px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ppt-dialog__header span {
+  color: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ppt-dialog__header h2 {
+  margin: 3px 0 0;
+  color: var(--primary);
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.ppt-dialog__header button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(201, 220, 233, 0.86);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ppt-dialog__body {
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+}
+
+.ppt-dialog__loading {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  color: var(--primary-soft);
+  font-weight: 900;
 }
 
 .save-dialog__panel {
@@ -2373,6 +3250,24 @@ textarea::placeholder {
 
   .chat-content {
     padding: 88px 14px 218px;
+  }
+
+  .skill-dialog {
+    padding: 14px;
+  }
+
+  .skill-dialog__body {
+    grid-template-columns: 1fr;
+  }
+
+  .skill-list-pane {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+  }
+
+  .skill-form-grid {
+    grid-template-columns: 1fr;
   }
 
   .empty-chat {
