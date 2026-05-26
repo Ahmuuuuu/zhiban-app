@@ -19,6 +19,7 @@ from backend.src.ai_core.tools.path import (
     list_learning_paths, get_learning_path_detail, enroll_learning_path,
     regenerate_learning_path, update_path_node, add_path_node, delete_path_node,
 )
+from backend.src.ai_core.tools.animation import generate_slide_animation
 from backend.src.ai_core.tools.history import get_used_history
 from backend.src.utils.prompt_loader import load_prompt
 from pydantic import create_model, Field as PydanticField
@@ -149,6 +150,7 @@ class UnifiedChat:
             _inject_user_id(generate_learning_resource, uid),
             _inject_user_id(generate_image, uid),
             _inject_user_id(generate_exam_questions, uid),
+            _inject_user_id(generate_slide_animation, uid),
             _inject_user_id(list_learning_paths, uid),
             _inject_user_id(get_learning_path_detail, uid),
             _inject_user_id(enroll_learning_path, uid),
@@ -213,14 +215,14 @@ class UnifiedChat:
 
                 if kind == "on_tool_start":
                     tool_name = event.get("name", "")
-                    yield {"type": "tool_start", "tool": tool_name}
+                    yield {"role": "tool", "type": "tool_start", "tool": tool_name}
 
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "")
                     tool_output = event.get("data", {}).get("output", "")
                     if isinstance(tool_output, str) and len(tool_output) > 500:
                         tool_output = tool_output[:500] + "..."
-                    yield {"type": "tool_end", "tool": tool_name, "output": str(tool_output)}
+                    yield {"role": "tool", "type": "tool_end", "tool": tool_name, "output": str(tool_output)}
 
                 elif kind == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
@@ -228,7 +230,7 @@ class UnifiedChat:
                         content = getattr(chunk, "content", None)
                         if content:
                             full_response += content
-                            yield {"type": "content", "content": content}
+                            yield {"role": "assistant", "type": "chunk", "content": content}
         except (TypeError, NotImplementedError):
             async for event in self._raw_executor.astream_events(
                 {
@@ -245,14 +247,14 @@ class UnifiedChat:
 
                 if kind == "on_tool_start":
                     tool_name = event.get("name", "")
-                    yield {"type": "tool_start", "tool": tool_name}
+                    yield {"role": "tool", "type": "tool_start", "tool": tool_name}
 
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "")
                     tool_output = event.get("data", {}).get("output", "")
                     if isinstance(tool_output, str) and len(tool_output) > 500:
                         tool_output = tool_output[:500] + "..."
-                    yield {"type": "tool_end", "tool": tool_name, "output": str(tool_output)}
+                    yield {"role": "tool", "type": "tool_end", "tool": tool_name, "output": str(tool_output)}
 
                 elif kind == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
@@ -260,7 +262,7 @@ class UnifiedChat:
                         content = getattr(chunk, "content", None)
                         if content:
                             full_response += content
-                            yield {"type": "content", "content": content}
+                            yield {"role": "assistant", "type": "chunk", "content": content}
 
         self._history.append(HumanMessage(content=message))
         self._history.append(AIMessage(content=full_response))
