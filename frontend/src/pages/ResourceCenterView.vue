@@ -105,6 +105,17 @@
             </footer>
             <div class="resource-actions">
               <button
+                v-if="canNarrateResource(resource)"
+                class="resource-action"
+                type="button"
+                :disabled="isNarrationLoading(resource)"
+                @click.stop="toggleNarration(resource)"
+              >
+                <PauseCircle v-if="isNarrationPlaying(resource)" :size="15" />
+                <Volume2 v-else :size="15" />
+                {{ isNarrationLoading(resource) ? '...' : (isNarrationPlaying(resource) ? '停' : '听') }}
+              </button>
+              <button
                 v-if="isQuizResource(resource)"
                 class="resource-action"
                 type="button"
@@ -172,6 +183,19 @@
             <span>{{ getWordCount(selectedResource.content) }} 字</span>
           </div>
 
+          <div v-if="canNarrateResource(selectedResource)" class="resource-fullscreen__audio">
+            <button
+              class="listen-inline-btn"
+              type="button"
+              :disabled="isNarrationLoading(selectedResource)"
+              @click="toggleNarration(selectedResource)"
+            >
+              <PauseCircle v-if="isNarrationPlaying(selectedResource)" :size="15" />
+              <Volume2 v-else :size="15" />
+              {{ isNarrationLoading(selectedResource) ? '生成音频...' : (isNarrationPlaying(selectedResource) ? '暂停朗读' : '朗读资源') }}
+            </button>
+          </div>
+
           <div class="resource-fullscreen__content">
             <template v-if="selectedResource.type === 'image' && selectedResource.previewUrl">
               <img
@@ -198,7 +222,12 @@
               </div>
             </template>
             <template v-else-if="isPptResource(selectedResource)">
-              <div v-if="selectedResource.previewUrl" class="file-preview-wrap">
+              <PptPreview
+                v-if="selectedResource.slides?.length"
+                :slides="selectedResource.slides"
+                :title="selectedResource.title"
+              />
+              <div v-else-if="selectedResource.previewUrl" class="file-preview-wrap">
                 <img
                   class="preview-image"
                   :src="selectedResource.previewUrl"
@@ -229,7 +258,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertCircle,
@@ -237,13 +266,17 @@ import {
   Presentation,
   FileText,
   GitBranch,
+  PauseCircle,
   RefreshCw,
-  Search
+  Search,
+  Volume2
 } from 'lucide-vue-next'
 import { downloadWithToken, getGeneratedImages, getGeneratedResource, getGeneratedResources, getStudyResources, resolveApiUrl } from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
+import PptPreview from '../components/PptPreview.vue'
+import { useResourceNarration } from '../composables/useResourceNarration'
 
 const router = useRouter()
 const resources = ref([])
@@ -251,6 +284,13 @@ const selectedResource = ref(null)
 const previewOpen = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
+const {
+  canNarrateResource,
+  toggleNarration,
+  isNarrationLoading,
+  isNarrationPlaying,
+  stopCurrentAudio
+} = useResourceNarration()
 const keyword = ref('')
 const categories = ['文档', 'ppt', '视频', '题库', '思维导图']
 const activeCategory = ref(categories[0])
@@ -311,6 +351,8 @@ const normalizeGeneratedResources = data => {
       sourceId: String(resourceId || ''),
       title: item.title || item.topic || fileTitleWithoutExtension(filename),
       filename,
+      slides: Array.isArray(item.slides) ? item.slides : [],
+      narration: item.narration || null,
       content: isQuiz ? '这是一套生成题目，进入题库后开始练习。' : (item.preview || item.preview_content || item.content || ''),
       type: isMindmap ? 'mindmap' : resourceType,
       category: isQuiz ? 'exercise' : isMindmap ? 'mindmap' : 'reference',
@@ -408,6 +450,8 @@ const openResourcePreview = async resource => {
         ...resource,
         content: fullContent,
         fullContent,
+        slides: Array.isArray(data.slides) ? data.slides : resource.slides || [],
+        narration: data.narration || resource.narration || null,
         filename: data.filename || resource.filename,
         type: isMindmapResource(resource) ? 'mindmap' : (data.resource_type || data.file_type || resource.type),
         sessionId: data.session_id || resource.sessionId || '',
@@ -420,6 +464,7 @@ const openResourcePreview = async resource => {
 }
 
 const closeResourcePreview = () => {
+  stopCurrentAudio()
   previewOpen.value = false
 }
 
@@ -552,6 +597,7 @@ const formatDate = (value, withTime = false) => {
 }
 
 onMounted(loadResources)
+onBeforeUnmount(stopCurrentAudio)
 </script>
 
 <style scoped>
@@ -909,6 +955,11 @@ onMounted(loadResources)
   overflow: auto;
 }
 
+.resource-fullscreen__audio {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .resource-fullscreen__content p {
   margin: 0;
   color: #1f2d43;
@@ -1262,7 +1313,7 @@ onMounted(loadResources)
 .resource-card {
   min-height: 0;
   max-height: none;
-  height: 178px;
+  height: 204px;
   padding: 14px 15px 16px;
   border-radius: 24px;
   background:
@@ -1275,6 +1326,7 @@ onMounted(loadResources)
 }
 
 .resource-card::after {
+  display: none;
   content: "";
   position: absolute;
   right: 16px;
@@ -1348,15 +1400,16 @@ onMounted(loadResources)
 .resource-actions,
 .resource-fullscreen__actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
   position: relative;
   z-index: 2;
 }
 
 .resource-action {
   min-height: 28px;
-  padding: 0 10px;
+  padding: 0 8px;
   border: 1px solid rgba(22, 63, 143, 0.18);
   border-radius: 999px;
   background: #163f8f;
@@ -1368,6 +1421,35 @@ onMounted(loadResources)
   font-weight: 800;
   font-family: inherit;
   cursor: pointer;
+  gap: 5px;
+}
+
+.resource-action:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+
+.listen-inline-btn {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(22, 63, 143, 0.18);
+  border-radius: 999px;
+  background: #163f8f;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.listen-inline-btn:disabled {
+  opacity: 0.62;
+  cursor: wait;
 }
 
 .resource-action.primary {

@@ -147,6 +147,10 @@
             :title="message.filename"
           />
 
+          <div v-else-if="isPptFile(message)" class="file-placeholder">
+            PPT 已生成，可以打开幻灯片预览。
+          </div>
+
           <pre v-else-if="message.content" class="file-preview">{{ message.content }}</pre>
 
           <div v-else class="file-placeholder">
@@ -154,7 +158,10 @@
           </div>
 
           <div v-if="message.previewUrl || message.downloadUrl || message.fileId || message.content" class="file-actions">
-            <a v-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
+            <button v-if="isPptFile(message) && canOpenPptPreview(message)" type="button" @click="openPptPreview(message)">
+              {{ pptPreview.loading && pptPreview.messageId === message.id ? '加载中...' : '预览' }}
+            </button>
+            <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
             <button
               type="button"
@@ -251,6 +258,32 @@
   </div>
 </footer>
     </main>
+
+    <Teleport to="body">
+      <section v-if="pptPreview.visible" class="ppt-dialog" @click.self="closePptPreview">
+        <article class="ppt-dialog__panel">
+          <header class="ppt-dialog__header">
+            <div>
+              <span>PPT Preview</span>
+              <h2>{{ pptPreview.title }}</h2>
+            </div>
+            <button type="button" aria-label="关闭 PPT 预览" @click="closePptPreview">
+              <X :size="20" />
+            </button>
+          </header>
+
+          <div class="ppt-dialog__body">
+            <div v-if="pptPreview.loading" class="ppt-dialog__loading">正在加载 PPT 预览...</div>
+            <PptPreview
+              v-else-if="pptPreview.slides.length"
+              :slides="pptPreview.slides"
+              :title="pptPreview.title"
+            />
+            <div v-else class="ppt-dialog__loading">暂无可预览的幻灯片内容。</div>
+          </div>
+        </article>
+      </section>
+    </Teleport>
 
     <Teleport to="body">
       <section v-if="saveDialog.visible" class="save-dialog" @click.self="closeSaveDialog">
@@ -402,12 +435,14 @@ import {
   streamChatMessage,
   getConversationList,
   getConversationMessages,
+  getGeneratedResource,
   upsertAgentActionSkill,
   resolveApiUrl
 } from '../api/apis'
 import { detectGenerationIntent, executeGeneration } from '../composables/useResourceGeneration'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
+import PptPreview from '../components/PptPreview.vue'
 import {
   FileText,
   GitBranch,
@@ -1081,6 +1116,14 @@ const getNowTime = () => {
 
 // 初始空状态展示草图里的学习资源引导
 const messages = ref([])
+const pptPreview = ref({
+  visible: false,
+  loading: false,
+  messageId: '',
+  title: '',
+  slides: []
+})
+
 const normalizeFileMessage = data => {
   const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || 'file'
   const rawFilename =
@@ -1098,6 +1141,8 @@ const normalizeFileMessage = data => {
     fileType,
     filename,
     content: data.content || data.text || data.preview_content || data.previewContent || '',
+    slides: Array.isArray(data.slides) ? data.slides : [],
+    narration: data.narration || null,
     fileId,
     resourceKind: data.resourceKind || data.kind || 'resource',
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.preview || ''),
@@ -1242,13 +1287,138 @@ const normalizeHistoryAssistantMessage = (item, id, time) => {
   }
 }
 
+const isPptFile = fileData => {
+  return String(fileData?.fileType || fileData?.file_type || fileData?.resource_type || fileData?.filename || '')
+    .toLowerCase()
+    .match(/ppt|powerpoint|presentation|slide/)
+}
+
+const getFileResourceId = fileData => {
+  const directId = fileData?.fileId || fileData?.file_id || fileData?.resourceId || fileData?.resource_id || ''
+  if (directId) return directId
+  const match = String(fileData?.downloadUrl || fileData?.download_url || fileData?.previewUrl || fileData?.preview_url || '')
+    .match(/\/resource\/([^/?#]+)(?:\/download)?/i)
+  return match?.[1] || ''
+}
+
+const canOpenPptPreview = message => {
+  return Boolean(message?.slides?.length || message?.content || getFileResourceId(message))
+}
+
+const parsePptSlidesFromContent = content => {
+  const text = String(content || '').trim()
+  if (!text) return []
+
+  try {
+    const parsed = JSON.parse(text)
+    const list = Array.isArray(parsed) ? parsed : parsed.slides || parsed.pages || parsed.items || []
+    if (Array.isArray(list) && list.length) {
+      return list.map((slide, index) => ({
+        index,
+        title: slide.title || slide.heading || `第 ${index + 1} 页`,
+        text: slide.text || slide.content || slide.body || '',
+        notes: slide.notes || slide.speaker_notes || ''
+      }))
+    }
+  } catch {
+    // fall through to markdown/plain-text parsing
+  }
+
+  const blocks = text
+    .replace(/^```(?:json|markdown|md)?\s*/i, '')
+    .replace(/```$/i, '')
+    .split(/\n\s*---+\s*\n|(?=\n\s*#{1,3}\s+)/)
+    .map(block => block.trim())
+    .filter(Boolean)
+
+  return blocks.map((block, index) => {
+    const lines = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const titleLine = lines.find(line => /^#{1,3}\s+/.test(line)) || lines[0] || `第 ${index + 1} 页`
+    const title = titleLine.replace(/^#{1,3}\s+/, '').replace(/^第?\s*\d+\s*[页章、.：:-]?\s*/, '').trim()
+    const body = lines
+      .filter(line => line !== titleLine)
+      .map(line => line.replace(/^[-*•]\s+/, '').trim())
+      .filter(Boolean)
+      .join('\n')
+
+    return {
+      index,
+      title: title || `第 ${index + 1} 页`,
+      text: body,
+      notes: ''
+    }
+  }).filter(slide => slide.title || slide.text)
+}
+
+const hydratePptPreview = async message => {
+  const resourceId = getFileResourceId(message)
+  if (message.slides?.length) return message.slides
+
+  if (resourceId) {
+    const res = await getGeneratedResource(resourceId)
+    const data = getResponseData(res)?.data || getResponseData(res)
+    const content = data.content || message.content || ''
+    const slides = Array.isArray(data.slides) && data.slides.length
+      ? data.slides
+      : parsePptSlidesFromContent(content)
+
+    Object.assign(message, {
+      content,
+      slides,
+      narration: data.narration || message.narration || null
+    })
+
+    return slides
+  }
+
+  const slides = parsePptSlidesFromContent(message.content)
+  Object.assign(message, { slides })
+  return slides
+}
+
+const openPptPreview = async message => {
+  pptPreview.value = {
+    visible: true,
+    loading: true,
+    messageId: message.id,
+    title: message.filename || 'PPT 预览',
+    slides: message.slides || []
+  }
+
+  try {
+    const slides = await hydratePptPreview(message)
+    pptPreview.value = {
+      ...pptPreview.value,
+      loading: false,
+      slides: slides || []
+    }
+  } catch (err) {
+    console.error('[ChatView] load ppt preview failed:', err)
+    pptPreview.value = {
+      ...pptPreview.value,
+      loading: false,
+      slides: parsePptSlidesFromContent(message.content)
+    }
+  }
+}
+
+const closePptPreview = () => {
+  pptPreview.value = {
+    visible: false,
+    loading: false,
+    messageId: '',
+    title: '',
+    slides: []
+  }
+}
+
 const appendQuizMessage = async fileData => {
   const fileType = fileData.file_type || fileData.fileType || fileData.resource_type || fileData.resourceType || 'exercise'
   const sourceId = fileData.file_id || fileData.fileId || fileData.resource_id || fileData.resourceId || ''
   const filename = fileData.filename || fileData.file_name || fileData.name || 'AI 生成题目'
   const existingQuiz = sourceId
     ? messages.value.find(item => item.type === 'quiz' && item.sourceId === sourceId)
-    : messages.value.find(item => item.type === 'quiz' && !item.sourceId && item.fileType === fileType)
+    : null
   const quiz = await upsertQuizSet({
     id: existingQuiz?.quizId,
     sourceId,
@@ -2868,6 +3038,80 @@ textarea::placeholder {
   background: rgba(12, 28, 58, 0.28);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+}
+
+.ppt-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 4300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(12, 28, 58, 0.34);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.ppt-dialog__panel {
+  width: min(1120px, 96vw);
+  max-height: 92vh;
+  border: 1px solid rgba(201, 220, 233, 0.85);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 28px 90px rgba(22, 63, 143, 0.24);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ppt-dialog__header {
+  min-height: 68px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ppt-dialog__header span {
+  color: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ppt-dialog__header h2 {
+  margin: 3px 0 0;
+  color: var(--primary);
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.ppt-dialog__header button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(201, 220, 233, 0.86);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ppt-dialog__body {
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+}
+
+.ppt-dialog__loading {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  color: var(--primary-soft);
+  font-weight: 900;
 }
 
 .save-dialog__panel {

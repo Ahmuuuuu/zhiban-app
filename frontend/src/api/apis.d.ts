@@ -72,6 +72,18 @@ export function getGeneratedResources(): Promise<unknown>;
 
 export function getGeneratedResource(resourceId: number | string): Promise<unknown>;
 
+export function narrateResource(
+  resourceId: number | string,
+  options?: {
+    voice?: string;
+    force_regenerate?: boolean;
+  },
+): Promise<unknown>;
+
+export function getNarration(narrationId: number | string): Promise<unknown>;
+
+export function getNarrationVoices(): Promise<unknown>;
+
 export function deleteGeneratedResource(resourceId: number | string): Promise<unknown>;
 
 export function getAgentSkills(): Promise<unknown>;
