@@ -100,6 +100,7 @@ const finished = ref(false)
 const runSessionId = ref('')
 const fromPage = ref(route.query.from || '')
 const nodeId = ref(route.query.nodeId || '')
+const routeSessionId = ref(String(route.query.sessionId || ''))
 
 const backLink = computed(() => {
   return fromPage.value === 'path' ? '/learning-path' : { path: '/learning-resources', query: { category: 'quiz' } }
@@ -110,7 +111,7 @@ onMounted(() => {
   const session = getQuizSet(id)
   quiz.value = session
   questions.value = session?.questions || []
-  runSessionId.value = session?.sessionId || session?.session_id || `quiz-${id}-${Date.now()}`
+  runSessionId.value = routeSessionId.value || session?.sessionId || session?.session_id || `quiz-${id}-${Date.now()}`
   loading.value = false
 })
 
@@ -224,10 +225,20 @@ const goNext = async () => {
       answers: answers.value,
       results: results.value
     })
-    // 来自学习路径：自动完成节点并解锁下一章
-    if (fromPage.value === 'path' && nodeId.value) {
+    if (fromPage.value !== 'path' || !nodeId.value || !runSessionId.value) {
+      return
+    }
+    if (fromPage.value === 'path' && nodeId.value && runSessionId.value) {
       try {
-        await completeLearningPathNode(Number(nodeId.value), runSessionId.value)
+        const completeResult = await completeLearningPathNode(Number(nodeId.value), runSessionId.value)
+        window.sessionStorage.setItem('zhiban_path_needs_refresh', '1')
+        window.dispatchEvent(new CustomEvent('zhiban-path-node-completed', {
+          detail: {
+            nodeId: nodeId.value,
+            sessionId: runSessionId.value,
+            result: unwrapData(completeResult)
+          }
+        }))
         console.log('[QuizRunner] 节点自动完成成功')
       } catch (e) {
         console.error('[QuizRunner] 自动完成节点失败:', e)

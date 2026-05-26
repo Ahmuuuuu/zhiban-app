@@ -110,21 +110,33 @@
                   <div v-if="node._resLoading" class="branch-loading">加载中...</div>
 
                   <template v-else-if="node._resources?.length">
-                    <button
+                    <div
                       v-for="resource in node._resources"
                       :key="resource.id"
-                      class="branch-resource"
-                      type="button"
-                      @click="previewNodeResource(resource)"
+                      class="branch-resource-row"
                     >
-                      <span class="branch-resource__icon">
-                        <FileImage v-if="isImageResource(resource)" :size="15" />
-                        <Presentation v-else-if="isPptResource(resource)" :size="15" />
-                        <GitBranch v-else-if="isMindmapResource(resource)" :size="15" />
-                        <FileText v-else :size="15" />
-                      </span>
-                      <span>{{ resource.title }}</span>
-                    </button>
+                      <button
+                        class="branch-resource"
+                        type="button"
+                        @click="previewNodeResource(resource)"
+                      >
+                        <span class="branch-resource__icon">
+                          <FileImage v-if="isImageResource(resource)" :size="15" />
+                          <Presentation v-else-if="isPptResource(resource)" :size="15" />
+                          <GitBranch v-else-if="isMindmapResource(resource)" :size="15" />
+                          <FileText v-else :size="15" />
+                        </span>
+                        <span>{{ resource.title }}</span>
+                      </button>
+                      <button
+                        v-if="canPreviewResource(resource)"
+                        class="branch-mini-action"
+                        type="button"
+                        @click="previewNodeResource(resource)"
+                      >
+                        预览
+                      </button>
+                    </div>
                   </template>
 
                   <button
@@ -149,7 +161,7 @@
                   <template v-else-if="node._quiz">
                     <div class="branch-quiz">
                       <span>{{ node._quiz.questionCount || 0 }} 道题</span>
-                      <router-link class="branch-action primary" :to="`/question-bank/${node._quiz.id}?from=path&nodeId=${node.id}`">
+                      <router-link class="branch-action primary" :to="pathQuizLink(node._quiz, node)">
                         开始检测
                       </router-link>
                     </div>
@@ -263,7 +275,7 @@
                         <span>{{ nodeQuizData.questionCount || 0 }} 道题</span>
                       </div>
                     </div>
-                    <router-link class="quiz-action-btn" :to="`/question-bank/${nodeQuizData.id}?from=path&nodeId=${selectedNode.id}`">
+                    <router-link class="quiz-action-btn" :to="pathQuizLink(nodeQuizData, selectedNode)">
                       开始练习
                     </router-link>
                   </div>
@@ -300,7 +312,20 @@
               <span>{{ previewResource.typeLabel }}</span>
               <h2>{{ previewResource.title }}</h2>
             </div>
-            <button type="button" aria-label="关闭预览" @click="closeResourcePreview">&times;</button>
+            <div class="resource-preview-tools">
+              <button
+                v-if="canNarrateResource(previewResource)"
+                class="resource-preview-icon-btn"
+                type="button"
+                :title="isNarrationPlaying(previewResource) ? '暂停朗读' : '朗读资源'"
+                :disabled="isNarrationLoading(previewResource)"
+                @click="toggleNarration(previewResource)"
+              >
+                <PauseCircle v-if="isNarrationPlaying(previewResource)" :size="17" />
+                <Volume2 v-else :size="17" />
+              </button>
+              <button type="button" aria-label="关闭预览" @click="closeResourcePreview">&times;</button>
+            </div>
           </header>
 
           <div class="resource-preview-body">
@@ -311,6 +336,11 @@
               v-else-if="isImageResource(previewResource) && previewResource.previewUrl"
               :src="previewResource.previewUrl"
               :alt="previewResource.title"
+            />
+            <PptPreview
+              v-else-if="isPptResource(previewResource) && previewResource.slides?.length"
+              :slides="previewResource.slides"
+              :title="previewResource.title"
             />
             <MindmapPreview
               v-else-if="isMindmapResource(previewResource) && previewResource.content"
@@ -326,7 +356,7 @@
           </div>
 
           <footer v-if="previewResource.downloadUrl">
-            <button type="button" @click="downloadNodeResource(previewResource)">下载原文件</button>
+            <button v-if="previewResource.downloadUrl" type="button" @click="downloadNodeResource(previewResource)">下载原文件</button>
           </footer>
         </article>
       </section>
@@ -335,14 +365,16 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
-import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2 } from 'lucide-vue-next'
 import {
   getCurrentLearningPath, generateLearningPath,
   generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, resolveApiUrl
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
+import PptPreview from '../components/PptPreview.vue'
+import { useResourceNarration } from '../composables/useResourceNarration'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 
@@ -370,6 +402,13 @@ const nodeQuizData = ref(null)
 const nodeSessionId = ref('')
 const previewResource = ref(null)
 const previewLoading = ref(false)
+const {
+  canNarrateResource,
+  toggleNarration,
+  isNarrationLoading,
+  isNarrationPlaying,
+  stopCurrentAudio
+} = useResourceNarration()
 
 const normalizeStatus = s => {
   const map = {
@@ -580,6 +619,16 @@ const statusLabel = status => ({
   locked: '待解锁'
 }[status] || '待开始')
 
+const pathQuizLink = (quiz, node) => {
+  const query = new URLSearchParams({
+    from: 'path',
+    nodeId: String(node?.id || '')
+  })
+  const sessionId = quiz?.sessionId || quiz?.session_id || node?.sessionId || node?.session_id || ''
+  if (sessionId) query.set('sessionId', String(sessionId))
+  return `/question-bank/${quiz?.id}?${query.toString()}`
+}
+
 const typeLabel = type => ({
   read: '资料阅读',
   quiz: '练习题',
@@ -601,7 +650,7 @@ const fileTypeLabel = type => {
 
 const isImageResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('image')
 
-const isPptResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('ppt')
+const isPptResource = r => /ppt|powerpoint|presentation|slide/.test(String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase())
 
 const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('mind')
 
@@ -619,6 +668,51 @@ const escapeHtml = value => {
 }
 
 const isImageResourceUrl = url => /\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(String(url || ''))
+
+const parsePptSlidesFromContent = content => {
+  const text = String(content || '').trim()
+  if (!text) return []
+
+  try {
+    const parsed = JSON.parse(text)
+    const list = Array.isArray(parsed) ? parsed : parsed.slides || parsed.pages || parsed.items || []
+    if (Array.isArray(list) && list.length) {
+      return list.map((slide, index) => ({
+        index,
+        title: slide.title || slide.heading || `第 ${index + 1} 页`,
+        text: slide.text || slide.content || slide.body || '',
+        notes: slide.notes || slide.speaker_notes || ''
+      }))
+    }
+  } catch {
+    // fall through to plain-text parsing
+  }
+
+  const blocks = text
+    .replace(/^```(?:json|markdown|md)?\s*/i, '')
+    .replace(/```$/i, '')
+    .split(/\n\s*---+\s*\n|(?=\n\s*#{1,3}\s+)/)
+    .map(block => block.trim())
+    .filter(Boolean)
+
+  return blocks.map((block, index) => {
+    const lines = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const titleLine = lines.find(line => /^#{1,3}\s+/.test(line)) || lines[0] || `第 ${index + 1} 页`
+    const title = titleLine.replace(/^#{1,3}\s+/, '').replace(/^第?\s*\d+\s*[页章、.：:-]?\s*/, '').trim()
+    const body = lines
+      .filter(line => line !== titleLine)
+      .map(line => line.replace(/^[-*•]\s+/, '').trim())
+      .filter(Boolean)
+      .join('\n')
+
+    return {
+      index,
+      title: title || `第 ${index + 1} 页`,
+      text: body,
+      notes: ''
+    }
+  }).filter(slide => slide.title || slide.text)
+}
 
 const renderInlineMarkdown = value => {
   let text = escapeHtml(value)
@@ -806,6 +900,7 @@ const normalizeNodeResources = (resources, node = null) =>
       fileType,
       typeLabel: fileTypeLabel(fileType),
       content: r.content || r.preview || r.text || '',
+      slides: Array.isArray(r.slides) ? r.slides : [],
       previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || ''),
       downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || (resourceId ? `/resource/${resourceId}/download` : '')),
     }
@@ -838,6 +933,41 @@ const extractResourceItems = (data, node = null) => {
       download_url: `/resource/${id}/download`
     }))
     : []
+}
+
+const hashText = value => {
+  const text = String(value || '')
+  let hash = 0
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash).toString(36)
+}
+
+const getNodeQuizSourceId = (node, data = null) => {
+  const pathId = pathState.value?.pathId
+  const raw = data || node?.quiz || {}
+  const backendId =
+    raw.resource_id ||
+    raw.resourceId ||
+    raw.quiz_id ||
+    raw.quizId ||
+    raw.exam_id ||
+    raw.examId ||
+    raw.session_id ||
+    raw.sessionId ||
+    node?.quizId ||
+    node?.sessionId ||
+    ''
+  const fallbackFingerprint = hashText(`${node?.title || ''}:${JSON.stringify(raw)}`)
+  return backendId
+    ? `${pathId}-${node.id}-${backendId}`
+    : `${pathId}-${node.id}-${fallbackFingerprint}`
+}
+
+const getNodeQuizSet = (node, data = null) => {
+  const sourceId = getNodeQuizSourceId(node, data)
+  return sourceId ? getQuizSet(`quiz-resource-${sourceId}`) : null
 }
 
 const patchNodeState = (node, patch = {}) => {
@@ -970,14 +1100,14 @@ const buildNodeQuiz = (node, quizData = null) => {
   const pathId = pathState.value?.pathId
   if (!pathId || !node?.id) return null
 
-  let existingQuiz = getQuizSet(`quiz-resource-${pathId}-${node.id}`)
+  const data = quizData || node.quiz
+  if (!data) return null
+
+  let existingQuiz = getNodeQuizSet(node, data)
   if (existingQuiz?.questions?.[0]?.question && typeof existingQuiz.questions[0].question === 'object') {
     existingQuiz = null
   }
   if (existingQuiz) return existingQuiz
-
-  const data = quizData || node.quiz
-  if (!data) return null
 
   const rawQuestions =
     data.questions ||
@@ -991,7 +1121,7 @@ const buildNodeQuiz = (node, quizData = null) => {
   if (!questions.length && !data.content && !node.quiz) return null
 
   return upsertQuizSet({
-    sourceId: `${pathId}-${node.id}`,
+    sourceId: getNodeQuizSourceId(node, data),
     title: `${node.title} - 巩固练习`,
     content: JSON.stringify(questions.length ? { questions } : data),
     fileType: 'exercise',
@@ -1098,15 +1228,14 @@ const loadNodeResources = async () => {
     })
     // 先查题库缓存，再用节点预载数据
     const pathId = pathState.value?.pathId
-    const quizBankId = pathId ? `quiz-resource-${pathId}-${selectedNode.value.id}` : ''
-    const existingQuiz = quizBankId ? getQuizSet(quizBankId) : null
+    const existingQuiz = pathId ? getNodeQuizSet(selectedNode.value) : null
     if (existingQuiz) {
       nodeQuizData.value = existingQuiz
       nodeSessionId.value = existingQuiz.sessionId || ''
       patchNodeState(selectedNode.value, { _quiz: existingQuiz })
     } else if (selectedNode.value.quiz) {
       const quiz = upsertQuizSet({
-        sourceId: `${pathId}-${selectedNode.value.id}`,
+        sourceId: getNodeQuizSourceId(selectedNode.value),
         title: `${selectedNode.value.title} - 巩固练习`,
         content: JSON.stringify(selectedNode.value.quiz),
         fileType: 'exercise',
@@ -1135,8 +1264,7 @@ const loadNodeResources = async () => {
     })
 
     // 查题库缓存 -> 节点预载 -> 调生成接口
-    const quizBankId = `quiz-resource-${pathId}-${selectedNode.value.id}`
-    const existingQuiz = getQuizSet(quizBankId)
+    const existingQuiz = getNodeQuizSet(selectedNode.value)
     if (existingQuiz) {
       nodeQuizData.value = existingQuiz
       nodeSessionId.value = existingQuiz.sessionId || ''
@@ -1144,7 +1272,7 @@ const loadNodeResources = async () => {
       console.log('[StudyPath] 从题库加载已有题目：', existingQuiz)
     } else if (selectedNode.value.quiz) {
       const quiz = upsertQuizSet({
-        sourceId: `${pathId}-${selectedNode.value.id}`,
+        sourceId: getNodeQuizSourceId(selectedNode.value),
         title: `${selectedNode.value.title} - 巩固练习`,
         content: JSON.stringify(selectedNode.value.quiz),
         fileType: 'exercise',
@@ -1168,7 +1296,7 @@ const loadNodeResources = async () => {
       const questions = Array.isArray(rawQuestions) ? rawQuestions : []
       if (questions.length || quizData.content) {
         const quiz = upsertQuizSet({
-          sourceId: `${pathId}-${selectedNode.value.id}`,
+          sourceId: getNodeQuizSourceId(selectedNode.value, quizData),
           title: `${selectedNode.value.title} - 巩固练习`,
           content: JSON.stringify(questions.length ? { questions } : quizData),
           fileType: 'exercise',
@@ -1218,6 +1346,13 @@ const mergePreviewResource = (resource, detail) => {
   const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || resource.fileType || resource.type
   const title = data.title || data.topic || data.filename || data.name || resource.title
 
+  const content = data.content || data.preview || data.text || resource.content || ''
+  const slides = Array.isArray(data.slides) && data.slides.length
+    ? data.slides
+    : (isPptResource({ ...resource, type: fileType, fileType, title, filename: data.filename || data.file_name || resource.filename || title })
+      ? parsePptSlidesFromContent(content)
+      : resource.slides || [])
+
   return {
     ...resource,
     id: resourceId || resource.id,
@@ -1227,7 +1362,9 @@ const mergePreviewResource = (resource, detail) => {
     type: fileType,
     fileType,
     typeLabel: fileTypeLabel(fileType),
-    content: data.content || data.preview || data.text || resource.content || '',
+    content,
+    slides,
+    narration: data.narration || resource.narration || null,
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.url || resource.previewUrl || ''),
     downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
   }
@@ -1259,7 +1396,7 @@ const previewNodeResource = async resource => {
   previewLoading.value = false
 
   const resourceId = resource.resourceId || resource.id || getResourceIdFromUrl(resource.downloadUrl)
-  if (!resourceId || resource.content || resource.previewUrl) return
+  if (!resourceId || resource.slides?.length || (!isPptResource(resource) && (resource.content || resource.previewUrl))) return
 
   previewLoading.value = true
   try {
@@ -1279,6 +1416,7 @@ const previewNodeResource = async resource => {
 }
 
 const closeResourcePreview = () => {
+  stopCurrentAudio()
   previewResource.value = null
   previewLoading.value = false
 }
@@ -1295,7 +1433,17 @@ const resetPath = () => {
   clearPathCache()
 }
 
-onMounted(fetchCurrentPath)
+const mountStudyPath = async () => {
+  await fetchCurrentPath()
+  if (window.sessionStorage.getItem('zhiban_path_needs_refresh') === '1') {
+    window.sessionStorage.removeItem('zhiban_path_needs_refresh')
+    await delay(600)
+    await fetchCurrentPath({ silent: true })
+  }
+}
+
+onMounted(mountStudyPath)
+onBeforeUnmount(stopCurrentAudio)
 </script>
 
 <style scoped>
@@ -1743,6 +1891,13 @@ onMounted(fetchCurrentPath)
   font-weight: 900;
 }
 
+.branch-resource-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
 .branch-resource {
   width: 100%;
   min-height: 34px;
@@ -1777,6 +1932,19 @@ onMounted(fetchCurrentPath)
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.branch-mini-action {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #163f8f;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .branch-action {
@@ -1887,6 +2055,12 @@ onMounted(fetchCurrentPath)
   font-size: 24px;
 }
 
+.resource-preview-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .resource-preview-panel header button {
   width: 38px;
   height: 38px;
@@ -1935,6 +2109,123 @@ onMounted(fetchCurrentPath)
   word-break: break-word;
   line-height: 1.8;
   font-family: inherit;
+}
+
+.ppt-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.ppt-slide {
+  min-height: 430px;
+  padding: 28px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(237, 249, 252, 0.78), rgba(255, 255, 255, 0.96) 42%),
+    #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ppt-slide__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ppt-slide h3 {
+  margin: 0;
+  color: #163f8f;
+  font-size: 30px;
+  line-height: 1.25;
+}
+
+.ppt-slide__content {
+  color: rgba(22, 63, 143, 0.78);
+  font-size: 16px;
+}
+
+.ppt-slide__notes {
+  margin-top: auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(201, 220, 233, 0.24);
+  color: rgba(22, 63, 143, 0.72);
+}
+
+.ppt-slide__notes span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ppt-slide__notes p {
+  margin: 5px 0 0;
+  line-height: 1.65;
+}
+
+.ppt-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ppt-controls > button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 999px;
+  background: #fff;
+  color: #163f8f;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.resource-preview-panel header .resource-preview-icon-btn {
+  font-size: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.resource-preview-panel header .resource-preview-icon-btn:disabled {
+  opacity: 0.56;
+  cursor: wait;
+}
+
+.ppt-controls > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ppt-dots {
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ppt-dots button {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(95, 143, 195, 0.32);
+  cursor: pointer;
+}
+
+.ppt-dots button.active {
+  background: #163f8f;
 }
 
 .resource-markdown {

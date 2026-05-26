@@ -3,7 +3,7 @@
     <nav class="nav-links">
       <a href="#/chat" @click.prevent="goChat">资源生成</a>
       <router-link to="/resources">资源中心</router-link>
-      <router-link to="/learning-resources">学习资源</router-link>
+      <router-link to="/learning-resources">我的资源</router-link>
       <router-link to="/learning-path">学习路径</router-link>
       <router-link to="/learning-situation">学习情况</router-link>
     </nav>
