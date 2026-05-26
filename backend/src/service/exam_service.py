@@ -117,7 +117,7 @@ class ExamService:
                 existing_session_id = r.get("session_id")
                 if existing_session_id:
                     records = await ExamRecord.filter(session_id=existing_session_id).prefetch_related("question").all()
-                    saved = [_question_to_dict(rec) for rec in records]
+                    saved = [_question_to_dict(rec.question) for rec in records if rec.question]
                     return {"session_id": existing_session_id, "questions": saved}
 
                 content = r.get("content", "")
