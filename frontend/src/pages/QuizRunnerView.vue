@@ -97,6 +97,7 @@ const answers = ref({})
 const checked = ref({})
 const results = ref({})
 const finished = ref(false)
+const sessionSummary = ref(null)
 const runSessionId = ref('')
 const fromPage = ref(route.query.from || '')
 const nodeId = ref(route.query.nodeId || '')
@@ -157,6 +158,7 @@ const getBackendQuestionId = question => {
 const checkCurrent = async () => {
   const question = currentQuestion.value
   if (!question?.id) return
+  if (checked.value[question.id]) return
 
   const userAnswer = normalizeAnswer(answers.value[question.id])
   const backendQuestionId = getBackendQuestionId(question)
@@ -176,10 +178,14 @@ const checkCurrent = async () => {
         correct_answer: data?.correct_answer || question.answer,
         analysis: data?.analysis || question.explanation || '',
         session_id: data?.session_id || runSessionId.value,
-        score: data?.score
+        score: data?.score,
+        weight: data?.weight
       }
       if (data?.session_id) {
         runSessionId.value = data.session_id
+      }
+      if (data?.session_summary) {
+        sessionSummary.value = data.session_summary
       }
       return
     } catch (error) {
@@ -206,6 +212,12 @@ const score = computed(() => questions.value.reduce((total, question) => {
 }, 0))
 
 const percentScore = computed(() => {
+  const backendScore = Number(
+    sessionSummary.value?.earned_points ??
+    sessionSummary.value?.percentage
+  )
+  if (Number.isFinite(backendScore)) return backendScore.toFixed(1)
+
   if (!questions.value.length) return '0.0'
   return ((score.value / questions.value.length) * 100).toFixed(1)
 })

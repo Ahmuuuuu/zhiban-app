@@ -240,6 +240,10 @@ export function getStudyResources(params = {}) {
   })
 }
 
+export function getStudyStats() {
+  return request.get('/study/stats')
+}
+
 // ── 学习资源生成（流式）──
 
 export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile } = {}) {

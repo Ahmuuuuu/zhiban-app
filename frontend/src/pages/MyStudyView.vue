@@ -2,27 +2,28 @@
   <div class="my-full-page">
     <main class="main">
       <header class="topbar">
-        <router-link class="home-pill" to="/" aria-label="返回首页">
-          首页
+        <PageBackButton />
+        <router-link class="home-pill" to="/" aria-label="&#x8FD4;&#x56DE;&#x9996;&#x9875;">
+          &#x9996;&#x9875;
         </router-link>
 
         <div class="title-block">
           <p>Mine</p>
-          <h1>我的</h1>
+          <h1>閹存垹娈?/h1>
         </div>
 
         <label class="search-field">
           <Search :size="18" />
-          <input type="search" placeholder="搜索课程、计划、错题..." />
+          <input type="search" placeholder="閹兼粎鍌ㄧ拠鍓р柤閵嗕浇顓搁崚鎺嬧偓渚€鏁婃０?.." />
         </label>
 
-        <UserAccountButton variant="dark" meta-type="major" logged-out-name="未登录" />
+        <UserAccountButton variant="dark" meta-type="major" logged-out-name="閺堫亞娅ヨぐ? />
       </header>
 
       <section class="my-page">
         <aside class="my-side">
-          <h2>导航</h2>
-          <nav class="my-tabs" aria-label="我的学习导航">
+          <h2>鐎佃壈鍩?/h2>
+          <nav class="my-tabs" aria-label="閹存垹娈戠€涳缚绡勭€佃壈鍩?>
             <button
               class="my-tab resource-trigger"
               type="button"
@@ -30,13 +31,13 @@
               @click="toggleResourcePicker"
             >
               <BookOpenText :size="18" />
-              <span>学习资源</span>
+              <span>鐎涳缚绡勭挧鍕爱</span>
             </button>
 
             <Transition name="resource-picker-slide">
               <div v-if="resourcePickerOpen" class="resource-picker">
                 <div class="picker__group">
-                  <span class="picker__label">资源分类</span>
+                  <span class="picker__label">鐠у嫭绨崚鍡欒</span>
                   <div class="picker__tags">
                     <button
                       v-for="item in resourceCategories"
@@ -53,7 +54,7 @@
 
                 <Transition name="sub-picker-slide">
                   <div v-if="activeCategory === 'document'" class="picker__group">
-                    <span class="picker__label">文档子分类</span>
+                    <span class="picker__label">閺傚洦銆傜€涙劕鍨庣猾?/span>
                     <div class="picker__tags">
                       <button
                         v-for="item in subCategories"
@@ -73,12 +74,12 @@
 
             <router-link class="my-tab" to="/mine/path" @click="resourcePickerOpen = false">
               <Route :size="18" />
-              <span>学习路径</span>
+              <span>鐎涳缚绡勭捄顖氱窞</span>
             </router-link>
 
             <router-link class="my-tab" to="/mine/situation" @click="resourcePickerOpen = false">
               <ChartNoAxesColumnIncreasing :size="18" />
-              <span>学习情况</span>
+              <span>鐎涳缚绡勯幆鍛枌</span>
             </router-link>
           </nav>
         </aside>
@@ -100,27 +101,28 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { BookOpenText, ChartNoAxesColumnIncreasing, Route, Search } from 'lucide-vue-next'
 import UserAccountButton from '../components/UserAccountButton.vue'
+import PageBackButton from '../components/PageBackButton.vue'
 
 const route = useRoute()
 const router = useRouter()
 const resourcePickerOpen = ref(false)
 
 const resourceCategories = [
-  { value: 'document', label: '文档' },
+  { value: 'document', label: '閺傚洦銆? },
   { value: 'ppt', label: 'PPT' },
-  { value: 'video', label: '视频' },
-  { value: 'quiz', label: '题库' },
-  { value: 'mindmap', label: '思维导图' }
+  { value: 'video', label: '鐟欏棝顣? },
+  { value: 'quiz', label: '妫版ê绨? },
+  { value: 'mindmap', label: '閹繄娣€电厧娴? }
 ]
 
 const subCategories = [
-  { value: 'all', label: '全部' },
-  { value: 'knowledge_point', label: '知识点讲解' },
-  { value: 'exercise', label: '习题/题库' },
-  { value: 'textbook', label: '教科书章节' },
-  { value: 'note', label: '学习笔记' },
-  { value: 'case_study', label: '实操案例' },
-  { value: 'reference', label: '参考资料' }
+  { value: 'all', label: '閸忋劑鍎? },
+  { value: 'knowledge_point', label: '閻儴鐦戦悙纭咁唹鐟? },
+  { value: 'exercise', label: '娑旂娀顣?妫版ê绨? },
+  { value: 'textbook', label: '閺佹瑧顫栨稊锔剧彿閼? },
+  { value: 'note', label: '鐎涳缚绡勭粭鏃囶唶' },
+  { value: 'case_study', label: '鐎圭偞鎼峰鍫滅伐' },
+  { value: 'reference', label: '閸欏倽鈧啳绁弬? }
 ]
 
 const isResourcesPage = computed(() => route.path === '/mine/resources')
