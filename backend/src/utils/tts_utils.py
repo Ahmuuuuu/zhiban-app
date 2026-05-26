@@ -5,14 +5,21 @@ import re
 
 logger = logging.getLogger(__name__)
 
-# 可用的中文语音列表
+# 可用语音列表
 VOICES = [
+    # 中文
     "zh-CN-XiaoxiaoNeural",   # 女声，温柔自然（默认）
     "zh-CN-YunxiNeural",      # 男声，沉稳
     "zh-CN-XiaoyiNeural",     # 女声，活泼
     "zh-CN-YunjianNeural",    # 男声，年轻
     "zh-CN-XiaochenNeural",   # 女声，成熟
     "zh-CN-YunyangNeural",    # 男声，新闻播报
+    # 英文
+    "en-US-AriaNeural",       # 美音女声，自然
+    "en-US-GuyNeural",        # 美音男声，沉稳
+    "en-US-JennyNeural",      # 美音女声，亲切
+    "en-GB-SoniaNeural",      # 英音女声
+    "en-GB-RyanNeural",       # 英音男声
 ]
 
 # 支持生成旁白的资源类型
