@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Depends, Body
-from backend.src.service.portrait_service import PortraitChatHistory_Service
+from backend.src.service.portrait_service import PortraitChatHistory_Service, PortraitRadarService
 from backend.src.schemas.portrait import Init_Portrait
 from backend.src.utils.jwt import create_access_token, get_user_id_from_token
 
@@ -63,4 +63,34 @@ async def regenerate_portrait(user_id: int = Depends(get_user_id_from_token)):
     except Exception:
         logger = logging.getLogger(__name__)
         logger.exception("画像再生失败")
+        raise HTTPException(500, "服务器错误")
+
+
+# ═══════════════════════════════════════
+#  六维雷达
+# ═══════════════════════════════════════
+
+@router.get("/radar")
+async def get_radar(user_id: int = Depends(get_user_id_from_token)):
+    """获取六维雷达数据，无则自动计算"""
+    try:
+        radar = await PortraitRadarService.get(user_id)
+        if not radar:
+            return {"code": 404, "msg": "暂无答题数据，无法生成雷达图"}
+        return {"code": 200, "msg": "success", "data": radar}
+    except Exception:
+        logging.getLogger(__name__).exception("雷达获取失败")
+        raise HTTPException(500, "服务器错误")
+
+
+@router.post("/radar/refresh")
+async def refresh_radar(user_id: int = Depends(get_user_id_from_token)):
+    """强制重算六维雷达数据"""
+    try:
+        radar = await PortraitRadarService.compute(user_id)
+        return {"code": 200, "msg": "雷达数据已刷新", "data": radar}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception:
+        logging.getLogger(__name__).exception("雷达刷新失败")
         raise HTTPException(500, "服务器错误")
