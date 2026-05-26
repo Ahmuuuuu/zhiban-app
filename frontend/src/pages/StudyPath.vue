@@ -2,6 +2,7 @@
   <main class="study-panel">
     <header class="panel-header">
       <div class="header-title-row">
+        <PageBackButton />
         <router-link class="home-pill" to="/">返回首页</router-link>
         <div>
         <p class="eyebrow">Study Path</p>
@@ -409,6 +410,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2 } from 'lucide-vue-next'
 import {
   getCurrentLearningPath, generateLearningPath,
@@ -418,9 +420,11 @@ import {
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
+import PageBackButton from '../components/PageBackButton.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
+const route = useRoute()
 
 const savePathToCache = state => {
   try { localStorage.setItem(PATH_CACHE_KEY, JSON.stringify(state)) } catch { /* ignore */ }
@@ -642,21 +646,25 @@ const closePathHistory = () => {
   historyError.value = ''
 }
 
+const selectLearningPath = async item => {
+  await enrollLearningPath(item.pathId).catch(err => {
+    const status = err?.response?.status
+    if (![400, 404, 409].includes(status)) throw err
+  })
+  const [detail, progress] = await Promise.all([
+    getLearningPathDetail(item.pathId),
+    getLearningPathProgress(item.pathId)
+  ])
+  const selected = normalizeSelectedPath(detail, progress, item)
+  setPathState(selected)
+}
+
 const switchPath = async item => {
   if (!item?.pathId || switchingPathId.value) return
   switchingPathId.value = String(item.pathId)
   historyError.value = ''
   try {
-    await enrollLearningPath(item.pathId).catch(err => {
-      const status = err?.response?.status
-      if (![400, 404, 409].includes(status)) throw err
-    })
-    const [detail, progress] = await Promise.all([
-      getLearningPathDetail(item.pathId),
-      getLearningPathProgress(item.pathId)
-    ])
-    const selected = normalizeSelectedPath(detail, progress, item)
-    setPathState(selected)
+    await selectLearningPath(item)
     closePathHistory()
   } catch (err) {
     historyError.value = err?.response?.data?.detail || err?.message || '切换学习路径失败'
@@ -1590,6 +1598,23 @@ const resetPath = () => {
 }
 
 const mountStudyPath = async () => {
+  const queryPathId = route.query.pathId || route.query.path_id
+  if (queryPathId) {
+    loading.value = true
+    error.value = ''
+    try {
+      await selectLearningPath({
+        pathId: String(Array.isArray(queryPathId) ? queryPathId[0] : queryPathId),
+        subject: '学习路径'
+      })
+    } catch (err) {
+      error.value = err?.response?.data?.detail || err?.message || '切换学习路径失败，请稍后再试。'
+    } finally {
+      loading.value = false
+    }
+    return
+  }
+
   await fetchCurrentPath()
   if (window.sessionStorage.getItem('zhiban_path_needs_refresh') === '1') {
     window.sessionStorage.removeItem('zhiban_path_needs_refresh')

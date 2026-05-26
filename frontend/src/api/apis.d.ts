@@ -41,6 +41,8 @@ export function uploadStudyMaterial(data: unknown): Promise<unknown>;
 
 export function getStudyResources(params?: Record<string, unknown>): Promise<unknown>;
 
+export function getStudyStats(): Promise<unknown>;
+
 export function streamResourceGeneration(
   data: {
     topic: string;

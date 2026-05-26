@@ -2,6 +2,7 @@
   <main class="study-panel">
     <header class="panel-header">
       <div class="header-title-row">
+        <PageBackButton />
         <router-link class="home-pill" to="/">&#x8FD4;&#x56DE;&#x9996;&#x9875;</router-link>
         <div>
           <p class="eyebrow">Study Status</p>
@@ -79,6 +80,26 @@
           </article>
         </aside>
 
+        <article class="current-path-panel panel-card">
+          <div class="section-title">
+            <Route :size="18" />
+            <h2>&#x6B63;&#x5728;&#x8FDB;&#x884C;&#x7684;&#x5B66;&#x4E60;&#x8DEF;&#x5F84;</h2>
+          </div>
+          <p v-if="!currentPaths.length" class="path-empty">&#x6682;&#x65E0;&#x6B63;&#x5728;&#x8FDB;&#x884C;&#x7684;&#x5B66;&#x4E60;&#x8DEF;&#x5F84;</p>
+          <ol v-else class="path-list compact">
+            <li v-for="item in currentPaths" :key="item.id">
+              <router-link class="path-link" :to="{ name: 'learningPath', query: { pathId: item.id } }">
+                <span>{{ item.index }}</span>
+                <div>
+                  <strong>{{ item.title }}</strong>
+                  <p>{{ item.time }} · {{ item.score }}</p>
+                  <div class="path-progress"><span :style="{ width: `${item.percent}%` }"></span></div>
+                </div>
+              </router-link>
+            </li>
+          </ol>
+        </article>
+
         <article class="accuracy-panel panel-card">
           <div class="section-title">
             <TrendingUp :size="18" />
@@ -100,13 +121,16 @@
             <Route :size="18" />
             <h2>&#x5DF2;&#x5B8C;&#x6210;&#x7684;&#x5B66;&#x4E60;&#x8DEF;&#x5F84;</h2>
           </div>
-          <ol class="path-list">
-            <li v-for="item in completedPaths" :key="item.title">
-              <span>{{ item.index }}</span>
-              <div>
-                <strong>{{ item.title }}</strong>
-                <p>{{ item.time }} · {{ item.score }}</p>
-              </div>
+          <p v-if="!completedPaths.length" class="path-empty">&#x6682;&#x65E0;&#x5DF2;&#x5B8C;&#x6210;&#x5B66;&#x4E60;&#x8DEF;&#x5F84;</p>
+          <ol v-else class="path-list">
+            <li v-for="item in completedPaths" :key="item.id">
+              <router-link class="path-link" :to="{ name: 'learningPath', query: { pathId: item.id } }">
+                <span>{{ item.index }}</span>
+                <div>
+                  <strong>{{ item.title }}</strong>
+                  <p>{{ item.time }} · {{ item.score }}</p>
+                </div>
+              </router-link>
             </li>
           </ol>
         </article>
@@ -171,8 +195,9 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
-import { getPortraitRadar } from '../api/apis'
+import { getPortraitRadar, getStudyStats } from '../api/apis'
 import UserAccountButton from '../components/UserAccountButton.vue'
+import PageBackButton from '../components/PageBackButton.vue'
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
 
 const zh = codes => codes.map(code => String.fromCharCode(code)).join('')
@@ -247,8 +272,10 @@ const radarLabels = computed(() => radarData.value.map((item, index) => {
   }
 }))
 
+const unwrapApiData = result => result?.data?.data || result?.data || result
+
 const normalizeRadarDimensions = result => {
-  const raw = result?.data?.data || result?.data || result || {}
+  const raw = unwrapApiData(result) || {}
   const dimensions = Array.isArray(raw.dimensions)
     ? raw.dimensions
     : Array.isArray(raw.radar)
@@ -296,26 +323,66 @@ const accuracyPoints = accuracyData.map((item, index) => ({
 }))
 const accuracyLine = accuracyPoints.map(point => `${point.x},${point.y}`).join(' ')
 
-const completedPaths = [
-  {
-    index: '01',
-    title: zh([0x8272, 0x5f69, 0x57fa, 0x7840, 0x7406, 0x8bba, 0x5165, 0x95e8]),
-    time: zh([0x34, 0x20, 0x4e2a, 0x8282, 0x70b9]),
-    score: zh([0x5e73, 0x5747, 0x6b63, 0x786e, 0x7387, 0x20, 0x38, 0x36, 0x25])
-  },
-  {
-    index: '02',
-    title: zh([0x914d, 0x8272, 0x65b9, 0x6cd5, 0x4e0e, 0x6848, 0x4f8b, 0x5206, 0x6790]),
-    time: zh([0x33, 0x20, 0x4e2a, 0x8282, 0x70b9]),
-    score: zh([0x5e73, 0x5747, 0x6b63, 0x786e, 0x7387, 0x20, 0x37, 0x39, 0x25])
-  },
-  {
-    index: '03',
-    title: zh([0x8bbe, 0x8ba1, 0x8868, 0x8fbe, 0x4e13, 0x9879, 0x7ec3, 0x4e60]),
-    time: zh([0x35, 0x20, 0x4e2a, 0x8282, 0x70b9]),
-    score: zh([0x5e73, 0x5747, 0x6b63, 0x786e, 0x7387, 0x20, 0x38, 0x32, 0x25])
+const completedPaths = ref([])
+const currentPaths = ref([])
+
+const normalizePathCount = value => Math.max(0, Math.round(Number(value || 0)))
+const pathFallbackTitle = zh([0x5b66, 0x4e60, 0x8def, 0x5f84])
+const completedText = zh([0x5df2, 0x5b8c, 0x6210])
+const nodeText = zh([0x4e2a, 0x8282, 0x70b9])
+const progressText = zh([0x5b8c, 0x6210, 0x5ea6])
+
+const normalizeLearningPaths = result => {
+  const raw = unwrapApiData(result) || {}
+  const paths = Array.isArray(raw.learning_paths)
+    ? raw.learning_paths
+    : Array.isArray(raw.learningPaths)
+      ? raw.learningPaths
+      : Array.isArray(raw.paths)
+        ? raw.paths
+        : []
+
+  return paths
+    .map(item => {
+      const totalNodes = normalizePathCount(item.total_nodes ?? item.totalNodes)
+      const completedNodes = normalizePathCount(item.completed_nodes ?? item.completedNodes)
+      const progress = Number(item.progress ?? (totalNodes ? completedNodes / totalNodes : 0))
+
+      return {
+        id: item.path_id ?? item.pathId ?? item.id ?? `${item.goal || item.subject || item.title || ''}-${totalNodes}-${completedNodes}`,
+        title: String(item.goal || item.subject || item.title || pathFallbackTitle),
+        totalNodes,
+        completedNodes,
+        progress: Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0
+      }
+    })
+    .filter(item => item.id && (item.totalNodes > 0 || item.completedNodes > 0))
+}
+
+const formatPathCard = (item, index, isCompleted = false) => {
+  const percent = Math.round(item.progress * 100)
+
+  return {
+    id: item.id,
+    index: String(index + 1).padStart(2, '0'),
+    title: item.title,
+    time: `${item.completedNodes}/${item.totalNodes} ${nodeText}`,
+    score: isCompleted ? completedText : `${progressText} ${percent}%`,
+    percent
   }
-]
+}
+
+const loadCompletedPaths = async () => {
+  try {
+    const paths = normalizeLearningPaths(await getStudyStats())
+    const finished = paths.filter(item => item.totalNodes > 0 && item.completedNodes >= item.totalNodes)
+    const inProgress = paths.filter(item => item.totalNodes > 0 && item.completedNodes < item.totalNodes)
+    completedPaths.value = finished.map((item, index) => formatPathCard(item, index, true))
+    currentPaths.value = inProgress.map((item, index) => formatPathCard(item, index)).slice(0, 2)
+  } catch (error) {
+    console.warn('[StudySituation] load completed paths failed:', error)
+  }
+}
 
 const weakPoints = [
   {
@@ -347,7 +414,10 @@ const resourceFeedback = [
   { label: zh([0x6536, 0x85cf, 0x8d44, 0x6599]), value: '18' }
 ]
 
-onMounted(loadRadarData)
+onMounted(() => {
+  loadRadarData()
+  loadCompletedPaths()
+})
 </script>
 
 <style scoped>
@@ -442,11 +512,19 @@ onMounted(loadRadarData)
 }
 
 .top-zone {
-  grid-template-columns: minmax(600px, 1fr) minmax(330px, 0.42fr);
+  grid-template-columns: minmax(280px, 0.42fr) minmax(520px, 1fr) minmax(330px, 0.42fr);
   grid-template-areas:
-    "profile side"
-    "accuracy side";
+    "profile profile side"
+    "current accuracy side";
   align-items: stretch;
+}
+
+.current-path-panel {
+  grid-area: current;
+}
+
+.accuracy-panel {
+  grid-area: accuracy;
 }
 
 .bottom-zone {
@@ -501,7 +579,11 @@ onMounted(loadRadarData)
 }
 
 .accuracy-panel {
-  grid-area: accuracy;
+  min-height: 220px;
+  padding: 20px;
+}
+
+.current-path-panel {
   min-height: 220px;
   padding: 20px;
 }
@@ -702,18 +784,46 @@ onMounted(loadRadarData)
   gap: 14px;
 }
 
+.path-list.compact {
+  margin-top: 16px;
+  gap: 10px;
+}
+
 .path-list li {
   min-height: 76px;
-  padding: 13px;
   border: 1px solid rgba(201, 220, 233, 0.82);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.7);
+  overflow: hidden;
+}
+
+.path-link {
+  min-height: 76px;
+  padding: 13px;
+  color: inherit;
+  text-decoration: none;
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.path-list li > span {
+.path-list.compact .path-link {
+  min-height: 62px;
+  padding: 12px;
+}
+
+.path-link > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.path-list li:hover {
+  border-color: rgba(22, 63, 143, 0.26);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 24px rgba(22, 63, 143, 0.08);
+}
+
+.path-link > span {
   width: 38px;
   height: 38px;
   border-radius: 50%;
@@ -738,6 +848,32 @@ onMounted(loadRadarData)
   margin: 6px 0 0;
   color: #5f8fc3;
   font-size: 12px;
+}
+
+.path-progress {
+  height: 5px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: rgba(201, 220, 233, 0.68);
+  overflow: hidden;
+}
+
+.path-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #163f8f;
+}
+
+.path-empty {
+  margin: 24px 0 0;
+  padding: 18px;
+  border: 1px dashed rgba(95, 143, 195, 0.42);
+  border-radius: 8px;
+  color: #5f8fc3;
+  font-size: 13px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.52);
 }
 
 .weak-list {
@@ -833,6 +969,7 @@ onMounted(loadRadarData)
   .profile-panel,
   .duration-panel,
   .tag-panel,
+  .current-path-panel,
   .accuracy-panel,
   .path-panel,
   .weak-panel,
