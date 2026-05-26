@@ -245,8 +245,8 @@
                       />
                     </div>
 
-                    <div v-if="resource.previewUrl || resource.downloadUrl" class="file-actions">
-                      <button v-if="resource.previewUrl" type="button" @click.stop="previewNodeResource(resource)">
+                    <div v-if="canPreviewResource(resource) || resource.downloadUrl" class="file-actions">
+                      <button v-if="canPreviewResource(resource)" type="button" @click.stop="previewNodeResource(resource)">
                         预览
                       </button>
                       <button v-if="resource.downloadUrl" type="button" @click.stop="downloadNodeResource(resource)">
@@ -304,8 +304,11 @@
           </header>
 
           <div class="resource-preview-body">
+            <div v-if="previewLoading" class="resources-loading">
+              正在加载预览...
+            </div>
             <img
-              v-if="isImageResource(previewResource) && previewResource.previewUrl"
+              v-else-if="isImageResource(previewResource) && previewResource.previewUrl"
               :src="previewResource.previewUrl"
               :alt="previewResource.title"
             />
@@ -314,6 +317,11 @@
               :content="previewResource.content"
               :title="previewResource.title"
             />
+            <article
+              v-else-if="previewResource.content"
+              class="resource-markdown markdown-body"
+              v-html="renderMarkdown(previewResource.content)"
+            ></article>
             <pre v-else>{{ previewResource.content || '暂无可预览内容，可以下载原文件查看。' }}</pre>
           </div>
 
@@ -331,7 +339,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText } from 'lucide-vue-next'
 import {
   getCurrentLearningPath, generateLearningPath,
-  generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, resolveApiUrl
+  generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, resolveApiUrl
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
@@ -354,12 +362,14 @@ const error = ref('')
 const pathState = ref(null)
 const topicInput = ref('')
 const generating = ref(false)
+const generationRunId = ref(0)
 const showResources = ref(false)
 const nodeResources = ref([])
 const resourcesLoading = ref(false)
 const nodeQuizData = ref(null)
 const nodeSessionId = ref('')
 const previewResource = ref(null)
+const previewLoading = ref(false)
 
 const normalizeStatus = s => {
   const map = {
@@ -373,6 +383,7 @@ const normalizeStatus = s => {
     todo: 'locked',
     available: 'available',
     unlocked: 'available',
+    open: 'available',
   }
   return map[s] || s || 'locked'
 }
@@ -466,8 +477,7 @@ const fetchCurrentPath = async (options = {}) => {
   try {
     const result = await getCurrentLearningPath()
     console.log('[StudyPath] current path:', result)
-    pathState.value = normalizePath(result)
-    savePathToCache(pathState.value)
+    setPathState(normalizePath(result))
   } catch (err) {
     if (err?.response?.status === 404) {
       const cached = loadPathFromCache()
@@ -492,20 +502,57 @@ const fetchCurrentPath = async (options = {}) => {
 
 const generateNewPath = async () => {
   if (!topicInput.value.trim() || generating.value) return
+  const subject = topicInput.value.trim()
+  const runId = generationRunId.value + 1
+  generationRunId.value = runId
   generating.value = true
   error.value = ''
+
+  const generatePromise = generateLearningPath({ subject })
+    .then(result => ({ type: 'generated', result }))
+    .catch(err => ({ type: 'error', err }))
+
+  const currentPromise = waitForGeneratedPath(runId, subject)
+
   try {
-    console.log('[StudyPath] generate path payload:', { subject: topicInput.value.trim() })
-    const result = await generateLearningPath({ subject: topicInput.value.trim() })
-    console.log('[StudyPath] generated path:', result)
-    const generatedPath = normalizePath(result)
-    pathState.value = generatedPath
-    savePathToCache(generatedPath)
-    topicInput.value = ''
+    console.log('[StudyPath] generate path payload:', { subject })
+    const firstResult = await Promise.race([generatePromise, currentPromise])
+    if (runId !== generationRunId.value) return
+
+    if (firstResult?.type === 'current') {
+      topicInput.value = ''
+      generatePromise.then(done => {
+        if (runId !== generationRunId.value || done?.type !== 'generated') return
+        const generatedPath = normalizePath(done.result)
+        if (generatedPath?.nodes?.length) setPathState(generatedPath)
+      })
+      return
+    }
+
+    if (firstResult?.type === 'generated') {
+      console.log('[StudyPath] generated path:', firstResult.result)
+      const generatedPath = normalizePath(firstResult.result)
+      if (generatedPath?.nodes?.length) {
+        setPathState(generatedPath)
+      } else {
+        await recoverGeneratedPathFromCurrent()
+      }
+      topicInput.value = ''
+      refreshGeneratedPathInBackground()
+      return
+    }
+
+    throw firstResult?.err || new Error('生成学习路径失败')
   } catch (err) {
+    const recovered = await recoverGeneratedPathFromCurrent()
+    if (recovered) {
+      topicInput.value = ''
+      return
+    }
+
     error.value = err?.response?.data?.detail || err?.message || '生成学习路径失败，请稍后再试。'
   } finally {
-    generating.value = false
+    if (runId === generationRunId.value) generating.value = false
   }
 }
 
@@ -558,6 +605,191 @@ const isPptResource = r => String(r?.type || r?.fileType || r?.title || r?.filen
 
 const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('mind')
 
+const canPreviewResource = resource => {
+  return Boolean(resource?.previewUrl || resource?.content || resource?.id || resource?.downloadUrl)
+}
+
+const escapeHtml = value => {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+const isImageResourceUrl = url => /\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(String(url || ''))
+
+const renderInlineMarkdown = value => {
+  let text = escapeHtml(value)
+
+  text = text.replace(/`([^`]+)`/g, '<code>$1</code>')
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>')
+  text = text.replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+  text = text.replace(/_([^_\n]+)_/g, '<em>$1</em>')
+  text = text.replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g, (_, label, url) => {
+    const href = escapeHtml(resolveApiUrl(url))
+    return `<a class="md-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="md-generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`
+  })
+  text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/)[^\s)]+)\)/g, (_, label, url) => {
+    const href = escapeHtml(resolveApiUrl(url))
+
+    if (!/^mailto:/i.test(url) && isImageResourceUrl(url)) {
+      return `<a class="md-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="md-generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`
+    }
+
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`
+  })
+
+  return text
+}
+
+const isTableSeparator = line => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+
+const renderTable = tableLines => {
+  const rows = tableLines.map(line => {
+    return line
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map(cell => renderInlineMarkdown(cell.trim()))
+  })
+
+  const header = rows[0] || []
+  const body = rows.slice(2)
+
+  return `
+    <div class="md-table-wrap">
+      <table>
+        <thead><tr>${header.map(cell => `<th>${cell}</th>`).join('')}</tr></thead>
+        <tbody>${body.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>
+  `
+}
+
+const renderMarkdown = content => {
+  const text = String(content || '').trim()
+  if (!text) return ''
+
+  const lines = text.split(/\r?\n/)
+  const html = []
+  let paragraph = []
+  let listItems = []
+  let listType = ''
+  let codeLines = []
+  let inCodeBlock = false
+  let codeLanguage = ''
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    html.push(`<p>${paragraph.map(renderInlineMarkdown).join('<br>')}</p>`)
+    paragraph = []
+  }
+
+  const flushList = () => {
+    if (!listItems.length) return
+    const tag = listType === 'ol' ? 'ol' : 'ul'
+    html.push(`<${tag}>${listItems.map(item => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${tag}>`)
+    listItems = []
+    listType = ''
+  }
+
+  const flushCode = () => {
+    const languageLabel = codeLanguage ? `<span>${escapeHtml(codeLanguage)}</span>` : ''
+    html.push(`<div class="md-code-block">${languageLabel}<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre></div>`)
+    codeLines = []
+    codeLanguage = ''
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index]
+    const line = rawLine.trim()
+
+    if (line.startsWith('```')) {
+      if (inCodeBlock) {
+        flushCode()
+        inCodeBlock = false
+      } else {
+        flushParagraph()
+        flushList()
+        inCodeBlock = true
+        codeLanguage = line.replace(/^```/, '').trim()
+      }
+      continue
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(rawLine)
+      continue
+    }
+
+    if (!line) {
+      flushParagraph()
+      flushList()
+      continue
+    }
+
+    if (line.includes('|') && lines[index + 1] && isTableSeparator(lines[index + 1])) {
+      flushParagraph()
+      flushList()
+      const tableLines = [rawLine, lines[index + 1]]
+      index += 2
+      while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
+        tableLines.push(lines[index])
+        index += 1
+      }
+      index -= 1
+      html.push(renderTable(tableLines))
+      continue
+    }
+
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/)
+    if (headingMatch) {
+      flushParagraph()
+      flushList()
+      const level = Math.min(headingMatch[1].length + 2, 6)
+      html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`)
+      continue
+    }
+
+    const blockquoteMatch = line.match(/^>\s?(.+)$/)
+    if (blockquoteMatch) {
+      flushParagraph()
+      flushList()
+      html.push(`<blockquote>${renderInlineMarkdown(blockquoteMatch[1])}</blockquote>`)
+      continue
+    }
+
+    const orderedMatch = line.match(/^\d+\.\s+(.+)$/)
+    const unorderedMatch = line.match(/^[-*]\s+(.+)$/)
+
+    if (orderedMatch || unorderedMatch) {
+      flushParagraph()
+      const currentType = orderedMatch ? 'ol' : 'ul'
+
+      if (listType && listType !== currentType) {
+        flushList()
+      }
+
+      listType = currentType
+      listItems.push((orderedMatch?.[1] || unorderedMatch?.[1] || '').trim())
+      continue
+    }
+
+    flushList()
+    paragraph.push(rawLine)
+  }
+
+  if (inCodeBlock) flushCode()
+  flushParagraph()
+  flushList()
+
+  return html.join('')
+}
+
 const normalizeNodeResources = (resources, node = null) =>
   (Array.isArray(resources) ? resources : []).map((item, i) => {
     const r = typeof item === 'object' && item !== null ? item : { resource_id: item }
@@ -567,6 +799,7 @@ const normalizeNodeResources = (resources, node = null) =>
     const title = r.title || r.topic || r.filename || r.file_name || r.name || node?.title || `学习资料 ${i + 1}`
     return {
       id: resourceId || `res-${i}`,
+      resourceId,
       title,
       filename: r.filename || r.file_name || r.name || `${title}_${fileType}`,
       type: fileType,
@@ -626,6 +859,110 @@ const patchNodeState = (node, patch = {}) => {
   }
 
   savePathToCache(pathState.value)
+}
+
+const hydratePathForRender = state => {
+  if (!state) return null
+
+  let hasCurrentNode = state.nodes?.some(node => node.status === 'current')
+  let promotedCurrent = false
+
+  return {
+    ...state,
+    diagnosis: {
+      weakPoints: [],
+      latestScore: 0,
+      recommendation: '',
+      ...(state.diagnosis || {})
+    },
+    nodes: (state.nodes || []).map((node, index) => {
+      const resources = node._resources?.length
+        ? node._resources
+        : normalizeNodeResources(node.resources || [], node)
+      const shouldPromote =
+        !hasCurrentNode &&
+        !promotedCurrent &&
+        (node.status === 'available' || node.status === 'unlocked' || (index === 0 && node.status !== 'locked'))
+
+      if (shouldPromote) {
+        promotedCurrent = true
+        hasCurrentNode = true
+      }
+
+      return {
+        ...node,
+        status: shouldPromote ? 'current' : node.status,
+        resources,
+        _resources: resources
+      }
+    })
+  }
+}
+
+const setPathState = state => {
+  const hydrated = hydratePathForRender(state)
+  pathState.value = hydrated
+  if (hydrated) savePathToCache(hydrated)
+}
+
+const delay = ms => new Promise(resolve => window.setTimeout(resolve, ms))
+
+const recoverGeneratedPathFromCurrent = async () => {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      if (attempt > 0) await delay(900)
+      const result = await getCurrentLearningPath()
+      const recovered = normalizePath(result)
+      if (recovered?.nodes?.length) {
+        setPathState(recovered)
+        error.value = ''
+        return true
+      }
+    } catch (currentErr) {
+      console.warn('[StudyPath] recover current path failed:', currentErr)
+    }
+  }
+
+  return false
+}
+
+const waitForGeneratedPath = async (runId, subject) => {
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    if (runId !== generationRunId.value) return { type: 'stale' }
+
+    try {
+      if (attempt > 0) await delay(1000)
+      const result = await getCurrentLearningPath()
+      const currentPath = normalizePath(result)
+      const matchesSubject =
+        !subject ||
+        currentPath.goal?.includes(subject) ||
+        currentPath.nodes?.some(node => node.title?.includes(subject) || node.summary?.includes(subject))
+
+      if (currentPath?.nodes?.length && matchesSubject) {
+        setPathState(currentPath)
+        error.value = ''
+        return { type: 'current', result: currentPath }
+      }
+    } catch (err) {
+      console.warn('[StudyPath] wait current path failed:', err)
+    }
+  }
+
+  return { type: 'timeout' }
+}
+
+const refreshGeneratedPathInBackground = async () => {
+  try {
+    await delay(1200)
+    const result = await getCurrentLearningPath()
+    const refreshed = normalizePath(result)
+    if (refreshed?.nodes?.length) {
+      setPathState(refreshed)
+    }
+  } catch (err) {
+    console.warn('[StudyPath] background refresh path failed:', err)
+  }
 }
 
 
@@ -870,12 +1207,80 @@ const downloadNodeResource = async resource => {
   }
 }
 
-const previewNodeResource = resource => {
+const getResourceIdFromUrl = url => {
+  const match = String(url || '').match(/\/resource\/([^/?#]+)(?:\/download)?/i)
+  return match?.[1] || ''
+}
+
+const mergePreviewResource = (resource, detail) => {
+  const data = getResponseData(detail)
+  const resourceId = data.resource_id || data.resourceId || data.id || resource.resourceId || resource.id || ''
+  const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || resource.fileType || resource.type
+  const title = data.title || data.topic || data.filename || data.name || resource.title
+
+  return {
+    ...resource,
+    id: resourceId || resource.id,
+    resourceId: resourceId || resource.resourceId,
+    title,
+    filename: data.filename || data.file_name || resource.filename || title,
+    type: fileType,
+    fileType,
+    typeLabel: fileTypeLabel(fileType),
+    content: data.content || data.preview || data.text || resource.content || '',
+    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.url || resource.previewUrl || ''),
+    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
+  }
+}
+
+const updateResourceInNodes = resource => {
+  if (!resource?.id || !pathState.value?.nodes) return
+
+  pathState.value = {
+    ...pathState.value,
+    nodes: pathState.value.nodes.map(node => ({
+      ...node,
+      resources: (node.resources || []).map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item),
+      _resources: (node._resources || []).map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item)
+    }))
+  }
+
+  if (selectedNode.value) {
+    const updatedNode = pathState.value.nodes.find(node => node.id === selectedNode.value.id)
+    if (updatedNode) selectedNode.value = updatedNode
+  }
+
+  nodeResources.value = nodeResources.value.map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item)
+  savePathToCache(pathState.value)
+}
+
+const previewNodeResource = async resource => {
   previewResource.value = resource
+  previewLoading.value = false
+
+  const resourceId = resource.resourceId || resource.id || getResourceIdFromUrl(resource.downloadUrl)
+  if (!resourceId || resource.content || resource.previewUrl) return
+
+  previewLoading.value = true
+  try {
+    const detail = await getGeneratedResource(resourceId)
+    const merged = mergePreviewResource(resource, detail)
+    previewResource.value = merged
+    updateResourceInNodes(merged)
+  } catch (err) {
+    console.error('[StudyPath] load resource preview failed:', err)
+    previewResource.value = {
+      ...resource,
+      content: '预览加载失败，可以先下载原文件查看。'
+    }
+  } finally {
+    previewLoading.value = false
+  }
 }
 
 const closeResourcePreview = () => {
   previewResource.value = null
+  previewLoading.value = false
 }
 
 const resetPath = () => {
@@ -1530,6 +1935,137 @@ onMounted(fetchCurrentPath)
   word-break: break-word;
   line-height: 1.8;
   font-family: inherit;
+}
+
+.resource-markdown {
+  color: #163f8f;
+  line-height: 1.8;
+  font-size: 14px;
+}
+
+.markdown-body :deep(p) {
+  margin: 0;
+}
+
+.markdown-body :deep(p + p),
+.markdown-body :deep(p + ul),
+.markdown-body :deep(p + ol),
+.markdown-body :deep(ul + p),
+.markdown-body :deep(ol + p),
+.markdown-body :deep(.md-table-wrap + p),
+.markdown-body :deep(.md-code-block + p) {
+  margin-top: 12px;
+}
+
+.markdown-body :deep(h3),
+.markdown-body :deep(h4),
+.markdown-body :deep(h5),
+.markdown-body :deep(h6) {
+  margin: 16px 0 8px;
+  padding-left: 10px;
+  border-left: 3px solid #5f8fc3;
+  color: #163f8f;
+  line-height: 1.45;
+}
+
+.markdown-body :deep(h3:first-child),
+.markdown-body :deep(h4:first-child),
+.markdown-body :deep(h5:first-child),
+.markdown-body :deep(h6:first-child) {
+  margin-top: 0;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 10px 0 0;
+  padding-left: 22px;
+}
+
+.markdown-body :deep(li) {
+  margin: 5px 0;
+}
+
+.markdown-body :deep(blockquote) {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid #5f8fc3;
+  border-radius: 8px;
+  background: rgba(237, 249, 252, 0.68);
+}
+
+.markdown-body :deep(code) {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(237, 249, 252, 0.85);
+  color: #163f8f;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 0.92em;
+}
+
+.markdown-body :deep(.md-code-block) {
+  margin-top: 12px;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 12px;
+  background: rgba(237, 249, 252, 0.58);
+  overflow: hidden;
+}
+
+.markdown-body :deep(.md-code-block span) {
+  display: block;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.markdown-body :deep(.md-code-block pre) {
+  margin: 0;
+  padding: 14px;
+  background: transparent;
+  white-space: pre-wrap;
+}
+
+.markdown-body :deep(a) {
+  color: #163f8f;
+  font-weight: 900;
+}
+
+.markdown-body :deep(.md-generated-image) {
+  display: block;
+  width: min(100%, 420px);
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.markdown-body :deep(.md-table-wrap) {
+  margin-top: 12px;
+  overflow-x: auto;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 10px;
+}
+
+.markdown-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  padding: 9px 11px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.56);
+  border-right: 1px solid rgba(201, 220, 233, 0.56);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body :deep(th) {
+  background: rgba(237, 249, 252, 0.78);
+  font-weight: 900;
 }
 
 /* 鈹€鈹€ Inline node resources (inside overlay) 鈹€鈹€ */
