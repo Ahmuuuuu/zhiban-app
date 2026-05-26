@@ -33,20 +33,19 @@ PROMPT_MAP = {
 class ResourceState(TypedDict):
     user_id: str
     topic: str
-    resource_types: list[str]           # ["document", "ppt"]
+    resource_types: list[str]
     portrait_context: str
     kb_context: str
-    custom_prompts: dict                # {"document": "用户定制prompt", ...}
-    generated_resources: dict           # {"document": "内容", "ppt": "内容"}
+    learning_guidance: str
+    custom_prompts: dict
+    generated_resources: dict
     review_feedback: str
     review_passed: bool
     retry_count: int
-    # exam 参数（exercise 类型使用）
-    exam_question_types: str            # "single_choice, multi_choice, true_false"
-    exam_count: str                     # "5"
-    exam_difficulty: str                # "medium"
-    # reviewer 逐题结果
-    reviewer_questions: list[dict]      # [{index, passed, score, feedback}, ...]
+    exam_question_types: str
+    exam_count: str
+    exam_difficulty: str
+    reviewer_questions: list[dict]
 
 
 # ═══════════════════════════════════════
@@ -58,7 +57,8 @@ async def leader_node(state: ResourceState) -> dict:
     topic = state["topic"]
     portrait = state.get("portrait_context", "")
     kb = state.get("kb_context", "")
-    prompt_text = fill_prompt(load_prompt("agent/leader"), topic=topic, portrait_context=portrait, kb_context=kb)
+    guidance = state.get("learning_guidance", "")
+    prompt_text = fill_prompt(load_prompt("agent/leader"), topic=topic, portrait_context=portrait, kb_context=kb, learning_guidance=guidance)
 
     try:
         response = await llm.ainvoke(prompt_text)
@@ -87,6 +87,7 @@ async def executor_node(state: ResourceState) -> dict:
     resource_types = state.get("resource_types", ["document"])
     portrait = state.get("portrait_context", "")
     kb = state.get("kb_context", "")
+    guidance = state.get("learning_guidance", "")
     custom_prompts = state.get("custom_prompts", {}) or {}
     feedback = state.get("review_feedback", "")
 
@@ -105,6 +106,7 @@ async def executor_node(state: ResourceState) -> dict:
             resource_type=rt,
             portrait_context=portrait,
             kb_context=kb,
+            learning_guidance=guidance,
             feedback=feedback,
             count=state.get("exam_count", "5"),
             question_types=state.get("exam_question_types", "single_choice, multi_choice, true_false"),

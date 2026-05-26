@@ -88,6 +88,10 @@ async def refresh_radar(user_id: int = Depends(get_user_id_from_token)):
     """强制重算六维雷达数据"""
     try:
         radar = await PortraitRadarService.compute(user_id)
+        try:
+            await PortraitRadarService.sync_to_portrait(user_id)
+        except Exception:
+            logging.getLogger(__name__).exception("雷达同步画像失败 user_id=%s", user_id)
         return {"code": 200, "msg": "雷达数据已刷新", "data": radar}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

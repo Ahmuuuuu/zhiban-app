@@ -7,6 +7,9 @@ system: |
   ## 用户画像
   {portrait_context}
 
+  ## 学习指导
+  {learning_guidance}
+
   ## 知识库相关资料
   {kb_context}
 

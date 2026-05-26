@@ -18,29 +18,78 @@ from backend.src.models.portraitmodel import User_picture
 from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
-from backend.src.service.portrait_service import format_portrait
+from backend.src.service.portrait_service import format_portrait, PortraitRadarService, build_learning_guidance
 from backend.src.service.exam_service import ExamService
 from backend.src.service.resource_service import ResourceService
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.json_parser import parse_llm_json
 
 
+def _compute_node_count(subject: str, picture) -> int:
+    """动态计算路径节点数 (3-12)，基于 knowbase 水平和学科广度"""
+    traits = {}
+    if picture and picture.traits:
+        try:
+            traits = json.loads(picture.traits)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    knowbase_data = traits.get("knowbase", {})
+    if isinstance(knowbase_data, dict):
+        kb_val = knowbase_data.get("value", "3")
+    else:
+        kb_val = str(knowbase_data or "3")
+    try:
+        kb_level = float(kb_val)
+    except (ValueError, TypeError):
+        kb_level = 3.0
+
+    broad_keywords = ["学", "原理", "概论", "导论", "基础", "体系", "框架", "进阶", "实战", "应用"]
+    narrow_keywords = ["定理", "公式", "法则", "方法", "工具", "技巧", "模型"]
+    is_broad = any(kw in subject for kw in broad_keywords)
+    is_narrow = any(kw in subject for kw in narrow_keywords)
+
+    base = 3 if is_narrow else (8 if is_broad else 5)
+    wc = len(subject)
+    if wc <= 3:
+        base = max(3, base - 1)
+    elif wc >= 8:
+        base = min(12, base + 2)
+
+    level_adjust = int((kb_level - 3) * 1.5)
+    return max(3, min(12, base + level_adjust))
+
+
 class PathService:
 
     @staticmethod
-    async def generate_path(subject: str, user_id: int, difficulty: str = "medium", node_count: int = 5) -> dict:
-        """LLM 生成路径结构 → 存库"""
+    async def generate_path(subject: str, user_id: int, difficulty: str = "medium", node_count: int = 0) -> dict:
+        """LLM 生成路径结构 → 存库（node_count=0 自动计算）"""
         await init_db()
 
         portrait_context = "暂无画像数据"
         mastery_context = "暂无掌握度数据"
         kb_context = "暂无相关知识库"
+        learning_guidance = ""
 
         user = await User.filter(id=user_id).first()
         if user:
             picture = await user.picture
             if picture:
-                portrait_context = "\n".join(format_portrait(picture, show_missing=False))
+                try:
+                    radar_data = await PortraitRadarService.get(user_id)
+                except Exception:
+                    radar_data = None
+                portrait_context = "\n".join(format_portrait(picture, show_missing=False, radar_data=radar_data))
+                if node_count <= 0:
+                    node_count = _compute_node_count(subject, picture)
+            else:
+                if node_count <= 0:
+                    node_count = 5
+
+        try:
+            learning_guidance = await build_learning_guidance(user_id) or ""
+        except Exception:
+            logger.exception("学习指导生成失败 user_id=%s", user_id)
 
         try:
             kb_result = await kb_search(subject, top_k=5, user_id=user_id)
@@ -66,6 +115,7 @@ class PathService:
             portrait_context=portrait_context,
             mastery_context=mastery_context,
             kb_context=kb_context,
+            learning_guidance=learning_guidance,
         )
 
         try:

@@ -16,6 +16,21 @@ from backend.src.utils.database import init_db
 from backend.src.utils.json_parser import parse_llm_json
 
 
+def _weight(difficulty: str, question_type: str) -> float:
+    """题目权重：easy=1, medium=2, hard=3，多选 +0.5"""
+    base = {"easy": 1.0, "medium": 2.0, "hard": 3.0}.get(difficulty, 2.0)
+    if question_type == "multi_choice":
+        base += 0.5
+    return base
+
+
+def _normalize_score(weight: float, total_weight: float) -> float:
+    """将权重转为百分制分数"""
+    if total_weight == 0:
+        return 0.0
+    return round(weight / total_weight * 100, 1)
+
+
 def _question_to_dict(q: ExamQuestion) -> dict:
     def _safe_parse(text: str | None):
         if not text:
@@ -34,6 +49,7 @@ def _question_to_dict(q: ExamQuestion) -> dict:
         "analysis": q.analysis,
         "difficulty": q.difficulty,
         "knowledge_tags": _safe_parse(q.knowledge_tags) or [],
+        "weight": q.point_value or _weight(q.difficulty, q.question_type),
         "created_at": str(q.created_at),
     }
 
@@ -48,14 +64,18 @@ class ExamService:
         session_id = str(uuid.uuid4())[:12]
         saved = []
         for q in questions:
+            qt = q.get("question_type", "single_choice")
+            diff = q.get("difficulty", difficulty)
+            pv = q.get("point_value") or _weight(diff, qt)
             record = await ExamQuestion.create(
-                question_type=q.get("question_type", "single_choice"),
+                question_type=qt,
                 content=q.get("content", ""),
                 options=json.dumps(q.get("options"), ensure_ascii=False) if q.get("options") else None,
                 answer=json.dumps(q.get("answer"), ensure_ascii=False) if isinstance(q.get("answer"), list) else str(q.get("answer") or ""),
                 analysis=q.get("analysis", ""),
-                difficulty=q.get("difficulty", difficulty),
+                difficulty=diff,
                 knowledge_tags=json.dumps(q.get("knowledge_tags", []), ensure_ascii=False),
+                point_value=pv,
                 user=user,
             )
             # 创建占位记录，使 session 立即可查询
@@ -235,28 +255,47 @@ class ExamService:
             raise ValueError("题目不存在")
 
         correct_answer = question.answer
+        w = float(question.point_value or _weight(question.difficulty, question.question_type))
 
-        # 判断对错
+        # 判断对错 + 计算权重得分
         if question.question_type == "true_false":
             is_correct = user_answer.strip().upper() == correct_answer.strip().upper()
+            score = w if is_correct else 0.0
+
         elif question.question_type in ("single_choice", "fill_blank"):
             is_correct = (user_answer.strip() == correct_answer.strip())
+            score = w if is_correct else 0.0
+
         elif question.question_type == "multi_choice":
             try:
-                def _normalize(ans: str) -> set:
+                def _parse_ans(ans: str) -> set:
                     if ans.startswith("["):
                         return set(json.loads(ans))
                     return set(ans.strip().upper().replace(" ", "").split(","))
-                is_correct = _normalize(user_answer) == _normalize(correct_answer)
+
+                user_set = _parse_ans(user_answer)
+                correct_set = _parse_ans(correct_answer)
+                n_correct = len(correct_set)
+                selected_correct = len(user_set & correct_set)
+                selected_wrong = len(user_set - correct_set)
+
+                if n_correct > 0:
+                    ratio = max(0.0, (selected_correct - selected_wrong) / n_correct)
+                else:
+                    ratio = 1.0 if selected_correct == 0 and selected_wrong == 0 else 0.0
+
+                is_correct = (ratio >= 1.0)
+                score = round(w * ratio, 2)
             except Exception:
                 is_correct = user_answer.strip().upper() == correct_answer.strip().upper()
-        else:
-            is_correct = None  # 简答题不自动判分
+                score = w if is_correct else 0.0
 
-        score = 100.0 if is_correct is True else (0.0 if is_correct is False else None)
+        else:
+            is_correct = None
+            score = None
+
         sid = session_id or str(uuid.uuid4())[:12]
 
-        # 从已有占位记录继承 node_id（如果未显式传入）
         if node_id is None and session_id:
             placeholder = await ExamRecord.filter(session_id=session_id, question_id=question_id, user_answer__isnull=True).first()
             if placeholder and placeholder.node_id:
@@ -300,25 +339,31 @@ class ExamService:
                 mastery.last_practiced_at = datetime.now()
                 await mastery.save()
 
-        # 同步画像（会话提交时 path_service.submit_node_quiz 也会触发，此处确保非路径答题也能更新）
         from backend.src.service.path_service import PathService
         try:
             await PathService._update_portrait_from_mastery(user_id)
         except Exception:
             logger.exception("答题后画像同步失败 user_id=%s", user_id)
 
-        # 汇总本轮会话成绩
-        session_records = await ExamRecord.filter(session_id=sid).all()
+        # 汇总本轮会话成绩（总分恒为 100）
+        session_records = await ExamRecord.filter(session_id=sid).prefetch_related("question").all()
         judged = [r for r in session_records if r.is_correct is not None]
         total_questions = len(session_records)
         correct_count = sum(1 for r in judged if r.is_correct)
         judged_count = len(judged)
-        session_score = round(sum(r.score for r in judged) / judged_count, 1) if judged_count else None
+        total_weight = sum(
+            float(r.question.point_value or _weight(r.question.difficulty, r.question.question_type))
+            for r in session_records if r.question
+        )
+        earned_weight = sum(float(r.score) for r in session_records if r.score is not None)
+        # 当前题目的百分制得分
+        question_score = _normalize_score(score or 0.0, total_weight) if total_weight > 0 else None
 
         return {
             "question_id": question_id,
             "is_correct": is_correct,
-            "score": score,
+            "score": question_score,           # 百分制得分
+            "weight": w,                        # 题目权重
             "correct_answer": correct_answer if not is_correct else None,
             "analysis": question.analysis if not is_correct else None,
             "session_id": sid,
@@ -327,7 +372,9 @@ class ExamService:
                 "correct_count": correct_count,
                 "incorrect_count": judged_count - correct_count,
                 "pending_count": total_questions - judged_count,
-                "score": session_score,
+                "total_points": 100,            # 总分恒为 100
+                "earned_points": _normalize_score(earned_weight, total_weight) if total_weight > 0 else 0.0,
+                "percentage": round(earned_weight / total_weight * 100, 1) if total_weight > 0 else None,
             },
         }
 
@@ -379,6 +426,11 @@ class ExamService:
         judged = [r for r in records if r.is_correct is not None]
         correct_count = sum(1 for r in judged if r.is_correct)
         judged_count = len(judged)
+        total_weight = sum(
+            float(r.question.point_value or _weight(r.question.difficulty, r.question.question_type))
+            for r in records if r.question
+        )
+        earned_weight = sum(float(r.score) for r in records if r.score is not None)
 
         return {
             "session_id": session_id,
@@ -386,7 +438,9 @@ class ExamService:
             "correct_count": correct_count,
             "incorrect_count": judged_count - correct_count,
             "pending_count": len(records) - judged_count,
-            "score": round(sum(r.score for r in judged) / judged_count, 1) if judged_count else None,
+            "total_points": 100,
+            "earned_points": _normalize_score(earned_weight, total_weight) if total_weight > 0 else 0.0,
+            "percentage": round(earned_weight / total_weight * 100, 1) if total_weight > 0 else None,
             "records": items,
         }
 
@@ -408,22 +462,109 @@ class ExamService:
                     "total": 0,
                     "correct": 0,
                     "judged": 0,
+                    "total_weight": 0.0,
+                    "earned_weight": 0.0,
                     "first_at": str(r.created_at),
                     "last_at": str(r.created_at),
                 }
             s = sessions[r.session_id]
             s["total"] += 1
+            if r.question:
+                s["total_weight"] += float(r.question.point_value or _weight(r.question.difficulty, r.question.question_type))
+            if r.score is not None:
+                s["earned_weight"] += float(r.score)
+                s["judged"] += 1
             if r.is_correct is True:
                 s["correct"] += 1
-                s["judged"] += 1
             elif r.is_correct is False:
-                s["judged"] += 1
+                pass
             s["last_at"] = str(r.created_at)
 
         for s in sessions.values():
             s["score"] = round(s["correct"] / s["judged"] * 100, 1) if s["judged"] else None
+            s["percentage"] = round(s["earned_weight"] / s["total_weight"] * 100, 1) if s["total_weight"] > 0 else None
+            s["total_points"] = 100
 
         return sorted(sessions.values(), key=lambda x: x["last_at"], reverse=True)
+
+    @staticmethod
+    async def get_statistics(user_id: int) -> dict:
+        """用户整体答题统计（总分恒为 100）"""
+        records = await ExamRecord.filter(user_id=user_id).prefetch_related("question").all()
+        judged = [r for r in records if r.is_correct is not None]
+
+        if not judged:
+            return {
+                "total_answered": 0, "total_correct": 0,
+                "total_points": 100, "earned_points": 0,
+                "overall_accuracy": None, "overall_percentage": None,
+                "by_difficulty": {}, "by_type": {}, "by_knowledge_tag": [],
+            }
+
+        total_correct = sum(1 for r in judged if r.is_correct)
+        total_weight = sum(
+            float(r.question.point_value or _weight(r.question.difficulty, r.question.question_type))
+            for r in judged if r.question
+        )
+        earned_weight = sum(float(r.score) for r in judged if r.score is not None)
+
+        def _build_breakdown(items: list, key_fn) -> dict:
+            buckets: dict[str, dict] = {}
+            for r in items:
+                if not r.question:
+                    continue
+                k = key_fn(r.question)
+                if k not in buckets:
+                    buckets[k] = {"total": 0, "correct": 0, "total_weight": 0.0, "earned_weight": 0.0}
+                buckets[k]["total"] += 1
+                buckets[k]["total_weight"] += float(r.question.point_value or _weight(r.question.difficulty, r.question.question_type))
+                if r.score is not None:
+                    buckets[k]["earned_weight"] += float(r.score)
+                if r.is_correct:
+                    buckets[k]["correct"] += 1
+            for v in buckets.values():
+                v["accuracy"] = round(v["correct"] / v["total"] * 100, 1) if v["total"] else None
+                v["percentage"] = round(v["earned_weight"] / v["total_weight"] * 100, 1) if v["total_weight"] > 0 else None
+            return buckets
+
+        by_difficulty = _build_breakdown(judged, lambda q: q.difficulty)
+        by_type = _build_breakdown(judged, lambda q: q.question_type)
+
+        # 按知识点统计（Top 20）
+        tag_stats: dict[str, dict] = {}
+        for r in judged:
+            if not r.question or not r.question.knowledge_tags:
+                continue
+            try:
+                tags = json.loads(r.question.knowledge_tags)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            w = float(r.question.point_value or _weight(r.question.difficulty, r.question.question_type))
+            for tag in tags:
+                if tag not in tag_stats:
+                    tag_stats[tag] = {"knowledge_tag": tag, "total": 0, "correct": 0, "total_weight": 0.0, "earned_weight": 0.0}
+                tag_stats[tag]["total"] += 1
+                tag_stats[tag]["total_weight"] += w
+                if r.score is not None:
+                    tag_stats[tag]["earned_weight"] += float(r.score)
+                if r.is_correct:
+                    tag_stats[tag]["correct"] += 1
+        for t in tag_stats.values():
+            t["accuracy"] = round(t["correct"] / t["total"] * 100, 1) if t["total"] else None
+            t["percentage"] = round(t["earned_weight"] / t["total_weight"] * 100, 1) if t["total_weight"] > 0 else None
+        by_tag = sorted(tag_stats.values(), key=lambda x: x["total"], reverse=True)[:20]
+
+        return {
+            "total_answered": len(judged),
+            "total_correct": total_correct,
+            "total_points": 100,
+            "earned_points": _normalize_score(earned_weight, total_weight) if total_weight > 0 else 0.0,
+            "overall_accuracy": round(total_correct / len(judged) * 100, 1),
+            "overall_percentage": round(earned_weight / total_weight * 100, 1) if total_weight > 0 else None,
+            "by_difficulty": by_difficulty,
+            "by_type": by_type,
+            "by_knowledge_tag": by_tag,
+        }
 
     @staticmethod
     async def get_mastery(user_id: int) -> list[dict]:
