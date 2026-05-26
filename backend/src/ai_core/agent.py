@@ -213,14 +213,14 @@ class UnifiedChat:
 
                 if kind == "on_tool_start":
                     tool_name = event.get("name", "")
-                    yield {"type": "tool_start", "tool": tool_name}
+                    yield {"role": "tool", "type": "tool_start", "tool": tool_name}
 
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "")
                     tool_output = event.get("data", {}).get("output", "")
                     if isinstance(tool_output, str) and len(tool_output) > 500:
                         tool_output = tool_output[:500] + "..."
-                    yield {"type": "tool_end", "tool": tool_name, "output": str(tool_output)}
+                    yield {"role": "tool", "type": "tool_end", "tool": tool_name, "output": str(tool_output)}
 
                 elif kind == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
@@ -228,7 +228,7 @@ class UnifiedChat:
                         content = getattr(chunk, "content", None)
                         if content:
                             full_response += content
-                            yield {"type": "content", "content": content}
+                            yield {"role": "assistant", "type": "chunk", "content": content}
         except (TypeError, NotImplementedError):
             async for event in self._raw_executor.astream_events(
                 {
@@ -245,14 +245,14 @@ class UnifiedChat:
 
                 if kind == "on_tool_start":
                     tool_name = event.get("name", "")
-                    yield {"type": "tool_start", "tool": tool_name}
+                    yield {"role": "tool", "type": "tool_start", "tool": tool_name}
 
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "")
                     tool_output = event.get("data", {}).get("output", "")
                     if isinstance(tool_output, str) and len(tool_output) > 500:
                         tool_output = tool_output[:500] + "..."
-                    yield {"type": "tool_end", "tool": tool_name, "output": str(tool_output)}
+                    yield {"role": "tool", "type": "tool_end", "tool": tool_name, "output": str(tool_output)}
 
                 elif kind == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
@@ -260,7 +260,7 @@ class UnifiedChat:
                         content = getattr(chunk, "content", None)
                         if content:
                             full_response += content
-                            yield {"type": "content", "content": content}
+                            yield {"role": "assistant", "type": "chunk", "content": content}
 
         self._history.append(HumanMessage(content=message))
         self._history.append(AIMessage(content=full_response))
