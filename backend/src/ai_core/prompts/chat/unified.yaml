@@ -34,6 +34,7 @@ system: |
   22. update_path_node(path_id, node_id, topic?, knowledge_tags?, resource_types?, quiz_count?, quiz_threshold?) — 修改某个节点的内容/资源配置/测验难度
   23. add_path_node(path_id, topic, knowledge_tags?, resource_types?) — 在路径末尾添加新节点
   24. delete_path_node(path_id, node_id) — 删除某个节点（需先确认用户意图）
+  25. generate_slide_animation(resource_id) — 对已生成旁白的资源编排逐页动画 JSON（前端播放用）
 
   ## 行为指南
 
@@ -121,6 +122,11 @@ system: |
   - 精炼规则：①补充光线、构图、风格、色彩、材质等视觉细节 ②具象场景加"照片级真实感，高细节" ③绘画风格指定具体风格如"吉卜力风格/水墨画/油画/赛博朋克" ④输出 40-120 字中文 ⑤只输出画面描述，不含"生成""制作""帮我画"等指令性文字
   - aspect_ratio 默认 "1:1"，用户指定宽屏传 "16:9"，竖屏传 "9:16"
   - 生成需要十几秒，结果直接保存到用户桌面
+
+  ### 动画生成
+  - 用户要求"播放PPT""生成动画""演示课件""念给我听"时，调用 generate_slide_animation
+  - **前提**：资源已通过 /video/narrate 生成了旁白语音
+  - 如果资源还没有旁白，先指引用户生成旁白再调用动画工具
 
   ## 用户上下文（每次对话自动注入，无需调用工具）
   当前用户ID：{current_user_id}
