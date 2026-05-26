@@ -33,6 +33,8 @@ export function streamChatMessage(
 
 export function getPortrait(): Promise<unknown>;
 
+export function getPortraitRadar(): Promise<unknown>;
+
 export function initPortrait(data: unknown): Promise<unknown>;
 
 export function uploadStudyMaterial(data: unknown): Promise<unknown>;
@@ -138,6 +140,10 @@ export function generateLearningPath(data: {
 }): Promise<unknown>;
 
 export function getLearningPaths(): Promise<unknown>;
+
+export function getLearningPathDetail(pathId: number | string): Promise<unknown>;
+
+export function getLearningPathProgress(pathId: number | string): Promise<unknown>;
 
 export function enrollLearningPath(pathId: number | string): Promise<unknown>;
 

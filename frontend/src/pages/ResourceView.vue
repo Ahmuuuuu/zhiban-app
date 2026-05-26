@@ -161,7 +161,7 @@
             <template v-else-if="isPptResource(selectedResource)">
               <PptPreview
                 v-if="selectedResource.slides?.length"
-                :slides="selectedResource.slides"
+                v-model:slides="selectedResource.slides"
                 :title="selectedResource.title"
               />
               <div v-else-if="selectedResource.previewUrl" class="file-preview-wrap">
@@ -401,11 +401,88 @@ const isMindmapResource = resource => {
 
 const downloadResource = async resource => {
   try {
+    if (isPptResource(resource) && Array.isArray(resource.slides) && resource.slides.length) {
+      downloadEditedPpt(resource)
+      return
+    }
+
     await downloadWithToken(resource.downloadUrl, resource.filename || `${resource.title || 'resource'}.md`)
   } catch (error) {
     console.error('下载资源失败：', error)
     window.alert('下载失败，请确认登录状态和后端服务是否正常。')
   }
+}
+
+const escapeHtml = value => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
+
+const splitSlideLines = value => String(value || '')
+  .split(/\r?\n|[;；]/)
+  .map(line => line.replace(/^[-*•\s]+/, '').trim())
+  .filter(Boolean)
+
+const pptDownloadName = resource => {
+  const raw = String(resource?.filename || resource?.title || 'edited-presentation')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\.[^.]+$/, '')
+  return `${raw || 'edited-presentation'}.ppt`
+}
+
+const buildEditedPptHtml = resource => {
+  const slides = Array.isArray(resource?.slides) ? resource.slides : []
+  const title = escapeHtml(resource?.title || 'Edited Presentation')
+  const slideHtml = slides.map((slide, index) => {
+    const slideTitle = escapeHtml(slide.title || `${resource?.title || 'Slide'} ${index + 1}`)
+    const text = slide.text || slide.content || ''
+    const notes = slide.notes || slide.speaker_notes || ''
+    const lines = splitSlideLines(text)
+      .map(line => `<li>${escapeHtml(line)}</li>`)
+      .join('')
+
+    return `
+      <section class="slide">
+        <div class="meta">${index + 1} / ${slides.length}</div>
+        <h1>${slideTitle}</h1>
+        <ul>${lines}</ul>
+        ${notes ? `<aside>${escapeHtml(notes).replace(/\n/g, '<br>')}</aside>` : ''}
+      </section>
+    `
+  }).join('')
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${title}</title>
+  <style>
+    @page { size: 13.333in 7.5in; margin: 0; }
+    body { margin: 0; font-family: "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif; color: #163f8f; background: #f4fbfd; }
+    .slide { box-sizing: border-box; width: 13.333in; height: 7.5in; padding: .55in .72in; page-break-after: always; background: linear-gradient(135deg, #fff 0%, #edf9fc 100%); display: flex; flex-direction: column; justify-content: center; position: relative; }
+    .meta { position: absolute; top: .32in; right: .5in; color: #5f8fc3; font-size: 12pt; font-weight: 700; }
+    h1 { margin: 0 0 .38in; text-align: center; font-size: 38pt; line-height: 1.15; }
+    ul { width: 78%; margin: 0 auto; padding-left: .35in; font-size: 20pt; line-height: 1.55; }
+    li { margin: 0 0 .12in; }
+    aside { margin-top: auto; padding: .14in .18in; border-radius: .08in; background: rgba(201, 220, 233, .42); color: rgba(22, 63, 143, .74); font-size: 12pt; line-height: 1.5; }
+  </style>
+</head>
+<body>${slideHtml}</body>
+</html>`
+}
+
+const downloadEditedPpt = resource => {
+  const blob = new Blob([buildEditedPptHtml(resource)], { type: 'application/vnd.ms-powerpoint;charset=utf-8' })
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = pptDownloadName(resource)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
 }
 
 const startResourceQuiz = async resource => {
