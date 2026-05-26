@@ -28,15 +28,27 @@
 
             <div class="radar-wrap">
               <svg viewBox="0 0 220 220" role="img" aria-label="profile radar">
-                <polygon points="110,28 181,69 181,151 110,192 39,151 39,69" class="radar-grid" />
-                <polygon points="110,56 157,83 157,137 110,164 63,137 63,83" class="radar-grid muted" />
+                <polygon
+                  v-for="ring in radarRings"
+                  :key="ring"
+                  :points="radarRingPoints(ring)"
+                  class="radar-grid"
+                  :class="{ muted: ring < 100 }"
+                />
+                <line
+                  v-for="axis in radarAxes"
+                  :key="axis.angle"
+                  :x1="radarCenter"
+                  :y1="radarCenter"
+                  :x2="axis.x"
+                  :y2="axis.y"
+                  class="radar-axis"
+                />
                 <polygon :points="radarPoints" class="radar-score" />
-                <circle v-for="point in radarDots" :key="point.label" :cx="point.x" :cy="point.y" r="3.5" class="radar-dot" />
-                <text v-for="point in radarScoreLabels" :key="`${point.label}-score`" :x="point.x" :y="point.y" class="radar-value" text-anchor="middle">
-                  {{ point.value }}
-                </text>
                 <text v-for="label in radarLabels" :key="label.text" :x="label.x" :y="label.y" text-anchor="middle">
-                  {{ label.text }}
+                  <tspan :x="label.x" dy="-12" class="radar-value">{{ label.value }}</tspan>
+                  <tspan :x="label.x" dy="13">{{ label.text }}</tspan>
+                  <tspan :x="label.x" dy="13" class="radar-label-en">{{ label.en }}</tspan>
                 </text>
               </svg>
             </div>
@@ -148,6 +160,7 @@
 </template>
 
 <script setup>
+import { computed, onMounted, ref } from 'vue'
 import {
   BadgeCheck,
   Clock3,
@@ -158,6 +171,7 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
+import { getPortraitRadar } from '../api/apis'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
 
@@ -174,14 +188,23 @@ const learnerTags = [
   zh([0x5468, 0x672b, 0x6d3b, 0x8dc3])
 ]
 
-const radarData = [
-  { label: zh([0x4e13, 0x6ce8, 0x5ea6]), value: 82 },
-  { label: zh([0x4e3b, 0x52a8, 0x6027]), value: 68 },
-  { label: zh([0x590d, 0x76d8, 0x529b]), value: 74 },
-  { label: zh([0x5b8c, 0x6210, 0x5ea6]), value: 88 },
-  { label: zh([0x7406, 0x89e3, 0x529b]), value: 72 },
-  { label: zh([0x8fc1, 0x79fb, 0x529b]), value: 63 }
+const fallbackRadarData = [
+  { key: 'focus', label: zh([0x4e13, 0x6ce8, 0x5ea6]), en: 'Focus', value: 82 },
+  { key: 'initiative', label: zh([0x4e3b, 0x52a8, 0x6027]), en: 'Initiative', value: 68 },
+  { key: 'review', label: zh([0x590d, 0x76d8, 0x529b]), en: 'Review', value: 74 },
+  { key: 'completion', label: zh([0x5b8c, 0x6210, 0x5ea6]), en: 'Completion', value: 88 },
+  { key: 'understanding', label: zh([0x7406, 0x89e3, 0x529b]), en: 'Understanding', value: 72 },
+  { key: 'transfer', label: zh([0x8fc1, 0x79fb, 0x529b]), en: 'Transfer', value: 63 }
 ]
+const radarData = ref(fallbackRadarData)
+const radarEnglishMap = {
+  memory: 'Memory',
+  understanding: 'Understanding',
+  application: 'Application',
+  analysis: 'Analysis',
+  breadth: 'Breadth',
+  persistence: 'Persistence'
+}
 
 const radarAngles = [-90, -30, 30, 90, 150, 210]
 const radarCenter = 110
@@ -196,23 +219,65 @@ const polarPoint = (angle, value) => {
   }
 }
 
-const radarDots = radarData.map((item, index) => ({
+const radarRings = [100, 80, 60, 40, 20]
+const radarRingPoints = value => radarAngles
+  .map(angle => {
+    const point = polarPoint(angle, value)
+    return `${point.x},${point.y}`
+  })
+  .join(' ')
+const radarAxes = radarAngles.map(angle => ({
+  angle,
+  ...polarPoint(angle, 100)
+}))
+
+const radarDots = computed(() => radarData.value.map((item, index) => ({
   ...item,
   ...polarPoint(radarAngles[index], item.value)
-}))
-const radarPoints = radarDots.map(point => `${point.x},${point.y}`).join(' ')
-const radarScoreLabels = radarDots.map((point, index) => {
-  const labelPoint = polarPoint(radarAngles[index], 150)
+})))
+const radarPoints = computed(() => radarDots.value.map(point => `${point.x},${point.y}`).join(' '))
+const radarLabels = computed(() => radarData.value.map((item, index) => {
+  const point = polarPoint(radarAngles[index], 134)
   return {
-    ...point,
-    x: labelPoint.x,
-    y: labelPoint.y + 4
+    text: item.label,
+    en: item.en || radarEnglishMap[item.key] || item.key || '',
+    value: item.value,
+    x: point.x,
+    y: point.y + 4
   }
-})
-const radarLabels = radarData.map((item, index) => {
-  const point = polarPoint(radarAngles[index], 122)
-  return { text: item.label, x: point.x, y: point.y + 4 }
-})
+}))
+
+const normalizeRadarDimensions = result => {
+  const raw = result?.data?.data || result?.data || result || {}
+  const dimensions = Array.isArray(raw.dimensions)
+    ? raw.dimensions
+    : Array.isArray(raw.radar)
+      ? raw.radar
+      : Array.isArray(raw)
+        ? raw
+        : []
+
+  return dimensions
+    .map((item, index) => ({
+      key: String(item.key || fallbackRadarData[index]?.key || ''),
+      label: String(item.label || item.name || item.key || fallbackRadarData[index]?.label || ''),
+      en: String(item.en || item.english || radarEnglishMap[item.key] || fallbackRadarData[index]?.en || ''),
+      value: Math.max(0, Math.min(100, Math.round(Number(item.score ?? item.value ?? item.percent ?? 0))))
+    }))
+    .filter(item => item.label && Number.isFinite(item.value))
+    .slice(0, 6)
+}
+
+const loadRadarData = async () => {
+  try {
+    const list = normalizeRadarDimensions(await getPortraitRadar())
+    if (list.length >= 3) {
+      radarData.value = list.length === 6 ? list : [...list, ...fallbackRadarData.slice(list.length)].slice(0, 6)
+    }
+  } catch (error) {
+    console.warn('[StudySituation] load radar failed:', error)
+  }
+}
 
 const accuracyData = [
   { day: zh([0x5468, 0x4e00]), value: 64 },
@@ -281,6 +346,8 @@ const resourceFeedback = [
   { label: zh([0x7ec3, 0x4e60, 0x5b8c, 0x6210, 0x7387]), value: '76%' },
   { label: zh([0x6536, 0x85cf, 0x8d44, 0x6599]), value: '18' }
 ]
+
+onMounted(loadRadarData)
 </script>
 
 <style scoped>
@@ -516,34 +583,37 @@ const resourceFeedback = [
 .radar-grid {
   fill: none;
   stroke: rgba(95, 143, 195, 0.36);
-  stroke-width: 1.4;
+  stroke-width: 0.8;
 }
 
-.radar-grid.muted {
-  stroke-dasharray: 4 7;
+.radar-axis {
+  stroke: rgba(95, 143, 195, 0.24);
+  stroke-width: 0.7;
 }
 
 .radar-score {
   fill: rgba(95, 143, 195, 0.24);
   stroke: #163f8f;
-  stroke-width: 2.2;
-}
-
-.radar-dot {
-  fill: #163f8f;
+  stroke-width: 1.25;
 }
 
 .radar-wrap text,
 .line-chart text {
-  fill: #5f8fc3;
-  font-size: 11px;
-  font-weight: 800;
+  fill: #2f6698;
+  font-size: 10px;
+  font-weight: 400;
 }
 
 .radar-wrap .radar-value {
-  fill: #163f8f;
+  fill: #0f3478;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 500;
+}
+
+.radar-wrap .radar-label-en {
+  fill: rgba(47, 102, 152, 0.86);
+  font-size: 6.8px;
+  font-weight: 300;
 }
 
 .duration-ring {

@@ -10,9 +10,14 @@
         </div>
       </div>
 
-      <button v-if="pathState" class="reset-btn" type="button" @click="resetPath">
-        重置路径
-      </button>
+      <div class="header-actions">
+        <button class="history-btn" type="button" @click="openPathHistory">
+          历史路径
+        </button>
+        <button v-if="pathState" class="reset-btn" type="button" @click="resetPath">
+          重置路径
+        </button>
+      </div>
     </header>
 
     <template v-if="loading">
@@ -199,6 +204,44 @@
 
     <Teleport to="body">
       <Transition name="overlay-fade">
+        <section v-if="historyOpen" class="history-overlay" @click.self="closePathHistory">
+          <article class="history-panel">
+            <header>
+              <div>
+                <span>Path History</span>
+                <h2>过往学习路径</h2>
+              </div>
+              <button type="button" aria-label="关闭历史路径" @click="closePathHistory">&times;</button>
+            </header>
+
+            <div v-if="historyLoading" class="history-state">正在加载历史路径...</div>
+            <div v-else-if="historyError" class="history-state error">{{ historyError }}</div>
+            <div v-else-if="!pathHistory.length" class="history-state">还没有过往学习路径</div>
+
+            <div v-else class="history-list">
+              <button
+                v-for="item in pathHistory"
+                :key="item.pathId"
+                type="button"
+                class="history-item"
+                :class="{ active: String(item.pathId) === String(pathState?.pathId), switching: switchingPathId === String(item.pathId) }"
+                :disabled="Boolean(switchingPathId)"
+                @click="switchPath(item)"
+              >
+                <div>
+                  <strong>{{ item.subject }}</strong>
+                  <span>{{ item.difficulty }} · {{ item.nodeCount }} 个节点</span>
+                </div>
+                <small>{{ formatHistoryDate(item.createdAt) }}</small>
+              </button>
+            </div>
+          </article>
+        </section>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="overlay-fade">
         <section v-if="selectedNode" class="node-overlay" @click.self="closeNodeCard">
           <article class="flip-card" :class="{ flipped: cardFlipped }">
             <div class="flip-face flip-back">
@@ -369,6 +412,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2 } from 'lucide-vue-next'
 import {
   getCurrentLearningPath, generateLearningPath,
+  getLearningPaths, getLearningPathDetail, getLearningPathProgress, enrollLearningPath,
   generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, resolveApiUrl
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
@@ -402,6 +446,11 @@ const nodeQuizData = ref(null)
 const nodeSessionId = ref('')
 const previewResource = ref(null)
 const previewLoading = ref(false)
+const historyOpen = ref(false)
+const historyLoading = ref(false)
+const historyError = ref('')
+const pathHistory = ref([])
+const switchingPathId = ref('')
 const {
   canNarrateResource,
   toggleNarration,
@@ -506,6 +555,113 @@ const normalizePath = data => {
       sessionId: n.session_id || n.sessionId || nodeResult.session_id || nodeResult.sessionId || progress.session_id || progress.sessionId || ''
     }
     })
+  }
+}
+
+const unwrapApiData = result => result?.data?.data ?? result?.data ?? result
+
+const normalizeHistoryList = result => {
+  const list = unwrapApiData(result)
+  return (Array.isArray(list) ? list : []).map(item => ({
+    pathId: String(item.path_id || item.pathId || item.id || ''),
+    subject: item.subject || item.goal || item.title || '学习路径',
+    difficulty: item.difficulty || '默认难度',
+    nodeCount: Number(item.node_count || item.nodeCount || item.total_nodes || 0),
+    coverTags: Array.isArray(item.cover_tags || item.coverTags) ? (item.cover_tags || item.coverTags) : [],
+    createdAt: item.created_at || item.createdAt || ''
+  })).filter(item => item.pathId)
+}
+
+const normalizeSelectedPath = (detailResult, progressResult, historyItem = null) => {
+  const detail = unwrapApiData(detailResult) || {}
+  const progress = unwrapApiData(progressResult) || {}
+  const detailNodes = Array.isArray(detail.nodes) ? detail.nodes : []
+  const progressNodes = Array.isArray(progress.nodes) ? progress.nodes : []
+  const progressMap = new Map(progressNodes.map(node => [String(node.node_id || node.nodeId || node.id || ''), node]))
+
+  return normalizePath({
+    path_id: detail.path_id || detail.pathId || detail.id || historyItem?.pathId,
+    subject: detail.subject || historyItem?.subject,
+    stage: progress.status === 'not_enrolled'
+      ? '未加入'
+      : `${progress.completed || 0}/${progress.total_nodes || detail.node_count || detailNodes.length || 0}`,
+    progress: progress.percentage ?? progress.progress,
+    diagnosis: {
+      weak_points: [],
+      latest_score: 0,
+      recommendation: progress.status === 'not_enrolled' ? '加入该路径后开始学习。' : '已切换到该学习路径。'
+    },
+    nodes: detailNodes.map((node, index) => {
+      const nodeId = String(node.node_id || node.nodeId || node.id || '')
+      const p = progressMap.get(nodeId) || {}
+      return {
+        id: nodeId,
+        title: node.topic || node.title || '',
+        summary: node.knowledge_tags?.length ? node.knowledge_tags.slice(0, 3).join(' / ') : `学习${node.topic || node.title || ''}`,
+        description: node.topic || node.title || '',
+        type: node.quiz_config && Object.keys(node.quiz_config).length ? 'quiz' : 'read',
+        status: normalizeStatus(p.status || p.node_status || (progress.status === 'not_enrolled' ? (index === 0 ? 'available' : 'locked') : 'locked')),
+        estimatedMinutes: 15,
+        rule: '',
+        resourceTypes: Array.isArray(node.resource_types) ? node.resource_types : [],
+        resources: [],
+        quiz: null,
+        quizId: null,
+        sessionId: p.session_id || p.sessionId || ''
+      }
+    })
+  })
+}
+
+const formatHistoryDate = value => {
+  if (!value) return '未知时间'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '未知时间'
+  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+}
+
+const loadPathHistory = async () => {
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    pathHistory.value = normalizeHistoryList(await getLearningPaths())
+  } catch (err) {
+    historyError.value = err?.response?.data?.detail || err?.message || '历史路径加载失败'
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+const openPathHistory = async () => {
+  historyOpen.value = true
+  await loadPathHistory()
+}
+
+const closePathHistory = () => {
+  historyOpen.value = false
+  historyError.value = ''
+}
+
+const switchPath = async item => {
+  if (!item?.pathId || switchingPathId.value) return
+  switchingPathId.value = String(item.pathId)
+  historyError.value = ''
+  try {
+    await enrollLearningPath(item.pathId).catch(err => {
+      const status = err?.response?.status
+      if (![400, 404, 409].includes(status)) throw err
+    })
+    const [detail, progress] = await Promise.all([
+      getLearningPathDetail(item.pathId),
+      getLearningPathProgress(item.pathId)
+    ])
+    const selected = normalizeSelectedPath(detail, progress, item)
+    setPathState(selected)
+    closePathHistory()
+  } catch (err) {
+    historyError.value = err?.response?.data?.detail || err?.message || '切换学习路径失败'
+  } finally {
+    switchingPathId.value = ''
   }
 }
 
@@ -1471,6 +1627,13 @@ onBeforeUnmount(stopCurrentAudio)
   gap: 14px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .home-pill {
   min-height: 40px;
   padding: 0 18px;
@@ -1506,6 +1669,7 @@ onBeforeUnmount(stopCurrentAudio)
   font-size: 14px;
 }
 
+.history-btn,
 .reset-btn,
 .generate-btn,
 .retry-btn,
@@ -1945,6 +2109,12 @@ onBeforeUnmount(stopCurrentAudio)
   font-size: 12px;
   font-weight: 900;
   cursor: pointer;
+}
+
+.history-btn {
+  border-color: rgba(22, 63, 143, 0.92);
+  background: #163f8f;
+  color: #ffffff;
 }
 
 .branch-action {
@@ -2569,6 +2739,134 @@ onBeforeUnmount(stopCurrentAudio)
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* History overlay */
+
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4250;
+  padding: 24px;
+  background: rgba(12, 28, 58, 0.3);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: grid;
+  place-items: center;
+}
+
+.history-panel {
+  width: min(680px, 100%);
+  max-height: min(720px, 88vh);
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 28px 80px rgba(22, 63, 143, 0.22);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-panel header {
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.history-panel header span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.history-panel header h2 {
+  margin: 4px 0 0;
+  color: #163f8f;
+  font-size: 24px;
+}
+
+.history-panel header button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(201, 220, 233, 0.9);
+  border-radius: 14px;
+  background: #fafafa;
+  color: #163f8f;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.history-list {
+  min-height: 0;
+  padding: 14px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.history-item {
+  width: 100%;
+  min-height: 78px;
+  padding: 14px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 14px;
+  background: rgba(237, 249, 252, 0.5);
+  color: #163f8f;
+  text-align: left;
+  font: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+}
+
+.history-item:hover,
+.history-item.active {
+  border-color: #163f8f;
+  background: rgba(201, 220, 233, 0.52);
+}
+
+.history-item:disabled {
+  opacity: 0.68;
+  cursor: wait;
+}
+
+.history-item strong {
+  display: block;
+  color: #163f8f;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.history-item span,
+.history-item small {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-item span {
+  display: block;
+  margin-top: 5px;
+}
+
+.history-state {
+  min-height: 180px;
+  padding: 26px;
+  color: #5f8fc3;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.history-state.error {
+  color: #b24141;
 }
 
 /* 鈹€鈹€ Empty / generate state 鈹€鈹€ */
