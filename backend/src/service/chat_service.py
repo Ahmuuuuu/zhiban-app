@@ -40,9 +40,9 @@ async def _build_path_context(user_id: int) -> str:
 
 
 async def _build_portrait_context(user_id: int) -> str:
-    """构建用户画像 + 知识点掌握度的上下文文本"""
+    """构建用户画像 + 知识点掌握度 + 六维雷达的上下文文本"""
     try:
-        from backend.src.service.portrait_service import PortraitChatHistory_Service
+        from backend.src.service.portrait_service import PortraitChatHistory_Service, PortraitRadarService
         portrait, _ = await PortraitChatHistory_Service.read_portrait(user_id)
         if not portrait or not portrait.get("traits"):
             return ""
@@ -60,6 +60,13 @@ async def _build_portrait_context(user_id: int) -> str:
             tags = [f"{m.get('tag', '')}({m.get('level', '')})" for m in mastery[:8] if m.get("tag")]
             if tags:
                 lines.append(f"- 知识点掌握度：{'、'.join(tags)}")
+        # 六维雷达
+        try:
+            radar = await PortraitRadarService.get(user_id)
+            if radar and radar.get("dimensions"):
+                lines.append(PortraitRadarService.format_for_prompt(radar))
+        except Exception:
+            pass
         return "用户画像：\n" + "\n".join(lines) if lines else ""
     except Exception:
         logger.exception("构建画像上下文失败 user_id=%s", user_id)
