@@ -19,6 +19,7 @@ from backend.src.ai_core.tools.path import (
     list_learning_paths, get_learning_path_detail, enroll_learning_path,
     regenerate_learning_path, update_path_node, add_path_node, delete_path_node,
 )
+from backend.src.ai_core.tools.animation import generate_slide_animation
 from backend.src.ai_core.tools.history import get_used_history
 from backend.src.utils.prompt_loader import load_prompt
 from pydantic import create_model, Field as PydanticField
@@ -149,6 +150,7 @@ class UnifiedChat:
             _inject_user_id(generate_learning_resource, uid),
             _inject_user_id(generate_image, uid),
             _inject_user_id(generate_exam_questions, uid),
+            _inject_user_id(generate_slide_animation, uid),
             _inject_user_id(list_learning_paths, uid),
             _inject_user_id(get_learning_path_detail, uid),
             _inject_user_id(enroll_learning_path, uid),

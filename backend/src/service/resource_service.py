@@ -3,6 +3,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from datetime import datetime, timedelta
+
 from backend.src.ai_core.graph import resource_graph
 from backend.src.utils.prompt_loader import fill_prompt
 from backend.src.ai_core.llm_config import llm
@@ -33,6 +35,7 @@ _FILE_EXT_MAP = {
     "exercise": "md",
     "case": "md",
     "reading": "md",
+    "slide_animation": "json",
 }
 
 from backend.src.service.portrait_service import format_portrait
@@ -85,6 +88,34 @@ def _resource_history_response(resources: list[dict]) -> str:
         else:
             lines.append(f"- {filename}")
     return "\n".join(lines)
+
+
+async def _find_cached_resources(topic: str, user_id: int, resource_types: list[str]) -> list[dict] | None:
+    """5 分钟内同主题同类型已生成过 → 直接返回缓存，避免重复跑 graph"""
+    cutoff = datetime.now() - timedelta(minutes=5)
+    existing = await GeneratedResource.filter(
+        user_id=user_id,
+        topic=topic,
+        resource_type__in=resource_types,
+        created_at__gte=cutoff,
+    ).order_by("-created_at").all()
+
+    if not existing:
+        return None
+
+    logger.info("命中缓存资源 user=%s topic=%s types=%s count=%d", user_id, topic, resource_types, len(existing))
+    return [
+        {
+            "resource_id": r.id,
+            "topic": r.topic,
+            "resource_type": r.resource_type,
+            "content": _format_mindmap_content(r.content) if r.resource_type == "mindmap" else r.content,
+            "review_passed": r.review_passed,
+            "retry_count": r.retry_count,
+            "cached": True,
+        }
+        for r in existing
+    ]
 
 
 async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str, resources: list[dict]) -> None:
@@ -175,6 +206,14 @@ class ResourceService:
     @staticmethod
     async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium") -> list[dict]:
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+
+        # ── 去重：近期已生成过同主题同类型资源 → 直接返回缓存 ──
+        if topic:
+            cached = await _find_cached_resources(topic, user_id, resource_types)
+            if cached:
+                await _save_generation_to_history(user_id, chat_group_id, topic, cached)
+                return cached
+
         initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty)
         topic = initial_state["topic"]
 
@@ -224,16 +263,10 @@ class ResourceService:
     async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium"):
         """节点级流式 — astream 逐节点产出状态，只跑一次 graph，同时推送文件事件"""
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty)
-        topic = initial_state["topic"]
-        final_resources = {}
-        final_passed = False
-        final_retry = 0
-        yielded_types: set[str] = set()
 
-        def _file_event(rt: str, content: str) -> str:
+        def _make_file_event(for_topic: str, rt: str, content: str) -> str:
             ext = _FILE_EXT_MAP.get(rt, "md")
-            filename = f"{topic}_{rt}.{ext}"
+            filename = f"{for_topic}_{rt}.{ext}"
             event_content = content
             if rt == "mindmap":
                 try:
@@ -241,6 +274,39 @@ class ResourceService:
                 except Exception:
                     logger.exception("SSE 思维导图 JSON 转换失败")
             return f"data: {json.dumps({'type': 'file', 'file_type': rt, 'filename': filename, 'content': event_content}, ensure_ascii=False)}\n\n"
+
+        # ── 去重：近期已生成过 → 直接推送缓存结果 ──
+        if topic:
+            cached = await _find_cached_resources(topic, user_id, resource_types)
+            if cached:
+                async def _replay_cache():
+                    for r in cached:
+                        rt = r["resource_type"]
+                        content = r["content"]
+                        if isinstance(content, dict):
+                            content = json.dumps(content, ensure_ascii=False)
+                        yield _make_file_event(r["topic"], rt, content)
+                        yield f"data: {json.dumps({'resources': [rt], 'review_passed': True}, ensure_ascii=False)}\n\n"
+                    done_data = {
+                        "done": True,
+                        "chat_group_id": chat_group_id,
+                        "resources": [
+                            {"resource_id": r["resource_id"], "file_type": r["resource_type"],
+                             "topic": r["topic"], "download_url": f"/resource/{r['resource_id']}/download"}
+                            for r in cached
+                        ],
+                    }
+                    yield f"data: {json.dumps(done_data, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                await _save_generation_to_history(user_id, chat_group_id, topic, cached)
+                return _replay_cache()
+
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty)
+        topic = initial_state["topic"]
+        final_resources = {}
+        final_passed = False
+        final_retry = 0
+        yielded_types: set[str] = set()
 
         async for chunk in resource_graph.astream(initial_state, stream_mode="values"):
             resources = chunk.get("generated_resources", {})
@@ -250,7 +316,7 @@ class ResourceService:
                 for rt, content in resources.items():
                     if rt not in yielded_types:
                         yielded_types.add(rt)
-                        yield _file_event(rt, content)
+                        yield _make_file_event(topic, rt, content)
             final_passed = chunk.get("review_passed", False)
             final_retry = chunk.get("retry_count", 0)
 
@@ -284,7 +350,8 @@ class ResourceService:
         content = record.content
         if record.resource_type == "mindmap":
             content = _format_mindmap_content(content)
-        return {
+
+        result = {
             "resource_id": record.id,
             "topic": record.topic,
             "resource_type": record.resource_type,
@@ -293,6 +360,33 @@ class ResourceService:
             "retry_count": record.retry_count,
             "created_at": str(record.created_at),
         }
+
+        # PPT 资源 → 按页拆成 slides 预览数组
+        if record.resource_type == "ppt" and record.content:
+            try:
+                from backend.src.utils.tts_utils import parse_slides
+                slides_data = parse_slides(record.content)
+                result["slides"] = [{"index": i, "title": s["title"], "text": s["text"], "notes": s.get("notes", "")} for i, s in enumerate(slides_data)]
+            except Exception:
+                pass
+
+        # 附带旁白数据（如有）
+        try:
+            from backend.src.utils.tts_utils import NARRATABLE_TYPES
+            if record.resource_type in NARRATABLE_TYPES:
+                from backend.src.models.narration_model import Narration
+                narration = await Narration.filter(resource_id=resource_id).order_by("-created_at").first()
+                if narration:
+                    result["narration"] = {
+                        "narration_id": narration.id,
+                        "voice": narration.voice,
+                        "sections": narration.slides_json,
+                        "created_at": str(narration.created_at),
+                    }
+        except Exception:
+            pass  # 旁白查询失败不影响主流程
+
+        return result
 
     @staticmethod
     async def list_resources(user_id: int) -> list[dict]:
