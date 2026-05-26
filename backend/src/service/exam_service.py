@@ -113,6 +113,13 @@ class ExamService:
 
         for r in saved_resources:
             if r.get("resource_type") == "exercise":
+                # ResourceService 可能已保存题目并附带 session_id → 直接复用，避免重复存库
+                existing_session_id = r.get("session_id")
+                if existing_session_id:
+                    records = await ExamRecord.filter(session_id=existing_session_id).prefetch_related("question").all()
+                    saved = [_question_to_dict(rec) for rec in records]
+                    return {"session_id": existing_session_id, "questions": saved}
+
                 content = r.get("content", "")
                 try:
                     questions = parse_llm_json(content)
@@ -124,10 +131,9 @@ class ExamService:
                 if not questions:
                     return {"session_id": None, "questions": []}
 
-                # 按题型/数量/难度过滤
-                types = question_types or ["single_choice"]
-                filtered = [q for q in questions if q.get("question_type") in types]
-                filtered = [q for q in filtered if q.get("difficulty", "medium") == difficulty]
+                # 仅按题型和数量过滤，难度分布由 learning_guidance 控制
+                allowed_types = question_types or ["single_choice", "multi_choice", "true_false"]
+                filtered = [q for q in questions if q.get("question_type") in allowed_types]
                 filtered = filtered[:count]
 
                 session_id, saved = await ExamService._save_questions(filtered, user, difficulty, node_id=node_id)
@@ -194,8 +200,8 @@ class ExamService:
                     logger.exception("题目 JSON 解析失败 resource_id=%s", r.id)
                     questions = []
                 if questions:
+                    # 仅按题型和数量过滤，难度分布由 learning_guidance 控制
                     filtered = [q for q in questions if q.get("question_type") in types]
-                    filtered = [q for q in filtered if q.get("difficulty", "medium") == difficulty]
                     filtered = filtered[:count]
                     if filtered:
                         session_id, saved_questions = await ExamService._save_questions(

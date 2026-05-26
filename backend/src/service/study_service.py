@@ -3,10 +3,11 @@
 import logging
 from datetime import date, datetime, timedelta
 
-from backend.src.models.study_model import StudySession, ResourceReadStatus
+from backend.src.models.study_model import StudySession, ResourceReadStatus, ResourceCollection
 from backend.src.models.exam_model import KnowledgeMastery, ExamRecord
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.path_model import LearningPath, UserPathProgress
+from backend.src.service.portrait_service import build_learning_guidance, PortraitRadarService
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ class StudyService:
         all_sessions = await StudySession.filter(user_id=user_id).all()
         total_seconds = sum(s.total_seconds for s in all_sessions)
 
-        # ── 薄弱点 ──
+        # ── 薄弱点（知识点 + 雷达维度） ──
         mastery_records = await KnowledgeMastery.filter(user_id=user_id).order_by("-last_practiced_at").all()
         weak_points = [
             {
@@ -74,10 +75,28 @@ class StudyService:
                 "accuracy": round(r.correct_count / max(r.total_attempts, 1), 2),
                 "level": r.mastery_level,
                 "total_attempts": r.total_attempts,
+                "source": "mastery",
             }
             for r in mastery_records
             if r.mastery_level in ("beginner", "learning")
         ]
+        # 追加雷达弱项维度
+        try:
+            radar = await PortraitRadarService.get(user_id)
+            if radar and radar.get("dimensions"):
+                labels = {"memory": "记忆(简单题)", "understanding": "理解(中等题)", "application": "应用(困难题)",
+                          "analysis": "分析(多选题)", "breadth": "广度(知识覆盖)", "persistence": "坚持(活跃度)"}
+                for d in radar["dimensions"]:
+                    if d["score"] < 50:
+                        weak_points.append({
+                            "tag": labels.get(d["key"], d["key"]),
+                            "accuracy": round(d["score"] / 100, 2),
+                            "level": "beginner" if d["score"] < 40 else "learning",
+                            "total_attempts": 0,
+                            "source": "radar",
+                        })
+        except Exception:
+            pass
 
         # ── 学习路径 ──
         paths = []
@@ -101,14 +120,18 @@ class StudyService:
                 "current_node": current,
             })
 
-        # ── 资源已读 ──
+        # ── 资源已读 + 使用率 ──
         resources = await GeneratedResource.filter(user_id=user_id).all()
         read_statuses = await ResourceReadStatus.filter(user_id=user_id,
             resource_id__in=[r.id for r in resources]).all()
         read_map = {rs.resource_id: rs.is_read for rs in read_statuses}
+        collections = await ResourceCollection.filter(user_id=user_id).all()
+        collected_ids = {c.resource_id for c in collections}
 
         by_type: dict[str, dict] = {}
         total_read = 0
+        total_views = 0
+        total_downloads = 0
         for r in resources:
             rt = r.resource_type or "other"
             if rt not in by_type:
@@ -117,12 +140,31 @@ class StudyService:
             if read_map.get(r.id):
                 by_type[rt]["read"] += 1
                 total_read += 1
+            total_views += (r.view_count or 0)
+            total_downloads += (r.download_count or 0)
 
         # ── 答题汇总 ──
         exam_records = await ExamRecord.filter(user_id=user_id, is_correct__not_isnull=True).all()
         total_questions = len(exam_records)
         correct_count = sum(1 for r in exam_records if r.is_correct)
         session_ids = {r.session_id for r in exam_records}
+        # 练习完成率：judged > 0 的会话视为完成
+        session_judged = {}
+        for r in exam_records:
+            sid = r.session_id
+            if sid not in session_judged:
+                session_judged[sid] = False
+            if r.is_correct is not None:
+                session_judged[sid] = True
+        completed_sessions = sum(1 for v in session_judged.values() if v)
+        total_sessions = len(session_ids)
+
+        # ── 学习指导 ──
+        guidance = ""
+        try:
+            guidance = await build_learning_guidance(user_id)
+        except Exception:
+            pass
 
         return {
             "study_time": {
@@ -137,11 +179,59 @@ class StudyService:
                 "total": len(resources),
                 "read_count": total_read,
                 "unread_count": len(resources) - total_read,
+                "open_rate": round(total_read / max(len(resources), 1), 2),
+                "total_views": total_views,
+                "total_downloads": total_downloads,
+                "collected_count": len(collections),
                 "by_type": by_type,
             },
             "exam_summary": {
                 "total_questions": total_questions,
                 "correct_rate": round(correct_count / max(total_questions, 1), 2),
-                "total_sessions": len(session_ids),
+                "total_sessions": total_sessions,
+                "completed_sessions": completed_sessions,
+                "completion_rate": round(completed_sessions / max(total_sessions, 1), 2),
             },
+            "learning_guidance": guidance,
         }
+
+    @staticmethod
+    async def get_learning_guidance(user_id: int) -> dict:
+        """返回个性化学习指导文本"""
+        guidance = await build_learning_guidance(user_id)
+        return {"guidance": guidance}
+
+    @staticmethod
+    async def collect_resource(user_id: int, resource_id: int) -> dict:
+        """收藏资源（幂等）"""
+        resource = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
+        if not resource:
+            raise ValueError("资源不存在")
+        await ResourceCollection.get_or_create(user_id=user_id, resource_id=resource_id)
+        return {"resource_id": resource_id, "collected": True}
+
+    @staticmethod
+    async def uncollect_resource(user_id: int, resource_id: int) -> dict:
+        """取消收藏"""
+        await ResourceCollection.filter(user_id=user_id, resource_id=resource_id).delete()
+        return {"resource_id": resource_id, "collected": False}
+
+    @staticmethod
+    async def list_collections(user_id: int) -> list[dict]:
+        """列出已收藏资源"""
+        collections = await ResourceCollection.filter(user_id=user_id).prefetch_related("resource").order_by("-created_at").all()
+        result = []
+        for c in collections:
+            r = c.resource
+            ext_map = {"document": "md", "ppt": "pptx", "mindmap": "txt", "exercise": "md", "case": "md", "reading": "md", "slide_animation": "json"}
+            ext = ext_map.get(r.resource_type, "md")
+            result.append({
+                "resource_id": r.id,
+                "topic": r.topic,
+                "resource_type": r.resource_type,
+                "filename": f"{r.topic}_{r.resource_type}.{ext}",
+                "preview": (r.content or "")[:200],
+                "download_url": f"/resource/{r.id}/download",
+                "collected_at": str(c.created_at),
+            })
+        return result
