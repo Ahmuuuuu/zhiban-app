@@ -126,17 +126,17 @@ class ChatService:
         full_response = ""
         async for chunk in bot.stream(user_req, path_context=path_context, portrait_context=portrait_context):
             if isinstance(chunk, dict):
-                if chunk.get("type") == "content":
-                    full_response += chunk["content"]
+                if chunk.get("type") in ("chunk", "content"):
+                    full_response += chunk.get("content", "")
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
             else:
                 full_response += chunk
-                yield f"data: {json.dumps({'type': 'content', 'content': chunk}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'role': 'assistant', 'type': 'chunk', 'content': chunk}, ensure_ascii=False)}\n\n"
 
         await ChatHistory.create(
             user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=full_response,
         )
-        yield f"data: {json.dumps({'type': 'done', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'role': 'system', 'type': 'done', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     @staticmethod
@@ -165,24 +165,46 @@ class ChatService:
     @staticmethod
     async def read_history(user_id: int):
         records = await ChatHistory.filter(user__id=user_id).order_by("created_at").all()
-        group_history = {}
+        group_history: dict[int, list[dict]] = {}
         for record in records:
             gid = record.chat_group_id
             if gid not in group_history:
                 group_history[gid] = []
             group_history[gid].append({
-                "user_id": record.user_id,
-                "chat_group_id": record.chat_group_id,
-                "req": record.req,
-                "res": record.res,
+                "role": "user",
+                "type": "text",
+                "content": record.req,
                 "created_time": str(record.created_at) if record.created_at else None,
             })
-        return group_history, "返回群组字典成功"
+            group_history[gid].append({
+                "role": "assistant",
+                "type": "text",
+                "content": record.res,
+                "created_time": str(record.created_at) if record.created_at else None,
+            })
+
+        result = []
+        for gid, messages in group_history.items():
+            first_user = next((m for m in messages if m["role"] == "user"), None)
+            last_msg = messages[-1] if messages else None
+            result.append({
+                "id": gid,
+                "title": first_user["content"] if first_user else f"对话 {gid}",
+                "last_message": last_msg["content"] if last_msg else "",
+                "message_count": len(messages),
+                "created_time": last_msg["created_time"] if last_msg else None,
+            })
+        return sorted(result, key=lambda x: x["created_time"] or ""), "返回群组列表成功"
 
     @staticmethod
     async def read_message(user_id: int, chat_group_id: int):
         records = await ChatHistory.filter(user__id=user_id, chat_group_id=chat_group_id).order_by("created_at").all()
-        return [{"user_id": user_id, "chat_group_id": chat_group_id, "req": r.req, "res": r.res, "created_time": r.created_at} for r in records], "返回对话列表成功"
+        messages = []
+        for r in records:
+            created_time = str(r.created_at) if r.created_at else None
+            messages.append({"role": "user", "type": "text", "content": r.req, "created_time": created_time})
+            messages.append({"role": "assistant", "type": "text", "content": r.res, "created_time": created_time})
+        return messages, "返回消息列表成功"
 
     @staticmethod
     async def delete_history(user_id: int, chat_group_id: int):
