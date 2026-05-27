@@ -28,4 +28,4 @@ def get_user_id_from_token(token : str | None = Header(None) ) -> int :
         return int(user_id)
 
     except (ValueError, JWTError, TypeError) :
-        raise HTTPException(401, "toekn无效或已过期")
+        raise HTTPException(401, "token无效或已过期")
