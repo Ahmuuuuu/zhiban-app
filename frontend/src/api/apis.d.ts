@@ -43,6 +43,8 @@ export function getStudyResources(params?: Record<string, unknown>): Promise<unk
 
 export function getStudyStats(): Promise<unknown>;
 
+export function getStudyExamWeekly(): Promise<unknown>;
+
 export function getLearningGuidance(): Promise<unknown>;
 
 export function collectStudyResource(resourceId: number | string): Promise<unknown>;
