@@ -1,4 +1,7 @@
 import logging
+import os
+import uuid
+from pathlib import Path
 
 from tortoise.exceptions import IntegrityError
 
@@ -87,6 +90,48 @@ class UserService():
             await user.save()
             return user, "信息修改成功"
         
+    @staticmethod
+    async def upload_avatar(user_id: int, file_content: bytes, filename: str) -> tuple:
+        user = await User.filter(id=user_id).first()
+        if not user:
+            return None, "用户不存在"
+
+        # 删除旧头像文件
+        if user.avatar:
+            old_path = Path(__file__).parent.parent.parent / user.avatar.lstrip("/")
+            if old_path.exists():
+                old_path.unlink()
+
+        # 保存新头像
+        ext = os.path.splitext(filename)[1] or ".png"
+        avatar_dir = Path(__file__).parent.parent.parent / "static" / "avatars"
+        avatar_dir.mkdir(parents=True, exist_ok=True)
+
+        save_name = f"{user_id}_{uuid.uuid4().hex}{ext}"
+        save_path = avatar_dir / save_name
+        save_path.write_bytes(file_content)
+
+        url_path = f"/static/avatars/{save_name}"
+        user.avatar = url_path
+        await user.save()
+        return user, "头像上传成功"
+
+    @staticmethod
+    async def delete_avatar(user_id: int) -> tuple:
+        user = await User.filter(id=user_id).first()
+        if not user:
+            return None, "用户不存在"
+        if not user.avatar:
+            return None, "没有头像"
+
+        file_path = Path(__file__).parent.parent.parent / user.avatar.lstrip("/")
+        if file_path.exists():
+            file_path.unlink()
+
+        user.avatar = None
+        await user.save()
+        return user, "头像删除成功"
+
     @staticmethod
     async def delete_user(user_id : int, data : Delete_User) : 
         user = await User.filter(id = user_id).first()

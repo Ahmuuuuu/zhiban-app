@@ -5,7 +5,7 @@ LeaderAgent → [ExecutorAgent × N 多线程并行] → ReviewerAgent
 import asyncio
 import json
 import logging
-from typing import TypedDict
+from typing import TypedDict, NotRequired
 
 from langgraph.graph import StateGraph, START, END
 
@@ -23,6 +23,7 @@ PROMPT_MAP = {
     "exercise": "resource/exam",
     "case": "resource/document",
     "reading": "resource/document",
+    "image": "resource/image_prompt",
 }
 
 
@@ -46,6 +47,7 @@ class ResourceState(TypedDict):
     exam_count: str
     exam_difficulty: str
     reviewer_questions: list[dict]
+    file_urls: NotRequired[dict[str, str]]
 
 
 # ═══════════════════════════════════════
@@ -82,7 +84,9 @@ async def leader_node(state: ResourceState) -> dict:
 
 
 async def executor_node(state: ResourceState) -> dict:
-    """多 Executor 并行生成 — 线程池 + 信号量限流"""
+    """多 Executor 并行生成 — 线程池 + 信号量限流。
+    image 类型走两阶段：LLM 生成 prompt → ImageService.generate() 生图。
+    """
     topic = state["topic"]
     resource_types = state.get("resource_types", ["document"])
     portrait = state.get("portrait_context", "")
@@ -116,26 +120,68 @@ async def executor_node(state: ResourceState) -> dict:
     # 信号量限制最大并发数，防止 DeepSeek 限流
     semaphore = asyncio.Semaphore(5)
 
-    async def gen_one(rt: str) -> tuple[str, str]:
+    async def gen_one(rt: str, user_id: str) -> tuple[str, str]:
         async with semaphore:
             try:
+                # image 类型：两阶段生成
+                if rt == "image":
+                    return await _generate_image(prompts[rt], user_id)
+                # 其他类型：单次 LLM 调用
                 response = await llm.ainvoke(prompts[rt])
                 return rt, response.content
             except Exception as e:
-                logger.exception(f"Executor [{rt}] LLM 调用失败")
+                logger.exception(f"Executor [{rt}] 调用失败")
                 return rt, f"[生成失败: {e}]"
 
-    results = await asyncio.gather(*(gen_one(rt) for rt in resource_types))
+    user_id = state.get("user_id", "0")
+    results = await asyncio.gather(*(gen_one(rt, user_id) for rt in resource_types))
 
     retry = state.get("retry_count", 0)
     if feedback:
         retry += 1
 
+    # 分离普通资源和 file_urls
+    generated = {}
+    file_urls = {}
+    for rt, content in results:
+        if rt.startswith("image:"):
+            # image 类型返回特殊 key，解析 file_url
+            actual_rt = rt.replace("image:", "")
+            generated[actual_rt] = content.get("prompt", "")
+            if content.get("url"):
+                file_urls[actual_rt] = content["url"]
+        else:
+            generated[rt] = content
+
     return {
-        "generated_resources": dict(results),
+        "generated_resources": generated,
+        "file_urls": file_urls,
         "retry_count": retry,
         "review_feedback": "",
     }
+
+
+async def _generate_image(prompt_text: str, user_id: str) -> tuple[str, dict]:
+    """两阶段图片生成：LLM 产出 prompt → ImageService 生图"""
+    # Phase 1: LLM 生成图像描述
+    from backend.src.ai_core.llm_config import llm
+    try:
+        response = await llm.ainvoke(prompt_text)
+        image_prompt = response.content.strip()
+    except Exception as e:
+        logger.exception("图片 prompt 生成失败")
+        return ("image:error", {"prompt": "", "url": ""})
+
+    # Phase 2: 调 ImageService 生图（阻塞轮询，不阻塞事件循环）
+    try:
+        from backend.src.service.image_service import ImageService
+        images = await ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=1)
+        if images and len(images) > 0:
+            return ("image:image", {"prompt": image_prompt, "url": images[0].get("url", "")})
+    except Exception as e:
+        logger.exception(f"图片生成失败: {e}")
+
+    return ("image:image", {"prompt": image_prompt, "url": ""})
 
 
 def _parse_review_response(raw: str) -> dict:
@@ -172,6 +218,7 @@ _REVIEWER_MAP = {
     "ppt": "agent/reviewer_ppt",
     "exercise": "agent/reviewer_exam",
     "mindmap": "agent/mindmap_reviewer",
+    "image": "agent/reviewer_image",
 }
 
 

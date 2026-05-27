@@ -50,6 +50,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 static_dir = Path(__file__).parent.parent / "static"
 static_dir.mkdir(parents=True, exist_ok=True)
 (static_dir / "images").mkdir(parents=True, exist_ok=True)
+(static_dir / "avatars").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
