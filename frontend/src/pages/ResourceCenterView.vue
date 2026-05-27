@@ -7,26 +7,26 @@
       </router-link>
 
       <div class="title-block">
-        <h1>鐠у嫭绨稉顓炵妇</h1>
+        <h1>资源中心</h1>
       </div>
 
       <label class="search-field">
         <Search :size="18" />
-        <input v-model.trim="keyword" type="search" placeholder="閹兼粎鍌ㄥ? />
+        <input v-model.trim="keyword" type="search" placeholder="搜索资源..." />
       </label>
 
-      <button class="send-search" type="button">閸欐垿鈧?/button>
+      <button class="send-search" type="button">搜索</button>
 
       <div class="header-actions">
-        <button class="icon-btn refresh-btn" type="button" :disabled="loading" title="閸掗攱鏌婄挧鍕爱" @click="loadResources">
+        <button class="icon-btn refresh-btn" type="button" :disabled="loading" title="刷新资源" @click="loadResources">
           <RefreshCw :size="24" :class="{ spinning: loading }" />
         </button>
         <router-link class="import-link" to="/study-import">
-          鐠у嫭鏋＄€电厧鍙?
+          资料导入
         </router-link>
         <UserAccountButton
           variant="dark"
-          logged-out-name="閺堫亞娅ヨぐ?
+          logged-out-name="未登录"
           @login="loadResources"
         />
       </div>
@@ -39,7 +39,7 @@
 
     <section class="resource-shell">
       <aside class="category-panel">
-        <h2>閸掑棛琚?/h2>
+        <h2>分类</h2>
         <button
           v-for="category in categories"
           :key="category"
@@ -51,9 +51,9 @@
         </button>
       </aside>
 
-      <section class="resource-list" aria-label="閸忣剙鍙＄挧鍕爱閸掓銆?>
-        <!-- 閺傚洦銆傜€涙劕鍨庣猾?-->
-        <div v-if="activeCategory === '閺傚洦銆?" class="sub-category-bar">
+      <section class="resource-list" aria-label="资源列表区域">
+        <!-- 文档子分类导航 -->
+        <div v-if="activeCategory === '文档'" class="sub-category-bar">
           <button
             v-for="sub in subCategories"
             :key="sub.value"
@@ -89,20 +89,20 @@
                 <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
                 <FileText v-else :size="18" />
               </span>
-              <span class="visibility">{{ resource.categoryLabel || '閸忣剙绱戠挧鍕爱' }}</span>
+              <span class="visibility">{{ resource.categoryLabel || '公开资源' }}</span>
             </div>
 
             <div v-if="resource.type === 'image' && resource.previewUrl" class="image-thumb">
               <img :src="resource.previewUrl" :alt="resource.title" loading="lazy" @error="handleImageError($event)" />
             </div>
 
-            <h2>{{ resource.title || '閺堫亜鎳￠崥宥堢カ閺? }}</h2>
+            <h2>{{ resource.title || '未命名资源' }}</h2>
             <p>{{ getResourceExcerpt(resource) }}</p>
 
             <footer>
               <span>{{ formatDate(resource.created_at) }}</span>
-              <span v-if="resource.type === 'image'">閸ュ墽澧?/span>
-              <span v-else>{{ getWordCount(resource.content) }} 鐎?/span>
+              <span v-if="resource.type === 'image'">图片</span>
+              <span v-else>{{ getWordCount(resource.content) }} 字</span>
             </footer>
             <div class="resource-actions">
               <button
@@ -114,7 +114,7 @@
               >
                 <PauseCircle v-if="isNarrationPlaying(resource)" :size="15" />
                 <Volume2 v-else :size="15" />
-                {{ isNarrationLoading(resource) ? '...' : (isNarrationPlaying(resource) ? '閸? : '閸?) }}
+                {{ isNarrationLoading(resource) ? '...' : (isNarrationPlaying(resource) ? '停' : '播') }}
               </button>
               <button
                 v-if="isQuizResource(resource)"
@@ -122,7 +122,7 @@
                 type="button"
                 @click.stop="startResourceQuiz(resource)"
               >
-                瀵偓婵绮屾稊?
+                开始练习
               </button>
               <button
                 v-if="resource.downloadUrl"
@@ -130,7 +130,7 @@
                 type="button"
                 @click.stop="downloadResource(resource)"
               >
-                娑撳娴囬崢鐔告瀮娴?
+                下载文件
               </button>
             </div>
           </article>
@@ -142,16 +142,16 @@
               <span class="type-mark soft">
                 <FileText :size="18" />
               </span>
-              <span class="visibility">缁涘绶熺挧鍕爱</span>
+              <span class="visibility">暂无资源</span>
             </div>
-            <h2>鐠у嫭绨崡锛勫</h2>
-            <p>閸氬海顏导鐘插弳閸忣剙鍙＄挧鍕爱閸氬函绱濇导姘躬鏉╂瑩鍣风仦鏇犮仛閺嶅洭顣介妴浣规喅鐟曚降鈧焦妞傞梻鏉戞嫲鐎涙鏆熼妴?/p>
+            <h2>资源为空</h2>
+            <p>上传学习资料或使用AI生成资源后，你的资料将出现在这里</p>
           </article>
         </template>
       </section>
 
       <aside class="hot-panel">
-        <h2>閻戭參妫挧鍕爱</h2>
+        <h2>热门资源</h2>
         <div class="hot-list">
           <button
             v-for="resource in hotResources"
@@ -159,12 +159,12 @@
             type="button"
             @click="openResourcePreview(resource)"
           >
-            {{ resource.title || '閺堫亜鎳￠崥宥堢カ濠? }}
+            {{ resource.title || '未命名资源' }}
           </button>
-          <p v-if="!hotResources.length" class="hot-empty">閺嗗倹妫ら悜顓㈡，鐠у嫭绨?/p>
+          <p v-if="!hotResources.length" class="hot-empty">暂无热门资源</p>
         </div>
 
-        <button class="share-btn" type="button">閹存垼顩﹂崚鍡曢煩</button>
+        <button class="share-btn" type="button">分享资源</button>
       </aside>
     </section>
 
@@ -173,15 +173,15 @@
         <article class="resource-fullscreen__panel">
           <header class="resource-fullscreen__header">
             <div>
-              <span>{{ selectedResource.categoryLabel || '鐎涳缚绡勭挧鍕爱' }}</span>
-              <h2>{{ selectedResource.title || '閺堫亜鎳￠崥宥堢カ濠? }}</h2>
+              <span>{{ selectedResource.categoryLabel || '我的资源' }}</span>
+              <h2>{{ selectedResource.title || '未命名资源' }}</h2>
             </div>
-            <button type="button" aria-label="閸忔娊妫存０鍕潔" @click="closeResourcePreview">鑴?/button>
+            <button type="button" aria-label="关闭预览" @click="closeResourcePreview">&#x2715;</button>
           </header>
 
           <div class="resource-fullscreen__meta">
             <span>{{ formatDate(selectedResource.created_at, true) }}</span>
-            <span>{{ getWordCount(selectedResource.content) }} 鐎?/span>
+            <span>{{ getWordCount(selectedResource.content) }} 字</span>
           </div>
 
           <div v-if="canNarrateResource(selectedResource)" class="resource-fullscreen__audio">
@@ -193,7 +193,7 @@
             >
               <PauseCircle v-if="isNarrationPlaying(selectedResource)" :size="15" />
               <Volume2 v-else :size="15" />
-              {{ isNarrationLoading(selectedResource) ? '閻㈢喐鍨氶棅鎶筋暥...' : (isNarrationPlaying(selectedResource) ? '閺嗗倸浠犻張妤勵嚢' : '閺堟顕扮挧鍕爱') }}
+              {{ isNarrationLoading(selectedResource) ? '加载音频...' : (isNarrationPlaying(selectedResource) ? '暂停播放' : '播放资源') }}
             </button>
           </div>
 
@@ -218,7 +218,7 @@
                   type="button"
                   @click="downloadResource(selectedResource)"
                 >
-                  娑撳娴囬幀婵堟樊鐎电厧娴?
+                  下载思维导图文件
                 </button>
               </div>
             </template>
@@ -239,18 +239,18 @@
               <div class="file-placeholder-block">
                 <Presentation v-if="isPptResource(selectedResource)" :size="48" />
                 <GitBranch v-else :size="48" />
-                <p>{{ selectedResource.title || (isPptResource(selectedResource) ? 'PPT 閺傚洣娆? : '閹繄娣€电厧娴?) }}</p>
+                <p>{{ selectedResource.title || (isPptResource(selectedResource) ? 'PPT 文件' : '思维导图') }}</p>
                 <button
                   v-if="selectedResource.downloadUrl"
                   class="file-download-btn"
                   type="button"
                   @click="downloadResource(selectedResource)"
                 >
-                  娑撳娴噞{ isPptResource(selectedResource) ? ' PPT 閺傚洣娆? : '閹繄娣€电厧娴? }}
+                  下载{{ isPptResource(selectedResource) ? ' PPT 文件' : '思维导图' }}
                 </button>
               </div>
             </template>
-            <p v-else>{{ selectedResource.content || '閺嗗倹妫ゅ锝嗘瀮閸愬懎顔? }}</p>
+            <p v-else>{{ selectedResource.content || '暂无内容可展示' }}</p>
           </div>
         </article>
       </section>
@@ -294,28 +294,28 @@ const {
   stopCurrentAudio
 } = useResourceNarration()
 const keyword = ref('')
-const categories = ['閺傚洦銆?, 'ppt', '鐟欏棝顣?, '妫版ê绨?, '閹繄娣€电厧娴?]
+const categories = ['文档', 'ppt', '视频', '题库', '思维导图']
 const activeCategory = ref(categories[0])
 const activeSubCategory = ref('all')
 
-// 娑撳骸鎮楃粩?KB_CATEGORIES 鐎靛綊缍?
+// 映射 KB_CATEGORIES 的值
 const subCategories = [
-  { value: 'all', label: '閸忋劑鍎? },
-  { value: 'knowledge_point', label: '閻儴鐦戦悙纭咁唹鐟? },
-  { value: 'exercise', label: '娑旂娀顣?妫版ê绨? },
-  { value: 'textbook', label: '閺佹瑧顫栨稊锔剧彿閼? },
-  { value: 'note', label: '鐎涳缚绡勭粭鏃囶唶' },
-  { value: 'case_study', label: '鐎圭偞鎼峰鍫滅伐' },
-  { value: 'reference', label: '閸欏倽鈧啳绁弬? },
+  { value: 'all', label: '全部' },
+  { value: 'knowledge_point', label: '知识点讲解' },
+  { value: 'exercise', label: '练习题库' },
+  { value: 'textbook', label: '教材教辅' },
+  { value: 'note', label: '我的笔记' },
+  { value: 'case_study', label: '案例分析' },
+  { value: 'reference', label: '参考资料' },
 ]
 
 const categoryLabelMap = {
-  knowledge_point: '閻儴鐦戦悙纭咁唹鐟?,
-  exercise: '娑旂娀顣?妫版ê绨?,
-  textbook: '閺佹瑧顫栨稊锔剧彿閼?,
-  note: '鐎涳缚绡勭粭鏃囶唶',
-  case_study: '鐎圭偞鎼峰鍫滅伐',
-  reference: '閸欏倽鈧啳绁弬?,
+  knowledge_point: '知识点讲解',
+  exercise: '练习题库',
+  textbook: '教材教辅',
+  note: '我的笔记',
+  case_study: '案例分析',
+  reference: '参考资料',
 }
 
 const normalizeResources = data => {
@@ -341,7 +341,7 @@ const normalizeGeneratedResources = data => {
   return list.map(item => {
     const resourceType = item.resource_type || item.file_type || item.fileType || 'resource'
     const resourceId = item.resource_id || item.resourceId || item.id
-    const filename = item.filename || `${item.topic || item.title || '閻㈢喐鍨氱挧鍕爱'}_${resourceType}`
+    const filename = item.filename || `${item.topic || item.title || '生成资源'}_${resourceType}`
 
     const resourceText = String(`${resourceType} ${filename} ${item.topic || ''} ${item.title || ''}`).toLowerCase()
     const isQuiz = resourceText.includes('exercise') || resourceText.includes('quiz')
@@ -355,11 +355,10 @@ const normalizeGeneratedResources = data => {
       filename,
       slides: Array.isArray(item.slides) ? item.slides : [],
       narration: item.narration || null,
-      content: isQuiz ? '鏉╂瑦妲告稉鈧總妤冩晸閹存劙顣介惄顕嗙礉鏉╂稑鍙嗘０妯虹氨閸氬骸绱戞慨瀣矊娑旂姰鈧? : (item.preview || item.preview_content || item.content || ''),
+      content: isQuiz ? '包含选择题、填空题等多种题型的练习资源' : (item.preview || item.preview_content || item.content || ''),
       type: isMindmap ? 'mindmap' : resourceType,
       category: isQuiz ? 'exercise' : isMindmap ? 'mindmap' : 'reference',
-      categoryLabel: isQuiz ? '娑旂娀顣?妫版ê绨? : 'AI 閻㈢喐鍨?,
-      categoryLabel: isMindmap ? '閹繄娣€电厧娴? : (isQuiz ? '娑旂娀顣?妫版ê绨? : 'AI 閻㈢喐鍨?),
+      categoryLabel: isMindmap ? '思维导图' : (isQuiz ? '练习题库' : 'AI 生成'),
       visibility: item.visibility || 'private',
       quizId: item.quiz_id || item.quizId || '',
       sessionId: item.session_id || item.sessionId || '',
@@ -384,7 +383,7 @@ const normalizeGeneratedImages = data => {
       content: item.prompt || item.content || item.preview || '',
       type: 'image',
       category: 'reference',
-      categoryLabel: 'AI 閻㈢喐鍨氶崶鍓у',
+      categoryLabel: 'AI 生成图片',
       visibility: 'private',
       quizId: '',
       sessionId: '',
@@ -410,13 +409,13 @@ const loadResources = async () => {
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     if (error?.response?.status === 401) {
-      errorMessage.value = '鐠囧嘲鍘涢惂璇茬秿閿涘苯鍟€閺屻儳婀呯挧鍕爱娑擃厼绺鹃妴?
+      errorMessage.value = '请先登录后再查看资源列表'
     } else {
       errorMessage.value =
         error?.response?.data?.detail ||
         error?.response?.data?.msg ||
         error?.message ||
-        '鐠у嫭绨稉顓炵妇閸旂姾娴囨径杈Е閿涘矁顕粙宥呮倵閸愬秷鐦妴?
+        '资源中心加载失败，请稍后重试'
     }
   } finally {
     loading.value = false
@@ -460,7 +459,7 @@ const openResourcePreview = async resource => {
         downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl)
       }
     } catch (error) {
-      console.error('閸旂姾娴囩挧鍕爱鐠囷附鍎忔径杈Е閿?, error)
+      console.error('加载资源详情失败', error)
     }
   }
 }
@@ -470,29 +469,29 @@ const closeResourcePreview = () => {
   previewOpen.value = false
 }
 
-const fileTitleWithoutExtension = filename => String(filename || '閻㈢喐鍨氱挧鍕爱').replace(/\.[^.\\/]+$/, '')
+const fileTitleWithoutExtension = filename => String(filename || '生成资源').replace(/\.[^.\\/]+$/, '')
 
 const isQuizResource = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  return Boolean(resource?.quizId) || text.includes('exercise') || text.includes('quiz') || text.includes('question') || text.includes('exam') || text.includes('妫?)
+  return Boolean(resource?.quizId) || text.includes('exercise') || text.includes('quiz') || text.includes('question') || text.includes('exam') || text.includes('题')
 }
 
 const isPptResource = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  return text.includes('ppt') || text.includes('pptx') || text.includes('slide') || text.includes('濠曟梻銇?)
+  return text.includes('ppt') || text.includes('pptx') || text.includes('slide') || text.includes('演示')
 }
 
 const isMindmapResource = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('閼存垵娴?) || text.includes('閹繄娣€电厧娴?)
+  return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('思维') || text.includes('思维导图')
 }
 
 const downloadResource = async resource => {
   try {
     await downloadWithToken(resource.downloadUrl, resource.filename || `${resource.title || 'resource'}.md`)
   } catch (error) {
-    console.error('娑撳娴囩挧鍕爱婢惰精瑙﹂敍?, error)
-    window.alert('娑撳娴囨径杈Е閿涘矁顕涵顔款吇閻ц缍嶉悩鑸碘偓浣告嫲閸氬海顏張宥呭閺勵垰鎯佸锝呯埗閵?)
+    console.error('下载资源失败', error)
+    window.alert('下载失败，请检查网络连接或稍后重试')
   }
 }
 
@@ -517,38 +516,38 @@ const startResourceQuiz = async resource => {
     })
 
     if (!quiz) {
-      window.alert('鏉╂瑥顨滄０妯绘畯閺冭埖鐥呴張澶嬪瑏閸掓澘鐣弫鎾暯閻╊喖鍞寸€圭櫢绱濈拠鐤唨閸氬海顏崷銊ㄧカ濠ф劘顕涢幆鍛村櫡鏉╂柨娲栫€瑰本鏆?content閵?)
+      window.alert('无法找到有效的练习数据，请确认资源中含有题目(content)信息')
       return
     }
 
     router.push(`/question-bank/${quiz.id}`)
   } catch (error) {
-    console.error('閹垫挸绱戞０妯虹氨鐠у嫭绨径杈Е閿?, error)
-    window.alert('妫版娲伴崝鐘烘祰婢惰精瑙﹂敍宀冾嚞缁嬪秴鎮楅崘宥堢槸閵?)
+    console.error('开始练习资源加载失败', error)
+    window.alert('题目数据加载失败，请稍后重试')
   }
 }
 
 const matchesCategory = resource => {
   const cat = activeCategory.value
 
-  if (cat === '閺傚洦銆?) {
-    // 閺傚洦銆傞幐澶婄摍閸掑棛琚崠褰掑帳
+  if (cat === '文档') {
+    // 文档按子分类过滤
     if (activeSubCategory.value === 'all') return true
     return resource.category === activeSubCategory.value
   }
 
-  // 閸忔湹绮崚鍡欒閿涙碍瀵滈弬鍥︽缁鐎?閸忔娊鏁拠宥呭爱闁?
+  // 其他分类按类型匹配
   const resourceType = String(resource.type || resource.category || '').toLowerCase()
   const categoryMap = {
     ppt: ['ppt', 'pptx', 'slide'],
-    鐟欏棝顣? ['video', 'mp4', 'mov', 'avi'],
-    妫版ê绨? ['quiz', 'question', 'exam', '妫?],
-    閹繄娣€电厧娴? ['mind', 'map', 'xmind', '閹繄娣?]
+    视频: ['video', 'mp4', 'mov', 'avi'],
+    题库: ['quiz', 'question', 'exam', '题'],
+    思维导图: ['mind', 'map', 'xmind', '思维']
   }
   return (categoryMap[cat] || []).some(type => resourceType.includes(type))
 }
 
-// 閸掑洦宕叉稉鈧痪褍鍨庣猾缁樻闁插秶鐤嗙€涙劕鍨庣猾?
+// 切换分类并重置子分类
 const switchCategory = (cat) => {
   activeCategory.value = cat
   activeSubCategory.value = 'all'
@@ -567,11 +566,11 @@ watch(filteredResources, list => {
 
 const getExcerpt = content => {
   const text = String(content || '').replace(/\s+/g, ' ').trim()
-  return text ? text.slice(0, 118) : '閺嗗倹妫ゅ锝嗘瀮閸愬懎顔?
+  return text ? text.slice(0, 118) : '暂无内容可展示'
 }
 
 const getResourceExcerpt = resource => {
-  if (isMindmapResource(resource)) return '閻愮懓鍤弻銉ф箙閸欘垵顫嬮崠鏍ㄢ偓婵堟樊鐎电厧娴?
+  if (isMindmapResource(resource)) return '思维导图，点击预览查看完整内容'
   return getExcerpt(resource?.content)
 }
 
@@ -584,11 +583,11 @@ const getWordCount = content => {
 }
 
 const formatDate = (value, withTime = false) => {
-  if (!value) return '閺堫亞鐓￠弮鍫曟？'
+  if (!value) return '未知日期'
 
   const date = new Date(value)
 
-  if (Number.isNaN(date.getTime())) return '閺堫亞鐓￠弮鍫曟？'
+  if (Number.isNaN(date.getTime())) return '未知日期'
 
   return date.toLocaleString('zh-CN', {
     year: 'numeric',
@@ -1046,7 +1045,7 @@ onBeforeUnmount(stopCurrentAudio)
   }
 }
 
-/* 閼藉娴橀悧鍫ｇカ濠ф劒鑵戣箛鍐ㄧ鐏炩偓 */
+/* 玻璃拟态面板样式 */
 .resource-center-page {
   width: 100vw;
   height: 100vh;
@@ -1276,7 +1275,7 @@ onBeforeUnmount(stopCurrentAudio)
   gap: 28px 48px;
 }
 
-/* 閺傚洦銆傜€涙劕鍨庣猾缁樼埉 */
+/* 文档子分类导航 */
 .sub-category-bar {
   grid-column: 1 / -1;
   display: flex;
