@@ -25,15 +25,21 @@ async def get_stats(user_id: int = Depends(get_user_id_from_token)):
 @router.post("/resource/{resource_id}/mark-read")
 async def mark_read(resource_id: int, user_id: int = Depends(get_user_id_from_token)):
     """标记资源为已读"""
-    result = await StudyService.mark_read(user_id, resource_id)
-    return {"code": 200, "msg": "已标记为已读", "data": result}
+    try:
+        result = await StudyService.mark_read(user_id, resource_id)
+        return {"code": 200, "msg": "已标记为已读", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.post("/resource/{resource_id}/mark-unread")
 async def mark_unread(resource_id: int, user_id: int = Depends(get_user_id_from_token)):
     """标记资源为未读"""
-    result = await StudyService.mark_unread(user_id, resource_id)
-    return {"code": 200, "msg": "已标记为未读", "data": result}
+    try:
+        result = await StudyService.mark_unread(user_id, resource_id)
+        return {"code": 200, "msg": "已标记为未读", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/learning-guidance")
@@ -56,8 +62,18 @@ async def collect_resource(resource_id: int, user_id: int = Depends(get_user_id_
 @router.delete("/resource/{resource_id}/collect")
 async def uncollect_resource(resource_id: int, user_id: int = Depends(get_user_id_from_token)):
     """取消收藏"""
-    result = await StudyService.uncollect_resource(user_id, resource_id)
-    return {"code": 200, "msg": "已取消收藏", "data": result}
+    try:
+        result = await StudyService.uncollect_resource(user_id, resource_id)
+        return {"code": 200, "msg": "已取消收藏", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/exam-weekly")
+async def get_exam_weekly(user_id: int = Depends(get_user_id_from_token)):
+    """最近 7 天每日做题正确率"""
+    result = await StudyService.get_exam_weekly(user_id)
+    return {"code": 200, "msg": "success", "data": result}
 
 
 @router.get("/collections")

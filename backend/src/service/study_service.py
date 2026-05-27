@@ -30,6 +30,9 @@ class StudyService:
     @staticmethod
     async def mark_read(user_id: int, resource_id: int) -> dict:
         """标记资源为已读"""
+        resource = await GeneratedResource.filter(id=resource_id).first()
+        if not resource:
+            raise ValueError("资源不存在")
         status, created = await ResourceReadStatus.get_or_create(
             user_id=user_id, resource_id=resource_id,
             defaults={"is_read": True, "read_at": datetime.now()},
@@ -43,6 +46,9 @@ class StudyService:
     @staticmethod
     async def mark_unread(user_id: int, resource_id: int) -> dict:
         """标记资源为未读"""
+        resource = await GeneratedResource.filter(id=resource_id).first()
+        if not resource:
+            raise ValueError("资源不存在")
         status = await ResourceReadStatus.filter(user_id=user_id, resource_id=resource_id).first()
         if status:
             status.is_read = False
@@ -196,6 +202,51 @@ class StudyService:
         }
 
     @staticmethod
+    async def get_exam_weekly(user_id: int) -> dict:
+        """最近 7 天每日正确率"""
+        today = date.today()
+        week_ago = today - timedelta(days=6)
+
+        records = await ExamRecord.filter(
+            user_id=user_id,
+            is_correct__not_isnull=True,
+            created_at__gte=week_ago,
+        ).all()
+
+        daily_map: dict[str, dict] = {}
+        for r in records:
+            day = str(r.created_at.date()) if r.created_at else str(today)
+            if day not in daily_map:
+                daily_map[day] = {"total": 0, "correct": 0}
+            daily_map[day]["total"] += 1
+            if r.is_correct:
+                daily_map[day]["correct"] += 1
+
+        daily = [
+            {
+                "date": str(week_ago + timedelta(days=i)),
+                "total": daily_map.get(str(week_ago + timedelta(days=i)), {}).get("total", 0),
+                "correct": daily_map.get(str(week_ago + timedelta(days=i)), {}).get("correct", 0),
+                "accuracy": round(
+                    daily_map.get(str(week_ago + timedelta(days=i)), {}).get("correct", 0)
+                    / max(daily_map.get(str(week_ago + timedelta(days=i)), {}).get("total", 0), 1),
+                    2,
+                ),
+            }
+            for i in range(7)
+        ]
+
+        week_total = sum(d["total"] for d in daily)
+        week_correct = sum(d["correct"] for d in daily)
+
+        return {
+            "daily": daily,
+            "week_total": week_total,
+            "week_correct": week_correct,
+            "week_accuracy": round(week_correct / max(week_total, 1), 2),
+        }
+
+    @staticmethod
     async def get_learning_guidance(user_id: int) -> dict:
         """返回个性化学习指导文本"""
         guidance = await build_learning_guidance(user_id)
@@ -213,6 +264,9 @@ class StudyService:
     @staticmethod
     async def uncollect_resource(user_id: int, resource_id: int) -> dict:
         """取消收藏"""
+        resource = await GeneratedResource.filter(id=resource_id).first()
+        if not resource:
+            raise ValueError("资源不存在")
         await ResourceCollection.filter(user_id=user_id, resource_id=resource_id).delete()
         return {"resource_id": resource_id, "collected": False}
 
