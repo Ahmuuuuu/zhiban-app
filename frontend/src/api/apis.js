@@ -10,6 +10,11 @@ export const resolveApiUrl = path => {
   return new URL(String(path).replace(/^\//, ''), API_BASE_URL).toString()
 }
 
+export const normalizeAvatarUrl = avatar => {
+  if (!avatar) return ''
+  return resolveApiUrl(avatar)
+}
+
 export async function downloadWithToken(url, filename = 'download') {
   const href = resolveApiUrl(url)
   const token = localStorage.getItem('token')
@@ -66,6 +71,24 @@ export function updateUserProfile(data) {
     url: '/user/update_user/information',
     method: 'post',
     data
+  })
+}
+
+export function uploadUserAvatar(file) {
+  const data = new FormData()
+  data.append('file', file)
+
+  return request({
+    url: '/user/avatar',
+    method: 'post',
+    data
+  })
+}
+
+export function deleteUserAvatar() {
+  return request({
+    url: '/user/avatar',
+    method: 'delete'
   })
 }
 
