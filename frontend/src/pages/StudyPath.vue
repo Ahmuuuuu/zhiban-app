@@ -2,7 +2,6 @@
   <main class="study-panel">
     <header class="panel-header">
       <div class="header-title-row">
-        <PageBackButton />
         <router-link class="home-pill" to="/">返回首页</router-link>
         <div>
         <p class="eyebrow">Study Path</p>
@@ -420,7 +419,6 @@ import {
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
-import PageBackButton from '../components/PageBackButton.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'

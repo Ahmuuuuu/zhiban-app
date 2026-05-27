@@ -2,7 +2,6 @@
   <div class="my-full-page">
     <main class="main">
       <header class="topbar">
-        <PageBackButton />
         <router-link class="home-pill" to="/" aria-label="返回首页">
           首页
         </router-link>
@@ -101,7 +100,6 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { BookOpenText, ChartNoAxesColumnIncreasing, Route, Search } from 'lucide-vue-next'
 import UserAccountButton from '../components/UserAccountButton.vue'
-import PageBackButton from '../components/PageBackButton.vue'
 
 const route = useRoute()
 const router = useRouter()

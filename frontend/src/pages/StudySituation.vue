@@ -2,7 +2,6 @@
   <main class="study-panel">
     <header class="panel-header">
       <div class="header-title-row">
-        <PageBackButton />
         <router-link class="home-pill" to="/">&#x8FD4;&#x56DE;&#x9996;&#x9875;</router-link>
         <div>
           <p class="eyebrow">Study Status</p>
@@ -66,7 +65,7 @@
             <strong>{{ studyMinutes }}</strong>
             <span>min</span>
           </div>
-          <p>&#x672C;&#x5468;&#x7D2F;&#x8BA1;&#xFF0C;&#x6BD4;&#x4E0A;&#x5468;&#x63D0;&#x5347; {{ weeklyGrowth }}%</p>
+          <p>{{ studyTimeNote }}</p>
           </article>
 
           <article class="tag-panel panel-card">
@@ -106,11 +105,15 @@
             <h2>&#x505A;&#x9898;&#x6B63;&#x786E;&#x7387;</h2>
           </div>
           <svg class="line-chart" viewBox="0 0 460 180" role="img" aria-label="accuracy line chart">
-            <line x1="28" y1="22" x2="28" y2="146" />
-            <line x1="28" y1="146" x2="432" y2="146" />
+            <g v-for="tick in accuracyTicks" :key="tick.value" class="chart-tick">
+              <line :x1="chartLeft" :y1="tick.y" :x2="chartRight" :y2="tick.y" />
+              <text :x="chartLeft - 10" :y="tick.y + 4" text-anchor="end">{{ tick.value }}%</text>
+            </g>
+            <line :x1="chartLeft" :y1="chartTop" :x2="chartLeft" :y2="chartBottom" class="chart-axis" />
+            <line :x1="chartLeft" :y1="chartBottom" :x2="chartRight" :y2="chartBottom" class="chart-axis" />
             <polyline :points="accuracyLine" />
-            <circle v-for="point in accuracyPoints" :key="point.day" :cx="point.x" :cy="point.y" r="4" />
-            <text v-for="point in accuracyPoints" :key="`${point.day}-label`" :x="point.x" y="168">{{ point.day }}</text>
+            <circle v-for="point in accuracyPoints" :key="`${point.day}-dot`" class="chart-point-dot" :cx="point.x" :cy="point.y" r="3" />
+            <text v-for="point in accuracyPoints" :key="`${point.day}-label`" :x="point.x" y="168" text-anchor="middle">{{ point.day }}</text>
           </svg>
         </article>
       </section>
@@ -141,7 +144,8 @@
               <Target :size="18" />
               <h2>&#x8584;&#x5F31;&#x77E5;&#x8BC6;&#x70B9;</h2>
             </div>
-            <div class="weak-list">
+            <p v-if="!weakPoints.length" class="path-empty">&#x6682;&#x65E0;&#x8584;&#x5F31;&#x77E5;&#x8BC6;&#x70B9;</p>
+            <div v-else class="weak-list">
               <div v-for="item in weakPoints" :key="item.name" class="weak-row">
                 <div>
                   <strong>{{ item.name }}</strong>
@@ -162,6 +166,7 @@
             <ul>
               <li v-for="item in suggestions" :key="item">{{ item }}</li>
             </ul>
+            <p v-if="!suggestions.length" class="path-empty">&#x6682;&#x65E0;&#x5B66;&#x4E60;&#x5EFA;&#x8BAE;</p>
           </article>
         </div>
 
@@ -176,7 +181,7 @@
               <span>{{ item.label }}</span>
             </div>
           </div>
-          <p>&#x8BB2;&#x89E3;&#x578B;&#x8D44;&#x6E90;&#x5B8C;&#x6210;&#x7387;&#x8F83;&#x9AD8;&#xFF0C;&#x5EFA;&#x8BAE;&#x5C06;&#x8584;&#x5F31;&#x77E5;&#x8BC6;&#x70B9;&#x4F18;&#x5148;&#x8F6C;&#x6210;&#x77ED;&#x8BB2;&#x4E49;&#x548C;&#x4E13;&#x9879;&#x7EC3;&#x4E60;&#x3002;</p>
+          <p>{{ resourceFeedbackText }}</p>
         </article>
       </section>
     </div>
@@ -195,15 +200,14 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
-import { getPortraitRadar, getStudyStats } from '../api/apis'
+import { getExamSessions, getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyStats } from '../api/apis'
 import UserAccountButton from '../components/UserAccountButton.vue'
-import PageBackButton from '../components/PageBackButton.vue'
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
 
 const zh = codes => codes.map(code => String.fromCharCode(code)).join('')
 
-const studyMinutes = 486
-const weeklyGrowth = 18
+const studyMinutes = ref(0)
+const studyTimeNote = ref(zh([0x672c, 0x5468, 0x6682, 0x65e0, 0x5b66, 0x4e60, 0x65f6, 0x957f, 0x8bb0, 0x5f55]))
 
 const learnerTags = [
   zh([0x7a33, 0x5b9a, 0x578b, 0x5b66, 0x4e60, 0x8005]),
@@ -306,22 +310,60 @@ const loadRadarData = async () => {
   }
 }
 
-const accuracyData = [
-  { day: zh([0x5468, 0x4e00]), value: 64 },
-  { day: zh([0x5468, 0x4e8c]), value: 71 },
-  { day: zh([0x5468, 0x4e09]), value: 69 },
-  { day: zh([0x5468, 0x56db]), value: 78 },
-  { day: zh([0x5468, 0x4e94]), value: 82 },
-  { day: zh([0x5468, 0x516d]), value: 76 },
-  { day: zh([0x5468, 0x65e5]), value: 86 }
-]
+const formatMonthDay = date => `${date.getMonth() + 1}/${date.getDate()}`
+const buildRecentDateLabels = () => {
+  const today = new Date()
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(today.getDate() - (6 - index))
+    return {
+      day: formatMonthDay(date),
+      value: 0
+    }
+  })
+}
 
-const accuracyPoints = accuracyData.map((item, index) => ({
-  ...item,
-  x: 48 + index * 60,
-  y: 146 - item.value * 1.28
+const fallbackAccuracyData = buildRecentDateLabels()
+
+const accuracyData = ref(fallbackAccuracyData)
+const chartLeft = 56
+const chartRight = 432
+const chartTop = 22
+const chartBottom = 146
+const chartHeight = chartBottom - chartTop
+const accuracyTicks = [100, 75, 50, 25, 0].map(value => ({
+  value,
+  y: chartBottom - (value / 100) * chartHeight
 }))
-const accuracyLine = accuracyPoints.map(point => `${point.x},${point.y}`).join(' ')
+const accuracyPoints = computed(() => accuracyData.value.map((item, index) => ({
+  ...item,
+  x: chartLeft + 24 + index * ((chartRight - chartLeft - 48) / 6),
+  y: chartBottom - (Math.max(0, Math.min(100, item.value)) / 100) * chartHeight
+})))
+const accuracyLine = computed(() => accuracyPoints.value.map(point => `${point.x},${point.y}`).join(' '))
+
+const formatAccuracyDate = value => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return formatMonthDay(date)
+}
+
+const normalizeSessionAccuracy = result => {
+  const sessions = unwrapApiData(result)
+  return (Array.isArray(sessions) ? sessions : [])
+    .map(item => {
+      const score = Number(item.score ?? item.correct_rate ?? item.correctRate ?? item.percentage)
+      const normalized = score <= 1 ? score * 100 : score
+      return {
+        day: formatAccuracyDate(item.last_at || item.lastAt || item.created_at || item.createdAt || item.first_at || item.firstAt),
+        value: Math.round(Math.max(0, Math.min(100, Number.isFinite(normalized) ? normalized : 0))),
+        time: item.last_at || item.lastAt || item.created_at || item.createdAt || item.first_at || item.firstAt || ''
+      }
+    })
+    .filter(item => item.day)
+    .sort((a, b) => new Date(a.time) - new Date(b.time))
+    .slice(-7)
+}
 
 const completedPaths = ref([])
 const currentPaths = ref([])
@@ -372,51 +414,110 @@ const formatPathCard = (item, index, isCompleted = false) => {
   }
 }
 
-const loadCompletedPaths = async () => {
+const weakPoints = ref([])
+const suggestions = ref([])
+const resourceFeedback = ref([])
+const resourceFeedbackText = ref(zh([0x6682, 0x65e0, 0x8d44, 0x6e90, 0x4f7f, 0x7528, 0x8bb0, 0x5f55]))
+
+const toPercent = value => `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`
+const formatSecondsToMinutes = seconds => Math.round(Number(seconds || 0) / 60)
+
+const normalizeWeakPoints = raw => {
+  const list = Array.isArray(raw) ? raw : []
+  return list.map(item => {
+    const accuracy = Number(item.accuracy ?? item.correct_rate ?? 0)
+    const normalizedAccuracy = accuracy > 1 ? accuracy / 100 : accuracy
+    const severity = Math.round((1 - Math.max(0, Math.min(1, normalizedAccuracy))) * 100)
+    const attempts = Number(item.total_attempts || 0)
+    const levelMap = {
+      beginner: zh([0x521d, 0x5b66]),
+      learning: zh([0x5b66, 0x4e60, 0x4e2d])
+    }
+
+    return {
+      name: String(item.tag || item.name || item.knowledge_tag || zh([0x672a, 0x547d, 0x540d, 0x77e5, 0x8bc6, 0x70b9])),
+      tip: attempts
+        ? `${levelMap[item.level] || item.level || zh([0x9700, 0x5de9, 0x56fa])} - ${zh([0x6b63, 0x786e, 0x7387])} ${toPercent(normalizedAccuracy)} - ${attempts} ${zh([0x6b21, 0x7ec3, 0x4e60])}`
+        : `${levelMap[item.level] || item.level || zh([0x9700, 0x5de9, 0x56fa])} - ${zh([0x638c, 0x63e1, 0x5ea6])} ${toPercent(normalizedAccuracy)}`,
+      value: severity
+    }
+  }).filter(item => item.name).slice(0, 4)
+}
+
+const normalizeGuidance = raw => {
+  const text = String(raw || '').trim()
+  if (!text) return []
+
+  return text
+    .split(/\r?\n|[.;]/)
+    .map(line => line.replace(/^[-*#\d.\s]+/, '').trim())
+    .filter(Boolean)
+    .slice(0, 4)
+}
+
+const applyStudyStats = (stats, collections = []) => {
+  const studyTime = stats.study_time || stats.studyTime || {}
+  const resources = stats.resources || {}
+  const exam = stats.exam_summary || stats.examSummary || {}
+  const paths = normalizeLearningPaths(stats)
+  const finished = paths.filter(item => item.totalNodes > 0 && item.completedNodes >= item.totalNodes)
+  const inProgress = paths.filter(item => item.totalNodes > 0 && item.completedNodes < item.totalNodes)
+  const weekMinutes = formatSecondsToMinutes(studyTime.week_seconds ?? studyTime.weekSeconds)
+  const totalMinutes = formatSecondsToMinutes(studyTime.total_seconds ?? studyTime.totalSeconds)
+  const activeDays = Number(studyTime.active_days ?? studyTime.activeDays ?? 0)
+  const correctRate = Number(exam.correct_rate ?? exam.correctRate ?? 0)
+  const completionRate = Number(exam.completion_rate ?? exam.completionRate ?? 0)
+  const collectedCount = Array.isArray(collections) ? collections.length : Number(resources.collected_count || 0)
+
+  studyMinutes.value = weekMinutes
+  studyTimeNote.value = `${zh([0x672c, 0x5468, 0x7d2f, 0x8ba1])} ${weekMinutes} min - ${zh([0x7d2f, 0x8ba1])} ${totalMinutes} min - ${zh([0x6d3b, 0x8dc3])} ${activeDays} ${zh([0x5929])}`
+  completedPaths.value = finished.map((item, index) => formatPathCard(item, index, true))
+  currentPaths.value = inProgress.map((item, index) => formatPathCard(item, index)).slice(0, 2)
+  weakPoints.value = normalizeWeakPoints(stats.weak_points || stats.weakPoints)
+  if (!accuracyData.value.length || accuracyData.value === fallbackAccuracyData) {
+    accuracyData.value = fallbackAccuracyData.map(item => ({
+      ...item,
+      value: Math.round(Math.max(0, Math.min(1, correctRate || 0)) * 100)
+    }))
+  }
+  resourceFeedback.value = [
+    { label: zh([0x8d44, 0x6e90, 0x6253, 0x5f00, 0x7387]), value: toPercent(resources.open_rate ?? resources.openRate) },
+    { label: zh([0x7ec3, 0x4e60, 0x5b8c, 0x6210, 0x7387]), value: toPercent(completionRate) },
+    { label: zh([0x67e5, 0x770b, 0x6b21, 0x6570]), value: String(resources.total_views ?? resources.totalViews ?? 0) },
+    { label: zh([0x4e0b, 0x8f7d, 0x6b21, 0x6570]), value: String(resources.total_downloads ?? resources.totalDownloads ?? 0) },
+    { label: zh([0x6536, 0x85cf, 0x8d44, 0x6599]), value: String(collectedCount) }
+  ]
+  resourceFeedbackText.value = `${zh([0x5171, 0x6709, 0x8d44, 0x6e90])} ${resources.total || 0} ${zh([0x4efd])} - ${zh([0x5df2, 0x9605, 0x8bfb])} ${resources.read_count ?? resources.readCount ?? 0} ${zh([0x4efd])} - ${zh([0x5f85, 0x9605, 0x8bfb])} ${resources.unread_count ?? resources.unreadCount ?? 0} ${zh([0x4efd])}`
+  suggestions.value = normalizeGuidance(stats.learning_guidance || stats.learningGuidance)
+}
+
+const loadStudyDashboard = async () => {
   try {
-    const paths = normalizeLearningPaths(await getStudyStats())
-    const finished = paths.filter(item => item.totalNodes > 0 && item.completedNodes >= item.totalNodes)
-    const inProgress = paths.filter(item => item.totalNodes > 0 && item.completedNodes < item.totalNodes)
-    completedPaths.value = finished.map((item, index) => formatPathCard(item, index, true))
-    currentPaths.value = inProgress.map((item, index) => formatPathCard(item, index)).slice(0, 2)
+    const statsResult = await getStudyStats()
+    const stats = unwrapApiData(statsResult) || {}
+    const [guidanceResult, collectionsResult, examSessionsResult] = await Promise.allSettled([
+      getLearningGuidance(),
+      getStudyCollections(),
+      getExamSessions()
+    ])
+    const guidanceData = guidanceResult.status === 'fulfilled' ? unwrapApiData(guidanceResult.value) : {}
+    const collectionsData = collectionsResult.status === 'fulfilled' ? unwrapApiData(collectionsResult.value) : []
+    const sessionAccuracy = examSessionsResult.status === 'fulfilled' ? normalizeSessionAccuracy(examSessionsResult.value) : []
+    const guidance = guidanceData?.guidance || stats.learning_guidance || stats.learningGuidance || ''
+    const collections = Array.isArray(collectionsData) ? collectionsData : []
+
+    if (sessionAccuracy.length) {
+      accuracyData.value = sessionAccuracy
+    }
+    applyStudyStats({ ...stats, learning_guidance: guidance }, collections)
   } catch (error) {
-    console.warn('[StudySituation] load completed paths failed:', error)
+    console.warn('[StudySituation] load dashboard failed:', error)
   }
 }
 
-const weakPoints = [
-  {
-    name: zh([0x4e92, 0x8865, 0x8272, 0x5e94, 0x7528]),
-    tip: zh([0x6982, 0x5ff5, 0x53ef, 0x590d, 0x8ff0, 0xff0c, 0x5e94, 0x7528, 0x9898, 0x6ce2, 0x52a8, 0x8f83, 0x5927]),
-    value: 68
-  },
-  {
-    name: zh([0x660e, 0x5ea6, 0x5bf9, 0x6bd4]),
-    tip: zh([0x5bb9, 0x6613, 0x5ffd, 0x7565, 0x753b, 0x9762, 0x5c42, 0x6b21, 0x5173, 0x7cfb]),
-    value: 56
-  },
-  {
-    name: zh([0x8272, 0x5f69, 0x5fc3, 0x7406, 0x8054, 0x60f3]),
-    tip: zh([0x6848, 0x4f8b, 0x8fc1, 0x79fb, 0x9700, 0x8981, 0x66f4, 0x591a, 0x7d20, 0x6750]),
-    value: 61
-  }
-]
-
-const suggestions = [
-  zh([0x6bcf, 0x5929, 0x5b89, 0x6392, 0x20, 0x31, 0x35, 0x20, 0x5206, 0x949f, 0x590d, 0x76d8, 0x9519, 0x9898, 0x3002]),
-  zh([0x4f18, 0x5148, 0x5b66, 0x4e60, 0x660e, 0x5ea6, 0x5bf9, 0x6bd4, 0x76f8, 0x5173, 0x8d44, 0x6e90, 0x3002]),
-  zh([0x7528, 0x4e00, 0x7ec4, 0x771f, 0x5b9e, 0x4f5c, 0x54c1, 0x505a, 0x8272, 0x5f69, 0x5206, 0x6790, 0x8f93, 0x51fa, 0x3002])
-]
-
-const resourceFeedback = [
-  { label: zh([0x8d44, 0x6e90, 0x6253, 0x5f00, 0x7387]), value: '92%' },
-  { label: zh([0x7ec3, 0x4e60, 0x5b8c, 0x6210, 0x7387]), value: '76%' },
-  { label: zh([0x6536, 0x85cf, 0x8d44, 0x6599]), value: '18' }
-]
-
 onMounted(() => {
   loadRadarData()
-  loadCompletedPaths()
+  loadStudyDashboard()
 })
 </script>
 
@@ -514,8 +615,8 @@ onMounted(() => {
 .top-zone {
   grid-template-columns: minmax(280px, 0.42fr) minmax(520px, 1fr) minmax(330px, 0.42fr);
   grid-template-areas:
-    "profile profile side"
-    "current accuracy side";
+    "profile profile duration"
+    "current accuracy tags";
   align-items: stretch;
 }
 
@@ -542,11 +643,7 @@ onMounted(() => {
 }
 
 .right-stack {
-  grid-area: side;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(230px, 0.58fr) minmax(190px, 0.42fr);
-  gap: 16px;
+  display: contents;
 }
 
 .panel-card {
@@ -569,11 +666,13 @@ onMounted(() => {
 }
 
 .duration-panel {
+  grid-area: duration;
   min-height: 0;
   padding: 20px;
 }
 
 .tag-panel {
+  grid-area: tags;
   min-height: 0;
   padding: 20px;
 }
@@ -762,6 +861,14 @@ onMounted(() => {
   stroke-width: 1;
 }
 
+.line-chart .chart-tick line {
+  stroke: rgba(95, 143, 195, 0.18);
+}
+
+.line-chart .chart-axis {
+  stroke: rgba(95, 143, 195, 0.4);
+}
+
 .line-chart polyline {
   fill: none;
   stroke: #163f8f;
@@ -770,10 +877,9 @@ onMounted(() => {
   stroke-linejoin: round;
 }
 
-.line-chart circle {
-  fill: #ffffff;
-  stroke: #163f8f;
-  stroke-width: 2;
+.line-chart .chart-point-dot {
+  fill: #163f8f;
+  stroke: none;
 }
 
 .path-list {
@@ -917,10 +1023,28 @@ onMounted(() => {
 
 .suggestion-panel ul {
   margin: 16px 0 0;
-  padding-left: 18px;
+  padding: 0;
+  list-style: none;
   color: #163f8f;
   font-size: 13px;
+  font-weight: 800;
   line-height: 1.8;
+}
+
+.suggestion-panel li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.suggestion-panel li::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: #163f8f;
+  flex-shrink: 0;
 }
 
 .suggestion-panel li + li {
@@ -930,7 +1054,7 @@ onMounted(() => {
 .feedback-summary {
   margin-top: 18px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -976,10 +1100,6 @@ onMounted(() => {
   .suggestion-panel,
   .feedback-panel {
     grid-area: auto;
-  }
-
-  .right-stack {
-    grid-template-rows: none;
   }
 
   .insight-stack {
