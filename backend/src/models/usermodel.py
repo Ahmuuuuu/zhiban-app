@@ -10,6 +10,7 @@ class User(Model):
     email = fields.TextField(null = True, description = "用户邮箱")
     phonenum = fields.CharField(max_length=20, null=True, description="用户手机号")
     profile = fields.CharField(null = True, max_length = 200, description = "用户简介")
+    avatar = fields.CharField(null=True, max_length=255, description="头像URL路径")
     role = fields.CharField(max_length=20, default="user", description="用户角色：user/admin")
     created_at = fields.DatetimeField(auto_now_add = True, null =True)
     updated_at = fields.DatetimeField(auto_now = True, null = True)

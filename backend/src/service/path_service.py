@@ -148,7 +148,7 @@ class PathService:
                 knowledge_tags=json.dumps(nd.get("knowledge_tags", []), ensure_ascii=False),
                 order_index=nd.get("order_index", len(nodes) + 1),
                 prerequisites=json.dumps(nd.get("prerequisites", []), ensure_ascii=False),
-                resource_types=json.dumps(nd.get("resource_types", ["document"]), ensure_ascii=False),
+                resource_types=json.dumps(nd.get("resource_types", ["document", "image"]), ensure_ascii=False),
                 quiz_config=json.dumps(nd.get("quiz_config", {"count": 3, "threshold": 0.7}), ensure_ascii=False),
             )
             created_nodes.append(node)
@@ -684,7 +684,7 @@ class PathService:
             knowledge_tags=json.dumps(fields.get("knowledge_tags", []), ensure_ascii=False),
             order_index=fields.get("order_index", next_order),
             prerequisites=json.dumps(fields.get("prerequisites", []), ensure_ascii=False),
-            resource_types=json.dumps(fields.get("resource_types", ["document"]), ensure_ascii=False),
+            resource_types=json.dumps(fields.get("resource_types", ["document", "image"]), ensure_ascii=False),
             quiz_config=json.dumps(fields.get("quiz_config", {"count": 3, "threshold": 0.7}), ensure_ascii=False),
         )
 

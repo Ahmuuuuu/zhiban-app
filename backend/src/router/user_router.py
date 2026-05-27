@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends, Body, UploadFile, File
 from backend.src.service.userservice import UserService
 from backend.src.utils.jwt import create_access_token, get_user_id_from_token
 from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
@@ -67,7 +67,8 @@ async def read(user_id : int = Depends(get_user_id_from_token)):
                     "major" : user.major,
                     "email" : user.email,
                     "phonenum" : user.phonenum,
-                    "profile" : user.profile
+                    "profile" : user.profile,
+                    "avatar" : user.avatar
                 }
             }
     except HTTPException:
@@ -113,6 +114,33 @@ async def update_password(user_id : int = Depends(get_user_id_from_token), data 
     except HTTPException :
         raise HTTPException(500, "服务器错误")
     
+@router.post("/avatar")
+async def upload_avatar(user_id: int = Depends(get_user_id_from_token), file: UploadFile = File(...)):
+    try:
+        if not file.filename:
+            return {"code": 400, "msg": "未选择文件"}
+        content = await file.read()
+        user, msg = await UserService.upload_avatar(user_id, content, file.filename)
+        if user is None:
+            return {"code": 404, "msg": msg}
+        return {
+            "code": 200,
+            "msg": msg,
+            "data": {"avatar": user.avatar}
+        }
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+@router.delete("/avatar")
+async def delete_avatar(user_id: int = Depends(get_user_id_from_token)):
+    try:
+        user, msg = await UserService.delete_avatar(user_id)
+        if user is None:
+            return {"code": 404, "msg": msg}
+        return {"code": 200, "msg": msg}
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
 @router.delete("/delete_user")
 async def delete(user_id : int = Depends(get_user_id_from_token), data : Delete_User = Body(...)):
     try :

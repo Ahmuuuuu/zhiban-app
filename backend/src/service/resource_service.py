@@ -188,11 +188,13 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
     }
 
 
-async def _save_resources(topic: str, user_id: int, generated: dict, review_passed: bool, retry_count: int) -> list[dict]:
+async def _save_resources(topic: str, user_id: int, generated: dict, review_passed: bool, retry_count: int,
+                          file_urls: dict | None = None) -> list[dict]:
     """存库并返回记录列表"""
     user = await User.filter(id=user_id).first()
     if not user:
         return []
+    file_urls = file_urls or {}
     saved = []
     for rt, content in generated.items():
         record = await GeneratedResource.create(
@@ -201,6 +203,7 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
             content=content,
             review_passed=review_passed,
             retry_count=retry_count,
+            file_url=file_urls.get(rt),
             user=user,
         )
         saved.append({
@@ -210,6 +213,7 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
             "content": record.content,
             "review_passed": record.review_passed,
             "retry_count": record.retry_count,
+            "file_url": record.file_url,
         })
     return saved
 
@@ -237,6 +241,7 @@ class ResourceService:
             generated,
             result.get("review_passed", False),
             result.get("retry_count", 0),
+            file_urls=result.get("file_urls"),
         )
         await _save_generation_to_history(user_id, chat_group_id, topic, saved)
 
@@ -321,6 +326,7 @@ class ResourceService:
         final_resources = {}
         final_passed = False
         final_retry = 0
+        final_file_urls = {}
         yielded_types: set[str] = set()
 
         async for chunk in resource_graph.astream(initial_state, stream_mode="values"):
@@ -332,13 +338,18 @@ class ResourceService:
                     if rt not in yielded_types:
                         yielded_types.add(rt)
                         yield _make_file_event(topic, rt, content)
+            # 追踪 file_urls（image 类型在 executor 产出）
+            chunk_file_urls = chunk.get("file_urls", {})
+            if chunk_file_urls:
+                final_file_urls.update(chunk_file_urls)
             final_passed = chunk.get("review_passed", False)
             final_retry = chunk.get("retry_count", 0)
 
             yield f"data: {json.dumps({'resources': list(resources.keys()), 'review_passed': final_passed}, ensure_ascii=False)}\n\n"
 
         # 流式结束后存库
-        saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry)
+        saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry,
+                                      file_urls=final_file_urls)
         await _save_generation_to_history(user_id, chat_group_id, topic, saved)
         # 在 done 事件中附带 download_url
         done_data = {
