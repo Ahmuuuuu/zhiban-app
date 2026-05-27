@@ -244,6 +244,10 @@ export function getStudyStats() {
   return request.get('/study/stats')
 }
 
+export function getStudyExamWeekly() {
+  return request.get('/study/exam-weekly')
+}
+
 export function getLearningGuidance() {
   return request.get('/study/learning-guidance')
 }
