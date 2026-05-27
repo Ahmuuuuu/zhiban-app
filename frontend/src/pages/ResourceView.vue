@@ -2,7 +2,6 @@
   <main class="resource-page">
     <header class="resource-header">
       <div class="header-title-row">
-        <PageBackButton />
         <router-link class="home-pill" to="/">返回首页</router-link>
         <div class="title-block">
         <p>My Resources</p>
@@ -213,7 +212,6 @@ import { downloadWithToken, getGeneratedImages, getGeneratedResource, getGenerat
 import { upsertQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
-import PageBackButton from '../components/PageBackButton.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 
 const route = useRoute()
