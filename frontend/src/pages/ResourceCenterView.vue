@@ -1,7 +1,6 @@
 <template>
   <main class="resource-center-page">
     <header class="center-header">
-      <PageBackButton />
       <router-link class="home-pill" to="/">
         &#x9996;&#x9875;
       </router-link>
@@ -277,7 +276,6 @@ import { upsertQuizSet } from '../utils/quizBank'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
-import PageBackButton from '../components/PageBackButton.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 
 const router = useRouter()

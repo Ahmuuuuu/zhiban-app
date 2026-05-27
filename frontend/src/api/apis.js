@@ -244,6 +244,28 @@ export function getStudyStats() {
   return request.get('/study/stats')
 }
 
+export function getLearningGuidance() {
+  return request.get('/study/learning-guidance')
+}
+
+export function collectStudyResource(resourceId) {
+  return request({
+    url: `/study/resource/${resourceId}/collect`,
+    method: 'post'
+  })
+}
+
+export function uncollectStudyResource(resourceId) {
+  return request({
+    url: `/study/resource/${resourceId}/collect`,
+    method: 'delete'
+  })
+}
+
+export function getStudyCollections() {
+  return request.get('/study/collections')
+}
+
 // ── 学习资源生成（流式）──
 
 export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile } = {}) {
