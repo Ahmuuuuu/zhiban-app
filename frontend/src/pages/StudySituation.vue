@@ -23,7 +23,7 @@
 
           <div class="profile-body">
             <div class="avatar-frame">
-              <img :src="avatarUrl" alt="avatar" />
+              <img :src="displayAvatarUrl" alt="avatar" />
             </div>
 
             <div class="radar-wrap">
@@ -190,7 +190,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   BadgeCheck,
   Clock3,
@@ -201,11 +201,32 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
-import { getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyStats } from '../api/apis'
+import { getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
 
 const zh = codes => codes.map(code => String.fromCharCode(code)).join('')
+
+const userAvatarUrl = ref(normalizeAvatarUrl(localStorage.getItem('avatar') || ''))
+const displayAvatarUrl = computed(() => userAvatarUrl.value || avatarUrl)
+
+const normalizeProfile = result => result?.data || result?.user || result || {}
+
+const loadUserAvatar = async () => {
+  try {
+    const profile = normalizeProfile(await getUserProfile())
+    userAvatarUrl.value = normalizeAvatarUrl(profile.avatar || localStorage.getItem('avatar') || '')
+    if (profile.avatar) {
+      localStorage.setItem('avatar', profile.avatar)
+    }
+  } catch {
+    userAvatarUrl.value = normalizeAvatarUrl(localStorage.getItem('avatar') || '')
+  }
+}
+
+const handleAvatarUpdated = event => {
+  userAvatarUrl.value = normalizeAvatarUrl(event?.detail?.avatar || localStorage.getItem('avatar') || '')
+}
 
 const studyMinutes = ref(0)
 const studyTimeNote = ref(zh([0x672c, 0x5468, 0x6682, 0x65e0, 0x5b66, 0x4e60, 0x65f6, 0x957f, 0x8bb0, 0x5f55]))
@@ -529,8 +550,14 @@ const loadStudyDashboard = async () => {
 }
 
 onMounted(() => {
+  window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  loadUserAvatar()
   loadRadarData()
   loadStudyDashboard()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
 })
 </script>
 
