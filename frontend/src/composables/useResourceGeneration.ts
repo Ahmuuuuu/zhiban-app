@@ -1,8 +1,8 @@
-﻿import { generateImage, getImageTaskStatus, streamResourceGeneration } from '../api/apis'
+﻿import { generateImage, getImageTaskStatus, narrateResource, streamResourceGeneration } from '../api/apis'
 
 export interface ResourceToolConfig {
   label: string
-  generateMode: 'resource' | 'image'
+  generateMode: 'resource' | 'image' | 'video'
   resourceTypes?: string[]
   aspectRatio?: string
   imageCount?: number
@@ -13,7 +13,7 @@ export const resourceTools: ResourceToolConfig[] = [
   { label: 'image', generateMode: 'image', aspectRatio: '1:1', imageCount: 1 },
   { label: 'ppt', generateMode: 'resource', resourceTypes: ['ppt'] },
   { label: 'word', generateMode: 'resource', resourceTypes: ['document'] },
-  { label: 'video', generateMode: 'resource', resourceTypes: ['document'] },
+  { label: 'video', generateMode: 'video', resourceTypes: ['document'] },
   { label: 'mindmap', generateMode: 'resource', resourceTypes: ['mindmap'] },
   { label: 'quiz', generateMode: 'resource', resourceTypes: ['exercise'] },
 ]
@@ -56,6 +56,20 @@ export type GenerationCallbacks = {
 }
 
 const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
+
+const getGeneratedResourceId = (resource: any) => {
+  const directId = resource?.resource_id || resource?.resourceId || resource?.file_id || resource?.fileId || resource?.id || ''
+  if (directId) return String(directId)
+
+  const url = String(resource?.download_url || resource?.downloadUrl || resource?.url || '')
+  const match = url.match(/\/resource\/([^/?#]+)(?:\/download)?/i)
+  return match?.[1] || ''
+}
+
+const isNarratableType = (resource: any) => {
+  const type = String(resource?.file_type || resource?.fileType || resource?.resource_type || resource?.resourceType || '').toLowerCase()
+  return /document|ppt|mindmap|mind_map|mind-map|case|reading|text|txt/.test(type)
+}
 
 const normalizeImageRecords = (payload: any): any[] => {
   const data = unwrapResponseData(payload)
@@ -161,6 +175,79 @@ export async function executeGeneration(
       callbacks.onError?.('图片生成超时，请稍后重试。')
     } catch {
       callbacks.onError?.('图片生成失败，请稍后再试。')
+    }
+    return
+  }
+
+  if (tool.generateMode === 'video') {
+    const resourceTypes = tool.resourceTypes || ['document']
+    const generatedResources: any[] = []
+
+    callbacks.onProgress?.('正在生成视频脚本...')
+
+    try {
+      await streamResourceGeneration(
+        {
+          topic: text,
+          resource_types: resourceTypes,
+          chat_group_id: Number(chatGroupId || 0),
+        },
+        {
+          onProgress: (eventData: any) => {
+            const finished = Array.isArray(eventData?.resources) ? eventData.resources : []
+            callbacks.onProgress?.(
+              finished.length ? '视频脚本已生成，正在整理内容...' : '正在生成视频脚本...',
+            )
+          },
+          onFile: (fileData: any) => {
+            generatedResources.push(fileData)
+          },
+          onDone: (eventData: any) => {
+            if (Array.isArray(eventData?.resources)) {
+              generatedResources.push(...eventData.resources)
+            }
+          },
+          onError: (err: string) => {
+            callbacks.onError?.(err)
+          },
+        },
+      )
+
+      const sourceResource = generatedResources.find(item => getGeneratedResourceId(item) && isNarratableType(item)) ||
+        generatedResources.find(item => getGeneratedResourceId(item))
+      const resourceId = getGeneratedResourceId(sourceResource)
+
+      if (!resourceId) {
+        callbacks.onError?.('视频脚本已生成，但没有拿到可生成视频的资源 ID。')
+        return
+      }
+
+      callbacks.onProgress?.('视频脚本已生成，正在生成旁白音频...')
+      const narrationResult: any = await narrateResource(resourceId)
+      const narration = unwrapResponseData(narrationResult)
+      const title = sourceResource?.topic || sourceResource?.title || text || '学习视频'
+
+      callbacks.onFile?.({
+        ...sourceResource,
+        file_id: resourceId,
+        resource_id: resourceId,
+        source_resource_id: resourceId,
+        file_type: 'video',
+        resource_type: 'video',
+        filename: sourceResource?.filename || `${title}.video`,
+        content: sourceResource?.content || sourceResource?.text || sourceResource?.preview_content || '',
+        narration,
+        download_url: '',
+        source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
+      })
+      callbacks.onProgress?.('学习视频已生成，可以播放旁白。')
+      callbacks.onDone?.({
+        chat_group_id: narration?.chat_group_id || narration?.chatGroupId,
+        resources: [],
+        narration,
+      })
+    } catch (error: any) {
+      callbacks.onError?.(error?.response?.data?.detail || error?.message || '视频生成失败，请稍后再试。')
     }
     return
   }

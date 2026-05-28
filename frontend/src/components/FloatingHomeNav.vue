@@ -44,10 +44,10 @@ watch(
   top: 22px;
   left: 28px;
   z-index: 20;
-  width: max-content;
+  width: min(760px, calc(100% - 56px));
   max-width: calc(100% - 40px);
   min-height: 62px;
-  padding: 10px 10px;
+  padding: 10px 8px;
   transform: none;
   border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 999px;
@@ -125,11 +125,11 @@ watch(
 }
 
 .nav-links {
-  width: auto;
+  width: 100%;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  justify-content: space-evenly;
+  gap: 0;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -141,7 +141,7 @@ watch(
 
 .nav-links a {
   min-height: 38px;
-  padding: 0 9px;
+  padding: 0 14px;
   border-radius: 999px;
   border: 1px solid rgba(22, 63, 143, 0.92);
   background:
