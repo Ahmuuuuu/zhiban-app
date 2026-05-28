@@ -116,6 +116,9 @@ class ExamService:
                 # ResourceService 可能已保存题目并附带 session_id → 直接复用，避免重复存库
                 existing_session_id = r.get("session_id")
                 if existing_session_id:
+                    # 修正占位记录的 node_id（ResourceService 存库时不知道 node_id）
+                    if node_id:
+                        await ExamRecord.filter(session_id=existing_session_id, node_id__isnull=True).update(node_id=node_id)
                     records = await ExamRecord.filter(session_id=existing_session_id).prefetch_related("question").all()
                     saved = [_question_to_dict(rec.question) for rec in records if rec.question]
                     return {"session_id": existing_session_id, "questions": saved}
@@ -302,21 +305,31 @@ class ExamService:
 
         sid = session_id or str(uuid.uuid4())[:12]
 
-        if node_id is None and session_id:
-            placeholder = await ExamRecord.filter(session_id=session_id, question_id=question_id, user_answer__isnull=True).first()
-            if placeholder and placeholder.node_id:
-                node_id = placeholder.node_id
-
-        await ExamRecord.create(
-            question=question,
-            user_id=user_id,
-            user_answer=user_answer,
-            is_correct=is_correct,
-            score=score,
-            time_spent=time_spent,
-            session_id=sid,
-            node_id=node_id,
-        )
+        # 复用占位记录，避免 total_weight 重复计算
+        existing = await ExamRecord.filter(
+            session_id=sid, question_id=question_id, user_answer__isnull=True
+        ).first()
+        if existing:
+            existing.user_answer = user_answer
+            existing.is_correct = is_correct
+            existing.score = score
+            existing.time_spent = time_spent
+            if node_id:
+                existing.node_id = node_id
+            elif existing.node_id:
+                node_id = existing.node_id
+            await existing.save()
+        else:
+            await ExamRecord.create(
+                question=question,
+                user_id=user_id,
+                user_answer=user_answer,
+                is_correct=is_correct,
+                score=score,
+                time_spent=time_spent,
+                session_id=sid,
+                node_id=node_id,
+            )
 
         # 更新知识点掌握度
         if question.knowledge_tags:

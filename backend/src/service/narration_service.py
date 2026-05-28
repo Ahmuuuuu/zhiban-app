@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 import shutil
 
-from backend.src.utils.tts_utils import parse_by_type, generate_audio, NARRATABLE_TYPES
+from backend.src.utils.tts_utils import parse_by_type, generate_audio_with_timestamps, NARRATABLE_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
         output_path = str(base_dir / filename)
 
         try:
-            await generate_audio(section["text"], output_path, voice)
+            _, word_timestamps = await generate_audio_with_timestamps(section["text"], output_path, voice)
         except Exception:
             logger.exception("EdgeTTS 生成失败 section=%d", i)
             continue
@@ -77,8 +77,9 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
             "text": section["text"],
             "audio_url": audio_url,
             "duration_ms": section["duration_ms"],
+            "word_timestamps": word_timestamps,
         })
-        logger.info("narration resource=%d section=%d dur=%dms", resource_id, i, section["duration_ms"])
+        logger.info("narration resource=%d section=%d dur=%dms words=%d", resource_id, i, section["duration_ms"], len(word_timestamps))
 
     # 入库
     record = await Narration.create(

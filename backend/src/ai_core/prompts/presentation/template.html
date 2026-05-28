@@ -69,6 +69,10 @@
   .slide-content ul li::before { content: "●"; color: #4f8cff; position: absolute; left: 0; font-size: 12px; top: 6px; }
   .slide-content ul li strong { color: #7aa9ff; }
 
+  /* ─── Karaoke 逐字显现 ─── */
+  .kw { display: inline; opacity: 0; }
+  .kw.done { opacity: 1; transition: opacity 0.12s ease; }
+
   /* ─── 全局键盘提示 ─── */
   .hint { position: fixed; top: 20px; right: 24px; color: #444; font-size: 13px; z-index: 50; }
 
@@ -322,7 +326,7 @@ function render() {
       var slidesHtml = '';
       for (var si = 0; si < sec.slides.length; si++) {
         var sl = sec.slides[si];
-        slidesHtml += '<div class="slide-container" style="display:' + (si === 0 ? 'flex' : 'none') + '">' +
+        slidesHtml += '<div class="slide-container" style="display:' + (si === 0 ? 'flex' : 'none') + '" data-slide="' + si + '">' +
           '<div class="slide-content intro-content">' + sl.content_html + '</div>' +
           '<div class="slide-number">' + (si + 1) + ' / ' + sec.slides.length + '</div>' +
           '<div class="slide-nav">' +
@@ -331,6 +335,8 @@ function render() {
           '</div></div>';
       }
       div.innerHTML = slidesHtml;
+      // 将正文文本逐字包装为 kw  span
+      div.querySelectorAll('.slide-container').forEach(function(c) { wrapChars(c); });
     } else if (sec.type === 'mindmap') {
       div.innerHTML = '<h2>思维导图</h2><div id="mindmap-container">' + sec.content_html + '</div>';
     } else if (sec.type === 'ppt') {
@@ -355,6 +361,7 @@ function render() {
           '</div></div>';
       }
       div.innerHTML = slidesHtml;
+      div.querySelectorAll('.slide-container').forEach(function(c) { wrapChars(c); });
     }
 
     stage.appendChild(div);
@@ -380,6 +387,35 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// 将 .slide-content 内的文本节点逐字包装为 <kw> 标签（导航按钮、页码不受影响）
+function wrapChars(container) {
+  var content = container.querySelector('.slide-content');
+  if (!content) return;
+  var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
+  var nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  var charIndex = 0;
+  nodes.forEach(function(textNode) {
+    var text = textNode.textContent;
+    if (!text) return;
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+        frag.appendChild(document.createTextNode(ch));
+      } else {
+        var kw = document.createElement('kw');
+        kw.className = 'kw';
+        kw.dataset.i = charIndex++;
+        kw.textContent = ch;
+        frag.appendChild(kw);
+      }
+    }
+    textNode.parentNode.replaceChild(frag, textNode);
+  });
+  return charIndex;
+}
+
 // ══════════════════════════════════════════════
 //  Chapter Navigation
 // ══════════════════════════════════════════════
@@ -397,6 +433,7 @@ function goToChapter(idx) {
   audioIndex = 0;
   updateUI();
   updateProgress();
+  resetKaraoke();
   loadAudioForChapter(idx);
   if (isPlaying) playAudioQueue();
 }
@@ -429,6 +466,7 @@ function showSlide(idx) {
   currentSlide = idx;
   updateUI();
   updateProgress();
+  resetKaraoke();
   // 同步音频索引到当前页，不重新加载音频队列，保持连续播放
   audioIndex = idx;
   if (isPlaying) {
@@ -504,6 +542,7 @@ function playAudioQueue() {
   };
   currentAudio.ontimeupdate = function() {
     updateProgress();
+    updateKaraoke();
   };
 }
 
@@ -539,6 +578,70 @@ function updateUI() {
     label += '  (' + (currentChapter + 1) + '/' + totalChapters + ')';
   }
   document.getElementById('chapter-indicator').textContent = label;
+}
+
+// ══════════════════════════════════════════════
+//  Karaoke 逐字高亮
+// ══════════════════════════════════════════════
+
+// 匀速字符时间轴：总时长 / 字数，每字均分，保证严格从左到右
+function _getCharTimings(slide, totalChars) {
+  if (slide._charTimings) return slide._charTimings;
+  // 优先用 word_timestamps 的末字结束时算总时长
+  var wts = slide.word_timestamps;
+  var totalDur;
+  if (wts && wts.length) {
+    var last = wts[wts.length - 1];
+    totalDur = last.offset_ms + last.duration_ms;
+  } else if (slide.duration_ms) {
+    totalDur = slide.duration_ms;
+  } else {
+    slide._charTimings = null;
+    return null;
+  }
+  var perChar = totalDur / totalChars;
+  var timings = new Array(totalChars);
+  for (var i = 0; i < totalChars; i++) timings[i] = Math.round(i * perChar);
+  slide._charTimings = timings;
+  return timings;
+}
+
+function updateKaraoke() {
+  var sec = SECTIONS[currentChapter];
+  if (!sec || !sec.slides) return;
+  var slide = sec.slides[currentSlide];
+  if (!slide) return;
+
+  var containers = document.querySelectorAll('.chapter.active .slide-container');
+  var container = containers[currentSlide];
+  if (!container) return;
+  var chars = container.querySelectorAll('.kw');
+  if (!chars.length) return;
+
+  if (!currentAudio || currentAudio.paused) {
+    for (var i = 0; i < chars.length; i++) chars[i].className = 'kw';
+    return;
+  }
+
+  var currentTimeMs = currentAudio.currentTime * 1000;
+  var timings = _getCharTimings(slide, chars.length);
+  if (!timings) return;
+
+  // 二分查找当前时间已reveal的字数
+  var lo = 0, hi = timings.length;
+  while (lo < hi) {
+    var mid = (lo + hi) >>> 1;
+    if (timings[mid] <= currentTimeMs) lo = mid + 1;
+    else hi = mid;
+  }
+
+  for (var i = 0; i < chars.length; i++) {
+    chars[i].className = i < lo ? 'kw done' : 'kw';
+  }
+}
+
+function resetKaraoke() {
+  document.querySelectorAll('.chapter.active .kw').forEach(function(el) { el.className = 'kw'; });
 }
 
 // ══════════════════════════════════════════════

@@ -176,6 +176,34 @@ async def download_resource(
         raise HTTPException(500, "服务器错误")
 
 
+@router.post("/{resource_id}/like")
+async def toggle_like(
+    resource_id: int,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    try:
+        result = await ResourceService.toggle_like(resource_id, user_id)
+        return {"code": 200, "msg": "success", "data": result}
+    except ValueError as e:
+        return {"code": 404, "msg": str(e)}
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.post("/{resource_id}/favorite")
+async def toggle_favorite(
+    resource_id: int,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    try:
+        result = await ResourceService.toggle_favorite(resource_id, user_id)
+        return {"code": 200, "msg": "success", "data": result}
+    except ValueError as e:
+        return {"code": 404, "msg": str(e)}
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
 @router.delete("/{resource_id}")
 async def delete_resource(
     resource_id : int,

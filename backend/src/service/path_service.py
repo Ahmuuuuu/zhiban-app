@@ -435,6 +435,19 @@ class PathService:
         }
 
     @staticmethod
+    async def _check_resource_viewed(node_id: int, user_id: int) -> tuple[bool, int]:
+        """检查节点资源是否已查看，返回 (has_viewed, total_view_count)"""
+        progress = await UserPathProgress.filter(user_id=user_id, node_id=node_id).first()
+        if not progress or not progress.resource_ids:
+            return False, 0
+        rids = json.loads(progress.resource_ids) if progress.resource_ids else []
+        if not rids:
+            return False, 0
+        resources = await GeneratedResource.filter(id__in=rids).all()
+        total_views = sum(r.view_count or 0 for r in resources)
+        return total_views > 0, total_views
+
+    @staticmethod
     async def generate_node_quiz(path_id: int, node_id: int, user_id: int) -> dict:
         """为节点获取测验题目 — 已有则复用，没有则生成"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
@@ -451,17 +464,32 @@ class PathService:
         if progress.quiz_session_id:
             existing = await ExamService.get_session(progress.quiz_session_id, user_id)
             if existing and existing.get("total_questions", 0) > 0:
+                # 查该 session 的 difficulty（从第一题推测）
+                first_record = await ExamRecord.filter(session_id=progress.quiz_session_id).prefetch_related("question").first()
                 return {
                     "node_id": node_id,
                     "session_id": progress.quiz_session_id,
                     "questions": existing.get("records", []),
                     "quiz_config": quiz_config,
                     "reused": True,
+                    "difficulty": first_record.question.difficulty if first_record and first_record.question else "medium",
                 }
 
         # 没有则生成
         count = quiz_config.get("count", 3)
-        difficulty = "medium"
+
+        # 检查资源是否已查看，根据查看次数决定难度
+        has_viewed, total_views = await PathService._check_resource_viewed(node_id, user_id)
+        if not has_viewed:
+            return {"blocked": True, "reason": "请先学习当前节点的学习资料后再进行检测"}
+
+        if total_views <= 1:
+            difficulty = "easy"
+        elif total_views <= 3:
+            difficulty = "medium"
+        else:
+            difficulty = "hard"
+
         result = await ExamService.generate_and_save(
             topic=node.topic,
             user_id=user_id,
@@ -480,6 +508,7 @@ class PathService:
             "session_id": sid,
             "questions": result.get("questions", []),
             "quiz_config": quiz_config,
+            "difficulty": difficulty,
             "reused": False,
         }
 
@@ -510,6 +539,20 @@ class PathService:
         count = quiz_config.get("count", 3)
         difficulty = "medium"
 
+        # 检查资源是否已查看，根据查看次数决定难度
+        has_viewed, total_views = await PathService._check_resource_viewed(node_id, user_id)
+        if not has_viewed:
+            yield f"data: {json.dumps({'type': 'blocked', 'reason': '请先学习当前节点的学习资料后再进行检测'}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        if total_views <= 1:
+            difficulty = "easy"
+        elif total_views <= 3:
+            difficulty = "medium"
+        else:
+            difficulty = "hard"
+
         # 流式生成并透传事件，截获 done 写 quiz_session_id
         async for event in ExamService.generate_and_save_stream(
             topic=node.topic,
@@ -531,6 +574,7 @@ class PathService:
                         if session_id:
                             await UserPathProgress.filter(id=progress.id).update(quiz_session_id=session_id)
                         payload["quiz_config"] = quiz_config
+                        payload["difficulty"] = difficulty
                         yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                         continue
                     yield event
@@ -550,8 +594,11 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        # 从 session 汇总成绩（同时按 node_id 过滤，防止串题）
-        records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).all()
+        # 从 session 汇总成绩（session_id 已按节点隔离，无需 node_id 过滤）
+        records = await ExamRecord.filter(session_id=session_id, user_id=user_id).all()
+        # 若查不到再按 node_id 试一次（兼容旧数据）
+        if not records:
+            records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).all()
         judged = [r for r in records if r.is_correct is not None]
         if not judged:
             return {"error": "该会话无已判分的答题记录"}
@@ -844,16 +891,28 @@ class PathService:
                         "file_type": ext,
                         "filename": f"{r.topic}_{r.resource_type}.{ext}",
                         "download_url": f"/resource/{r.id}/download",
+                        "view_count": r.view_count or 0,
                     })
 
+            # 计算该节点资源总查看次数
+            node_total_views = sum(
+                (resources_map.get(rid).view_count or 0) for rid in resource_ids_map.get(node.id, [])
+                if resources_map.get(rid)
+            )
+
+            resource_types = json.loads(node.resource_types) if node.resource_types else ["document"]
             nodes.append({
                 "id": node.id,
                 "title": node.topic,
                 "type": "quiz" if node.quiz_config else "read",
                 "status": status,
                 "summary": summary,
+                "knowledge_tags": knowledge_tags,
+                "resource_types": resource_types,
                 "resources": node_resources,
                 "session_id": p.quiz_session_id,
+                "resources_viewed": node_total_views > 0,
+                "total_views": node_total_views,
                 "action_label": "开始测验" if node.quiz_config and status in ("unlocked", "in_progress") else "开始学习",
             })
 

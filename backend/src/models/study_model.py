@@ -42,3 +42,16 @@ class ResourceCollection(Model):
     class Meta:
         table = "resource_collections"
         unique_together = [("user_id", "resource_id")]
+
+
+class ResourceLike(Model):
+    """资源点赞"""
+    id = fields.IntField(pk=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    user = fields.ForeignKeyField("models.User", related_name="resource_likes", on_delete=fields.CASCADE)
+    resource = fields.ForeignKeyField("models.GeneratedResource", related_name="likes", on_delete=fields.CASCADE)
+
+    class Meta:
+        table = "resource_likes"
+        unique_together = [("user_id", "resource_id")]
