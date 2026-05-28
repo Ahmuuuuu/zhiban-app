@@ -2,7 +2,11 @@
   <div class="profile-page">
     <section class="profile-header">
       <div class="avatar-wrap">
-        <img class="avatar" :src="defaultAvatar" alt="用户头像" />
+        <img class="avatar" :src="profileAvatarUrl" alt="用户头像" />
+        <label class="avatar-edit" title="更换头像">
+          <input type="file" accept="image/*" :disabled="avatarUploading" @change="handleAvatarChange" />
+          {{ avatarUploading ? '...' : '更换' }}
+        </label>
         <span class="online-dot"></span>
       </div>
 
@@ -105,7 +109,13 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { deleteUser, getUserProfile, updateUserProfile } from '../../api/apis'
+import {
+  deleteUser,
+  getUserProfile,
+  normalizeAvatarUrl,
+  updateUserProfile,
+  uploadUserAvatar
+} from '../../api/apis'
 import LoginView from '../../components/LoginView.vue'
 
 const router = useRouter()
@@ -114,6 +124,7 @@ const defaultAvatar = 'https://api.dicebear.com/7.x/avataaars/svg?seed=Zhiban'
 const token = ref(localStorage.getItem('token') || '')
 const loading = ref(false)
 const saving = ref(false)
+const avatarUploading = ref(false)
 const isEditing = ref(false)
 const showLogin = ref(false)
 const errorMessage = ref('')
@@ -125,7 +136,8 @@ const profile = reactive({
   major: '',
   email: '',
   phonenum: '',
-  profile: ''
+  profile: '',
+  avatar: ''
 })
 
 const form = reactive({ ...profile })
@@ -139,10 +151,19 @@ const infoItems = [
 ]
 
 const hasProfile = computed(() => infoItems.some(item => Boolean(String(profile[item.key] || '').trim())))
+const profileAvatarUrl = computed(() => normalizeAvatarUrl(profile.avatar) || defaultAvatar)
 
 const displayValue = value => String(value || '').trim() || '请完善个人信息'
-
 const normalizeProfile = result => result?.data || result?.user || result || {}
+
+const dispatchAvatarUpdated = avatar => {
+  if (avatar) {
+    localStorage.setItem('avatar', avatar)
+  } else {
+    localStorage.removeItem('avatar')
+  }
+  window.dispatchEvent(new CustomEvent('zhiban:user-avatar-updated', { detail: { avatar } }))
+}
 
 const syncForm = () => {
   Object.keys(form).forEach(key => {
@@ -154,6 +175,7 @@ const fillProfile = data => {
   Object.keys(profile).forEach(key => {
     profile[key] = String(data?.[key] ?? '')
   })
+  if (data?.avatar) dispatchAvatarUpdated(data.avatar)
   syncForm()
 }
 
@@ -254,6 +276,43 @@ const saveProfile = async () => {
   }
 }
 
+const handleAvatarChange = async event => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || avatarUploading.value) return
+
+  if (!token.value) {
+    errorMessage.value = '请先登录'
+    return
+  }
+
+  avatarUploading.value = true
+  errorMessage.value = ''
+  successMessage.value = ''
+
+  try {
+    const result = await uploadUserAvatar(file)
+    const data = result?.data || result || {}
+    const avatar = data.avatar || data.user?.avatar || ''
+    if (avatar) {
+      profile.avatar = avatar
+      dispatchAvatarUpdated(avatar)
+    } else {
+      const profileResult = await getUserProfile()
+      fillProfile(normalizeProfile(profileResult))
+    }
+    successMessage.value = '头像已更新'
+  } catch (error) {
+    errorMessage.value =
+      error?.response?.data?.detail ||
+      error?.response?.data?.msg ||
+      error?.message ||
+      '头像上传失败'
+  } finally {
+    avatarUploading.value = false
+  }
+}
+
 const deleteAccount = async () => {
   if (!token.value) {
     errorMessage.value = '请先登录'
@@ -272,6 +331,7 @@ const deleteAccount = async () => {
 
     localStorage.removeItem('token')
     localStorage.removeItem('user_id')
+    localStorage.removeItem('avatar')
     router.push('/learning-resources')
   } catch (error) {
     errorMessage.value =
@@ -288,6 +348,8 @@ const logout = () => {
   localStorage.removeItem('username')
   localStorage.removeItem('role')
   localStorage.removeItem('identity')
+  localStorage.removeItem('avatar')
+  dispatchAvatarUpdated('')
   router.push('/')
 }
 
@@ -325,6 +387,27 @@ onMounted(loadProfile)
   width: 104px;
   height: 104px;
   flex-shrink: 0;
+}
+
+.avatar-edit {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(22, 63, 143, 0.9);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+.avatar-edit input {
+  display: none;
 }
 
 .avatar {

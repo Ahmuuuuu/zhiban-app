@@ -6,7 +6,10 @@
       :aria-label="isLoggedIn ? '个人信息' : '登录'"
       @click="handleClick"
     >
-      <span class="account-avatar">{{ avatarText }}</span>
+      <span class="account-avatar">
+        <img v-if="avatarUrl" :src="avatarUrl" alt="" />
+        <span v-else>{{ avatarText }}</span>
+      </span>
       <span class="account-text">
         <strong>{{ accountName }}</strong>
         <small>{{ accountMeta }}</small>
@@ -22,9 +25,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getUserProfile } from '../api/apis'
+import { getUserProfile, normalizeAvatarUrl } from '../api/apis'
 import LoginView from './LoginView.vue'
 
 const props = defineProps({
@@ -42,6 +45,7 @@ const token = ref(localStorage.getItem('token') || '')
 const username = ref(localStorage.getItem('username') || '')
 const userRole = ref(localStorage.getItem('role') || localStorage.getItem('identity') || '')
 const major = ref('')
+const avatarUrl = ref(normalizeAvatarUrl(localStorage.getItem('avatar') || ''))
 const showLogin = ref(false)
 
 const isLoggedIn = computed(() => Boolean(token.value))
@@ -74,6 +78,7 @@ const loadAccountInfo = async () => {
     username.value = ''
     userRole.value = ''
     major.value = ''
+    avatarUrl.value = ''
     return
   }
 
@@ -83,6 +88,7 @@ const loadAccountInfo = async () => {
     username.value = profile.username || localStorage.getItem('username') || '已登录账户'
     userRole.value = profile.role || profile.identity || localStorage.getItem('role') || ''
     major.value = profile.major || ''
+    avatarUrl.value = normalizeAvatarUrl(profile.avatar || localStorage.getItem('avatar') || '')
 
     if (profile.username) {
       localStorage.setItem('username', profile.username)
@@ -90,6 +96,9 @@ const loadAccountInfo = async () => {
 
     if (profile.role || profile.identity) {
       localStorage.setItem('role', profile.role || profile.identity)
+    }
+    if (profile.avatar) {
+      localStorage.setItem('avatar', profile.avatar)
     }
   } catch (error) {
     username.value = localStorage.getItem('username') || '已登录账户'
@@ -111,7 +120,18 @@ const handleLoginSuccess = async () => {
   emit('login')
 }
 
-onMounted(loadAccountInfo)
+const handleAvatarUpdated = event => {
+  avatarUrl.value = normalizeAvatarUrl(event?.detail?.avatar || localStorage.getItem('avatar') || '')
+}
+
+onMounted(() => {
+  window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  loadAccountInfo()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+})
 </script>
 
 <style scoped>
@@ -175,6 +195,13 @@ onMounted(loadAccountInfo)
   justify-content: center;
   font-weight: 800;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.account-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .account-text {
