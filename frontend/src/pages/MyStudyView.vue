@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="my-full-page">
     <main class="main">
       <header class="topbar">
@@ -50,24 +50,6 @@
                     </button>
                   </div>
                 </div>
-
-                <Transition name="sub-picker-slide">
-                  <div v-if="activeCategory === 'document'" class="picker__group">
-                    <span class="picker__label">文档子分类</span>
-                    <div class="picker__tags">
-                      <button
-                        v-for="item in subCategories"
-                        :key="item.value"
-                        type="button"
-                        class="picker__tag"
-                        :class="{ active: activeSubCategory === item.value }"
-                        @click="setSubCategory(item.value)"
-                      >
-                        {{ item.label }}
-                      </button>
-                    </div>
-                  </div>
-                </Transition>
               </div>
             </Transition>
 
@@ -108,31 +90,19 @@ const resourcePickerOpen = ref(false)
 const resourceCategories = [
   { value: 'document', label: '文档' },
   { value: 'ppt', label: 'PPT' },
+  { value: 'image', label: '图片' },
   { value: 'video', label: '视频' },
   { value: 'quiz', label: '题库' },
   { value: 'mindmap', label: '思维导图' }
 ]
-
-const subCategories = [
-  { value: 'all', label: '全部' },
-  { value: 'knowledge_point', label: '知识点讲解' },
-  { value: 'exercise', label: '练习题库' },
-  { value: 'textbook', label: '教材教辅' },
-  { value: 'note', label: '我的笔记' },
-  { value: 'case_study', label: '案例分析' },
-  { value: 'reference', label: '参考资料' }
-]
-
 const isResourcesPage = computed(() => route.path === '/mine/resources')
 const activeCategory = computed(() => String(route.query.category || 'document'))
-const activeSubCategory = computed(() => String(route.query.sub || 'all'))
 
 const goResources = query => {
   router.push({
     path: '/mine/resources',
     query: {
       category: activeCategory.value,
-      ...(activeCategory.value === 'document' ? { sub: activeSubCategory.value } : {}),
       ...query
     }
   })
@@ -147,14 +117,7 @@ const toggleResourcePicker = () => {
 }
 
 const setResourceCategory = category => {
-  goResources({
-    category,
-    ...(category === 'document' ? { sub: activeSubCategory.value } : { sub: undefined })
-  })
-}
-
-const setSubCategory = sub => {
-  goResources({ category: 'document', sub })
+  goResources({ category })
 }
 
 watch(() => route.path, path => {
@@ -489,3 +452,4 @@ watch(() => route.path, path => {
   }
 }
 </style>
+

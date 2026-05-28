@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <main class="resource-center-page">
     <header class="center-header">
       <router-link class="home-pill" to="/">
@@ -51,20 +51,6 @@
       </aside>
 
       <section class="resource-list" aria-label="资源列表区域">
-        <!-- 文档子分类导航 -->
-        <div v-if="activeCategory === '文档'" class="sub-category-bar">
-          <button
-            v-for="sub in subCategories"
-            :key="sub.value"
-            type="button"
-            class="sub-cat-btn"
-            :class="{ active: activeSubCategory === sub.value }"
-            @click="activeSubCategory = sub.value"
-          >
-            {{ sub.label }}
-          </button>
-        </div>
-
         <template v-if="loading">
           <article v-for="item in 9" :key="item" class="resource-card skeleton-card">
             <span></span>
@@ -113,7 +99,7 @@
               >
                 <PauseCircle v-if="isNarrationPlaying(resource)" :size="15" />
                 <Volume2 v-else :size="15" />
-                {{ isNarrationLoading(resource) ? '...' : (isNarrationPlaying(resource) ? '停' : '播') }}
+                {{ isNarrationLoading(resource) ? '...' : (isNarrationPlaying(resource) ? '暂停' : '朗读') }}
               </button>
               <button
                 v-if="isQuizResource(resource)"
@@ -144,7 +130,7 @@
               <span class="visibility">暂无资源</span>
             </div>
             <h2>资源为空</h2>
-            <p>上传学习资料或使用AI生成资源后，你的资料将出现在这里</p>
+            <p>上传学习资料或使用 AI 生成资源后，你的资料会出现在这里。</p>
           </article>
         </template>
       </section>
@@ -292,26 +278,17 @@ const {
   stopCurrentAudio
 } = useResourceNarration()
 const keyword = ref('')
-const categories = ['文档', 'ppt', '视频', '题库', '思维导图']
+const categories = ['文档', 'PPT', '图片', '视频', '题库', '思维导图']
 const activeCategory = ref(categories[0])
-const activeSubCategory = ref('all')
 
-// 映射 KB_CATEGORIES 的值
-const subCategories = [
-  { value: 'all', label: '全部' },
-  { value: 'knowledge_point', label: '知识点讲解' },
-  { value: 'exercise', label: '练习题库' },
-  { value: 'textbook', label: '教材教辅' },
-  { value: 'note', label: '我的笔记' },
-  { value: 'case_study', label: '案例分析' },
-  { value: 'reference', label: '参考资料' },
-]
+
+// 鏄犲皠 KB_CATEGORIES 鐨勫€?
 
 const categoryLabelMap = {
   knowledge_point: '知识点讲解',
-  exercise: '练习题库',
+  exercise: '习题/题库',
   textbook: '教材教辅',
-  note: '我的笔记',
+  note: '学习笔记',
   case_study: '案例分析',
   reference: '参考资料',
 }
@@ -484,6 +461,16 @@ const isMindmapResource = resource => {
   return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('思维') || text.includes('思维导图')
 }
 
+const getResourceKind = resource => {
+  const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
+  if (text.includes('image') || /\.(jpg|jpeg|png|webp|gif|bmp|svg)$/i.test(text)) return '图片'
+  if (isPptResource(resource)) return 'PPT'
+  if (text.includes('video') || /\.(mp4|mov|avi|mkv|webm)$/i.test(text)) return '视频'
+  if (isQuizResource(resource)) return '题库'
+  if (isMindmapResource(resource)) return '思维导图'
+  return '文档'
+}
+
 const downloadResource = async resource => {
   try {
     await downloadWithToken(resource.downloadUrl, resource.filename || `${resource.title || 'resource'}.md`)
@@ -514,7 +501,7 @@ const startResourceQuiz = async resource => {
     })
 
     if (!quiz) {
-      window.alert('无法找到有效的练习数据，请确认资源中含有题目(content)信息')
+      window.alert('无法找到有效的练习数据，请确认资源中包含题目内容')
       return
     }
 
@@ -526,29 +513,11 @@ const startResourceQuiz = async resource => {
 }
 
 const matchesCategory = resource => {
-  const cat = activeCategory.value
-
-  if (cat === '文档') {
-    // 文档按子分类过滤
-    if (activeSubCategory.value === 'all') return true
-    return resource.category === activeSubCategory.value
-  }
-
-  // 其他分类按类型匹配
-  const resourceType = String(resource.type || resource.category || '').toLowerCase()
-  const categoryMap = {
-    ppt: ['ppt', 'pptx', 'slide'],
-    视频: ['video', 'mp4', 'mov', 'avi'],
-    题库: ['quiz', 'question', 'exam', '题'],
-    思维导图: ['mind', 'map', 'xmind', '思维']
-  }
-  return (categoryMap[cat] || []).some(type => resourceType.includes(type))
+  return getResourceKind(resource) === activeCategory.value
 }
-
-// 切换分类并重置子分类
-const switchCategory = (cat) => {
+// 切换资源大类
+const switchCategory = cat => {
   activeCategory.value = cat
-  activeSubCategory.value = 'all'
 }
 
 watch(filteredResources, list => {
@@ -1273,7 +1242,7 @@ onBeforeUnmount(stopCurrentAudio)
   gap: 28px 48px;
 }
 
-/* 文档子分类导航 */
+/* 分类导航 */
 .sub-category-bar {
   grid-column: 1 / -1;
   display: flex;
@@ -1613,3 +1582,4 @@ onBeforeUnmount(stopCurrentAudio)
   }
 }
 </style>
+
