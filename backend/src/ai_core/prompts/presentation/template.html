@@ -112,6 +112,23 @@
   .chapter.active .content > *:nth-child(2) { animation-delay: 0.1s; }
   .chapter.active .content > *:nth-child(3) { animation-delay: 0.15s; }
 
+  /* Word-by-word narration reveal */
+  .timed-word {
+    display: inline-block;
+    opacity: 0.18;
+    transform: translateY(7px) scale(0.98);
+    transition: opacity 0.2s ease, transform 0.22s ease, color 0.18s ease, text-shadow 0.18s ease;
+    will-change: opacity, transform;
+  }
+  .timed-word.is-visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  .timed-word.is-current {
+    color: #fff3a5;
+    text-shadow: 0 0 12px rgba(255, 222, 96, 0.45);
+  }
+
   /* ─── 空状态 ─── */
   .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #555; }
   .empty-state .icon { font-size: 64px; margin-bottom: 16px; opacity: 0.3; }
@@ -300,6 +317,7 @@ function seekTo(fraction) {
       }
 
       updateProgress();
+      updateWordReveal();
       return;
     }
     acc += dur;
@@ -373,11 +391,93 @@ function render() {
   updateUI();
   updateProgress();
   loadAudioForChapter(0);
+  prepareTimedWords(getActiveWordRoot());
+  resetWordReveal(getActiveWordRoot());
 }
 
 function escHtml(s) {
   if (!s) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function prepareTimedWords(root) {
+  if (!root || root.dataset.wordsPrepared === '1') return;
+  var skipTags = {SCRIPT: true, STYLE: true, SVG: true, BUTTON: true};
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: function(node) {
+      if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      if (node.parentElement && skipTags[node.parentElement.tagName]) return NodeFilter.FILTER_REJECT;
+      if (node.parentElement && node.parentElement.classList.contains('timed-word')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  var textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+  textNodes.forEach(function(node) {
+    var frag = document.createDocumentFragment();
+    var parts = node.nodeValue.match(/(\s+|[\u4e00-\u9fff]|[A-Za-z0-9]+|[^\s])/g) || [];
+    parts.forEach(function(part) {
+      if (/^\s+$/.test(part)) {
+        frag.appendChild(document.createTextNode(part));
+      } else {
+        var span = document.createElement('span');
+        span.className = 'timed-word';
+        span.textContent = part;
+        frag.appendChild(span);
+      }
+    });
+    node.parentNode.replaceChild(frag, node);
+  });
+  Array.prototype.forEach.call(root.querySelectorAll('.timed-word'), function(el, idx) {
+    el.dataset.wordIndex = idx;
+  });
+  root.dataset.wordsPrepared = '1';
+}
+
+function getActiveWordRoot() {
+  var active = document.querySelector('.chapter.active');
+  if (!active) return null;
+  var visibleSlide = active.querySelector('.slide-container[style*="display:flex"], .slide-container[style*="display: flex"]');
+  return visibleSlide || active;
+}
+
+function resetWordReveal(root) {
+  if (!root) return;
+  Array.prototype.forEach.call(root.querySelectorAll('.timed-word'), function(el) {
+    el.classList.remove('is-visible', 'is-current');
+  });
+}
+
+function updateWordReveal() {
+  var root = getActiveWordRoot();
+  if (!root) return;
+  prepareTimedWords(root);
+
+  var words = Array.prototype.slice.call(root.querySelectorAll('.timed-word'));
+  if (!words.length) return;
+
+  var seg = audioQueue[audioIndex] || {};
+  var timings = Array.isArray(seg.word_timings) ? seg.word_timings : [];
+  var timeMs = currentAudio ? currentAudio.currentTime * 1000 : 0;
+  var activeIdx = -1;
+
+  if (timings.length) {
+    for (var i = 0; i < timings.length; i++) {
+      if ((timings[i].offset_ms || 0) <= timeMs + 80) activeIdx = i;
+      else break;
+    }
+    activeIdx = Math.min(activeIdx, words.length - 1);
+  } else if (currentAudio && (seg.duration_ms || currentAudio.duration)) {
+    var durationMs = seg.duration_ms || (currentAudio.duration * 1000);
+    activeIdx = Math.floor((timeMs / Math.max(durationMs, 1)) * words.length);
+  }
+
+  words.forEach(function(el, idx) {
+    var visible = idx <= activeIdx;
+    el.classList.toggle('is-visible', visible);
+    el.classList.toggle('is-current', idx === activeIdx);
+  });
 }
 
 // ══════════════════════════════════════════════
@@ -398,6 +498,8 @@ function goToChapter(idx) {
   updateUI();
   updateProgress();
   loadAudioForChapter(idx);
+  prepareTimedWords(getActiveWordRoot());
+  resetWordReveal(getActiveWordRoot());
   if (isPlaying) playAudioQueue();
 }
 
@@ -429,6 +531,8 @@ function showSlide(idx) {
   currentSlide = idx;
   updateUI();
   updateProgress();
+  prepareTimedWords(getActiveWordRoot());
+  resetWordReveal(getActiveWordRoot());
   // 同步音频索引到当前页，不重新加载音频队列，保持连续播放
   audioIndex = idx;
   if (isPlaying) {
@@ -450,7 +554,7 @@ function loadAudioForChapter(chapterIdx) {
     for (var si = 0; si < sec.slides.length; si++) {
       var sl = sec.slides[si];
       if (sl.audio_url) {
-        audioQueue.push({audio_url: sl.audio_url, duration_ms: sl.duration_ms});
+        audioQueue.push({audio_url: sl.audio_url, duration_ms: sl.duration_ms, word_timings: sl.word_timings || []});
       }
     }
   } else if (sec.audio_segments && sec.audio_segments.length > 0) {
@@ -487,6 +591,7 @@ function playAudioQueue() {
 
   currentAudio = new Audio(seg.audio_url);
   currentAudio.play().catch(function(e) { console.warn('Audio play error:', e); });
+  updateWordReveal();
   currentAudio.onended = function() {
     audioIndex++;
     // 自动翻页：一段音频播完自动进入下一张幻灯片
@@ -498,12 +603,15 @@ function playAudioQueue() {
       });
       currentSlide++;
       updateUI();
+      prepareTimedWords(getActiveWordRoot());
+      resetWordReveal(getActiveWordRoot());
     }
     updateProgress();
     playAudioQueue();
   };
   currentAudio.ontimeupdate = function() {
     updateProgress();
+    updateWordReveal();
   };
 }
 
