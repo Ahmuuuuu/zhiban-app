@@ -7,3 +7,6 @@ node_modules/
 dist/
 .vscode/
 *.log
+backend/static/audio/
+backend/static/images/
+backend/static/presentations/

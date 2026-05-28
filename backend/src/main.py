@@ -21,6 +21,7 @@ from backend.src.router.path_router import router as path_router
 from backend.src.router.learning_path_router import router as learning_path_router
 from backend.src.router.video_router import router as video_router
 from backend.src.router.study_router import router as study_router
+from backend.src.router.presentation_router import router as presentation_router
 app = FastAPI(
     title="AI聊天后端",
     description="Swagger接口文档",
@@ -51,6 +52,8 @@ static_dir = Path(__file__).parent.parent / "static"
 static_dir.mkdir(parents=True, exist_ok=True)
 (static_dir / "images").mkdir(parents=True, exist_ok=True)
 (static_dir / "avatars").mkdir(parents=True, exist_ok=True)
+(static_dir / "ppt").mkdir(parents=True, exist_ok=True)
+(static_dir / "presentations").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
@@ -94,3 +97,4 @@ app.include_router(path_router)
 app.include_router(learning_path_router)
 app.include_router(video_router)
 app.include_router(study_router)
+app.include_router(presentation_router)
