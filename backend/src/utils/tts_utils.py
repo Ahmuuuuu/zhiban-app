@@ -36,10 +36,21 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"\*(.+?)\*", r"\1", text)
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^[-*]\s+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
+    text = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", text)
+    # 去掉水平分隔线（---、***、___ 单独成行）
+    text = re.sub(r"^[-\*_]{3,}\s*$", "", text, flags=re.MULTILINE)
+    # 去掉表格对齐行（| :--- | :--- |）
+    text = re.sub(r"^\|[\s:\-]+\|.*$", "", text, flags=re.MULTILINE)
+    # 表格行：去掉首尾 |，竖线变逗号
+    text = re.sub(r"^\|(.+)\|$", lambda m: m.group(1).strip(), text, flags=re.MULTILINE)
+    text = text.replace("|", "，")
+    # HTML 实体
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = text.replace("&quot;", '"').replace("&nbsp;", " ")
     text = re.sub(r"\n+", "，", text)
     text = re.sub(r"，{2,}", "，", text)
-    text = re.sub(r"，$", "", text)
+    text = re.sub(r"^[，、；\s]+", "", text)
+    text = re.sub(r"[，、；\s]+$", "", text)
     return text.strip()
 
 
@@ -83,6 +94,7 @@ def parse_slides(markdown: str) -> list[dict]:
             text += "。" + "，".join(content_items[:6])
         if notes:
             text += "。" + "，".join(notes)
+        text = clean_for_tts(text)
 
         duration_ms = int(len(text) / 4 * 1000)
         slides.append({"title": title, "text": text, "notes": "\n".join(notes), "duration_ms": duration_ms})

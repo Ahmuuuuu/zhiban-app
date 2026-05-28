@@ -351,6 +351,7 @@ class ResourceService:
         saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry,
                                       file_urls=final_file_urls)
         await _save_generation_to_history(user_id, chat_group_id, topic, saved)
+
         # 在 done 事件中附带 download_url
         done_data = {
             "done": True,
@@ -391,12 +392,16 @@ class ResourceService:
             "created_at": str(record.created_at),
         }
 
-        # PPT 资源 → 按页拆成 slides 预览数组
-        if record.resource_type == "ppt" and record.content:
+        # PPT 资源 → 按页拆成 slides 预览数组（仅 LLM 生成的 markdown 可解析）
+        if record.resource_type == "ppt" and record.content and record.content.startswith("#"):
             try:
                 from backend.src.utils.tts_utils import parse_slides
                 slides_data = parse_slides(record.content)
-                result["slides"] = [{"index": i, "title": s["title"], "text": s["text"], "notes": s.get("notes", "")} for i, s in enumerate(slides_data)]
+
+                result["slides"] = [
+                    {"index": i, "title": s["title"], "text": s["text"], "notes": s.get("notes", "")}
+                    for i, s in enumerate(slides_data)
+                ]
             except Exception:
                 pass
 
@@ -454,10 +459,22 @@ class ResourceService:
         ext = _FILE_EXT_MAP.get(record.resource_type, "md")
         filename = f"{record.topic}_{record.resource_type}.{ext}"
         if record.resource_type == "ppt":
+            # 优先：讯飞智文 API 生成的 PPTX（file_url 指向本地文件）
+            if record.file_url:
+                from pathlib import Path as PPath
+                pptx_path = PPath(record.file_url)
+                if pptx_path.exists():
+                    content_bytes = pptx_path.read_bytes()
+                    media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    filename = f"{record.topic}_ppt.pptx"
+                    return content_bytes, filename, media_type
+
+            # 降级：LLM 生成的 markdown → python-pptx（无配图）
             try:
-                from backend.src.utils.pptx_generator import markdown_to_pptx  # deferred: optional python-pptx dependency
+                from backend.src.utils.pptx_generator import markdown_to_pptx
             except ImportError:
                 raise ImportError("PPT 导出需要安装 python-pptx 依赖")
+
             content_bytes = markdown_to_pptx(record.content)
             media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             return content_bytes, filename, media_type
