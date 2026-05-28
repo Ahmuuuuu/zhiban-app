@@ -429,8 +429,12 @@ function showSlide(idx) {
   currentSlide = idx;
   updateUI();
   updateProgress();
-  loadAudioForChapter(currentChapter);
-  if (isPlaying) playAudioQueue();
+  // 同步音频索引到当前页，不重新加载音频队列，保持连续播放
+  audioIndex = idx;
+  if (isPlaying) {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    playAudioQueue();
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -440,15 +444,21 @@ function loadAudioForChapter(chapterIdx) {
   var sec = SECTIONS[chapterIdx];
   if (!sec) { audioQueue = []; return; }
 
-  // 有 slides 的章节（intro / ppt）：每页独立音频
+  // 有 slides 的章节：加载全部音频到队列，实现连续播放
   if (sec.slides && sec.slides.length > 0) {
-    var slide = sec.slides[currentSlide] || {};
-    audioQueue = slide.audio_url ? [{audio_url: slide.audio_url, duration_ms: slide.duration_ms}] : [];
+    audioQueue = [];
+    for (var si = 0; si < sec.slides.length; si++) {
+      var sl = sec.slides[si];
+      if (sl.audio_url) {
+        audioQueue.push({audio_url: sl.audio_url, duration_ms: sl.duration_ms});
+      }
+    }
   } else if (sec.audio_segments && sec.audio_segments.length > 0) {
     audioQueue = sec.audio_segments.slice();
   } else {
     audioQueue = [];
   }
+  audioIndex = 0;
 }
 
 function playAudioQueue() {
@@ -479,6 +489,16 @@ function playAudioQueue() {
   currentAudio.play().catch(function(e) { console.warn('Audio play error:', e); });
   currentAudio.onended = function() {
     audioIndex++;
+    // 自动翻页：一段音频播完自动进入下一张幻灯片
+    var sec = SECTIONS[currentChapter];
+    if (sec && sec.slides && sec.slides.length > 1 && currentSlide < sec.slides.length - 1) {
+      var containers = document.querySelectorAll('.chapter.active .slide-container');
+      containers.forEach(function(el, i) {
+        el.style.display = i === currentSlide + 1 ? 'flex' : 'none';
+      });
+      currentSlide++;
+      updateUI();
+    }
     updateProgress();
     playAudioQueue();
   };
