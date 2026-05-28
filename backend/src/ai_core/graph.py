@@ -123,6 +123,9 @@ async def executor_node(state: ResourceState) -> dict:
     async def gen_one(rt: str, user_id: str) -> tuple[str, str]:
         async with semaphore:
             try:
+                # ppt 类型：rich query → 讯飞智文 API
+                if rt == "ppt":
+                    return await _generate_ppt(topic, portrait, guidance, user_id)
                 # image 类型：两阶段生成
                 if rt == "image":
                     return await _generate_image(prompts[rt], user_id)
@@ -150,6 +153,12 @@ async def executor_node(state: ResourceState) -> dict:
             generated[actual_rt] = content.get("prompt", "")
             if content.get("url"):
                 file_urls[actual_rt] = content["url"]
+        elif rt.startswith("ppt:"):
+            # ppt:api 类型：content 是本地文件路径
+            actual_rt = rt.replace("ppt:", "")
+            generated[actual_rt] = f"PPT 已通过讯飞智文生成：{topic}"
+            if content and isinstance(content, str) and content.endswith(".pptx"):
+                file_urls[actual_rt] = content
         else:
             generated[rt] = content
 
@@ -182,6 +191,45 @@ async def _generate_image(prompt_text: str, user_id: str) -> tuple[str, dict]:
         logger.exception(f"图片生成失败: {e}")
 
     return ("image:image", {"prompt": image_prompt, "url": ""})
+
+
+async def _generate_ppt(topic: str, portrait: str, guidance: str, user_id: str) -> tuple[str, str]:
+    """PPT 生成：rich query → 讯飞智文 API → PPTX，失败降级为 LLM + python-pptx"""
+    # 构造 rich query
+    query_parts = [f"请生成一份关于「{topic}」的详细 PPT。"]
+    if portrait and "暂无" not in portrait:
+        query_parts.append(f"目标受众：{portrait[:300]}")
+    if guidance:
+        query_parts.append(f"教学要求：{guidance[:300]}")
+    query_parts.append(
+        "要求：内容丰富、每页要点充足，适合课堂教学。"
+        "请自动配图，包含架构图、流程图等 visual 元素。"
+        "生成至少 10 页以上。"
+    )
+    query = "\n".join(query_parts)
+
+    # Phase 1: 调讯飞智文 API
+    try:
+        from backend.src.service.ppt_service import PptService
+        local_path = await PptService.generate(query, is_figure=True)
+        logger.info(f"PPT 讯飞生成完成: {local_path}")
+        return ("ppt:api", local_path)
+    except Exception as e:
+        logger.warning(f"讯飞智文 API 调用失败，降级为 LLM + python-pptx: {e}")
+        # Phase 2: 降级 — LLM 生成 markdown + python-pptx
+        try:
+            prompt_path = PROMPT_MAP.get("ppt", "resource/ppt")
+            template = load_prompt(prompt_path)
+            fallback_prompt = fill_prompt(
+                template, topic=topic, resource_type="ppt",
+                portrait_context=portrait, kb_context="",
+                learning_guidance=guidance, feedback="",
+            )
+            response = await llm.ainvoke(fallback_prompt)
+            return ("ppt", response.content)
+        except Exception as e2:
+            logger.exception(f"PPT 降级生成也失败")
+            return ("ppt", f"[生成失败: {e2}]")
 
 
 def _parse_review_response(raw: str) -> dict:
@@ -227,6 +275,10 @@ async def reviewer_node(state: ResourceState) -> dict:
     generated = state.get("generated_resources", {})
 
     async def review_one(rt: str, content: str) -> dict:
+        # API 生成的 PPT/图片跳过文本审核
+        file_urls = state.get("file_urls", {})
+        if file_urls.get(rt):
+            return {"passed": True, "score": 100, "feedback": "API 生成，自动通过"}
         reviewer_path = _REVIEWER_MAP.get(rt, "agent/reviewer_document")
         if not content:
             return {"passed": True, "score": 100, "feedback": ""}
