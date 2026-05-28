@@ -148,7 +148,7 @@
           />
 
           <div v-else-if="isVideoFile(message)" class="file-placeholder">
-            学习视频已生成，可以播放旁白。
+            动态课件已生成，可以打开预览。
           </div>
 
           <div v-else-if="isPptFile(message)" class="file-placeholder">
@@ -165,16 +165,7 @@
             <button v-if="isPptFile(message) && canOpenPptPreview(message)" type="button" @click="openPptPreview(message)">
               {{ pptPreview.loading && pptPreview.messageId === message.id ? '加载中...' : '预览' }}
             </button>
-            <button
-              v-if="isVideoFile(message) && message.narration"
-              type="button"
-              :disabled="isNarrationLoading(message)"
-              @click="toggleNarration(message)"
-            >
-              <PauseCircle v-if="isNarrationPlaying(message)" :size="14" />
-              <Volume2 v-else :size="14" />
-              {{ isNarrationLoading(message) ? '生成中...' : (isNarrationPlaying(message) ? '暂停' : '播放') }}
-            </button>
+            <a v-if="isVideoFile(message) && message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">打开课件</a>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
             <button
@@ -416,7 +407,6 @@ import {
   resolveApiUrl
 } from '../api/apis'
 import { detectGenerationIntent, executeGeneration } from '../composables/useResourceGeneration'
-import { useResourceNarration } from '../composables/useResourceNarration'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
@@ -431,12 +421,10 @@ import {
   Music,
   Plus,
   Presentation,
-  PauseCircle,
   CircleHelp,
   Bot,
   SendHorizontal,
   Trash2,
-  Volume2,
   X,
   Video
 } from 'lucide-vue-next'
@@ -447,11 +435,6 @@ import { saveGeneratedResourceRef } from '../utils/savedResources'
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
-const {
-  toggleNarration,
-  isNarrationLoading,
-  isNarrationPlaying
-} = useResourceNarration()
 
 const resourceTools = [
   {
@@ -1022,6 +1005,7 @@ const pptPreview = ref({
 
 const normalizeFileMessage = data => {
   const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || 'file'
+  const resourceKind = data.resourceKind || data.kind || 'resource'
   const rawFilename =
     data.filename ||
     data.file_name ||
@@ -1039,10 +1023,11 @@ const normalizeFileMessage = data => {
     content: data.content || data.text || data.preview_content || data.previewContent || '',
     slides: Array.isArray(data.slides) ? data.slides : [],
     narration: data.narration || null,
+    presentation: data.presentation || null,
     fileId,
-    resourceKind: data.resourceKind || data.kind || 'resource',
-    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.preview || ''),
-    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || data.url || (fileId ? `/resource/${fileId}/download` : '')),
+    resourceKind,
+    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.file_url || data.fileUrl || data.preview || ''),
+    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || data.url || (resourceKind !== 'presentation' && fileId ? `/resource/${fileId}/download` : '')),
     centerSaveStatus: data.centerSaveStatus || '',
     time: getNowTime()
   }
@@ -1521,7 +1506,7 @@ const fileExtension = type => {
 
   if (normalizedType.includes('ppt')) return 'pptx'
   if (normalizedType.includes('image')) return 'jpg'
-  if (normalizedType.includes('video')) return 'video'
+  if (normalizedType.includes('video')) return 'html'
   if (normalizedType.includes('mindmap') || normalizedType.includes('mind')) return 'xmind'
   if (normalizedType.includes('txt') || normalizedType.includes('document')) return 'txt'
   if (normalizedType.includes('pdf')) return 'pdf'
@@ -1533,7 +1518,7 @@ const fileTypeLabel = type => {
 
   if (normalizedType.includes('ppt')) return 'PPT 文件'
   if (normalizedType.includes('image')) return '图片'
-  if (normalizedType.includes('video')) return '学习视频'
+  if (normalizedType.includes('video')) return '动态课件'
   if (normalizedType.includes('mind')) return '思维导图'
   if (normalizedType.includes('txt')) return 'TXT 文档'
   if (normalizedType.includes('document')) return '学习文档'

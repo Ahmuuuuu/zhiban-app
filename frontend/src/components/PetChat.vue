@@ -17,7 +17,7 @@ const emit = defineEmits<{
 }>();
 const router = useRouter();
 
-// 鈹€鈹€鈹€ Types 鈹€鈹€鈹€
+
 type PetChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -53,7 +53,7 @@ type StreamChatMessageFn = (
   handlers?: StreamChatHandlers,
 ) => Promise<void>;
 
-// 鈹€鈹€鈹€ State 鈹€鈹€鈹€
+
 const PET_HISTORY_KEY = "zhiban_pet_chat_groups";
 const chatExpanded = ref(false);
 const chatInput = ref("");
@@ -70,7 +70,7 @@ const petMessages = ref<PetChatMessage[]>([
   {
     id: "pet-welcome",
     role: "assistant",
-    content: "嗨，我是小知。点我就能聊天，也可以问我学习资源怎么生成。",
+    content: "嗨，我是小知。有不会的问题可以问我哦，也可以找我聊天~",
   },
 ]);
 

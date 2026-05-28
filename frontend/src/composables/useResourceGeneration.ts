@@ -1,4 +1,4 @@
-﻿import { generateImage, getImageTaskStatus, narrateResource, streamResourceGeneration } from '../api/apis'
+﻿import { generateImage, generatePresentation, getImageTaskStatus, streamResourceGeneration } from '../api/apis'
 
 export interface ResourceToolConfig {
   label: string
@@ -222,29 +222,32 @@ export async function executeGeneration(
         return
       }
 
-      callbacks.onProgress?.('视频脚本已生成，正在生成旁白音频...')
-      const narrationResult: any = await narrateResource(resourceId)
-      const narration = unwrapResponseData(narrationResult)
+      callbacks.onProgress?.('视频脚本已生成，正在生成动态课件...')
+      const presentationResult: any = await generatePresentation({ topic: text })
+      const presentation = unwrapResponseData(presentationResult)
       const title = sourceResource?.topic || sourceResource?.title || text || '学习视频'
 
       callbacks.onFile?.({
         ...sourceResource,
-        file_id: resourceId,
-        resource_id: resourceId,
+        file_id: presentation?.id || presentation?.presentation_id || `presentation-${resourceId}`,
+        presentation_id: presentation?.id || presentation?.presentation_id || '',
         source_resource_id: resourceId,
         file_type: 'video',
         resource_type: 'video',
-        filename: sourceResource?.filename || `${title}.video`,
+        resourceKind: 'presentation',
+        filename: `${title}.html`,
         content: sourceResource?.content || sourceResource?.text || sourceResource?.preview_content || '',
-        narration,
+        presentation,
+        preview_url: presentation?.file_url || presentation?.fileUrl || '',
+        file_url: presentation?.file_url || presentation?.fileUrl || '',
         download_url: '',
         source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
       })
-      callbacks.onProgress?.('学习视频已生成，可以播放旁白。')
+      callbacks.onProgress?.('动态课件已生成，可以打开预览。')
       callbacks.onDone?.({
-        chat_group_id: narration?.chat_group_id || narration?.chatGroupId,
+        chat_group_id: presentation?.chat_group_id || presentation?.chatGroupId,
         resources: [],
-        narration,
+        presentation,
       })
     } catch (error: any) {
       callbacks.onError?.(error?.response?.data?.detail || error?.message || '视频生成失败，请稍后再试。')

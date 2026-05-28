@@ -104,6 +104,13 @@ export function getNarration(narrationId: number | string): Promise<unknown>;
 
 export function getNarrationVoices(): Promise<unknown>;
 
+export function generatePresentation(data: {
+  topic: string;
+  voice?: string;
+}): Promise<unknown>;
+
+export function getPresentation(presentationId: number | string): Promise<unknown>;
+
 export function deleteGeneratedResource(resourceId: number | string): Promise<unknown>;
 
 export function getAgentSkills(): Promise<unknown>;
