@@ -112,7 +112,7 @@
                     <strong>学习资料</strong>
                   </div>
 
-                  <div v-if="node._resLoading" class="branch-loading">加载中...</div>
+                  <div v-if="node._resLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
 
                   <template v-else-if="node._resources?.length">
                     <div
@@ -161,7 +161,7 @@
                     <strong>学习检测</strong>
                   </div>
 
-                  <div v-if="node._quizLoading" class="branch-loading">加载中...</div>
+                  <div v-if="node._quizLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
 
                   <template v-else-if="node._quiz">
                     <div class="branch-quiz">
@@ -269,7 +269,7 @@
                 <h3 class="resources-heading">学习资料</h3>
 
                 <div v-if="resourcesLoading" class="resources-loading">
-                  正在生成学习资料...
+                  AI 正在为你生成学习资料，通常需要 30-90 秒...
                 </div>
 
                 <template v-else-if="nodeResources.length > 0 || nodeQuizData">
