@@ -1587,6 +1587,7 @@ const openPresentationPlayer = message => {
     name: 'presentationPlayer',
     query: {
       url: message.previewUrl,
+      id: message.presentation?.id || message.presentationId || message.presentation_id || message.fileId || '',
       title: message.filename || '动态课件'
     }
   })
