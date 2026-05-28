@@ -276,6 +276,7 @@ def _build_intro_section(record, narration) -> dict:
             "content_html": html,
             "audio_url": seg["audio_url"] if seg else None,
             "duration_ms": seg["duration_ms"] if seg else 5000,
+            "word_timestamps": seg.get("word_timestamps", []) if seg else [],
         })
 
     total_dur = sum(s.get("duration_ms", 0) for s in slides)
@@ -307,7 +308,7 @@ async def _build_ppt_section(record, narration) -> dict:
 
     slides = []
     for i, meta in enumerate(slides_meta):
-        bullets = [line for line in (meta.get("text") or "").split("，") if line.strip()]
+        bullets = meta.get("bullets") or []
         seg = segments[i] if i < len(segments) else None
         slides.append({
             "title": meta.get("title", ""),
@@ -315,6 +316,7 @@ async def _build_ppt_section(record, narration) -> dict:
             "notes": meta.get("notes", ""),
             "audio_url": seg["audio_url"] if seg else None,
             "duration_ms": seg["duration_ms"] if seg else 5000,
+            "word_timestamps": seg.get("word_timestamps", []) if seg else [],
         })
 
     total_dur = sum(s.get("duration_ms", 0) for s in slides)

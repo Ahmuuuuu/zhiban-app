@@ -370,6 +370,52 @@ class ResourceService:
         yield "data: [DONE]\n\n"
 
     @staticmethod
+    async def toggle_like(resource_id: int, user_id: int) -> dict:
+        """切换点赞状态，返回当前是否点赞和点赞总数"""
+        from backend.src.models.study_model import ResourceLike
+        user = await User.filter(id=user_id).first()
+        if not user:
+            raise ValueError("用户不存在")
+        resource = await GeneratedResource.filter(id=resource_id).first()
+        if not resource:
+            raise ValueError("资源不存在")
+
+        existing = await ResourceLike.filter(user_id=user_id, resource_id=resource_id).first()
+        if existing:
+            await existing.delete()
+            resource.like_count = max(0, (resource.like_count or 0) - 1)
+            await resource.save()
+            return {"liked": False, "like_count": resource.like_count}
+        else:
+            await ResourceLike.create(user=user, resource=resource)
+            resource.like_count = (resource.like_count or 0) + 1
+            await resource.save()
+            return {"liked": True, "like_count": resource.like_count}
+
+    @staticmethod
+    async def toggle_favorite(resource_id: int, user_id: int) -> dict:
+        """切换收藏状态，返回当前是否收藏和收藏总数"""
+        from backend.src.models.study_model import ResourceCollection
+        user = await User.filter(id=user_id).first()
+        if not user:
+            raise ValueError("用户不存在")
+        resource = await GeneratedResource.filter(id=resource_id).first()
+        if not resource:
+            raise ValueError("资源不存在")
+
+        existing = await ResourceCollection.filter(user_id=user_id, resource_id=resource_id).first()
+        if existing:
+            await existing.delete()
+            resource.favorite_count = max(0, (resource.favorite_count or 0) - 1)
+            await resource.save()
+            return {"favorited": False, "favorite_count": resource.favorite_count}
+        else:
+            await ResourceCollection.create(user=user, resource=resource)
+            resource.favorite_count = (resource.favorite_count or 0) + 1
+            await resource.save()
+            return {"favorited": True, "favorite_count": resource.favorite_count}
+
+    @staticmethod
     async def get_resource(resource_id: int, user_id: int) -> dict | None:
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:
@@ -390,7 +436,18 @@ class ResourceService:
             "review_passed": record.review_passed,
             "retry_count": record.retry_count,
             "created_at": str(record.created_at),
+            "view_count": record.view_count,
+            "download_count": record.download_count,
+            "like_count": record.like_count,
+            "favorite_count": record.favorite_count,
         }
+
+        # 当前用户的交互状态
+        from backend.src.models.study_model import ResourceLike, ResourceCollection
+        liked = await ResourceLike.filter(user_id=user_id, resource_id=resource_id).exists()
+        favorited = await ResourceCollection.filter(user_id=user_id, resource_id=resource_id).exists()
+        result["liked"] = liked
+        result["favorited"] = favorited
 
         # PPT 资源 → 按页拆成 slides 预览数组（仅 LLM 生成的 markdown 可解析）
         if record.resource_type == "ppt" and record.content and record.content.startswith("#"):
@@ -445,7 +502,15 @@ class ResourceService:
                 "download_url": f"/resource/{r.id}/download",
                 "review_passed": r.review_passed,
                 "created_at": str(r.created_at),
+                "view_count": r.view_count,
+                "download_count": r.download_count,
+                "like_count": r.like_count,
+                "favorite_count": r.favorite_count,
             }
+            # 附带当前用户的交互状态
+            from backend.src.models.study_model import ResourceLike, ResourceCollection
+            item["liked"] = await ResourceLike.filter(user_id=user_id, resource_id=r.id).exists()
+            item["favorited"] = await ResourceCollection.filter(user_id=user_id, resource_id=r.id).exists()
             result.append(item)
         return result
 

@@ -98,7 +98,7 @@ def parse_slides(markdown: str) -> list[dict]:
         text = clean_for_tts(text)
 
         duration_ms = int(len(text) / 4 * 1000)
-        slides.append({"title": title, "text": text, "notes": "\n".join(notes), "duration_ms": duration_ms})
+        slides.append({"title": title, "text": text, "bullets": bullets, "notes": "\n".join(notes), "duration_ms": duration_ms})
 
     return slides
 
@@ -175,11 +175,25 @@ def parse_by_type(markdown: str, resource_type: str) -> list[dict]:
 
 async def generate_audio(text: str, output_path: str, voice: str = "zh-CN-XiaoxiaoNeural", rate: str = "+0%"):
     """调用 EdgeTTS 将文本转为 MP3 音频（带超时，自动绕过代理）"""
-    import edge_tts
-    import os
+    output_path, _ = await _generate_audio_impl(text, output_path, voice, rate)
+    return output_path
 
-    # EdgeTTS 使用 HTTP/2，大多数代理不支持 HTTP/2 透明转发
-    # 临时绕过代理，仅对微软 TTS 域名生效
+
+async def generate_audio_with_timestamps(text: str, output_path: str, voice: str = "zh-CN-XiaoxiaoNeural", rate: str = "+0%"):
+    """调用 EdgeTTS stream 模式生成音频并收集词级时间戳
+
+    Returns:
+        (output_path, word_timestamps)
+        word_timestamps: [{"text": str, "offset_ms": int, "duration_ms": int}, ...]
+    """
+    return await _generate_audio_impl(text, output_path, voice, rate, capture_words=True)
+
+
+async def _generate_audio_impl(text: str, output_path: str, voice: str, rate: str, capture_words: bool = False):
+    """EdgeTTS 统一实现：支持普通模式和词级时间戳模式"""
+    import os
+    import edge_tts
+
     old_no_proxy = os.environ.get("NO_PROXY", "")
     domains = "*.speech.microsoft.com,*.microsoft.com,*.bing.com,edge-tts.azurewebsites.net"
     os.environ["NO_PROXY"] = f"{domains},{old_no_proxy}" if old_no_proxy else domains
@@ -187,13 +201,35 @@ async def generate_audio(text: str, output_path: str, voice: str = "zh-CN-Xiaoxi
 
     try:
         communicate = edge_tts.Communicate(text, voice, rate=rate)
-        await asyncio.wait_for(communicate.save(output_path), timeout=60)
-        return output_path
+
+        if not capture_words:
+            await asyncio.wait_for(communicate.save(output_path), timeout=60)
+            return output_path, []
+
+        # stream 模式：启用 WordBoundary 收集词级时间戳
+        communicate = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
+        audio_data = bytearray()
+        word_timestamps = []
+
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data.extend(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                # EdgeTTS offset/duration 单位是 Ticks (100ns)，转成毫秒
+                word_timestamps.append({
+                    "text": chunk["text"],
+                    "offset_ms": chunk["offset"] // 10000,
+                    "duration_ms": chunk["duration"] // 10000,
+                })
+
+        with open(output_path, "wb") as f:
+            f.write(audio_data)
+
+        return output_path, word_timestamps
     except asyncio.TimeoutError:
         logger.error("EdgeTTS 超时 (60s): text_len=%d voice=%s", len(text), voice)
         raise
     finally:
-        # 恢复原代理设置
         if old_no_proxy:
             os.environ["NO_PROXY"] = old_no_proxy
             os.environ["no_proxy"] = old_no_proxy
