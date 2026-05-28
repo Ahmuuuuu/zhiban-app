@@ -128,7 +128,7 @@ const normalizePetHistoryGroups = (res: any) => {
 
   return entries
     .filter(([groupId]) => !knownIds.length || knownIds.includes(String(groupId)))
-    .map(([groupId, records]: [string, any]) => {
+    .map(([groupId, records]) => {
       const list = Array.isArray(records) ? records : [];
       const firstRecord = list[0] || {};
       const lastRecord = list[list.length - 1] || firstRecord;
