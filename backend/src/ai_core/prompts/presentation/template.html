@@ -116,6 +116,23 @@
   .chapter.active .content > *:nth-child(2) { animation-delay: 0.1s; }
   .chapter.active .content > *:nth-child(3) { animation-delay: 0.15s; }
 
+  /* Word-by-word narration reveal */
+  .timed-word {
+    display: inline-block;
+    opacity: 0.18;
+    transform: translateY(7px) scale(0.98);
+    transition: opacity 0.2s ease, transform 0.22s ease, color 0.18s ease, text-shadow 0.18s ease;
+    will-change: opacity, transform;
+  }
+  .timed-word.is-visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  .timed-word.is-current {
+    color: #fff3a5;
+    text-shadow: 0 0 12px rgba(255, 222, 96, 0.45);
+  }
+
   /* ─── 空状态 ─── */
   .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #555; }
   .empty-state .icon { font-size: 64px; margin-bottom: 16px; opacity: 0.3; }
@@ -304,6 +321,7 @@ function seekTo(fraction) {
       }
 
       updateProgress();
+      updateWordReveal();
       return;
     }
     acc += dur;
@@ -380,6 +398,8 @@ function render() {
   updateUI();
   updateProgress();
   loadAudioForChapter(0);
+  prepareTimedWords(getActiveWordRoot());
+  resetWordReveal(getActiveWordRoot());
 }
 
 function escHtml(s) {
@@ -435,6 +455,8 @@ function goToChapter(idx) {
   updateProgress();
   resetKaraoke();
   loadAudioForChapter(idx);
+  prepareTimedWords(getActiveWordRoot());
+  resetWordReveal(getActiveWordRoot());
   if (isPlaying) playAudioQueue();
 }
 
@@ -488,7 +510,7 @@ function loadAudioForChapter(chapterIdx) {
     for (var si = 0; si < sec.slides.length; si++) {
       var sl = sec.slides[si];
       if (sl.audio_url) {
-        audioQueue.push({audio_url: sl.audio_url, duration_ms: sl.duration_ms});
+        audioQueue.push({audio_url: sl.audio_url, duration_ms: sl.duration_ms, word_timings: sl.word_timings || []});
       }
     }
   } else if (sec.audio_segments && sec.audio_segments.length > 0) {
@@ -525,6 +547,7 @@ function playAudioQueue() {
 
   currentAudio = new Audio(seg.audio_url);
   currentAudio.play().catch(function(e) { console.warn('Audio play error:', e); });
+  updateWordReveal();
   currentAudio.onended = function() {
     audioIndex++;
     // 自动翻页：一段音频播完自动进入下一张幻灯片
@@ -536,6 +559,8 @@ function playAudioQueue() {
       });
       currentSlide++;
       updateUI();
+      prepareTimedWords(getActiveWordRoot());
+      resetWordReveal(getActiveWordRoot());
     }
     updateProgress();
     playAudioQueue();

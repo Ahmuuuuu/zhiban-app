@@ -165,7 +165,7 @@
             <button v-if="isPptFile(message) && canOpenPptPreview(message)" type="button" @click="openPptPreview(message)">
               {{ pptPreview.loading && pptPreview.messageId === message.id ? '加载中...' : '预览' }}
             </button>
-            <a v-if="isVideoFile(message) && message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">打开课件</a>
+            <button v-if="isVideoFile(message) && message.previewUrl" type="button" @click="openPresentationPlayer(message)">打开课件</button>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
             <button
@@ -395,6 +395,7 @@
 
 <script setup>
 import { computed, ref, nextTick, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   downloadWithToken,
   deleteAgentSkill,
@@ -403,6 +404,7 @@ import {
   getConversationList,
   getConversationMessages,
   getGeneratedResource,
+  getPresentations,
   upsertAgentActionSkill,
   resolveApiUrl
 } from '../api/apis'
@@ -435,6 +437,7 @@ import { saveGeneratedResourceRef } from '../utils/savedResources'
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
+const router = useRouter()
 
 const resourceTools = [
   {
@@ -751,6 +754,60 @@ const buildMessagesFromHistory = (records, conversationId) => {
     })
 }
 
+const normalizePresentationTopic = value => String(value || '')
+  .replace(/^帮我生成一个学习视频[:：]\s*/i, '')
+  .replace(/^帮我规划一个学习视频脚本[:：]\s*/i, '')
+  .trim()
+
+const isVideoHistoryRecord = record => {
+  const text = String(`${record?.req || ''} ${record?.res || record?.content || record?.answer || ''}`)
+  return /(视频|video|课程视频|教学视频|动态课件)/i.test(text)
+}
+
+const appendPresentationCardsFromHistory = async (records, targetMessages) => {
+  const videoRecords = records.filter(isVideoHistoryRecord)
+  if (!videoRecords.length) return
+
+  try {
+    const presentations = normalizeList(await getPresentations())
+    if (!presentations.length) return
+
+    const existingUrls = new Set(targetMessages.map(message => message.previewUrl).filter(Boolean))
+    const existingIds = new Set(targetMessages.map(message => String(message.presentation?.id || message.fileId || '')).filter(Boolean))
+
+    for (const record of videoRecords) {
+      const reqTopic = normalizePresentationTopic(stripInternalInstructions(record.req))
+      const presentation = presentations.find(item => {
+        const itemTopic = normalizePresentationTopic(item.topic)
+        return itemTopic && reqTopic && (itemTopic === reqTopic || item.topic === record.req)
+      })
+
+      if (!presentation?.file_url) continue
+      const previewUrl = resolveApiUrl(presentation.file_url)
+      const presentationId = String(presentation.id || '')
+      if (existingUrls.has(previewUrl) || (presentationId && existingIds.has(presentationId))) continue
+
+      targetMessages.push(normalizeFileMessage({
+        file_id: presentation.id || presentation.file_url,
+        presentation_id: presentation.id || '',
+        file_type: 'video',
+        resource_type: 'video',
+        resourceKind: 'presentation',
+        filename: `${presentation.topic || reqTopic || '动态课件'}.html`,
+        preview_url: presentation.file_url,
+        file_url: presentation.file_url,
+        presentation,
+        content: '',
+        centerSaveStatus: ''
+      }))
+      existingUrls.add(previewUrl)
+      if (presentationId) existingIds.add(presentationId)
+    }
+  } catch (error) {
+    console.warn('[ChatView] load presentations for history failed:', error)
+  }
+}
+
 const normalizeHistoryGroups = (res) => {
   const data = getResponseData(res)
   const groups = data?.data || data
@@ -1004,18 +1061,22 @@ const pptPreview = ref({
 })
 
 const normalizeFileMessage = data => {
-  const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || 'file'
-  const resourceKind = data.resourceKind || data.kind || 'resource'
+  const hasPresentationUrl = Boolean(data.presentation_url || data.presentationUrl || data.file_url || data.fileUrl)
+  const resourceKind = data.resourceKind || data.kind || (hasPresentationUrl ? 'presentation' : 'resource')
+  const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || (resourceKind === 'presentation' ? 'video' : 'file')
   const rawFilename =
     data.filename ||
     data.file_name ||
     data.name ||
     `${data.topic || fileTypeLabel(fileType)}.${fileExtension(fileType)}`
   const filename = normalizeFileName(rawFilename, fileType)
-  const fileId = data.file_id || data.fileId || data.resource_id || data.resourceId || ''
+  const fileId = data.file_id || data.fileId || data.resource_id || data.resourceId || data.presentation_id || data.presentationId || ''
+  const messageId = fileId
+    ? `${resourceKind === 'presentation' ? 'presentation' : 'file'}-${fileId}`
+    : `file-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
   return {
-    id: fileId ? `file-${fileId}` : `file-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: messageId,
     role: 'assistant',
     type: 'file',
     fileType,
@@ -1026,7 +1087,7 @@ const normalizeFileMessage = data => {
     presentation: data.presentation || null,
     fileId,
     resourceKind,
-    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.file_url || data.fileUrl || data.preview || ''),
+    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.presentation_url || data.presentationUrl || data.file_url || data.fileUrl || data.preview || ''),
     downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || data.url || (resourceKind !== 'presentation' && fileId ? `/resource/${fileId}/download` : '')),
     centerSaveStatus: data.centerSaveStatus || '',
     time: getNowTime()
@@ -1049,6 +1110,21 @@ const tryParseJson = value => {
 
 const parseResourceHistoryMessage = value => {
   const text = String(value || '')
+
+  const presentationMatch = text.match(/\[([^\]]+)\]\(((?:https?:\/\/[^)\s]+|\/[^)\s]+)?\/static\/presentations\/[^)\s]+\.html(?:[?#][^)]*)?)\)/i)
+  if (presentationMatch) {
+    const filename = presentationMatch[1] || '动态课件.html'
+    const url = presentationMatch[2]
+    return {
+      file_id: url,
+      file_type: 'video',
+      resourceKind: 'presentation',
+      filename: /\.html?$/i.test(filename) ? filename : `${filename}.html`,
+      preview_url: url,
+      file_url: url,
+      content: ''
+    }
+  }
 
   // 匹配 /resource/{id}/download 或 /image/{id}/download 格式
   const resourceMatch = text.match(/\[([^\]]+)\]\((\/(?:resource|image)\/(\d+)\/download)\)/)
@@ -1128,8 +1204,12 @@ const normalizeHistoryAssistantMessage = (item, id, time) => {
       parsed.fileId ||
       parsed.resource_id ||
       parsed.resourceId ||
+      parsed.presentation_id ||
+      parsed.presentationId ||
       parsed.download_url ||
-      parsed.preview_url
+      parsed.preview_url ||
+      parsed.presentation_url ||
+      parsed.file_url
 
     if (hasFileShape) {
       return { ...normalizeFileMessage(parsed), id, time }
@@ -1501,6 +1581,18 @@ const downloadGeneratedFile = async message => {
   }
 }
 
+const openPresentationPlayer = message => {
+  if (!message?.previewUrl) return
+  router.push({
+    name: 'presentationPlayer',
+    query: {
+      url: message.previewUrl,
+      id: message.presentation?.id || message.presentationId || message.presentation_id || message.fileId || '',
+      title: message.filename || '动态课件'
+    }
+  })
+}
+
 const fileExtension = type => {
   const normalizedType = String(type || '').toLowerCase()
 
@@ -1756,8 +1848,10 @@ const openConversation = async (conversationId) => {
 
   try {
     const res = await getConversationMessages(conversationId)
+    const records = normalizeList(res)
 
-    messages.value = buildMessagesFromHistory(normalizeList(res), conversationId)
+    messages.value = buildMessagesFromHistory(records, conversationId)
+    await appendPresentationCardsFromHistory(records, messages.value)
     await scrollToBottom()
   } catch (error) {
     console.error('获取历史对话详情失败：', error)

@@ -203,6 +203,10 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <Transition name="portrait-backdrop-fade">
+    <div v-if="portraitPromptVisible || portraitWizardVisible || portraitCompleteVisible" class="portrait-backdrop" @click="closePortraitOnboarding" />
+  </Transition>
+
   <Transition name="pet-onboarding-pop">
     <section
       v-if="portraitPromptVisible"
@@ -507,6 +511,25 @@ onUnmounted(() => {
 .portrait-wizard__next:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.portrait-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1240;
+  background: rgba(8, 23, 51, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.portrait-backdrop-fade-enter-active,
+.portrait-backdrop-fade-leave-active {
+  transition: opacity 320ms ease;
+}
+
+.portrait-backdrop-fade-enter-from,
+.portrait-backdrop-fade-leave-to {
+  opacity: 0;
 }
 
 .pet-onboarding-pop-enter-active,
