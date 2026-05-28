@@ -23,7 +23,7 @@ type PetChatMessage = {
   role: "user" | "assistant";
   content: string;
   resourceId?: number | string;
-  resourceKind?: "resource" | "image";
+  resourceKind?: "resource" | "image" | "presentation";
   resourceType?: string;
   resourceFilename?: string;
   resourceContent?: string;
@@ -128,7 +128,7 @@ const normalizePetHistoryGroups = (res: any) => {
 
   return entries
     .filter(([groupId]) => !knownIds.length || knownIds.includes(String(groupId)))
-    .map(([groupId, records]: [string, any]) => {
+    .map(([groupId, records]) => {
       const list = Array.isArray(records) ? records : [];
       const firstRecord = list[0] || {};
       const lastRecord = list[list.length - 1] || firstRecord;
@@ -304,6 +304,26 @@ const replacePetTextWithQuiz = (message: PetChatMessage, title = "AI 生成题�
   return true;
 };
 
+const isPetVideoFile = (message: PetChatMessage) => {
+  const kind = message.resourceKind || "";
+  const type = (message.resourceType || "").toLowerCase();
+  return kind === "presentation" || type.includes("video");
+};
+
+const openPetPresentation = (message: PetChatMessage) => {
+  const url = message.resourcePreviewUrl;
+  if (!url && !message.resourceId) return;
+  emit("update:modelValue", false);
+  router.push({
+    name: "presentationPlayer",
+    query: {
+      url: url || "",
+      id: String(message.resourceId || ""),
+      title: message.resourceFilename || "动态课件",
+    },
+  });
+};
+
 const openPetQuiz = (quizId?: string) => {
   if (!quizId) return;
   emit("update:modelValue", false);
@@ -404,7 +424,8 @@ const sendPetMessage = async () => {
           }
           assistantMessage.content = getPetGeneratedFileMessage(fileData);
           assistantMessage.resourceId = getPetGeneratedResourceId(fileData) || assistantMessage.resourceId;
-          assistantMessage.resourceKind = "resource";
+          assistantMessage.resourceKind =
+            fileData?.resourceKind || fileData?.kind || (fileData?.file_type === "video" ? "presentation" : "resource");
           assistantMessage.resourceType =
             fileData?.file_type ||
             fileData?.fileType ||
@@ -419,6 +440,10 @@ const sendPetMessage = async () => {
             fileData?.preview_content ||
             fileData?.previewContent ||
             assistantMessage.resourceContent;
+          assistantMessage.resourcePreviewUrl =
+            fileData?.preview_url || fileData?.previewUrl || assistantMessage.resourcePreviewUrl || "";
+          assistantMessage.resourceDownloadUrl =
+            fileData?.download_url || fileData?.downloadUrl || assistantMessage.resourceDownloadUrl || "";
           assistantMessage.centerSaveStatus = assistantMessage.resourceId
             ? assistantMessage.centerSaveStatus || ""
             : assistantMessage.centerSaveStatus;
@@ -436,7 +461,8 @@ const sendPetMessage = async () => {
             return;
           }
           assistantMessage.resourceId = getPetGeneratedResourceId(savedResource) || assistantMessage.resourceId;
-          assistantMessage.resourceKind = "resource";
+          assistantMessage.resourceKind =
+            savedResource.resourceKind || savedResource.kind || (savedResource.file_type === "video" ? "presentation" : "resource");
           assistantMessage.resourceType =
             savedResource.file_type ||
             savedResource.fileType ||
@@ -478,6 +504,8 @@ const sendPetMessage = async () => {
           }
           assistantMessage.content = getPetGeneratedFileMessage(fileData);
           assistantMessage.resourceId = getPetGeneratedResourceId(fileData) || assistantMessage.resourceId;
+          assistantMessage.resourceKind =
+            fileData?.resourceKind || fileData?.kind || (fileData?.file_type === "video" ? "presentation" : "resource");
           assistantMessage.resourceType =
             fileData?.file_type ||
             fileData?.fileType ||
@@ -492,6 +520,10 @@ const sendPetMessage = async () => {
             fileData?.preview_content ||
             fileData?.previewContent ||
             assistantMessage.resourceContent;
+          assistantMessage.resourcePreviewUrl =
+            fileData?.preview_url || fileData?.previewUrl || assistantMessage.resourcePreviewUrl || "";
+          assistantMessage.resourceDownloadUrl =
+            fileData?.download_url || fileData?.downloadUrl || assistantMessage.resourceDownloadUrl || "";
           assistantMessage.centerSaveStatus = assistantMessage.resourceId
             ? assistantMessage.centerSaveStatus || ""
             : assistantMessage.centerSaveStatus;
@@ -617,7 +649,15 @@ watch(
       >
         <span v-html="renderPetMarkdown(message.content || 'Thinking...')"></span>
         <button
-          v-if="message.role === 'assistant' && message.resourceId"
+          v-if="message.role === 'assistant' && isPetVideoFile(message) && message.resourcePreviewUrl"
+          type="button"
+          class="pet-chat__save-resource"
+          @click="openPetPresentation(message)"
+        >
+          打开课件
+        </button>
+        <button
+          v-if="message.role === 'assistant' && message.resourceId && !isPetVideoFile(message)"
           type="button"
           class="pet-chat__save-resource"
           :disabled="message.centerSaveStatus === 'saving' || message.centerSaveStatus === 'saved'"

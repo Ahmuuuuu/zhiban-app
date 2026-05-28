@@ -420,6 +420,10 @@ export function generatePresentation(data) {
   })
 }
 
+export function getPresentations() {
+  return request.get('/presentation/list')
+}
+
 export function getPresentation(presentationId) {
   return request.get(`/presentation/${presentationId}`)
 }
