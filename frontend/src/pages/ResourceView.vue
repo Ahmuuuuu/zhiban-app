@@ -240,7 +240,6 @@ const categoryLabelMap = {
 }
 
 const activeCategory = computed(() => String(route.query.category || 'document'))
-const activeSubCategory = computed(() => String(route.query.sub || 'all'))
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
 
@@ -391,12 +390,22 @@ const isQuizResource = resource => {
 
 const isPptResource = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  return text.includes('ppt') || text.includes('pptx') || text.includes('slide') || text.includes('婕旂ず')
+  return text.includes('ppt') || text.includes('pptx') || text.includes('slide') || text.includes('演示')
 }
 
 const isMindmapResource = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
   return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('xmind') || text.includes('脑图') || text.includes('思维导图')
+}
+
+const getResourceKind = resource => {
+  const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
+  if (text.includes('image') || /\.(jpg|jpeg|png|webp|gif|bmp|svg)$/i.test(text)) return 'image'
+  if (isPptResource(resource)) return 'ppt'
+  if (text.includes('video') || /\.(mp4|mov|avi|mkv|webm)$/i.test(text)) return 'video'
+  if (isQuizResource(resource)) return 'quiz'
+  if (isMindmapResource(resource)) return 'mindmap'
+  return 'document'
 }
 
 const downloadResource = async resource => {
@@ -518,21 +527,7 @@ const startResourceQuiz = async resource => {
 }
 
 const matchesCategory = resource => {
-  const cat = activeCategory.value
-
-  if (cat === 'document') {
-    if (activeSubCategory.value === 'all') return true
-    return resource.category === activeSubCategory.value
-  }
-
-  const resourceType = String(resource.type || resource.category || resource.title || '').toLowerCase()
-  const categoryMap = {
-    ppt: ['ppt', 'pptx', 'slide', 'reference'],
-    video: ['video', 'mp4', 'mov', 'avi'],
-    quiz: ['quiz', 'question', 'exam', 'exercise', '题'],
-    mindmap: ['mind', 'map', 'xmind', '思维', 'note']
-  }
-  return (categoryMap[cat] || []).some(type => resourceType.includes(type))
+  return getResourceKind(resource) === activeCategory.value
 }
 
 watch(filteredResources, list => {
@@ -563,10 +558,10 @@ const handleImageError = event => {
 const getWordCount = content => String(content || '').replace(/\s/g, '').length
 
 const formatDate = (value, withTime = false) => {
-  if (!value) return '鏈煡鏃堕棿'
+  if (!value) return '未知时间'
 
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '鏈煡鏃堕棿'
+  if (Number.isNaN(date.getTime())) return '未知时间'
 
   return date.toLocaleString('zh-CN', {
     year: 'numeric',

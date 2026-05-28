@@ -1,7 +1,7 @@
 ﻿<template>
   <header class="floating-nav" :class="{ 'entering-chat': enteringChat }">
     <nav class="nav-links">
-      <a href="#/chat" @click.prevent="goChat">资源生成</a>
+      <a href="#/chat" @click.prevent="goChat">ai对话</a>
       <router-link to="/resources">资源中心</router-link>
       <router-link to="/learning-resources">我的资源</router-link>
       <router-link to="/learning-path">学习路径</router-link>
@@ -44,10 +44,10 @@ watch(
   top: 22px;
   left: 28px;
   z-index: 20;
-  width: 500px;
+  width: max-content;
   max-width: calc(100% - 40px);
   min-height: 62px;
-  padding: 10px 12px;
+  padding: 10px 10px;
   transform: none;
   border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 999px;
@@ -125,11 +125,11 @@ watch(
 }
 
 .nav-links {
-  width: 100%;
+  width: auto;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
+  justify-content: center;
+  gap: 6px;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -141,7 +141,7 @@ watch(
 
 .nav-links a {
   min-height: 38px;
-  padding: 0 11px;
+  padding: 0 9px;
   border-radius: 999px;
   border: 1px solid rgba(22, 63, 143, 0.92);
   background:
@@ -181,7 +181,8 @@ watch(
 
 @media (max-width: 980px) {
   .floating-nav {
-    width: min(760px, calc(100% - 40px));
+    width: min-content;
+    max-width: calc(100% - 40px);
   }
 
   .nav-links {
