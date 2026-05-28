@@ -784,9 +784,9 @@ onBeforeUnmount(() => {
 }
 
 .avatar-frame img {
-  width: 90%;
-  height: 90%;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .radar-wrap {

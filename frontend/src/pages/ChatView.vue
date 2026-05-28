@@ -147,6 +147,10 @@
             :title="message.filename"
           />
 
+          <div v-else-if="isVideoFile(message)" class="file-placeholder">
+            学习视频已生成，可以播放旁白。
+          </div>
+
           <div v-else-if="isPptFile(message)" class="file-placeholder">
             PPT 已生成，可以打开幻灯片预览。
           </div>
@@ -160,6 +164,16 @@
           <div v-if="message.previewUrl || message.downloadUrl || message.fileId || message.content" class="file-actions">
             <button v-if="isPptFile(message) && canOpenPptPreview(message)" type="button" @click="openPptPreview(message)">
               {{ pptPreview.loading && pptPreview.messageId === message.id ? '加载中...' : '预览' }}
+            </button>
+            <button
+              v-if="isVideoFile(message) && message.narration"
+              type="button"
+              :disabled="isNarrationLoading(message)"
+              @click="toggleNarration(message)"
+            >
+              <PauseCircle v-if="isNarrationPlaying(message)" :size="14" />
+              <Volume2 v-else :size="14" />
+              {{ isNarrationLoading(message) ? '生成中...' : (isNarrationPlaying(message) ? '暂停' : '播放') }}
             </button>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
@@ -210,9 +224,9 @@
         <Plus :size="17" stroke-width="1.7" />
         开启新对话
       </button>
-      <button type="button" @click="showAgentSkillListInChat">
+      <button type="button" @click="openSkillPanel">
         <Bot :size="17" stroke-width="1.7" />
-        能力列表
+        智能体能力
       </button>
     </div>
 
@@ -314,7 +328,7 @@
           <header class="skill-dialog__header">
             <div>
               <span>Personal Agent</span>
-              <h2>智能体 Skill</h2>
+              <h2>智能体能力</h2>
             </div>
             <button type="button" aria-label="关闭 Skill 管理" @click="closeSkillPanel">
               <X :size="20" />
@@ -324,27 +338,22 @@
           <div class="skill-dialog__body">
             <aside class="skill-list-pane">
               <div class="skill-list-head">
-                <strong>已配置</strong>
-                <button type="button" @click="startCreateSkill">
-                  <Plus :size="15" />
-                  新建
-                </button>
+                <strong>当前智能体能力</strong>
+                <button type="button" @click="loadAgentSkills">刷新</button>
               </div>
 
               <p v-if="skillPanel.loading" class="skill-empty">正在加载...</p>
-              <p v-else-if="!agentSkills.length" class="skill-empty">暂无自定义 Skill</p>
+              <p v-else-if="!agentSkills.length" class="skill-empty">暂无自定义智能体能力</p>
 
               <template v-else>
                 <article
                   v-for="skill in agentSkills"
                   :key="skill.skill_id || skill.resource_type || skill.name"
                   class="skill-list-item"
-                  :class="{ active: selectedSkillKey === skillKey(skill) }"
-                  @click="editSkill(skill)"
                 >
                   <span>
                     <strong>{{ skill.name }}</strong>
-                    <small>{{ skillLabel(skill) }}</small>
+                    <small>{{ skill.tool_description || '可执行能力' }}</small>
                   </span>
                   <button
                     class="skill-delete-btn"
@@ -361,60 +370,28 @@
             <form class="skill-editor" @submit.prevent="saveSkill">
               <div class="skill-editor__top">
                 <div>
-                  <span>{{ skillFormMode === 'create' ? 'Create' : 'Edit' }}</span>
-                  <h3>{{ skillFormMode === 'create' ? '新建智能体能力' : '编辑智能体能力' }}</h3>
+                  <span>Add Agent</span>
+                  <h3>添加智能体能力</h3>
                 </div>
                 <button type="submit" :disabled="skillPanel.saving || !canSaveSkill">
-                  <Save :size="16" />
-                  保存
+                  <Plus :size="16" />
+                  添加
                 </button>
               </div>
 
               <label>
                 <span>能力名称</span>
-                <input v-model.trim="skillForm.name" type="text" placeholder="例如：check_weather" />
+                <input v-model.trim="skillForm.name" type="text" placeholder="例如：天气查询" />
               </label>
 
               <label>
-                <span>能力描述</span>
-                <input v-model.trim="skillForm.tool_description" type="text" placeholder="例如：当用户询问某地天气时，调用该能力查询实时天气。" />
-              </label>
-
-              <div class="skill-form-grid">
-                <label>
-                  <span>调用方式</span>
-                  <select v-model="skillForm.action_config.method">
-                    <option value="GET">GET</option>
-                    <option value="POST">POST</option>
-                  </select>
-                </label>
-
-                <label>
-                  <span>动作类型</span>
-                  <select v-model="skillForm.action_type">
-                    <option value="http">HTTP</option>
-                  </select>
-                </label>
-              </div>
-
-              <label>
-                <span>接口地址</span>
-                <input v-model.trim="skillForm.action_config.url" type="text" placeholder="https://api.example.com/weather?city={{city}}" />
-              </label>
-
-              <label class="skill-prompt-field">
-                <span>参数说明 JSON</span>
+                <span>能力说明</span>
                 <textarea
-                  v-model="skillParamsText"
-                  rows="8"
-                  placeholder='{"city":"城市名称，例如 Beijing"}'
+                  v-model.trim="skillForm.tool_description"
+                  rows="6"
+                  placeholder="例如：当我询问城市天气时，帮我查询并总结当前天气。"
                 ></textarea>
               </label>
-
-              <button class="skill-example-btn" type="button" @click="fillWeatherSkillExample">
-                <CloudSun :size="16" />
-                填入天气能力示例
-              </button>
 
               <p v-if="skillPanel.error" class="skill-error">{{ skillPanel.error }}</p>
             </form>
@@ -430,7 +407,6 @@ import { computed, ref, nextTick, onMounted } from 'vue'
 import {
   downloadWithToken,
   deleteAgentSkill,
-  getAgentSkill,
   getAgentSkills,
   streamChatMessage,
   getConversationList,
@@ -440,6 +416,7 @@ import {
   resolveApiUrl
 } from '../api/apis'
 import { detectGenerationIntent, executeGeneration } from '../composables/useResourceGeneration'
+import { useResourceNarration } from '../composables/useResourceNarration'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
@@ -454,12 +431,12 @@ import {
   Music,
   Plus,
   Presentation,
+  PauseCircle,
   CircleHelp,
   Bot,
-  CloudSun,
-  Save,
   SendHorizontal,
   Trash2,
+  Volume2,
   X,
   Video
 } from 'lucide-vue-next'
@@ -470,6 +447,11 @@ import { saveGeneratedResourceRef } from '../utils/savedResources'
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
+const {
+  toggleNarration,
+  isNarrationLoading,
+  isNarrationPlaying
+} = useResourceNarration()
 
 const resourceTools = [
   {
@@ -504,8 +486,8 @@ const resourceTools = [
   {
     label: 'video',
     icon: Video,
-    prompt: '帮我规划一个学习视频脚本：',
-    generateMode: 'resource',
+    prompt: '帮我生成一个学习视频：',
+    generateMode: 'video',
     resourceTypes: ['document']
   },
   {
@@ -586,14 +568,6 @@ const isAgentSkillListIntent = value => {
     /(技能|能力|工具|智能体).{0,12}(列表|清单|有哪些|有什么)/.test(text)
 }
 
-const withAgentSkillInstruction = value => `${value}
-
-【智能体能力指令】
-如果用户要求你学习、创建、添加、接入某个可执行能力，请优先使用 create_action_skill 创建动作 Skill，而不是只给文字建议。
-创建动作 Skill 前必须确认或找到真实可用的 HTTP API。action_type 使用 "http"。
-action_config 必须是 JSON 字符串，包含 url、method、params；url 中动态参数使用 {{参数名}} 占位。
-如果用户要求查看已有能力，请调用 list_skills。`
-
 const handleAddFile = () => {
   showAddMenu.value = false
 }
@@ -625,8 +599,6 @@ const skillPanel = ref({
   error: ''
 })
 const agentSkills = ref([])
-const selectedSkillKey = ref('')
-const skillFormMode = ref('create')
 const skillForm = ref({
   name: '',
   action_type: 'http',
@@ -636,13 +608,11 @@ const skillForm = ref({
   },
   tool_description: ''
 })
-const skillParamsText = ref('{\n  "city": "城市名称，例如 Beijing"\n}')
 
 const canSaveSkill = computed(() => {
   return Boolean(
     skillForm.value.name.trim() &&
-    skillForm.value.tool_description.trim() &&
-    skillForm.value.action_config.url.trim()
+    skillForm.value.tool_description.trim()
   )
 })
 
@@ -656,11 +626,6 @@ const skillKey = skill => {
   return skill?.name || ''
 }
 
-const skillLabel = skill => {
-  if (skill?.skill_type === 'action') return `动作 Skill · ${skill.action_type || 'action'}`
-  return `生成 Skill · ${skill.resource_type || 'resource'}`
-}
-
 const formatAgentSkillList = skills => {
   if (!skills.length) return '你现在还没有学会额外的智能体能力。'
 
@@ -671,8 +636,6 @@ const formatAgentSkillList = skills => {
 }
 
 const resetSkillForm = () => {
-  selectedSkillKey.value = ''
-  skillFormMode.value = 'create'
   skillForm.value = {
     name: '',
     action_type: 'http',
@@ -682,7 +645,6 @@ const resetSkillForm = () => {
     },
     tool_description: ''
   }
-  skillParamsText.value = '{\n  "city": "城市名称，例如 Beijing"\n}'
 }
 
 const loadAgentSkills = async () => {
@@ -699,6 +661,7 @@ const loadAgentSkills = async () => {
 }
 
 const openSkillPanel = async () => {
+  showAddMenu.value = false
   skillPanel.value.visible = true
   resetSkillForm()
   await loadAgentSkills()
@@ -727,98 +690,32 @@ const startCreateSkill = () => {
   resetSkillForm()
 }
 
-const editSkill = async skill => {
-  const key = skillKey(skill)
-  selectedSkillKey.value = key
-  skillPanel.value.error = ''
-
-  if (skill.skill_type !== 'action') {
-    skillPanel.value.error = '这里管理的是智能体动作能力，不编辑资源生成 Skill。'
-    return
-  }
-
-  skillFormMode.value = 'edit'
-  skillForm.value = {
-    name: skill.name || '',
-    action_type: skill.action_type || 'http',
-    action_config: {
-      method: 'GET',
-      url: ''
-    },
-    tool_description: skill.tool_description || ''
-  }
-
-  try {
-    const detailEnvelope = getResponseData(await getAgentSkill(key))
-    const detail = detailEnvelope?.data || detailEnvelope
-    const actionConfig = typeof detail.action_config === 'string'
-      ? JSON.parse(detail.action_config || '{}')
-      : detail.action_config || {}
-    skillForm.value = {
-      name: detail.name || skill.name || '',
-      action_type: detail.action_type || skill.action_type || 'http',
-      action_config: {
-        method: actionConfig.method || 'GET',
-        url: actionConfig.url || ''
-      },
-      tool_description: detail.tool_description || skill.tool_description || ''
-    }
-    skillParamsText.value = JSON.stringify(actionConfig.params || {}, null, 2)
-  } catch (err) {
-    console.error('[ChatView] load agent skill failed:', err)
-    skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 详情加载失败'
-  }
-}
-
 const saveSkill = async () => {
   if (!canSaveSkill.value || skillPanel.value.saving) return
 
   skillPanel.value.saving = true
   skillPanel.value.error = ''
   try {
-    let params = {}
-    try {
-      params = JSON.parse(skillParamsText.value || '{}')
-    } catch {
-      skillPanel.value.error = '参数说明 JSON 格式不正确'
-      return
-    }
+    const name = skillForm.value.name.trim()
 
     await upsertAgentActionSkill({
-      name: skillForm.value.name.trim(),
-      action_type: skillForm.value.action_type,
+      name,
+      action_type: 'http',
       action_config: {
-        method: skillForm.value.action_config.method,
-        url: skillForm.value.action_config.url.trim(),
-        params
+        method: 'GET',
+        url: `https://example.invalid/zhiban-agent/${encodeURIComponent(name)}`,
+        params: {}
       },
       tool_description: skillForm.value.tool_description.trim()
     })
     await loadAgentSkills()
-    selectedSkillKey.value = `action:${skillForm.value.name.trim()}`
-    skillFormMode.value = 'edit'
+    resetSkillForm()
   } catch (err) {
     console.error('[ChatView] save agent skill failed:', err)
     skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 保存失败'
   } finally {
     skillPanel.value.saving = false
   }
-}
-
-const fillWeatherSkillExample = () => {
-  skillForm.value = {
-    name: 'check_weather',
-    action_type: 'http',
-    action_config: {
-      method: 'GET',
-      url: 'https://api.open-meteo.com/v1/forecast?latitude={{latitude}}&longitude={{longitude}}&current_weather=true'
-    },
-    tool_description: '当用户询问某地天气时，先确定地点经纬度，再调用该能力查询当前天气。'
-  }
-  skillParamsText.value = JSON.stringify({
-    latitude: '地点纬度，例如 39.9042',
-    longitude: '地点经度，例如 116.4074'
-  }, null, 2)
 }
 
 const removeSkill = async skill => {
@@ -830,7 +727,6 @@ const removeSkill = async skill => {
   skillPanel.value.error = ''
   try {
     await deleteAgentSkill(key)
-    if (selectedSkillKey.value === key) resetSkillForm()
     await loadAgentSkills()
   } catch (err) {
     console.error('[ChatView] delete agent skill failed:', err)
@@ -1625,6 +1521,7 @@ const fileExtension = type => {
 
   if (normalizedType.includes('ppt')) return 'pptx'
   if (normalizedType.includes('image')) return 'jpg'
+  if (normalizedType.includes('video')) return 'video'
   if (normalizedType.includes('mindmap') || normalizedType.includes('mind')) return 'xmind'
   if (normalizedType.includes('txt') || normalizedType.includes('document')) return 'txt'
   if (normalizedType.includes('pdf')) return 'pdf'
@@ -1636,6 +1533,7 @@ const fileTypeLabel = type => {
 
   if (normalizedType.includes('ppt')) return 'PPT 文件'
   if (normalizedType.includes('image')) return '图片'
+  if (normalizedType.includes('video')) return '学习视频'
   if (normalizedType.includes('mind')) return '思维导图'
   if (normalizedType.includes('txt')) return 'TXT 文档'
   if (normalizedType.includes('document')) return '学习文档'
@@ -1648,6 +1546,7 @@ const fileIcon = type => {
 
   if (normalizedType.includes('ppt')) return '📊'
   if (normalizedType.includes('image')) return '🖼️'
+  if (normalizedType.includes('video')) return '🎬'
   if (normalizedType.includes('mind')) return '🧠'
   if (normalizedType.includes('txt') || normalizedType.includes('document')) return '📄'
   if (normalizedType.includes('pdf')) return '📕'
@@ -1663,6 +1562,11 @@ const isMindmapFile = message => {
     text.includes('xmind') ||
     text.includes('思维') ||
     text.includes('导图')
+}
+
+const isVideoFile = message => {
+  const text = String(`${message?.fileType || ''} ${message?.filename || ''} ${message?.title || ''}`).toLowerCase()
+  return text.includes('video') || text.includes('视频')
 }
 
 const scrollToBottom = async () => {
@@ -1699,8 +1603,9 @@ const sendMessage = async () => {
   showAddMenu.value = false
   const activeTool = selectedResourceTool.value
   const backendText = activeTool?.prompt ? `${activeTool.prompt}${text}` : text
-  const shouldHandleAgentSkills = Boolean(activeTool?.agentSkillMode) || isAgentSkillCreateIntent(text) || isAgentSkillListIntent(text)
-  const chatRequestText = shouldHandleAgentSkills ? withAgentSkillInstruction(backendText) : text
+  const shouldOpenSkillPanel = Boolean(activeTool?.agentSkillMode) || isAgentSkillCreateIntent(text)
+  const shouldListAgentSkills = isAgentSkillListIntent(text)
+  const chatRequestText = text
   const loadingMessageId = Date.now() + 1
 
   messages.value.push({
@@ -1713,6 +1618,16 @@ const sendMessage = async () => {
 
   inputValue.value = ''
   selectedResourceTool.value = null
+
+  if (shouldListAgentSkills) {
+    await showAgentSkillListInChat()
+    return
+  }
+
+  if (shouldOpenSkillPanel) {
+    await openSkillPanel()
+    return
+  }
 
   messages.value.push({
     id: loadingMessageId,
@@ -1799,9 +1714,6 @@ const sendMessage = async () => {
           await replaceTextWithQuizMessage(target, 'AI 生成题目')
         }
 
-        if (shouldHandleAgentSkills) {
-          await loadAgentSkills()
-        }
       }
     })
 
@@ -1811,9 +1723,6 @@ const sendMessage = async () => {
 
     await scrollToBottom()
     await loadConversationList()
-    if (shouldHandleAgentSkills && isAgentSkillListIntent(text)) {
-      await showAgentSkillListInChat()
-    }
 
   } catch (error) {
     console.error(error)
@@ -2979,14 +2888,7 @@ textarea::placeholder {
   gap: 7px;
 }
 
-.skill-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
 .skill-editor input,
-.skill-editor select,
 .skill-editor textarea {
   width: 100%;
   border: 1px solid rgba(201, 220, 233, 0.82);
@@ -2997,8 +2899,7 @@ textarea::placeholder {
   outline: none;
 }
 
-.skill-editor input,
-.skill-editor select {
+.skill-editor input {
   min-height: 42px;
   padding: 0 12px;
 }
@@ -3009,23 +2910,6 @@ textarea::placeholder {
   padding: 12px;
   resize: vertical;
   line-height: 1.65;
-}
-
-.skill-example-btn {
-  min-height: 38px;
-  padding: 0 14px;
-  border: 1px solid rgba(201, 220, 233, 0.82);
-  border-radius: 8px;
-  background: rgba(237, 249, 252, 0.78);
-  color: var(--primary);
-  font: inherit;
-  font-weight: 900;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  cursor: pointer;
-  align-self: flex-start;
 }
 
 .save-dialog {
@@ -3264,10 +3148,6 @@ textarea::placeholder {
     max-height: 220px;
     border-right: 0;
     border-bottom: 1px solid rgba(201, 220, 233, 0.72);
-  }
-
-  .skill-form-grid {
-    grid-template-columns: 1fr;
   }
 
   .empty-chat {

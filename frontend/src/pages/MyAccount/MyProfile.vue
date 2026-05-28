@@ -102,12 +102,54 @@
       </aside>
     </section>
 
+    <div v-if="cropModalOpen" class="crop-backdrop" @click.self="closeAvatarCrop">
+      <section class="crop-dialog" role="dialog" aria-modal="true" aria-label="裁剪头像">
+        <header class="crop-title">
+          <h3>裁剪头像</h3>
+          <button class="crop-close" type="button" :disabled="avatarUploading" @click="closeAvatarCrop">×</button>
+        </header>
+
+        <div
+          ref="cropViewport"
+          class="crop-viewport"
+          @pointerdown="startCropDrag"
+          @pointermove="moveCropDrag"
+          @pointerup="endCropDrag"
+          @pointercancel="endCropDrag"
+          @pointerleave="endCropDrag"
+        >
+          <img
+            ref="cropImageEl"
+            class="crop-image"
+            :src="cropImageUrl"
+            alt="头像裁剪预览"
+            draggable="false"
+            :style="cropImageStyle"
+          />
+          <span class="crop-circle"></span>
+        </div>
+
+        <label class="crop-zoom">
+          <span>缩放</span>
+          <input v-model.number="cropZoom" type="range" min="1" max="3" step="0.01" />
+        </label>
+
+        <div class="crop-actions">
+          <button type="button" :disabled="avatarUploading" @click="resetAvatarCrop">重置</button>
+          <button type="button" :disabled="avatarUploading" @click="closeAvatarCrop">取消</button>
+          <button class="save-btn" type="button" :disabled="avatarUploading" @click="confirmAvatarCrop">
+            {{ avatarUploading ? '上传中...' : '确认上传' }}
+          </button>
+        </div>
+      </section>
+    </div>
+
     <LoginView :visible="showLogin" @close="showLogin = false" @login="handleLogin" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   deleteUser,
@@ -129,6 +171,21 @@ const isEditing = ref(false)
 const showLogin = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+const cropModalOpen = ref(false)
+const cropImageUrl = ref('')
+const cropFileName = ref('avatar.png')
+const cropZoom = ref(1)
+const cropViewport = ref(null)
+const cropImageEl = ref(null)
+const cropOffset = reactive({ x: 0, y: 0 })
+const cropDrag = reactive({
+  active: false,
+  pointerId: null,
+  startX: 0,
+  startY: 0,
+  originX: 0,
+  originY: 0
+})
 
 const profile = reactive({
   id: '',
@@ -152,6 +209,9 @@ const infoItems = [
 
 const hasProfile = computed(() => infoItems.some(item => Boolean(String(profile[item.key] || '').trim())))
 const profileAvatarUrl = computed(() => normalizeAvatarUrl(profile.avatar) || defaultAvatar)
+const cropImageStyle = computed(() => ({
+  transform: `translate(${cropOffset.x}px, ${cropOffset.y}px) scale(${cropZoom.value})`
+}))
 
 const displayValue = value => String(value || '').trim() || '请完善个人信息'
 const normalizeProfile = result => result?.data || result?.user || result || {}
@@ -276,16 +336,100 @@ const saveProfile = async () => {
   }
 }
 
-const handleAvatarChange = async event => {
-  const file = event.target.files?.[0]
-  event.target.value = ''
-  if (!file || avatarUploading.value) return
-
+const ensureCanUploadAvatar = () => {
   if (!token.value) {
     errorMessage.value = '请先登录'
+    return false
+  }
+
+  return true
+}
+
+const resetAvatarCrop = () => {
+  cropZoom.value = 1
+  cropOffset.x = 0
+  cropOffset.y = 0
+}
+
+const revokeCropUrl = () => {
+  if (cropImageUrl.value) {
+    URL.revokeObjectURL(cropImageUrl.value)
+  }
+}
+
+const closeAvatarCrop = () => {
+  if (avatarUploading.value) return
+  cropModalOpen.value = false
+  revokeCropUrl()
+  cropImageUrl.value = ''
+  resetAvatarCrop()
+}
+
+const startCropDrag = event => {
+  if (avatarUploading.value) return
+  cropDrag.active = true
+  cropDrag.pointerId = event.pointerId
+  cropDrag.startX = event.clientX
+  cropDrag.startY = event.clientY
+  cropDrag.originX = cropOffset.x
+  cropDrag.originY = cropOffset.y
+  event.currentTarget.setPointerCapture?.(event.pointerId)
+}
+
+const moveCropDrag = event => {
+  if (!cropDrag.active || cropDrag.pointerId !== event.pointerId) return
+  cropOffset.x = cropDrag.originX + event.clientX - cropDrag.startX
+  cropOffset.y = cropDrag.originY + event.clientY - cropDrag.startY
+}
+
+const endCropDrag = event => {
+  if (cropDrag.pointerId === event.pointerId) {
+    cropDrag.active = false
+    cropDrag.pointerId = null
+  }
+}
+
+const cropAvatarToFile = () => new Promise((resolve, reject) => {
+  const image = cropImageEl.value
+  const viewport = cropViewport.value
+  if (!image || !viewport || !image.naturalWidth || !image.naturalHeight) {
+    reject(new Error('头像图片还没有加载完成'))
     return
   }
 
+  const size = 512
+  const rect = viewport.getBoundingClientRect()
+  const viewWidth = rect.width
+  const viewHeight = rect.height
+  const baseScale = Math.max(viewWidth / image.naturalWidth, viewHeight / image.naturalHeight)
+  const scale = baseScale * cropZoom.value
+  const renderedWidth = image.naturalWidth * scale
+  const renderedHeight = image.naturalHeight * scale
+  const left = (viewWidth - renderedWidth) / 2 + cropOffset.x
+  const top = (viewHeight - renderedHeight) / 2 + cropOffset.y
+  const sourceX = Math.max(0, -left / scale)
+  const sourceY = Math.max(0, -top / scale)
+  const sourceWidth = Math.min(image.naturalWidth - sourceX, viewWidth / scale)
+  const sourceHeight = Math.min(image.naturalHeight - sourceY, viewHeight / scale)
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, size, size)
+  ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, size, size)
+
+  canvas.toBlob(blob => {
+    if (!blob) {
+      reject(new Error('头像裁剪失败'))
+      return
+    }
+
+    resolve(new File([blob], cropFileName.value.replace(/\.\w+$/, '') + '.png', { type: 'image/png' }))
+  }, 'image/png', 0.92)
+})
+
+const uploadAvatarFile = async file => {
   avatarUploading.value = true
   errorMessage.value = ''
   successMessage.value = ''
@@ -311,6 +455,40 @@ const handleAvatarChange = async event => {
   } finally {
     avatarUploading.value = false
   }
+}
+
+const confirmAvatarCrop = async () => {
+  if (!ensureCanUploadAvatar()) return
+
+  try {
+    const croppedFile = await cropAvatarToFile()
+    await uploadAvatarFile(croppedFile)
+    cropModalOpen.value = false
+    revokeCropUrl()
+    cropImageUrl.value = ''
+    resetAvatarCrop()
+  } catch (error) {
+    errorMessage.value = error?.message || '头像裁剪失败'
+  }
+}
+
+const handleAvatarChange = event => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || avatarUploading.value) return
+  if (!ensureCanUploadAvatar()) return
+  if (!file.type.startsWith('image/')) {
+    errorMessage.value = '请选择图片文件'
+    return
+  }
+
+  revokeCropUrl()
+  cropFileName.value = file.name || 'avatar.png'
+  cropImageUrl.value = URL.createObjectURL(file)
+  resetAvatarCrop()
+  cropModalOpen.value = true
+  errorMessage.value = ''
+  successMessage.value = ''
 }
 
 const deleteAccount = async () => {
@@ -354,6 +532,7 @@ const logout = () => {
 }
 
 onMounted(loadProfile)
+onBeforeUnmount(revokeCropUrl)
 </script>
 
 <style scoped>
@@ -584,6 +763,100 @@ textarea {
 
 .success-message {
   color: #2f7d57;
+}
+
+.crop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  padding: 24px;
+  background: rgba(8, 24, 55, 0.42);
+  display: grid;
+  place-items: center;
+}
+
+.crop-dialog {
+  width: min(92vw, 420px);
+  padding: 20px;
+  border: 1px solid #c9dce9;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(22, 63, 143, 0.24);
+}
+
+.crop-title,
+.crop-actions,
+.crop-zoom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.crop-title {
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.crop-title h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.crop-close {
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 20px;
+}
+
+.crop-viewport {
+  position: relative;
+  width: min(72vw, 300px);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #edf6fa;
+  touch-action: none;
+  cursor: grab;
+}
+
+.crop-viewport:active {
+  cursor: grabbing;
+}
+
+.crop-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: center;
+  user-select: none;
+  pointer-events: none;
+}
+
+.crop-circle {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  box-shadow: 0 0 0 999px rgba(8, 24, 55, 0.24);
+  pointer-events: none;
+}
+
+.crop-zoom {
+  margin: 16px 0;
+  font-weight: 800;
+}
+
+.crop-zoom input {
+  height: auto;
+  padding: 0;
+}
+
+.crop-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 @media (max-width: 900px) {
