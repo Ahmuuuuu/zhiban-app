@@ -23,7 +23,7 @@
 
           <div class="profile-body">
             <div class="avatar-frame">
-              <img :src="avatarUrl" alt="avatar" />
+              <img :src="displayAvatarUrl" alt="avatar" />
             </div>
 
             <div class="radar-wrap">
@@ -104,6 +104,7 @@
             <TrendingUp :size="18" />
             <h2>&#x505A;&#x9898;&#x6B63;&#x786E;&#x7387;</h2>
           </div>
+          <p class="accuracy-summary">{{ accuracySummary }}</p>
           <svg class="line-chart" viewBox="0 0 460 180" role="img" aria-label="accuracy line chart">
             <g v-for="tick in accuracyTicks" :key="tick.value" class="chart-tick">
               <line :x1="chartLeft" :y1="tick.y" :x2="chartRight" :y2="tick.y" />
@@ -189,7 +190,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   BadgeCheck,
   Clock3,
@@ -200,11 +201,32 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
-import { getExamSessions, getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyStats } from '../api/apis'
+import { getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
 
 const zh = codes => codes.map(code => String.fromCharCode(code)).join('')
+
+const userAvatarUrl = ref(normalizeAvatarUrl(localStorage.getItem('avatar') || ''))
+const displayAvatarUrl = computed(() => userAvatarUrl.value || avatarUrl)
+
+const normalizeProfile = result => result?.data || result?.user || result || {}
+
+const loadUserAvatar = async () => {
+  try {
+    const profile = normalizeProfile(await getUserProfile())
+    userAvatarUrl.value = normalizeAvatarUrl(profile.avatar || localStorage.getItem('avatar') || '')
+    if (profile.avatar) {
+      localStorage.setItem('avatar', profile.avatar)
+    }
+  } catch {
+    userAvatarUrl.value = normalizeAvatarUrl(localStorage.getItem('avatar') || '')
+  }
+}
+
+const handleAvatarUpdated = event => {
+  userAvatarUrl.value = normalizeAvatarUrl(event?.detail?.avatar || localStorage.getItem('avatar') || '')
+}
 
 const studyMinutes = ref(0)
 const studyTimeNote = ref(zh([0x672c, 0x5468, 0x6682, 0x65e0, 0x5b66, 0x4e60, 0x65f6, 0x957f, 0x8bb0, 0x5f55]))
@@ -326,6 +348,7 @@ const buildRecentDateLabels = () => {
 const fallbackAccuracyData = buildRecentDateLabels()
 
 const accuracyData = ref(fallbackAccuracyData)
+const accuracySummary = ref(zh([0x6b63, 0x5728, 0x52a0, 0x8f7d, 0x6700, 0x8fd1, 0x37, 0x5929, 0x6b63, 0x786e, 0x7387]))
 const chartLeft = 56
 const chartRight = 432
 const chartTop = 22
@@ -348,21 +371,27 @@ const formatAccuracyDate = value => {
   return formatMonthDay(date)
 }
 
-const normalizeSessionAccuracy = result => {
-  const sessions = unwrapApiData(result)
-  return (Array.isArray(sessions) ? sessions : [])
+const normalizeWeeklyAccuracy = result => {
+  const raw = unwrapApiData(result) || {}
+  const daily = Array.isArray(raw.daily) ? raw.daily : Array.isArray(raw) ? raw : []
+  return {
+    points: daily
     .map(item => {
-      const score = Number(item.score ?? item.correct_rate ?? item.correctRate ?? item.percentage)
+      const score = Number(item.accuracy ?? item.correct_rate ?? item.correctRate ?? item.percentage ?? item.score)
       const normalized = score <= 1 ? score * 100 : score
       return {
-        day: formatAccuracyDate(item.last_at || item.lastAt || item.created_at || item.createdAt || item.first_at || item.firstAt),
+        day: formatAccuracyDate(item.date || item.day || item.created_at || item.createdAt),
         value: Math.round(Math.max(0, Math.min(100, Number.isFinite(normalized) ? normalized : 0))),
-        time: item.last_at || item.lastAt || item.created_at || item.createdAt || item.first_at || item.firstAt || ''
+        time: item.date || item.day || item.created_at || item.createdAt || ''
       }
     })
     .filter(item => item.day)
     .sort((a, b) => new Date(a.time) - new Date(b.time))
-    .slice(-7)
+    .slice(-7),
+    total: Number(raw.week_total ?? raw.weekTotal ?? daily.reduce((sum, item) => sum + Number(item.total || 0), 0)),
+    correct: Number(raw.week_correct ?? raw.weekCorrect ?? daily.reduce((sum, item) => sum + Number(item.correct || 0), 0)),
+    accuracy: Number(raw.week_accuracy ?? raw.weekAccuracy ?? 0)
+  }
 }
 
 const completedPaths = ref([])
@@ -474,11 +503,9 @@ const applyStudyStats = (stats, collections = []) => {
   completedPaths.value = finished.map((item, index) => formatPathCard(item, index, true))
   currentPaths.value = inProgress.map((item, index) => formatPathCard(item, index)).slice(0, 2)
   weakPoints.value = normalizeWeakPoints(stats.weak_points || stats.weakPoints)
-  if (!accuracyData.value.length || accuracyData.value === fallbackAccuracyData) {
-    accuracyData.value = fallbackAccuracyData.map(item => ({
-      ...item,
-      value: Math.round(Math.max(0, Math.min(1, correctRate || 0)) * 100)
-    }))
+  if (!accuracyData.value.length) {
+    accuracyData.value = buildRecentDateLabels()
+    accuracySummary.value = `${zh([0x6700, 0x8fd1, 0x37, 0x5929, 0x6682, 0x65e0, 0x505a, 0x9898, 0x6570, 0x636e])} - ${zh([0x603b, 0x6b63, 0x786e, 0x7387])} ${toPercent(correctRate)}`
   }
   resourceFeedback.value = [
     { label: zh([0x8d44, 0x6e90, 0x6253, 0x5f00, 0x7387]), value: toPercent(resources.open_rate ?? resources.openRate) },
@@ -495,19 +522,26 @@ const loadStudyDashboard = async () => {
   try {
     const statsResult = await getStudyStats()
     const stats = unwrapApiData(statsResult) || {}
-    const [guidanceResult, collectionsResult, examSessionsResult] = await Promise.allSettled([
+    const [guidanceResult, collectionsResult, weeklyAccuracyResult] = await Promise.allSettled([
       getLearningGuidance(),
       getStudyCollections(),
-      getExamSessions()
+      getStudyExamWeekly()
     ])
     const guidanceData = guidanceResult.status === 'fulfilled' ? unwrapApiData(guidanceResult.value) : {}
     const collectionsData = collectionsResult.status === 'fulfilled' ? unwrapApiData(collectionsResult.value) : []
-    const sessionAccuracy = examSessionsResult.status === 'fulfilled' ? normalizeSessionAccuracy(examSessionsResult.value) : []
+    const weeklyAccuracy = weeklyAccuracyResult.status === 'fulfilled' ? normalizeWeeklyAccuracy(weeklyAccuracyResult.value) : { points: [] }
     const guidance = guidanceData?.guidance || stats.learning_guidance || stats.learningGuidance || ''
     const collections = Array.isArray(collectionsData) ? collectionsData : []
 
-    if (sessionAccuracy.length) {
-      accuracyData.value = sessionAccuracy
+    if (weeklyAccuracyResult.status === 'rejected') {
+      console.warn('[StudySituation] load weekly accuracy failed:', weeklyAccuracyResult.reason)
+    }
+
+    if (weeklyAccuracy.points?.length) {
+      accuracyData.value = weeklyAccuracy.points
+      accuracySummary.value = `${zh([0x6700, 0x8fd1, 0x37, 0x5929])} ${weeklyAccuracy.total || 0} ${zh([0x9898])} - ${zh([0x6b63, 0x786e])} ${weeklyAccuracy.correct || 0} ${zh([0x9898])} - ${zh([0x6b63, 0x786e, 0x7387])} ${toPercent(weeklyAccuracy.accuracy)}`
+    } else {
+      accuracyData.value = buildRecentDateLabels()
     }
     applyStudyStats({ ...stats, learning_guidance: guidance }, collections)
   } catch (error) {
@@ -516,8 +550,14 @@ const loadStudyDashboard = async () => {
 }
 
 onMounted(() => {
+  window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  loadUserAvatar()
   loadRadarData()
   loadStudyDashboard()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
 })
 </script>
 
@@ -853,7 +893,14 @@ onMounted(() => {
 .line-chart {
   width: 100%;
   height: 170px;
-  margin-top: 14px;
+  margin-top: 8px;
+}
+
+.accuracy-summary {
+  margin: 10px 0 0;
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .line-chart line {

@@ -1,5 +1,7 @@
 export function resolveApiUrl(path: string): string;
 
+export function normalizeAvatarUrl(avatar: string | null | undefined): string;
+
 export function downloadWithToken(url: string, filename?: string): Promise<void>;
 
 export function login(data: unknown): Promise<unknown>;
@@ -9,6 +11,10 @@ export function register(data: unknown): Promise<unknown>;
 export function getUserProfile(): Promise<unknown>;
 
 export function updateUserProfile(data: unknown): Promise<unknown>;
+
+export function uploadUserAvatar(file: File): Promise<unknown>;
+
+export function deleteUserAvatar(): Promise<unknown>;
 
 export function deleteUser(data: unknown): Promise<unknown>;
 
@@ -42,6 +48,8 @@ export function uploadStudyMaterial(data: unknown): Promise<unknown>;
 export function getStudyResources(params?: Record<string, unknown>): Promise<unknown>;
 
 export function getStudyStats(): Promise<unknown>;
+
+export function getStudyExamWeekly(): Promise<unknown>;
 
 export function getLearningGuidance(): Promise<unknown>;
 
