@@ -109,6 +109,8 @@ export function generatePresentation(data: {
   voice?: string;
 }): Promise<unknown>;
 
+export function getPresentations(): Promise<unknown>;
+
 export function getPresentation(presentationId: number | string): Promise<unknown>;
 
 export function deleteGeneratedResource(resourceId: number | string): Promise<unknown>;
