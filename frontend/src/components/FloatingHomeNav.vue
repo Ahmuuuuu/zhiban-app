@@ -44,7 +44,7 @@ watch(
   top: 22px;
   left: 28px;
   z-index: 20;
-  width: min(760px, calc(100% - 56px));
+  width: min(560px, calc(100% - 56px));
   max-width: calc(100% - 40px);
   min-height: 62px;
   padding: 10px 8px;

@@ -409,6 +409,21 @@ export function getNarrationVoices() {
   return request.get('/video/voices')
 }
 
+export function generatePresentation(data) {
+  return request({
+    url: '/presentation/generate',
+    method: 'post',
+    data: {
+      topic: data.topic,
+      voice: data.voice || 'zh-CN-XiaoxiaoNeural'
+    }
+  })
+}
+
+export function getPresentation(presentationId) {
+  return request.get(`/presentation/${presentationId}`)
+}
+
 // ── 个人智能体 Skill API ──
 
 export function getAgentSkills() {
