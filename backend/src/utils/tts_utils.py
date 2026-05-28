@@ -1,5 +1,6 @@
 """EdgeTTS 工具 — 文本转语音、幻灯片/文档章节解析"""
 
+import asyncio
 import logging
 import re
 
@@ -173,9 +174,29 @@ def parse_by_type(markdown: str, resource_type: str) -> list[dict]:
 
 
 async def generate_audio(text: str, output_path: str, voice: str = "zh-CN-XiaoxiaoNeural", rate: str = "+0%"):
-    """调用 EdgeTTS 将文本转为 MP3 音频"""
+    """调用 EdgeTTS 将文本转为 MP3 音频（带超时，自动绕过代理）"""
     import edge_tts
+    import os
 
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
-    await communicate.save(output_path)
-    return output_path
+    # EdgeTTS 使用 HTTP/2，大多数代理不支持 HTTP/2 透明转发
+    # 临时绕过代理，仅对微软 TTS 域名生效
+    old_no_proxy = os.environ.get("NO_PROXY", "")
+    domains = "*.speech.microsoft.com,*.microsoft.com,*.bing.com,edge-tts.azurewebsites.net"
+    os.environ["NO_PROXY"] = f"{domains},{old_no_proxy}" if old_no_proxy else domains
+    os.environ["no_proxy"] = os.environ["NO_PROXY"]
+
+    try:
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+        await asyncio.wait_for(communicate.save(output_path), timeout=60)
+        return output_path
+    except asyncio.TimeoutError:
+        logger.error("EdgeTTS 超时 (60s): text_len=%d voice=%s", len(text), voice)
+        raise
+    finally:
+        # 恢复原代理设置
+        if old_no_proxy:
+            os.environ["NO_PROXY"] = old_no_proxy
+            os.environ["no_proxy"] = old_no_proxy
+        else:
+            os.environ.pop("NO_PROXY", None)
+            os.environ.pop("no_proxy", None)
