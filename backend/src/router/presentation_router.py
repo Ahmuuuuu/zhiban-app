@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from backend.src.service.presentation_service import (
     generate,
+    preview,
     get_presentation,
     list_presentations,
     delete_presentation,
@@ -24,12 +25,17 @@ router = APIRouter(prefix="/presentation", tags=["课件生成"])
 class GenerateRequest(BaseModel):
     topic: str = Field(description="学习话题，必须已通过 /resource/generate 生成过资源")
     voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="EdgeTTS 语音名称")
+    chapters: list[str] | None = Field(default=None, description="要生成的章节列表，如 ['intro', 'ppt']，不传则全生成")
+
+
+class PreviewRequest(BaseModel):
+    topic: str = Field(description="学习话题")
 
 
 @router.post("/generate")
 async def generate_presentation(data: GenerateRequest, user_id: int = Depends(get_user_id_from_token)):
     """生成动态 HTML 课件：学科介绍 → 思维导图 → PPT讲解 → EdgeTTS 配音"""
-    result = await generate(data.topic, user_id, voice=data.voice)
+    result = await generate(data.topic, user_id, voice=data.voice, chapters=data.chapters)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}
@@ -48,6 +54,15 @@ async def get_presentation_detail(presentation_id: int, user_id: int = Depends(g
     result = await get_presentation(presentation_id, user_id)
     if not result:
         raise HTTPException(status_code=404, detail="课件不存在")
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/preview")
+async def preview_presentation(data: PreviewRequest, user_id: int = Depends(get_user_id_from_token)):
+    """预览话题的可用章节，供用户选择"""
+    result = await preview(data.topic, user_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}
 
 
