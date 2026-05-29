@@ -20,7 +20,7 @@ async def init_db():
         return 
     await Tortoise.init(
         db_url=database,
-        modules={"models": ["backend.src.models.usermodel", "backend.src.models.chat_history_model", "backend.src.models.portraitmodel", "backend.src.models.portrait_radar_model", "backend.src.models.knowledgemodel", "backend.src.models.resource_model", "backend.src.models.agent_skill_model", "backend.src.models.image_model", "backend.src.models.exam_model", "backend.src.models.path_model", "backend.src.models.narration_model", "backend.src.models.study_model", "backend.src.models.presentation_model", "backend.src.models.task_model"]}
+        modules={"models": ["backend.src.models.usermodel", "backend.src.models.chat_history_model", "backend.src.models.portraitmodel", "backend.src.models.portrait_radar_model", "backend.src.models.knowledgemodel", "backend.src.models.resource_model", "backend.src.models.agent_skill_model", "backend.src.models.image_model", "backend.src.models.exam_model", "backend.src.models.path_model", "backend.src.models.narration_model", "backend.src.models.study_model", "backend.src.models.presentation_model", "backend.src.models.task_model", "backend.src.models.email_code_model"]}
     )
     await Tortoise.generate_schemas()
     _DB_INITIALIZED = True

@@ -37,6 +37,26 @@ class Update_User_Information(BaseModel):
     profile: str | None = Field(default=None, description="个人简介")
 
 
+class SendEmailCode(BaseModel):
+    """发送邮箱验证码"""
+    email: str = Field(description="邮箱地址")
+    purpose: str = Field(default="login", description="login / register / bind")
+
+
+class RegisterByEmail(BaseModel):
+    """邮箱注册"""
+    email: str = Field(description="邮箱地址")
+    code: str = Field(description="验证码")
+    password: str = Field(description="密码")
+    username: str = Field(description="用户名")
+
+
+class LoginByEmail(BaseModel):
+    """邮箱验证码登录"""
+    email: str = Field(description="邮箱地址")
+    code: str = Field(description="验证码")
+
+
 class Delete_User(BaseModel):
     """注销账户，需验证密码"""
     password: str = Field(description="密码")
