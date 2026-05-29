@@ -816,7 +816,7 @@ const normalizeHistoryGroups = (res) => {
   const groups = data?.data || data
 
   if (Array.isArray(groups)) {
-    return groups
+    return groups.reverse()
   }
 
   if (!groups || typeof groups !== 'object') {
@@ -834,7 +834,7 @@ const normalizeHistoryGroups = (res) => {
       lastMessage: stripInternalInstructions(lastRecord.req) || lastRecord.res || '',
       time: formatTime(getRecordTime(lastRecord))
     }
-  })
+  }).reverse()
 }
 
 const escapeHtml = (value) => {
@@ -1651,10 +1651,13 @@ const isVideoFile = message => {
 
 const scrollToBottom = async () => {
   await nextTick()
-
-  if (chatContentRef.value) {
-    chatContentRef.value.scrollTop = chatContentRef.value.scrollHeight
-  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (chatContentRef.value) {
+        chatContentRef.value.scrollTop = chatContentRef.value.scrollHeight
+      }
+    })
+  })
 }
 
 const handleGenerationDone = async eventData => {
