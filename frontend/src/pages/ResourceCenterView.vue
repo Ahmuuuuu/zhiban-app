@@ -89,33 +89,57 @@
               <span v-if="resource.type === 'image'">图片</span>
               <span v-else>{{ getWordCount(resource.content) }} 字</span>
             </footer>
-            <div class="resource-actions">
+            <div class="resource-card-actions" @click.stop>
+              <button
+                class="reaction-btn"
+                :class="{ active: resource.isLiked }"
+                type="button"
+                title="点赞"
+                :disabled="isReactionLoading(resource, 'like') || !canReactResource(resource)"
+                @click="toggleResourceLike(resource)"
+              >
+                <ThumbsUp :size="14" />
+                <span>{{ formatCount(resource.likeCount) }}</span>
+              </button>
+              <button
+                class="reaction-btn"
+                :class="{ active: resource.isFavorited }"
+                type="button"
+                title="收藏"
+                :disabled="isReactionLoading(resource, 'favorite') || !canReactResource(resource)"
+                @click="toggleResourceFavorite(resource)"
+              >
+                <Bookmark :size="14" />
+                <span>{{ formatCount(resource.favoriteCount) }}</span>
+              </button>
               <button
                 v-if="canNarrateResource(resource)"
                 class="resource-action"
                 type="button"
+                :title="isNarrationPlaying(resource) ? '暂停朗读' : '朗读'"
                 :disabled="isNarrationLoading(resource)"
                 @click.stop="toggleNarration(resource)"
               >
                 <PauseCircle v-if="isNarrationPlaying(resource)" :size="15" />
                 <Volume2 v-else :size="15" />
-                {{ isNarrationLoading(resource) ? '...' : (isNarrationPlaying(resource) ? '暂停' : '朗读') }}
               </button>
               <button
                 v-if="isQuizResource(resource)"
                 class="resource-action"
                 type="button"
+                title="开始练习"
                 @click.stop="startResourceQuiz(resource)"
               >
-                开始练习
+                <FileQuestion :size="15" />
               </button>
               <button
                 v-if="resource.downloadUrl"
                 class="resource-action"
                 type="button"
+                title="下载文件"
                 @click.stop="downloadResource(resource)"
               >
-                下载文件
+                <Download :size="15" />
               </button>
             </div>
           </article>
@@ -141,10 +165,19 @@
           <button
             v-for="resource in hotResources"
             :key="resource.doc_id"
+            class="hot-resource-card"
             type="button"
             @click="openResourcePreview(resource)"
           >
-            {{ resource.title || '未命名资源' }}
+            <span class="hot-resource-card__rank">{{ resource.hotRank }}</span>
+            <span class="hot-resource-card__body">
+              <strong>{{ resource.title || '未命名资源' }}</strong>
+              <small>{{ getResourceKind(resource) }} · {{ getHotScore(resource) }} 热度</small>
+            </span>
+            <span class="hot-resource-card__stats">
+              <span><ThumbsUp :size="12" />{{ formatCount(resource.likeCount) }}</span>
+              <span><Bookmark :size="12" />{{ formatCount(resource.favoriteCount) }}</span>
+            </span>
           </button>
           <p v-if="!hotResources.length" class="hot-empty">暂无热门资源</p>
         </div>
@@ -167,6 +200,26 @@
           <div class="resource-fullscreen__meta">
             <span>{{ formatDate(selectedResource.created_at, true) }}</span>
             <span>{{ getWordCount(selectedResource.content) }} 字</span>
+            <button
+              class="reaction-btn reaction-btn--meta"
+              :class="{ active: selectedResource.isLiked }"
+              type="button"
+              :disabled="isReactionLoading(selectedResource, 'like') || !canReactResource(selectedResource)"
+              @click="toggleResourceLike(selectedResource)"
+            >
+              <ThumbsUp :size="14" />
+              <span>{{ formatCount(selectedResource.likeCount) }}</span>
+            </button>
+            <button
+              class="reaction-btn reaction-btn--meta"
+              :class="{ active: selectedResource.isFavorited }"
+              type="button"
+              :disabled="isReactionLoading(selectedResource, 'favorite') || !canReactResource(selectedResource)"
+              @click="toggleResourceFavorite(selectedResource)"
+            >
+              <Bookmark :size="14" />
+              <span>{{ formatCount(selectedResource.favoriteCount) }}</span>
+            </button>
           </div>
 
           <div v-if="canNarrateResource(selectedResource)" class="resource-fullscreen__audio">
@@ -248,16 +301,31 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertCircle,
+  Bookmark,
+  Download,
   FileImage,
+  FileQuestion,
   Presentation,
   FileText,
   GitBranch,
   PauseCircle,
   RefreshCw,
   Search,
+  ThumbsUp,
   Volume2
 } from 'lucide-vue-next'
-import { downloadWithToken, getGeneratedImages, getGeneratedResource, getGeneratedResources, getStudyResources, resolveApiUrl } from '../api/apis'
+import {
+  downloadWithToken,
+  favoriteResource,
+  getGeneratedImages,
+  getGeneratedResource,
+  getGeneratedResources,
+  getStudyResources,
+  likeResource,
+  resolveApiUrl,
+  unfavoriteResource,
+  unlikeResource
+} from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
@@ -270,6 +338,7 @@ const selectedResource = ref(null)
 const previewOpen = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
+const reactionLoading = ref({})
 const {
   canNarrateResource,
   toggleNarration,
@@ -293,11 +362,37 @@ const categoryLabelMap = {
   reference: '参考资料',
 }
 
+const pickNumber = (...values) => {
+  for (const value of values) {
+    const number = Number(value)
+    if (Number.isFinite(number)) return number
+  }
+  return 0
+}
+
+const pickBoolean = (...values) => {
+  for (const value of values) {
+    if (typeof value === 'boolean') return value
+    if (value === 1 || value === '1' || value === 'true') return true
+    if (value === 0 || value === '0' || value === 'false') return false
+  }
+  return false
+}
+
+const normalizeReactionFields = item => ({
+  likeCount: pickNumber(item.like_count, item.likeCount, item.likes_count, item.likes, item.praise_count, item.upvote_count),
+  favoriteCount: pickNumber(item.favorite_count, item.favoriteCount, item.collect_count, item.collectCount, item.collection_count, item.collections_count, item.favorites),
+  isLiked: pickBoolean(item.is_liked, item.isLiked, item.liked, item.has_liked),
+  isFavorited: pickBoolean(item.is_favorited, item.isFavorited, item.favorited, item.collected, item.is_collected, item.has_favorited)
+})
+
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
 
   return list.map((item, index) => ({
     doc_id: String(item.doc_id || item.id || index),
+    source: item.source || 'knowledge',
+    sourceId: String(item.resource_id || item.resourceId || item.id || item.doc_id || ''),
     title: item.title || '',
     content: item.preview || item.content || '',
     type: item.type || item.file_type || '',
@@ -306,7 +401,8 @@ const normalizeResources = data => {
     visibility: item.visibility || 'private',
     created_at: item.created_at || item.createdAt || '',
     previewUrl: item.previewUrl || item.preview_url || '',
-    downloadUrl: item.downloadUrl || item.download_url || ''
+    downloadUrl: item.downloadUrl || item.download_url || '',
+    ...normalizeReactionFields(item)
   }))
 }
 
@@ -339,7 +435,8 @@ const normalizeGeneratedResources = data => {
       sessionId: item.session_id || item.sessionId || '',
       created_at: item.created_at || item.createdAt || '',
       previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || ''),
-      downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
+      downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+      ...normalizeReactionFields(item)
     }
   })
 }
@@ -364,7 +461,8 @@ const normalizeGeneratedImages = data => {
       sessionId: '',
       created_at: item.created_at || item.createdAt || '',
       previewUrl: resolveApiUrl(url),
-      downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || url || (imageId ? `/image/${imageId}/download` : ''))
+      downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || url || (imageId ? `/image/${imageId}/download` : '')),
+      ...normalizeReactionFields(item)
     }
   })
 }
@@ -410,7 +508,15 @@ const filteredResources = computed(() => {
 })
 
 const hotResources = computed(() => {
-  return resources.value.slice(0, 5)
+  return resources.value
+    .slice()
+    .sort((a, b) => {
+      const scoreDiff = getHotScore(b) - getHotScore(a)
+      if (scoreDiff !== 0) return scoreDiff
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    })
+    .slice(0, 5)
+    .map((resource, index) => ({ ...resource, hotRank: index + 1 }))
 })
 
 const openResourcePreview = async resource => {
@@ -431,8 +537,10 @@ const openResourcePreview = async resource => {
         filename: data.filename || resource.filename,
         type: isMindmapResource(resource) ? 'mindmap' : (data.resource_type || data.file_type || resource.type),
         sessionId: data.session_id || resource.sessionId || '',
-        downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl)
+        downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl),
+        ...normalizeReactionFields({ ...resource, ...data })
       }
+      updateResourceState(selectedResource.value)
     } catch (error) {
       console.error('加载资源详情失败', error)
     }
@@ -515,6 +623,96 @@ const startResourceQuiz = async resource => {
 const matchesCategory = resource => {
   return getResourceKind(resource) === activeCategory.value
 }
+
+const getReactionId = resource => {
+  const id = resource?.sourceId || resource?.resourceId || resource?.resource_id || ''
+  return id && !String(id).startsWith('image-') ? id : ''
+}
+
+const canReactResource = resource => Boolean(getReactionId(resource))
+
+const reactionKey = (resource, type) => `${type}-${getReactionId(resource) || resource?.doc_id || ''}`
+
+const isReactionLoading = (resource, type) => Boolean(reactionLoading.value[reactionKey(resource, type)])
+
+const setReactionLoading = (resource, type, value) => {
+  reactionLoading.value = {
+    ...reactionLoading.value,
+    [reactionKey(resource, type)]: value
+  }
+}
+
+const updateResourceState = patch => {
+  if (!patch?.doc_id) return
+  resources.value = resources.value.map(item => item.doc_id === patch.doc_id ? { ...item, ...patch } : item)
+  if (selectedResource.value?.doc_id === patch.doc_id) {
+    selectedResource.value = { ...selectedResource.value, ...patch }
+  }
+}
+
+const getHotScore = resource => {
+  return pickNumber(resource?.likeCount) * 2 + pickNumber(resource?.favoriteCount) * 3
+}
+
+const formatCount = value => {
+  const count = pickNumber(value)
+  if (count >= 10000) return `${(count / 10000).toFixed(count >= 100000 ? 0 : 1)}万`
+  if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}k`
+  return String(count)
+}
+
+const toggleResourceLike = async resource => {
+  const resourceId = getReactionId(resource)
+  if (!resourceId || isReactionLoading(resource, 'like')) return
+
+  const nextLiked = !resource.isLiked
+  const nextCount = Math.max(0, pickNumber(resource.likeCount) + (nextLiked ? 1 : -1))
+  const optimistic = { ...resource, isLiked: nextLiked, likeCount: nextCount }
+  updateResourceState(optimistic)
+  setReactionLoading(resource, 'like', true)
+
+  try {
+    const result = nextLiked ? await likeResource(resourceId) : await unlikeResource(resourceId)
+    const data = result?.data || result || {}
+    updateResourceState({
+      ...optimistic,
+      ...normalizeReactionFields({ ...optimistic, ...data })
+    })
+  } catch (error) {
+    console.error('资源点赞状态更新失败', error)
+    updateResourceState(resource)
+    window.alert('点赞失败，请稍后重试')
+  } finally {
+    setReactionLoading(resource, 'like', false)
+  }
+}
+
+const toggleResourceFavorite = async resource => {
+  const resourceId = getReactionId(resource)
+  if (!resourceId || isReactionLoading(resource, 'favorite')) return
+
+  const nextFavorited = !resource.isFavorited
+  const nextCount = Math.max(0, pickNumber(resource.favoriteCount) + (nextFavorited ? 1 : -1))
+  const optimistic = { ...resource, isFavorited: nextFavorited, favoriteCount: nextCount }
+  updateResourceState(optimistic)
+  setReactionLoading(resource, 'favorite', true)
+
+  try {
+    const result = nextFavorited ? await favoriteResource(resourceId) : await unfavoriteResource(resourceId)
+    const data = result?.data || result || {}
+    updateResourceState({
+      ...optimistic,
+      ...normalizeReactionFields({ ...optimistic, ...data })
+    })
+  } catch (error) {
+    console.error('资源收藏状态更新失败', error)
+    updateResourceState(resource)
+    window.alert('收藏失败，请稍后重试')
+  } finally {
+    setReactionLoading(resource, 'favorite', false)
+  }
+}
+
 // 切换资源大类
 const switchCategory = cat => {
   activeCategory.value = cat
@@ -1281,7 +1479,7 @@ onBeforeUnmount(stopCurrentAudio)
 .resource-card {
   min-height: 0;
   max-height: none;
-  height: 204px;
+  height: 238px;
   padding: 14px 15px 16px;
   border-radius: 24px;
   background:
@@ -1365,7 +1563,62 @@ onBeforeUnmount(stopCurrentAudio)
   z-index: 1;
 }
 
-.resource-actions,
+.resource-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  width: 100%;
+  position: relative;
+  z-index: 2;
+}
+
+.reaction-btn {
+  height: 30px;
+  min-width: 46px;
+  padding: 0 7px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #45617e;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.reaction-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(22, 63, 143, 0.32);
+  background: #ffffff;
+}
+
+.reaction-btn.active {
+  border-color: rgba(22, 63, 143, 0.36);
+  background: #163f8f;
+  color: #ffffff;
+}
+
+.reaction-btn.active svg {
+  fill: currentColor;
+}
+
+.reaction-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.reaction-btn--meta {
+  height: 30px;
+  min-width: 62px;
+  background: rgba(22, 63, 143, 0.08);
+}
+
 .resource-fullscreen__actions {
   display: flex;
   flex-wrap: nowrap;
@@ -1376,20 +1629,24 @@ onBeforeUnmount(stopCurrentAudio)
 }
 
 .resource-action {
-  min-height: 28px;
-  padding: 0 8px;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
   border: 1px solid rgba(22, 63, 143, 0.18);
   border-radius: 999px;
   background: #163f8f;
   color: #fafafa;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   text-decoration: none;
   font-size: 12px;
   font-weight: 800;
   font-family: inherit;
   cursor: pointer;
   gap: 5px;
+  flex: 0 0 auto;
 }
 
 .resource-action:disabled {
@@ -1470,12 +1727,11 @@ onBeforeUnmount(stopCurrentAudio)
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 10px;
   overflow: hidden;
 }
 
-.hot-list button,
-.hot-list span {
+.hot-list > span {
   height: 2px;
   margin-left: 26px;
   border: 0;
@@ -1483,17 +1739,81 @@ onBeforeUnmount(stopCurrentAudio)
   background: linear-gradient(to right, transparent, rgba(201, 220, 233, 0.74) 18%, rgba(201, 220, 233, 0.74) 82%, transparent);
 }
 
-.hot-list button {
-  height: auto;
-  min-height: 28px;
-  padding: 4px 0;
+.hot-resource-card {
+  min-height: 74px;
+  margin-left: 20px;
+  padding: 10px 10px;
+  border: 1px solid rgba(22, 63, 143, 0.12);
+  border-radius: 14px;
+  background: rgba(250, 250, 250, 0.72);
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-areas:
+    "rank body"
+    "rank stats";
+  align-items: center;
+  gap: 5px 8px;
   text-align: left;
   color: #163f8f;
-  font-size: 13px;
-  font-weight: 800;
   cursor: pointer;
-  background: transparent;
-  border-bottom: 1px solid rgba(201, 220, 233, 0.7);
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.hot-resource-card:hover {
+  transform: translateX(3px);
+  border-color: rgba(22, 63, 143, 0.28);
+  background: #ffffff;
+}
+
+.hot-resource-card__rank {
+  grid-area: rank;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #163f8f;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.hot-resource-card__body {
+  grid-area: body;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hot-resource-card__body strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.hot-resource-card__body small {
+  color: #6c7e96;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.hot-resource-card__stats {
+  grid-area: stats;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #55708d;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.hot-resource-card__stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .share-btn {
