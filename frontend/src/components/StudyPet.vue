@@ -179,6 +179,7 @@ onUnmounted(() => {
       'study-pet--right': floating && side === 'right',
       'study-pet--dragging': isDragging,
       'study-pet--chat-expanded': chatExpanded,
+      'study-pet--notice-visible': noticeVisible,
     }"
     :style="petStyle"
     @pointerdown="startDrag"
@@ -238,6 +239,10 @@ onUnmounted(() => {
 .study-pet--chat-expanded {
   filter: none;
   z-index: 1200;
+}
+
+.study-pet--notice-visible {
+  z-index: 5200;
 }
 
 .study-pet__notice {
