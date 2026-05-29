@@ -9,7 +9,6 @@ export interface ResourceToolConfig {
 }
 
 export const resourceTools: ResourceToolConfig[] = [
-  { label: 'music', generateMode: 'resource', resourceTypes: ['document'] },
   { label: 'image', generateMode: 'image', aspectRatio: '1:1', imageCount: 1 },
   { label: 'ppt', generateMode: 'resource', resourceTypes: ['ppt'] },
   { label: 'word', generateMode: 'resource', resourceTypes: ['document'] },
@@ -40,9 +39,6 @@ export function detectGenerationIntent(text: string): ResourceToolConfig | null 
   }
   if (/(文档|word|学习资源|资料|笔记|教案|讲义|总结)/i.test(trimmed)) {
     return { ...resourceTools.find(t => t.label === 'word')! }
-  }
-  if (/(音乐|歌曲|music|节奏|旋律)/i.test(trimmed)) {
-    return { ...resourceTools.find(t => t.label === 'music')! }
   }
   return null
 }

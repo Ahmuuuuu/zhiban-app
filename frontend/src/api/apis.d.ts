@@ -8,6 +8,15 @@ export function login(data: unknown): Promise<unknown>;
 
 export function register(data: unknown): Promise<unknown>;
 
+export function sendEmailCode(data: { email: string; purpose?: 'login' | 'register' | 'bind' | string }): Promise<unknown>;
+
+export function registerByEmail(data: {
+  username: string;
+  email: string;
+  password: string;
+  code: string;
+}): Promise<unknown>;
+
 export function getUserProfile(): Promise<unknown>;
 
 export function updateUserProfile(data: unknown): Promise<unknown>;

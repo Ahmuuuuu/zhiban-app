@@ -8,7 +8,7 @@ const request = axios.create({
 request.interceptors.request.use(
   config => {
     const token = localStorage.getItem('token')
-    const publicUrls = ['/user/create_user', '/user/login_user']
+    const publicUrls = ['/user/create_user', '/user/login_user', '/user/send_email_code', '/user/register_by_email', '/user/login_by_email']
 
     if (token && !publicUrls.includes(config.url)) {
       config.headers.token = token

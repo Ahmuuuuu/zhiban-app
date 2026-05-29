@@ -57,6 +57,22 @@ export function register(data) {
   })
 }
 
+export function sendEmailCode(data) {
+  return request({
+    url: '/user/send_email_code',
+    method: 'post',
+    data
+  })
+}
+
+export function registerByEmail(data) {
+  return request({
+    url: '/user/register_by_email',
+    method: 'post',
+    data
+  })
+}
+
 // 获取用户资料：后端 Read_User 通过 token 获取 user_id
 export function getUserProfile() {
   return request({
