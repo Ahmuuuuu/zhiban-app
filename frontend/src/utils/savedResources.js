@@ -1,4 +1,5 @@
 import { getGeneratedImage, getGeneratedResource, resolveApiUrl } from '../api/apis'
+import { getResourceCoverUrl } from './resourceCover'
 
 export const SAVED_GENERATED_RESOURCES_KEY = 'zhiban_saved_generated_resource_refs'
 
@@ -38,6 +39,7 @@ export const saveGeneratedResourceRef = payload => {
     title: payload.title || '',
     filename: payload.filename || '',
     content: payload.content || '',
+    coverUrl: payload.coverUrl || '',
     previewUrl: payload.previewUrl || '',
     downloadUrl: payload.downloadUrl || '',
     visibility: payload.visibility || 'private',
@@ -81,7 +83,7 @@ const normalizeDetail = (detail, ref) => {
     item.imageUrl ||
     ''
 
-  return {
+  const resource = {
     doc_id: `${ref.kind}-${ref.sourceId}`,
     sourceId: ref.sourceId,
     source: 'generated',
@@ -94,8 +96,14 @@ const normalizeDetail = (detail, ref) => {
     quizId: ref.quizId || '',
     created_at: item.created_at || item.createdAt || ref.createdAt || '',
     filename: ref.filename || title,
+    coverUrl: resolveApiUrl(item.cover_url || item.coverUrl || item.thumbnail_url || item.thumbnailUrl || ref.coverUrl || ''),
     previewUrl: resolveApiUrl(previewUrl),
     downloadUrl: resolveApiUrl(downloadUrl)
+  }
+
+  return {
+    ...resource,
+    coverUrl: resource.coverUrl || getResourceCoverUrl(resource)
   }
 }
 

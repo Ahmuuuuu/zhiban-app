@@ -316,6 +316,9 @@ const createMindInstance = (el, data, profile = layoutProfile.value) => {
     draggable: true,
     mouseSelectionButton: 0,
     overflowHidden: false,
+    scaleMax: 3,
+    scaleMin: 0.2,
+    scaleSensitivity: 0.2,
     theme: themeForProfile(profile)
   })
   instance.init(data)
@@ -599,9 +602,10 @@ onBeforeUnmount(() => {
 .mindmap-overlay__toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px;
-  padding: 14px 20px;
+  min-height: 66px;
+  padding: 14px 178px 14px 152px;
   background: rgba(255, 255, 255, 0.06);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -617,6 +621,10 @@ onBeforeUnmount(() => {
 }
 
 .mindmap-overlay__back {
+  position: fixed;
+  left: 18px;
+  top: 12px;
+  z-index: 3;
   min-width: 82px;
   height: 38px;
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -634,10 +642,21 @@ onBeforeUnmount(() => {
 }
 
 .mindmap-overlay__actions {
+  position: fixed;
+  right: 18px;
+  top: 12px;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(8, 23, 51, 0.42);
+  box-shadow: 0 12px 30px rgba(8, 23, 51, 0.2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .mindmap-overlay__actions button {
