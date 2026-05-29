@@ -8,9 +8,6 @@
         <button class="menu-btn" type="button" aria-label="打开最近对话" @click="showHistoryPanel = !showHistoryPanel">
           <Menu :size="34" stroke-width="1.25" />
         </button>
-        <button class="menu-btn" type="button" aria-label="管理个人智能体 Skill" title="管理个人智能体 Skill" @click="openSkillPanel">
-          <Bot :size="31" stroke-width="1.35" />
-        </button>
       </div>
       <UserAccountButton variant="home" logged-out-meta="点击登录" />
     </header>
@@ -145,7 +142,12 @@
             class="chat-mindmap-preview"
             :content="message.content"
             :title="message.filename"
+            :open-signal="message.mindmapPreviewSignal || 0"
           />
+
+          <div v-else-if="isMindmapFile(message)" class="file-placeholder">
+            思维导图已生成，可以加载预览。
+          </div>
 
           <div v-else-if="isVideoFile(message)" class="file-placeholder">
             动态课件已生成，可以打开预览。
@@ -164,6 +166,9 @@
           <div v-if="message.previewUrl || message.downloadUrl || message.fileId || message.content" class="file-actions">
             <button v-if="isPptFile(message) && canOpenPptPreview(message)" type="button" @click="openPptPreview(message)">
               {{ pptPreview.loading && pptPreview.messageId === message.id ? '加载中...' : '预览' }}
+            </button>
+            <button v-if="isMindmapFile(message)" type="button" @click="openMindmapLargePreview(message)">
+              {{ message.mindmapPreviewLoading ? '加载中...' : '预览' }}
             </button>
             <button v-if="isVideoFile(message) && message.previewUrl" type="button" @click="openPresentationPlayer(message)">打开课件</button>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
@@ -214,10 +219,6 @@
       <button type="button" @click="startNewConversation">
         <Plus :size="17" stroke-width="1.7" />
         开启新对话
-      </button>
-      <button type="button" @click="openSkillPanel">
-        <Bot :size="17" stroke-width="1.7" />
-        智能体能力
       </button>
     </div>
 
@@ -313,83 +314,7 @@
       </section>
     </Teleport>
 
-    <Teleport to="body">
-      <section v-if="skillPanel.visible" class="skill-dialog" @click.self="closeSkillPanel">
-        <article class="skill-dialog__panel">
-          <header class="skill-dialog__header">
-            <div>
-              <span>Personal Agent</span>
-              <h2>智能体能力</h2>
-            </div>
-            <button type="button" aria-label="关闭 Skill 管理" @click="closeSkillPanel">
-              <X :size="20" />
-            </button>
-          </header>
-
-          <div class="skill-dialog__body">
-            <aside class="skill-list-pane">
-              <div class="skill-list-head">
-                <strong>当前智能体能力</strong>
-                <button type="button" @click="loadAgentSkills">刷新</button>
-              </div>
-
-              <p v-if="skillPanel.loading" class="skill-empty">正在加载...</p>
-              <p v-else-if="!agentSkills.length" class="skill-empty">暂无自定义智能体能力</p>
-
-              <template v-else>
-                <article
-                  v-for="skill in agentSkills"
-                  :key="skill.skill_id || skill.resource_type || skill.name"
-                  class="skill-list-item"
-                >
-                  <span>
-                    <strong>{{ skill.name }}</strong>
-                    <small>{{ skill.tool_description || '可执行能力' }}</small>
-                  </span>
-                  <button
-                    class="skill-delete-btn"
-                    type="button"
-                    aria-label="删除 Skill"
-                    @click.stop="removeSkill(skill)"
-                  >
-                    <Trash2 :size="15" />
-                  </button>
-                </article>
-              </template>
-            </aside>
-
-            <form class="skill-editor" @submit.prevent="saveSkill">
-              <div class="skill-editor__top">
-                <div>
-                  <span>Add Agent</span>
-                  <h3>添加智能体能力</h3>
-                </div>
-                <button type="submit" :disabled="skillPanel.saving || !canSaveSkill">
-                  <Plus :size="16" />
-                  添加
-                </button>
-              </div>
-
-              <label>
-                <span>能力名称</span>
-                <input v-model.trim="skillForm.name" type="text" placeholder="例如：天气查询" />
-              </label>
-
-              <label>
-                <span>能力说明</span>
-                <textarea
-                  v-model.trim="skillForm.tool_description"
-                  rows="6"
-                  placeholder="例如：当我询问城市天气时，帮我查询并总结当前天气。"
-                ></textarea>
-              </label>
-
-              <p v-if="skillPanel.error" class="skill-error">{{ skillPanel.error }}</p>
-            </form>
-          </div>
-        </article>
-      </section>
-    </Teleport>
+    <Teleport to="body">    </Teleport>
   </div>
 </template>
 
@@ -398,14 +323,11 @@ import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   downloadWithToken,
-  deleteAgentSkill,
-  getAgentSkills,
   streamChatMessage,
   getConversationList,
   getConversationMessages,
   getGeneratedResource,
   getPresentations,
-  upsertAgentActionSkill,
   resolveApiUrl
 } from '../api/apis'
 import { detectGenerationIntent } from '../composables/useResourceGeneration'
@@ -421,7 +343,6 @@ import {
   Menu,
   Mic,
   MoreHorizontal,
-  Music,
   Plus,
   Presentation,
   CircleHelp,
@@ -439,17 +360,15 @@ const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
 const router = useRouter()
-const { tasks: generationTasks, startTask: startGenerationTask } = useGenerationTaskQueue()
+const {
+  tasks: generationTasks,
+  startTask: startGenerationTask,
+  hydrateTasks: hydrateGenerationTasks,
+  maybeGeneratePresentation
+} = useGenerationTaskQueue()
 const boundGenerationTaskMessages = new Map()
 
 const resourceTools = [
-  {
-    label: 'music',
-    icon: Music,
-    prompt: '帮我生成一份音乐学习资源：',
-    generateMode: 'resource',
-    resourceTypes: ['document']
-  },
   {
     label: 'image',
     icon: Image,
@@ -478,12 +397,6 @@ const resourceTools = [
     prompt: '帮我生成一个学习视频：',
     generateMode: 'video',
     resourceTypes: ['document']
-  },
-  {
-    label: 'skill',
-    icon: Bot,
-    prompt: '帮我学习并创建一个智能体能力：',
-    agentSkillMode: true
   },
   {
     label: 'mindmap',
@@ -516,12 +429,10 @@ const selectResourceTool = tool => {
 const selectedResourceToolName = computed(() => {
   const label = selectedResourceTool.value?.label
   const names = {
-    music: '音乐',
     image: '图片',
     ppt: 'PPT',
     word: 'Word',
     video: '视频',
-    skill: '智能体能力',
     mindmap: '思维导图',
     quiz: '题目'
   }
@@ -733,12 +644,19 @@ const getRecordTime = (record) => {
   return record?.created_time || record?.created_at || record?.createTime || record?.updated_at || record?.updateTime
 }
 
+const getTimeValue = value => {
+  const time = new Date(value || 0).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
 const getRecordId = (record, fallback) => {
   return record?.id || record?.index || fallback
 }
 
 const buildMessagesFromHistory = (records, conversationId) => {
   return records
+    .slice()
+    .sort((a, b) => getTimeValue(getRecordTime(a)) - getTimeValue(getRecordTime(b)))
     .flatMap((item, index) => {
       const time = formatTime(getRecordTime(item))
       const id = getRecordId(item, index)
@@ -816,7 +734,9 @@ const normalizeHistoryGroups = (res) => {
   const groups = data?.data || data
 
   if (Array.isArray(groups)) {
-    return groups.reverse()
+    return groups
+      .slice()
+      .sort((a, b) => getTimeValue(getRecordTime(b)) - getTimeValue(getRecordTime(a)))
   }
 
   if (!groups || typeof groups !== 'object') {
@@ -825,16 +745,18 @@ const normalizeHistoryGroups = (res) => {
 
   return Object.entries(groups).map(([groupId, records]) => {
     const list = Array.isArray(records) ? records : []
-    const firstRecord = list[0] || {}
-    const lastRecord = list[list.length - 1] || firstRecord
+    const sortedList = list.slice().sort((a, b) => getTimeValue(getRecordTime(a)) - getTimeValue(getRecordTime(b)))
+    const firstRecord = sortedList[0] || {}
+    const lastRecord = sortedList[sortedList.length - 1] || firstRecord
 
     return {
       id: Number(groupId) || firstRecord.chat_group_id || groupId,
+      sortTime: getTimeValue(getRecordTime(lastRecord)),
       title: stripInternalInstructions(firstRecord.req) || `对话 ${groupId}`,
       lastMessage: stripInternalInstructions(lastRecord.req) || lastRecord.res || '',
       time: formatTime(getRecordTime(lastRecord))
     }
-  }).reverse()
+  }).sort((a, b) => b.sortTime - a.sortTime)
 }
 
 const escapeHtml = (value) => {
@@ -1456,6 +1378,9 @@ const appendFileMessage = async fileData => {
 
   if (fallbackIndex === -1) {
     messages.value.push(fileMessage)
+    if (isMindmapFile(fileMessage) && !fileMessage.content) {
+      await hydrateMindmapPreview(fileMessage)
+    }
     return
   }
 
@@ -1464,6 +1389,9 @@ const appendFileMessage = async fileData => {
     ...fileMessage,
     content: fileMessage.content || messages.value[fallbackIndex].content,
     centerSaveStatus: messages.value[fallbackIndex].centerSaveStatus || fileMessage.centerSaveStatus
+  }
+  if (isMindmapFile(messages.value[fallbackIndex]) && !messages.value[fallbackIndex].content) {
+    await hydrateMindmapPreview(messages.value[fallbackIndex])
   }
 }
 
@@ -1644,6 +1572,41 @@ const isMindmapFile = message => {
     text.includes('导图')
 }
 
+const hydrateMindmapPreview = async (message, openAfterLoad = false) => {
+  const resourceId = getFileResourceId(message)
+  if (message.content) {
+    if (openAfterLoad) {
+      message.mindmapPreviewSignal = (message.mindmapPreviewSignal || 0) + 1
+    }
+    return
+  }
+  if (!resourceId || message.mindmapPreviewLoading) return
+
+  message.mindmapPreviewLoading = true
+  try {
+    const res = await getGeneratedResource(resourceId)
+    const data = getResponseData(res)?.data || getResponseData(res)
+    Object.assign(message, {
+      content: data.content || data.preview || data.preview_content || message.content || '',
+      filename: data.filename || data.title || data.topic || message.filename,
+      fileType: data.resource_type || data.file_type || message.fileType || 'mindmap',
+      downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || message.downloadUrl)
+    })
+    if (openAfterLoad && message.content) {
+      message.mindmapPreviewSignal = (message.mindmapPreviewSignal || 0) + 1
+    }
+  } catch (error) {
+    console.error('[ChatView] load mindmap preview failed:', error)
+    if (openAfterLoad) window.alert('思维导图预览加载失败，请稍后重试')
+  } finally {
+    message.mindmapPreviewLoading = false
+  }
+}
+
+const openMindmapLargePreview = async message => {
+  await hydrateMindmapPreview(message, true)
+}
+
 const isVideoFile = message => {
   const text = String(`${message?.fileType || ''} ${message?.filename || ''} ${message?.title || ''}`).toLowerCase()
   return text.includes('video') || text.includes('视频')
@@ -1690,10 +1653,20 @@ const attachGenerationTaskToMessage = (task, messageId) => {
       const target = messages.value.find(item => item.id === messageId)
 
       if (target) {
-        target.content = task.status === 'failed'
-          ? (task.error || '资源生成失败，请稍后再试。')
-          : (task.progress || '正在生成资源...')
+        if (task.status === 'failed') {
+          target.content = task.error || '资源生成失败，请稍后再试。'
+        } else {
+          let text = task.progress || '正在生成资源...'
+          if (task.images.length > 0 || task.files.length > 0) {
+            text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim()
+          }
+          target.content = text
+        }
         target.time = getNowTime()
+      }
+
+      if (task.status === 'done' && task.tool?.generateMode === 'video') {
+        await maybeGeneratePresentation(task)
       }
 
       while (fileCursor < task.files.length) {
@@ -1914,6 +1887,9 @@ const openConversation = async (conversationId) => {
 
     messages.value = buildMessagesFromHistory(records, conversationId)
     await appendPresentationCardsFromHistory(records, messages.value)
+    await hydrateGenerationTasks().catch(error => {
+      console.warn('[ChatView] restore generation tasks failed:', error)
+    })
     restoreGenerationTasksInChat()
     await scrollToBottom()
   } catch (error) {
@@ -1953,7 +1929,10 @@ const handleEnter = (event) => {
   sendMessage()
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await hydrateGenerationTasks().catch(error => {
+    console.warn('[ChatView] restore generation tasks failed:', error)
+  })
   loadConversationList()
   restoreGenerationTasksInChat()
 })
