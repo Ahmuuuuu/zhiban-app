@@ -346,9 +346,7 @@ import {
   Plus,
   Presentation,
   CircleHelp,
-  Bot,
   SendHorizontal,
-  Trash2,
   X,
   Video
 } from 'lucide-vue-next'
@@ -450,23 +448,7 @@ const stripTypedResourceInstruction = value => {
   return String(value || '').replace(/\n\n【生成类型指令】[\s\S]*$/, '')
 }
 
-const stripAgentSkillInstruction = value => {
-  return String(value || '').replace(/\n\n【智能体能力指令】[\s\S]*$/, '')
-}
-
-const stripInternalInstructions = value => stripAgentSkillInstruction(stripTypedResourceInstruction(value))
-
-const isAgentSkillCreateIntent = value => {
-  const text = String(value || '')
-  return /(学|学习|创建|添加|新增|接入|掌握|教你|给你).{0,12}(技能|能力|工具|智能体)/.test(text) ||
-    /(技能|能力|工具|智能体).{0,12}(学|学习|创建|添加|新增|接入|掌握)/.test(text)
-}
-
-const isAgentSkillListIntent = value => {
-  const text = String(value || '')
-  return /(查看|看看|列出|显示|有什么|有哪些).{0,12}(技能|能力|工具|智能体)/.test(text) ||
-    /(技能|能力|工具|智能体).{0,12}(列表|清单|有哪些|有什么)/.test(text)
-}
+const stripInternalInstructions = value => stripTypedResourceInstruction(value)
 
 const handleAddFile = () => {
   showAddMenu.value = false
@@ -492,147 +474,6 @@ const saveDialog = ref({
   visibility: 'private',
   message: null
 })
-const skillPanel = ref({
-  visible: false,
-  loading: false,
-  saving: false,
-  error: ''
-})
-const agentSkills = ref([])
-const skillForm = ref({
-  name: '',
-  action_type: 'http',
-  action_config: {
-    method: 'GET',
-    url: ''
-  },
-  tool_description: ''
-})
-
-const canSaveSkill = computed(() => {
-  return Boolean(
-    skillForm.value.name.trim() &&
-    skillForm.value.tool_description.trim()
-  )
-})
-
-const getResponseData = (res) => {
-  return res?.data ?? res ?? {}
-}
-
-const skillKey = skill => {
-  if (skill?.resource_type) return skill.resource_type
-  if (skill?.skill_type === 'action' && skill?.name) return `action:${skill.name}`
-  return skill?.name || ''
-}
-
-const formatAgentSkillList = skills => {
-  if (!skills.length) return '你现在还没有学会额外的智能体能力。'
-
-  return [
-    `当前已学会 ${skills.length} 个智能体能力：`,
-    ...skills.map(skill => `- ${skill.name}：${skill.tool_description || skill.action_type || '可执行能力'}`)
-  ].join('\n')
-}
-
-const resetSkillForm = () => {
-  skillForm.value = {
-    name: '',
-    action_type: 'http',
-    action_config: {
-      method: 'GET',
-      url: ''
-    },
-    tool_description: ''
-  }
-}
-
-const loadAgentSkills = async () => {
-  skillPanel.value.loading = true
-  skillPanel.value.error = ''
-  try {
-    agentSkills.value = normalizeList(await getAgentSkills()).filter(skill => skill.skill_type === 'action')
-  } catch (err) {
-    console.error('[ChatView] load agent skills failed:', err)
-    skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 加载失败'
-  } finally {
-    skillPanel.value.loading = false
-  }
-}
-
-const openSkillPanel = async () => {
-  showAddMenu.value = false
-  skillPanel.value.visible = true
-  resetSkillForm()
-  await loadAgentSkills()
-}
-
-const showAgentSkillListInChat = async () => {
-  showAddMenu.value = false
-  await loadAgentSkills()
-  messages.value.push({
-    id: Date.now(),
-    role: 'assistant',
-    type: 'text',
-    content: formatAgentSkillList(agentSkills.value),
-    time: getNowTime()
-  })
-  await scrollToBottom()
-}
-
-const closeSkillPanel = () => {
-  skillPanel.value.visible = false
-  skillPanel.value.error = ''
-}
-
-const startCreateSkill = () => {
-  skillPanel.value.error = ''
-  resetSkillForm()
-}
-
-const saveSkill = async () => {
-  if (!canSaveSkill.value || skillPanel.value.saving) return
-
-  skillPanel.value.saving = true
-  skillPanel.value.error = ''
-  try {
-    const name = skillForm.value.name.trim()
-
-    await upsertAgentActionSkill({
-      name,
-      action_type: 'http',
-      action_config: {
-        method: 'GET',
-        url: `https://example.invalid/zhiban-agent/${encodeURIComponent(name)}`,
-        params: {}
-      },
-      tool_description: skillForm.value.tool_description.trim()
-    })
-    await loadAgentSkills()
-    resetSkillForm()
-  } catch (err) {
-    console.error('[ChatView] save agent skill failed:', err)
-    skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 保存失败'
-  } finally {
-    skillPanel.value.saving = false
-  }
-}
-
-const removeSkill = async skill => {
-  const key = skillKey(skill)
-  if (!key) return
-  const confirmed = window.confirm(`确定删除「${skill.name || key}」吗？`)
-  if (!confirmed) return
-
-  skillPanel.value.error = ''
-  try {
-    await deleteAgentSkill(key)
-    await loadAgentSkills()
-  } catch (err) {
-    console.error('[ChatView] delete agent skill failed:', err)
-    skillPanel.value.error = err?.response?.data?.detail || err?.message || 'Skill 删除失败'
-  }
-}
 
 const normalizeList = (res) => {
   const data = getResponseData(res)
@@ -1727,8 +1568,6 @@ const sendMessage = async () => {
   showAddMenu.value = false
   const activeTool = selectedResourceTool.value
   const backendText = activeTool?.prompt ? `${activeTool.prompt}${text}` : text
-  const shouldOpenSkillPanel = Boolean(activeTool?.agentSkillMode) || isAgentSkillCreateIntent(text)
-  const shouldListAgentSkills = isAgentSkillListIntent(text)
   const chatRequestText = text
   const loadingMessageId = Date.now() + 1
 
@@ -1742,16 +1581,6 @@ const sendMessage = async () => {
 
   inputValue.value = ''
   selectedResourceTool.value = null
-
-  if (shouldListAgentSkills) {
-    await showAgentSkillListInChat()
-    return
-  }
-
-  if (shouldOpenSkillPanel) {
-    await openSkillPanel()
-    return
-  }
 
   messages.value.push({
     id: loadingMessageId,
@@ -2814,225 +2643,6 @@ textarea::placeholder {
   border-radius: 8px;
 }
 
-.skill-dialog {
-  position: fixed;
-  inset: 0;
-  z-index: 4300;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(12, 28, 58, 0.3);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-
-.skill-dialog__panel {
-  width: min(920px, 100%);
-  max-height: min(760px, 92vh);
-  border: 1px solid rgba(201, 220, 233, 0.85);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow: 0 24px 70px rgba(22, 63, 143, 0.22);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.skill-dialog__header {
-  min-height: 74px;
-  padding: 16px 18px 14px 22px;
-  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.skill-dialog__header span,
-.skill-editor__top span,
-.skill-editor label span {
-  color: var(--primary-soft);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.skill-dialog__header h2,
-.skill-editor__top h3 {
-  margin: 4px 0 0;
-  color: var(--primary);
-}
-
-.skill-dialog__header h2 {
-  font-size: 22px;
-}
-
-.skill-dialog__header button,
-.skill-list-head button,
-.skill-editor__top button,
-.skill-delete-btn {
-  min-height: 36px;
-  border: 1px solid rgba(201, 220, 233, 0.82);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--primary);
-  font: inherit;
-  font-weight: 900;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  cursor: pointer;
-}
-
-.skill-dialog__header button {
-  width: 38px;
-  padding: 0;
-}
-
-.skill-dialog__body {
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  flex: 1;
-}
-
-.skill-list-pane {
-  min-height: 0;
-  padding: 16px;
-  border-right: 1px solid rgba(201, 220, 233, 0.72);
-  overflow-y: auto;
-}
-
-.skill-list-head {
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.skill-list-head strong {
-  color: var(--primary);
-}
-
-.skill-list-head button {
-  padding: 0 12px;
-}
-
-.skill-empty,
-.skill-error {
-  margin: 12px 0 0;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.skill-error {
-  color: #b13d3d;
-}
-
-.skill-list-item {
-  min-height: 62px;
-  margin-bottom: 8px;
-  padding: 10px;
-  border: 1px solid rgba(201, 220, 233, 0.76);
-  border-radius: 8px;
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  cursor: pointer;
-}
-
-.skill-list-item.active,
-.skill-list-item:hover {
-  border-color: rgba(95, 143, 195, 0.55);
-  background: rgba(237, 249, 252, 0.78);
-}
-
-.skill-list-item span {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.skill-list-item strong,
-.skill-list-item small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-list-item small {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.skill-delete-btn {
-  width: 32px;
-  min-height: 32px;
-  padding: 0;
-}
-
-.skill-editor {
-  min-height: 0;
-  padding: 18px 20px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  overflow-y: auto;
-}
-
-.skill-editor__top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.skill-editor__top button {
-  min-width: 92px;
-  padding: 0 14px;
-  background: var(--primary);
-  border-color: var(--primary);
-  color: #fff;
-}
-
-.skill-editor__top button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.skill-editor label {
-  display: grid;
-  gap: 7px;
-}
-
-.skill-editor input,
-.skill-editor textarea {
-  width: 100%;
-  border: 1px solid rgba(201, 220, 233, 0.82);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--primary);
-  font: inherit;
-  outline: none;
-}
-
-.skill-editor input {
-  min-height: 42px;
-  padding: 0 12px;
-}
-
-.skill-editor textarea {
-  min-height: 220px;
-  max-height: none;
-  padding: 12px;
-  resize: vertical;
-  line-height: 1.65;
-}
 
 .save-dialog {
   position: fixed;
@@ -3256,20 +2866,6 @@ textarea::placeholder {
 
   .chat-content {
     padding: 88px 14px 218px;
-  }
-
-  .skill-dialog {
-    padding: 14px;
-  }
-
-  .skill-dialog__body {
-    grid-template-columns: 1fr;
-  }
-
-  .skill-list-pane {
-    max-height: 220px;
-    border-right: 0;
-    border-bottom: 1px solid rgba(201, 220, 233, 0.72);
   }
 
   .empty-chat {
