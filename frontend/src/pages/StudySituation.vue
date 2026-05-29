@@ -500,8 +500,8 @@ const applyStudyStats = (stats, collections = []) => {
 
   studyMinutes.value = weekMinutes
   studyTimeNote.value = `${zh([0x672c, 0x5468, 0x7d2f, 0x8ba1])} ${weekMinutes} min - ${zh([0x7d2f, 0x8ba1])} ${totalMinutes} min - ${zh([0x6d3b, 0x8dc3])} ${activeDays} ${zh([0x5929])}`
-  completedPaths.value = finished.map((item, index) => formatPathCard(item, index, true))
-  currentPaths.value = inProgress.map((item, index) => formatPathCard(item, index)).slice(0, 2)
+  completedPaths.value = finished.reverse().map((item, index) => formatPathCard(item, index, true))
+  currentPaths.value = inProgress.reverse().map((item, index) => formatPathCard(item, index)).slice(0, 2)
   weakPoints.value = normalizeWeakPoints(stats.weak_points || stats.weakPoints)
   if (!accuracyData.value.length) {
     accuracyData.value = buildRecentDateLabels()
