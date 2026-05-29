@@ -14,6 +14,73 @@ PRESENTATION_DIR = Path(__file__).parent.parent.parent / "static" / "presentatio
 TEMPLATE_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template.html"
 
 
+# ═══════════════════════════════════════════════
+#  预览 — 展示可用章节让用户选择
+# ═══════════════════════════════════════════════
+
+async def preview(topic: str, user_id: int) -> dict:
+    """预览话题的可用章节及其内容大纲"""
+    doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
+    chapters = []
+
+    # intro — 从 document ## 标题提取
+    if doc:
+        content = doc.content or ""
+        raw_parts = re.split(r"\n(?=## )", content.strip())
+        if len(raw_parts) <= 1:
+            raw_parts = re.split(r"\n(?=# )", content.strip())
+        slides = []
+        for part in raw_parts:
+            part = part.strip()
+            if not part:
+                continue
+            lines = part.split("\n")
+            title = lines[0].lstrip("#").strip()
+            summary = ""
+            for l in lines[1:]:
+                s = l.strip().lstrip("-* ").strip()
+                if s:
+                    summary = s[:80]
+                    break
+            slides.append({"title": title, "summary": summary})
+        chapters.append({
+            "id": "intro",
+            "title": "学科介绍",
+            "slide_count": len(slides),
+            "slides": slides,
+        })
+
+    # mindmap
+    if mindmap_data:
+        from backend.src.utils.mindmap import parse_mindmap_text
+
+        def _count_nodes(node) -> int:
+            return 1 + sum(_count_nodes(c) for c in node.get("children", []))
+        parsed = parse_mindmap_text(mindmap_data.content or "")
+        node_count = _count_nodes(parsed) if parsed else 0
+        top_topics = [c.get("topic", "") for c in (parsed.get("children", [])[:5])] if parsed else []
+        chapters.append({
+            "id": "mindmap",
+            "title": "思维导图",
+            "node_count": node_count,
+            "top_topics": top_topics,
+        })
+
+    # PPT
+    if ppt_data:
+        from backend.src.utils.tts_utils import parse_slides
+        slides_meta = parse_slides(ppt_data.content or "")
+        slides = [{"title": m.get("title", ""), "bullet_count": len(m.get("bullets", []))} for m in slides_meta]
+        chapters.append({
+            "id": "ppt",
+            "title": "PPT讲解",
+            "slide_count": len(slides),
+            "slides": slides,
+        })
+
+    return {"chapters": chapters}
+
+
 # ─── SSE 通知队列 ───
 _sse_queues: dict[int, list] = {}
 
@@ -43,7 +110,7 @@ async def _notify_sse(presentation_id: int, data: dict):
 #  对外 API
 # ═══════════════════════════════════════════════
 
-async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural") -> dict:
+async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural", chapters: list[str] | None = None) -> dict:
     """创建课件记录 + 启动后台生成，立即返回"""
     from backend.src.models.usermodel import User
     user = await User.filter(id=user_id).first()
@@ -68,7 +135,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     await record.save()
 
     # 启动后台生成
-    asyncio_create_task(_generate_chapters(record.id, topic, user_id, voice))
+    asyncio_create_task(_generate_chapters(record.id, topic, user_id, voice, chapters))
 
     return {
         "id": record.id,
@@ -139,7 +206,7 @@ async def delete_presentation(presentation_id: int, user_id: int) -> bool:
 #  后台增量生成
 # ═══════════════════════════════════════════════
 
-async def _generate_chapters(record_id: int, topic: str, user_id: int, voice: str):
+async def _generate_chapters(record_id: int, topic: str, user_id: int, voice: str, selected_chapters: list[str] | None = None):
     """逐章生成：每完成一章就更新 HTML + 通知 SSE"""
     from backend.src.service.narration_service import narrate_resource
     from backend.src.utils.mindmap import parse_mindmap_text
@@ -153,30 +220,39 @@ async def _generate_chapters(record_id: int, topic: str, user_id: int, voice: st
 
     try:
         # ── Ch1: 学科介绍 ──
-        if doc:
-            logger.info("[课件] 开始生成学科介绍 narration resource=%d", doc.id)
-            narration = await narrate_resource(doc.id, voice)
-            ch = _build_intro_section(doc, narration)
-            chapters.append(ch)
-            await _flush(record, topic, chapters, "generating")
+        if selected_chapters is None or "intro" in selected_chapters:
+            if doc:
+                logger.info("[课件] 开始生成学科介绍 narration resource=%d", doc.id)
+                narration = await narrate_resource(doc.id, voice)
+                ch = _build_intro_section(doc, narration)
+                chapters.append(ch)
+                await _flush(record, topic, chapters, "generating")
+        else:
+            logger.info("[课件] 跳过学科介绍（未选中）")
 
         # ── Ch2: 思维导图 ──
-        if mindmap_data:
-            logger.info("[课件] 开始生成思维导图 narration resource=%d", mindmap_data.id)
-            narration = await narrate_resource(mindmap_data.id, voice)
-            parsed = parse_mindmap_text(mindmap_data.content or "")
-            svg = _mindmap_to_svg(parsed)
-            ch = _build_mindmap_section(mindmap_data, svg, narration)
-            chapters.append(ch)
-            await _flush(record, topic, chapters, "generating")
+        if selected_chapters is None or "mindmap" in selected_chapters:
+            if mindmap_data:
+                logger.info("[课件] 开始生成思维导图 narration resource=%d", mindmap_data.id)
+                narration = await narrate_resource(mindmap_data.id, voice)
+                parsed = parse_mindmap_text(mindmap_data.content or "")
+                svg = _mindmap_to_svg(parsed)
+                ch = _build_mindmap_section(mindmap_data, svg, narration)
+                chapters.append(ch)
+                await _flush(record, topic, chapters, "generating")
+        else:
+            logger.info("[课件] 跳过思维导图（未选中）")
 
         # ── Ch3: PPT讲解 ──
-        if ppt_data:
-            logger.info("[课件] 开始生成 PPT 讲解 narration resource=%d", ppt_data.id)
-            narration = await narrate_resource(ppt_data.id, voice)
-            ch = await _build_ppt_section(ppt_data, narration)
-            chapters.append(ch)
-            await _flush(record, topic, chapters, "generating")
+        if selected_chapters is None or "ppt" in selected_chapters:
+            if ppt_data:
+                logger.info("[课件] 开始生成 PPT 讲解 narration resource=%d", ppt_data.id)
+                narration = await narrate_resource(ppt_data.id, voice)
+                ch = await _build_ppt_section(ppt_data, narration)
+                chapters.append(ch)
+                await _flush(record, topic, chapters, "generating")
+        else:
+            logger.info("[课件] 跳过 PPT 讲解（未选中）")
 
         # 全部完成
         await _flush(record, topic, chapters, "ready")
