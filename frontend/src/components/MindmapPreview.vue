@@ -1,6 +1,12 @@
 <template>
   <div class="mindmap-preview" :class="`mindmap-preview--${layoutProfile.name}`" @click="openFullscreen">
     <div ref="mapEl" class="mindmap-canvas"></div>
+    <div class="mindmap-preview__tools" @click.stop>
+      <button type="button" aria-label="缩小" @click="zoomPreviewOut">-</button>
+      <span>{{ Math.round(previewScale * 100) }}%</span>
+      <button type="button" aria-label="放大" @click="zoomPreviewIn">+</button>
+      <button type="button" aria-label="适应画面" @click="zoomPreviewFit">fit</button>
+    </div>
     <div v-if="!fullscreenOpen" class="mindmap-hint">点击放大预览</div>
     <div v-if="errorText && !fullscreenOpen" class="mindmap-fallback">
       <strong>{{ fallbackTitle }}</strong>
@@ -56,6 +62,7 @@ const errorText = ref('')
 const overlayError = ref('')
 const fullscreenOpen = ref(false)
 const currentScale = ref(1)
+const previewScale = ref(1)
 const layoutProfile = ref({ name: 'balanced', title: '平衡结构' })
 let mind = null
 let overlayMind = null
@@ -151,6 +158,11 @@ const collectStats = (node, depth = 1) => {
   return { totalNodes, maxDepth, maxBreadth, leafCount, topicLength }
 }
 
+const getBranchWeight = node => {
+  const stats = collectStats(node)
+  return stats.leafCount * 2 + stats.totalNodes + stats.maxDepth * 3
+}
+
 const detectKnowledgeType = node => {
   const text = JSON.stringify(node || '').toLowerCase()
   if (/流程|步骤|阶段|路径|顺序|过程|怎么做|process|step|stage|flow/.test(text)) return 'process'
@@ -166,19 +178,36 @@ const chooseLayoutProfile = root => {
   const avgTopicLength = stats.totalNodes ? stats.topicLength / stats.totalNodes : 0
   const type = detectKnowledgeType(root)
 
-  if (type === 'process' || (stats.maxDepth >= 5 && rootChildren <= 4)) {
-    return { name: 'outline', title: '流程提纲', direction: MindElixir.RIGHT, stats }
+  if (rootChildren >= 4 || stats.totalNodes > 26 || stats.leafCount > 14) {
+    return { name: 'compact', title: '紧凑平衡', direction: MindElixir.SIDE, stats }
   }
   if (type === 'compare' || (rootChildren <= 3 && stats.totalNodes <= 22)) {
     return { name: 'split', title: '对比结构', direction: MindElixir.SIDE, stats }
   }
-  if (rootChildren >= 7 || (stats.totalNodes >= 24 && stats.maxDepth <= 3 && avgTopicLength < 12)) {
+  if (rootChildren >= 7 || (stats.totalNodes >= 18 && stats.maxDepth <= 3 && avgTopicLength < 12)) {
     return { name: 'radial', title: '放射结构', direction: MindElixir.SIDE, stats }
   }
-  if (stats.totalNodes > 34 || stats.maxBreadth > 7 || avgTopicLength > 18) {
+  if ((type === 'process' || avgTopicLength > 22) && rootChildren <= 2) {
     return { name: 'outline', title: '阅读提纲', direction: MindElixir.RIGHT, stats }
   }
   return { name: type === 'checklist' ? 'checklist' : 'balanced', title: '平衡结构', direction: MindElixir.SIDE, stats }
+}
+
+const assignBalancedBranchDirections = root => {
+  const children = Array.isArray(root.children) ? root.children : []
+  const buckets = [
+    { direction: MindElixir.LEFT, weight: 0 },
+    { direction: MindElixir.RIGHT, weight: 0 }
+  ]
+
+  children
+    .map(child => ({ child, weight: getBranchWeight(child) }))
+    .sort((a, b) => b.weight - a.weight)
+    .forEach(({ child, weight }) => {
+      const target = buckets[0].weight <= buckets[1].weight ? buckets[0] : buckets[1]
+      child.direction = target.direction
+      target.weight += weight
+    })
 }
 
 const styleNodeByLayout = (node, profile, depth = 0, branchIndex = 0) => {
@@ -202,7 +231,7 @@ const styleNodeByLayout = (node, profile, depth = 0, branchIndex = 0) => {
       fontSize: profile.name === 'radial' ? '13px' : '15px',
       border: '0'
     }
-    if (profile.direction === MindElixir.SIDE) {
+    if (profile.direction === MindElixir.SIDE && node.direction === undefined) {
       node.direction = branchIndex % 2 === 0 ? MindElixir.RIGHT : MindElixir.LEFT
     }
   } else {
@@ -231,6 +260,9 @@ const toMindElixirData = value => {
   nodeIndex = 0
   const nodeData = normalizeNode(root)
   const profile = chooseLayoutProfile(nodeData)
+  if (profile.direction === MindElixir.SIDE) {
+    assignBalancedBranchDirections(nodeData)
+  }
   styleNodeByLayout(nodeData, profile)
   layoutProfile.value = profile
 
@@ -244,15 +276,16 @@ const toMindElixirData = value => {
 const themeForProfile = profile => {
   const isOutline = profile.name === 'outline'
   const isRadial = profile.name === 'radial'
+  const isCompact = profile.name === 'compact'
   return {
     name: `Zhiban-${profile.name}`,
     type: 'light',
     palette: branchPalette,
     cssVar: {
-      '--node-gap-x': isOutline ? '58px' : isRadial ? '42px' : '48px',
-      '--node-gap-y': isOutline ? '13px' : isRadial ? '10px' : '14px',
-      '--main-gap-x': isOutline ? '120px' : isRadial ? '92px' : '105px',
-      '--main-gap-y': isOutline ? '48px' : isRadial ? '34px' : '46px',
+      '--node-gap-x': isOutline ? '54px' : isCompact ? '44px' : isRadial ? '40px' : '48px',
+      '--node-gap-y': isOutline ? '12px' : isCompact ? '7px' : isRadial ? '8px' : '11px',
+      '--main-gap-x': isOutline ? '108px' : isCompact ? '112px' : isRadial ? '88px' : '104px',
+      '--main-gap-y': isOutline ? '42px' : isCompact ? '24px' : isRadial ? '28px' : '38px',
       '--root-radius': isRadial ? '999px' : '10px',
       '--main-radius': isRadial ? '999px' : '8px',
       '--root-color': '#ffffff',
@@ -261,7 +294,7 @@ const themeForProfile = profile => {
       '--main-color': '#2B3440',
       '--main-bgcolor': '#ffffff',
       '--main-bgcolor-transparent': 'rgba(255, 255, 255, 0.9)',
-      '--topic-padding': isRadial ? '5px 11px' : '6px 13px',
+      '--topic-padding': isCompact ? '4px 9px' : isRadial ? '5px 10px' : '6px 12px',
       '--color': '#5B6574',
       '--bgcolor': '#FAFCFF',
       '--selected': '#45A3FF',
@@ -269,7 +302,7 @@ const themeForProfile = profile => {
       '--panel-color': '#2B3440',
       '--panel-bgcolor': '#ffffff',
       '--panel-border-color': '#E7EEF8',
-      '--map-padding': isOutline ? '70px 120px' : '70px 100px'
+      '--map-padding': isCompact ? '18px 24px' : isOutline ? '48px 72px' : '42px 64px'
     }
   }
 }
@@ -309,6 +342,7 @@ const renderMap = async () => {
     requestAnimationFrame(() => {
       mind?.scaleFit?.()
       mind?.toCenter?.()
+      previewScale.value = 1
     })
   } catch (error) {
     console.error('Mindmap render failed:', error)
@@ -390,6 +424,27 @@ const zoomFit = () => {
   currentScale.value = 1
 }
 
+const zoomPreviewIn = () => {
+  if (!mind) return
+  const next = Math.min(previewScale.value + 0.25, 3)
+  mind.scale(next)
+  previewScale.value = next
+}
+
+const zoomPreviewOut = () => {
+  if (!mind) return
+  const next = Math.max(previewScale.value - 0.25, 0.25)
+  mind.scale(next)
+  previewScale.value = next
+}
+
+const zoomPreviewFit = () => {
+  if (!mind) return
+  mind.scaleFit()
+  mind.toCenter()
+  previewScale.value = 1
+}
+
 watch(() => [props.content, props.title], renderMap, { deep: true })
 onMounted(renderMap)
 
@@ -427,6 +482,48 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 620px;
   min-height: 520px;
+}
+
+.mindmap-preview__tools {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(22, 63, 143, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 22px rgba(35, 59, 92, 0.12);
+}
+
+.mindmap-preview__tools button {
+  min-width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(22, 63, 143, 0.08);
+  color: #163f8f;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mindmap-preview__tools button:hover {
+  background: #163f8f;
+  color: #fff;
+}
+
+.mindmap-preview__tools span {
+  min-width: 42px;
+  color: #45617e;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .mindmap-hint {
@@ -497,6 +594,27 @@ onBeforeUnmount(() => {
 .mindmap-preview--outline :deep(me-tpc),
 .mindmap-overlay--outline :deep(me-tpc) {
   min-width: 96px;
+}
+
+.mindmap-preview--compact :deep(me-root > me-tpc),
+.mindmap-overlay--compact :deep(me-root > me-tpc) {
+  padding: 10px 14px;
+  font-size: 16px;
+}
+
+.mindmap-preview--compact :deep(me-tpc),
+.mindmap-overlay--compact :deep(me-tpc) {
+  padding: 4px 9px;
+  font-size: 12px;
+  line-height: 1.28;
+  box-shadow: 0 5px 12px rgba(35, 59, 92, 0.08);
+}
+
+.mindmap-preview--compact :deep(.lines path),
+.mindmap-preview--compact :deep(.subLines path),
+.mindmap-overlay--compact :deep(.lines path),
+.mindmap-overlay--compact :deep(.subLines path) {
+  stroke-width: 1.8px;
 }
 
 .mindmap-fallback {
