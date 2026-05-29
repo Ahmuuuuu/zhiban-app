@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 import asyncio
 
 from backend.src.ai_core.llm_config import llm
-from tortoise.expressions import Q
+
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
 from backend.src.models.exam_model import ExamRecord, KnowledgeMastery
@@ -217,14 +217,9 @@ class PathService:
         }
 
     @staticmethod
-    async def list_paths(user_id: int | None = None) -> list[dict]:
-        """列出所有公开路径"""
-
-        if user_id:
-            qs = LearningPath.filter(Q(is_public=True) | Q(user_id=user_id, is_public=False))
-        else:
-            qs = LearningPath.filter(is_public=True)
-        paths = await qs.order_by("-created_at").prefetch_related("nodes").all()
+    async def list_paths(user_id: int) -> list[dict]:
+        """列出当前用户的所有路径"""
+        paths = await LearningPath.filter(user_id=user_id).order_by("-created_at").prefetch_related("nodes").all()
 
         result = []
         for p in paths:
@@ -241,10 +236,14 @@ class PathService:
         return result
 
     @staticmethod
-    async def get_path(path_id: int) -> dict | None:
-        """获取路径详情含节点列表"""
+    async def get_path(path_id: int, user_id: int) -> dict | None:
+        """获取路径详情含节点列表（仅返回本人创建或已加入的路径）"""
         path = await LearningPath.filter(id=path_id).prefetch_related("nodes").first()
         if not path:
+            return None
+
+        # 权限检查：仅创建者可查看
+        if path.user_id != user_id:
             return None
 
         nodes = path.nodes or []

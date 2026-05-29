@@ -32,9 +32,9 @@ async def list_paths(user_id: int = Depends(get_user_id_from_token)):
 
 
 @router.get("/{path_id}")
-async def get_path(path_id: int):
+async def get_path(path_id: int, user_id: int = Depends(get_user_id_from_token)):
     """路径详情（含所有节点）"""
-    result = await PathService.get_path(path_id)
+    result = await PathService.get_path(path_id, user_id)
     if not result:
         raise HTTPException(status_code=404, detail="路径不存在")
     return {"code": 200, "msg": "success", "data": result}
