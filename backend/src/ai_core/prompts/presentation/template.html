@@ -606,6 +606,17 @@ function updateUI() {
 }
 
 // ══════════════════════════════════════════════
+//  Timed-word stubs — 逐词显隐已由 karaoke 系统接管
+// ══════════════════════════════════════════════
+function getActiveWordRoot() {
+  var containers = document.querySelectorAll('.chapter.active .slide-container');
+  return containers[currentSlide] || document.querySelector('.chapter.active');
+}
+function prepareTimedWords(root) { /* noop — handled by wrapChars */ }
+function resetWordReveal(root) { /* noop — handled by resetKaraoke */ }
+function updateWordReveal() { /* noop — handled by updateKaraoke */ }
+
+// ══════════════════════════════════════════════
 //  Karaoke 逐字高亮
 // ══════════════════════════════════════════════
 

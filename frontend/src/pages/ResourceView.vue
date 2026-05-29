@@ -24,6 +24,19 @@
     </div>
 
     <section class="resource-shell">
+      <aside class="category-panel">
+        <h2>分类</h2>
+        <button
+          v-for="category in categories"
+          :key="category"
+          type="button"
+          :class="{ active: activeCategory === category }"
+          @click="switchCategory(category)"
+        >
+          {{ category }}
+        </button>
+      </aside>
+
       <section class="resource-list" aria-label="我的资源列表">
         <template v-if="loading">
           <article v-for="item in 9" :key="item" class="resource-card skeleton-card">
@@ -45,13 +58,14 @@
                 <FileImage v-if="resource.type === 'image'" :size="18" />
                 <Presentation v-else-if="isPptResource(resource)" :size="18" />
                 <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
+                <Video v-else-if="isVideoResource(resource)" :size="18" />
                 <FileText v-else :size="18" />
               </span>
               <span class="visibility">{{ resource.categoryLabel || '我的资源' }}</span>
             </div>
 
-            <div v-if="resource.type === 'image' && resource.previewUrl" class="image-thumb">
-              <img :src="resource.previewUrl" :alt="resource.title" loading="lazy" @error="handleImageError($event)" />
+            <div class="resource-cover">
+              <img :src="resource.coverUrl" :alt="resource.title" loading="lazy" @error="handleImageError($event)" />
             </div>
 
             <h2>{{ resource.title || '未命名资源' }}</h2>
@@ -60,6 +74,7 @@
             <footer>
               <span>{{ formatDate(resource.created_at) }}</span>
               <span v-if="resource.type === 'image'">图片</span>
+              <span v-else-if="isVideoResource(resource)">视频</span>
               <span v-else>{{ getWordCount(resource.content) }} 字</span>
             </footer>
             <div class="resource-actions">
@@ -142,6 +157,19 @@
                 @error="handleImageError"
               />
             </template>
+            <template v-else-if="isVideoResource(selectedResource)">
+              <video
+                v-if="selectedResource.previewUrl"
+                class="preview-video"
+                :src="selectedResource.previewUrl"
+                controls
+                autoplay
+                playsinline
+              >
+                您的浏览器不支持视频播放
+              </video>
+              <p v-else>{{ selectedResource.content || '暂无视频内容' }}</p>
+            </template>
             <template v-else-if="isMindmapResource(selectedResource)">
               <MindmapPreview
                 :content="selectedResource.fullContent || selectedResource.content"
@@ -196,7 +224,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import {
   AlertCircle,
   FileImage,
@@ -205,6 +233,7 @@ import {
   FileText,
   GitBranch,
   PauseCircle,
+  Video,
   Volume2,
   RefreshCw
 } from 'lucide-vue-next'
@@ -213,8 +242,8 @@ import { upsertQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
+import { getResourceCoverUrl } from '../utils/resourceCover'
 
-const route = useRoute()
 const router = useRouter()
 const resources = ref([])
 const selectedResource = ref(null)
@@ -230,6 +259,13 @@ const {
 } = useResourceNarration()
 
 
+const categories = ['文档', 'PPT', '图片', '视频', '题库', '思维导图']
+const activeCategory = ref(categories[0])
+
+const switchCategory = cat => {
+  activeCategory.value = cat
+}
+
 const categoryLabelMap = {
   knowledge_point: '知识点讲解',
   exercise: '习题/题库',
@@ -237,24 +273,33 @@ const categoryLabelMap = {
   note: '学习笔记',
   case_study: '实操案例',
   reference: '参考资料',
+  video: '视频',
 }
 
-const activeCategory = computed(() => String(route.query.category || 'document'))
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
 
-  return list.map((item, index) => ({
-    doc_id: String(item.doc_id || item.id || index),
-    title: item.title || '',
-    content: item.preview || item.content || '',
-    type: item.type || item.file_type || '',
-    category: item.category || '',
-    categoryLabel: categoryLabelMap[item.category] || '',
-    visibility: item.visibility || 'private',
-    created_at: item.created_at || item.createdAt || '',
-    previewUrl: item.previewUrl || item.preview_url || '',
-    downloadUrl: item.downloadUrl || item.download_url || ''
-  }))
+  return list.map((item, index) => {
+    const isVideo = item.category === 'video' || (item.type || item.file_type || '').includes('video')
+    const rawContent = item.preview || item.content || ''
+    const videoUrl = isVideo ? resolveApiUrl(rawContent) : ''
+    const resource = {
+      doc_id: String(item.doc_id || item.id || index),
+      title: item.title || '',
+      content: isVideo ? videoUrl : rawContent,
+      type: isVideo ? 'video' : (item.type || item.file_type || ''),
+      category: item.category || '',
+      categoryLabel: categoryLabelMap[item.category] || '',
+      visibility: item.visibility || 'private',
+      created_at: item.created_at || item.createdAt || '',
+      previewUrl: item.previewUrl || item.preview_url || videoUrl || '',
+      downloadUrl: item.downloadUrl || item.download_url || videoUrl || ''
+    }
+    return {
+      ...resource,
+      coverUrl: getResourceCoverUrl({ ...resource, ...item })
+    }
+  })
 }
 
 const normalizeGeneratedResources = data => {
@@ -269,7 +314,7 @@ const normalizeGeneratedResources = data => {
     const isQuiz = resourceText.includes('exercise') || resourceText.includes('quiz')
     const isMindmap = resourceText.includes('mindmap') || resourceText.includes('mind_map') || resourceText.includes('mind-map') || resourceText.includes('xmind')
 
-    return {
+    const resource = {
       doc_id: `generated-${resourceId}`,
       source: 'generated',
       sourceId: String(resourceId || ''),
@@ -288,6 +333,10 @@ const normalizeGeneratedResources = data => {
       previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || ''),
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
     }
+    return {
+      ...resource,
+      coverUrl: getResourceCoverUrl({ ...resource, ...item })
+    }
   })
 }
 
@@ -296,7 +345,7 @@ const normalizeGeneratedImages = data => {
   return (Array.isArray(list) ? list : []).map(item => {
     const imageId = String(item.image_id || item.imageId || item.id || '')
     const url = item.url || item.image_url || item.imageUrl || item.preview_url || item.previewUrl || ''
-    return {
+    const resource = {
       doc_id: `image-${imageId}`,
       source: 'generated',
       sourceId: imageId,
@@ -312,6 +361,10 @@ const normalizeGeneratedImages = data => {
       created_at: item.created_at || item.createdAt || '',
       previewUrl: resolveApiUrl(url),
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || url || (imageId ? `/image/${imageId}/download` : ''))
+    }
+    return {
+      ...resource,
+      coverUrl: getResourceCoverUrl({ ...resource, ...item })
     }
   })
 }
@@ -329,8 +382,8 @@ const loadResources = async () => {
   }
 
   try {
-    const result = await getStudyResources({ visibility: 'private' })
-    const backendResources = normalizeResources(result).filter(item => item.visibility !== 'public')
+    const result = await getStudyResources({ mine: true })
+    const backendResources = normalizeResources(result)
     const generatedResult = await getGeneratedResources()
     const generatedBackendResources = normalizeGeneratedResources(generatedResult)
     const imageResult = await getGeneratedImages()
@@ -398,14 +451,23 @@ const isMindmapResource = resource => {
   return text.includes('mindmap') || text.includes('mind_map') || text.includes('mind-map') || text.includes('xmind') || text.includes('脑图') || text.includes('思维导图')
 }
 
+const isVideoResource = resource => {
+  const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
+  return resource?.category === 'video' || text.includes('video') || text.includes('mp4') || text.includes('视频')
+}
+
 const getResourceKind = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  if (text.includes('image') || /\.(jpg|jpeg|png|webp|gif|bmp|svg)$/i.test(text)) return 'image'
-  if (isPptResource(resource)) return 'ppt'
-  if (text.includes('video') || /\.(mp4|mov|avi|mkv|webm)$/i.test(text)) return 'video'
-  if (isQuizResource(resource)) return 'quiz'
-  if (isMindmapResource(resource)) return 'mindmap'
-  return 'document'
+  if (text.includes('image') || /\.(jpg|jpeg|png|webp|gif|bmp|svg)$/i.test(text)) return '图片'
+  if (isPptResource(resource)) return 'PPT'
+  if (isVideoResource(resource)) return '视频'
+  if (isQuizResource(resource)) return '题库'
+  if (isMindmapResource(resource)) return '思维导图'
+  return '文档'
+}
+
+const matchesCategory = resource => {
+  return getResourceKind(resource) === activeCategory.value
 }
 
 const downloadResource = async resource => {
@@ -526,10 +588,6 @@ const startResourceQuiz = async resource => {
   }
 }
 
-const matchesCategory = resource => {
-  return getResourceKind(resource) === activeCategory.value
-}
-
 watch(filteredResources, list => {
   if (!list.length) {
     selectedResource.value = null
@@ -548,6 +606,7 @@ const getExcerpt = content => {
 
 const getResourceExcerpt = resource => {
   if (isMindmapResource(resource)) return '点击查看可视化思维导图'
+  if (isVideoResource(resource)) return '点击预览视频内容'
   return getExcerpt(resource?.content)
 }
 
@@ -704,7 +763,73 @@ onBeforeUnmount(stopCurrentAudio)
 .resource-shell {
   min-height: 0;
   flex: 1;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 28px;
   overflow: hidden;
+}
+
+.category-panel {
+  min-height: 0;
+  border-radius: 28px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  background: rgba(250, 250, 250, 0.78);
+  box-shadow:
+    0 14px 34px rgba(22, 63, 143, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+
+.category-panel h2 {
+  position: relative;
+  margin: 0;
+  height: 52px;
+  border-bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #163f8f;
+  font-size: 18px;
+}
+
+.category-panel button {
+  position: relative;
+  width: calc(100% - 28px);
+  height: 36px;
+  margin: 6px 14px 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(250, 250, 250, 0.48);
+  color: #163f8f;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.category-panel h2::after,
+.category-panel button::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background:
+    linear-gradient(to right, transparent 0%, rgba(201, 220, 233, 0.34) 24%, rgba(201, 220, 233, 0.72) 48%, rgba(201, 220, 233, 0.72) 52%, rgba(201, 220, 233, 0.34) 76%, transparent 100%),
+    linear-gradient(to right, transparent 0%, transparent 42%, rgba(201, 220, 233, 0.9) 42%, rgba(201, 220, 233, 0.9) 58%, transparent 58%, transparent 100%);
+  opacity: 0.66;
+}
+
+.category-panel button:hover,
+.category-panel button.active {
+  background: rgba(201, 220, 233, 0.72);
+  color: #163f8f;
 }
 
 .resource-list {
@@ -718,7 +843,7 @@ onBeforeUnmount(stopCurrentAudio)
 }
 
 .resource-card {
-  height: 178px;
+  height: 276px;
   padding: 14px 15px 16px;
   border-radius: 24px;
   background:
@@ -731,6 +856,22 @@ onBeforeUnmount(stopCurrentAudio)
   gap: 8px;
   overflow: hidden;
   transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.resource-cover {
+  height: 96px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(237, 249, 252, 0.76);
+  box-shadow: inset 0 0 0 1px rgba(22, 63, 143, 0.08);
+  flex-shrink: 0;
+}
+
+.resource-cover img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 
 .resource-card:hover {
@@ -1033,6 +1174,23 @@ onBeforeUnmount(stopCurrentAudio)
   border-radius: 8px;
 }
 
+.video-thumb {
+  height: 100px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(22, 63, 143, 0.08), rgba(22, 63, 143, 0.16));
+  color: #163f8f;
+}
+
+.preview-video {
+  width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  display: block;
+}
+
 .file-preview-wrap {
   margin-bottom: 16px;
 }
@@ -1083,13 +1241,35 @@ onBeforeUnmount(stopCurrentAudio)
 }
 
 @media (max-width: 1120px) {
-  .resource-header,
-  .resource-shell {
+  .resource-header {
     grid-template-columns: 1fr;
   }
 
+  .resource-shell {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .category-panel {
+    flex-direction: row;
+    overflow-x: auto;
+    border-radius: 18px;
+  }
+
+  .category-panel h2,
+  .category-panel button {
+    min-width: 80px;
+    border-bottom: 0;
+    border-right: 1px solid rgba(201, 220, 233, 0.44);
+  }
+
+  .category-panel button {
+    width: auto;
+    margin: 6px 8px;
+    padding: 0 16px;
+  }
+
   .resource-page,
-  .resource-shell,
   .resource-list {
     overflow: visible;
   }

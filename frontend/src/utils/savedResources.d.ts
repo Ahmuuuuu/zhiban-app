@@ -10,6 +10,7 @@ export interface SavedResourceRef {
   title: string;
   filename: string;
   content: string;
+  coverUrl: string;
   previewUrl: string;
   downloadUrl: string;
   visibility: string;
@@ -25,6 +26,7 @@ export interface SaveGeneratedResourcePayload {
   title?: string;
   filename?: string;
   content?: string;
+  coverUrl?: string;
   previewUrl?: string;
   downloadUrl?: string;
   visibility?: string;
