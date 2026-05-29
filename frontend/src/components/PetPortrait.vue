@@ -204,7 +204,7 @@ onUnmounted(() => {
 
 <template>
   <Transition name="portrait-backdrop-fade">
-    <div v-if="portraitPromptVisible || portraitWizardVisible || portraitCompleteVisible" class="portrait-backdrop" @click="closePortraitOnboarding" />
+    <div v-if="portraitWizardVisible" class="portrait-backdrop" @click="closePortraitOnboarding" />
   </Transition>
 
   <Transition name="pet-onboarding-pop">
@@ -372,15 +372,16 @@ onUnmounted(() => {
 
 .portrait-wizard {
   position: fixed;
-  right: clamp(22px, 4vw, 72px);
-  bottom: clamp(170px, 22vh, 230px);
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   z-index: 1250;
   width: min(480px, calc(100vw - 32px));
   padding: 18px;
   border: 1px solid rgba(22, 63, 143, 0.14);
   border-radius: 26px;
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 28px 72px rgba(22, 63, 143, 0.2);
+  box-shadow: 0 34px 92px rgba(8, 23, 51, 0.32);
   backdrop-filter: blur(22px) saturate(145%);
   -webkit-backdrop-filter: blur(22px) saturate(145%);
   cursor: default;
@@ -517,9 +518,11 @@ onUnmounted(() => {
   position: fixed;
   inset: 0;
   z-index: 1240;
-  background: rgba(8, 23, 51, 0.35);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background:
+    radial-gradient(circle at 50% 46%, rgba(255, 255, 255, 0.16), transparent 32%),
+    rgba(8, 23, 51, 0.46);
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
 }
 
 .portrait-backdrop-fade-enter-active,
@@ -552,7 +555,7 @@ onUnmounted(() => {
 .portrait-wizard-fade-enter-from,
 .portrait-wizard-fade-leave-to {
   opacity: 0;
-  transform: translateY(18px) scale(0.96);
+  transform: translate(-50%, calc(-50% + 18px)) scale(0.96);
   filter: blur(2px);
 }
 
@@ -589,10 +592,17 @@ onUnmounted(() => {
   .portrait-wizard {
     left: 14px;
     right: 14px;
-    bottom: calc(var(--pet-size) + var(--pet-bottom) + 8px);
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
     width: auto;
     padding: 14px;
     border-radius: 22px;
+  }
+
+  .portrait-wizard-fade-enter-from,
+  .portrait-wizard-fade-leave-to {
+    transform: translateY(calc(-50% + 18px)) scale(0.96);
   }
 
   .portrait-wizard__card {
