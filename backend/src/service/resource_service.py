@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,31 @@ _FILE_EXT_MAP = {
     "reading": "md",
     "slide_animation": "json",
 }
+
+
+# ─── 任务 SSE 通知队列 ───
+_task_sse_queues: dict[str, list] = {}
+
+
+def _subscribe_task_sse(task_id: str):
+    """为生成任务 SSE 客户端创建消息队列"""
+    q: list = []
+    _task_sse_queues.setdefault(task_id, []).append(q)
+    return q
+
+
+def _unsubscribe_task_sse(task_id: str, q: list):
+    queues = _task_sse_queues.get(task_id, [])
+    if q in queues:
+        queues.remove(q)
+    if not queues:
+        _task_sse_queues.pop(task_id, None)
+
+
+async def _notify_task_sse(task_id: str, data: dict):
+    """通知所有 SSE 客户端"""
+    for q in _task_sse_queues.get(task_id, []):
+        q.append(data)
 
 from backend.src.service.portrait_service import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
@@ -553,3 +580,209 @@ class ResourceService:
             return False
         await record.delete()
         return True
+
+    # ═══════════════════════════════════════════
+    #  任务管理
+    # ═══════════════════════════════════════════
+
+    @staticmethod
+    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> dict:
+        """创建生成任务，启动后台运行，立即返回 task_id"""
+        from backend.src.models.task_model import GenerationTask
+
+        tid = uuid.uuid4().hex
+        task = await GenerationTask.create(
+            task_id=tid,
+            user_id=user_id,
+            topic=topic or "",
+            resource_types=json.dumps(resource_types, ensure_ascii=False),
+            chat_group_id=chat_group_id or None,
+            status="pending",
+        )
+        asyncio.ensure_future(_run_generation_task(task.id, tid))
+        return {"task_id": tid, "status": "pending"}
+
+    @staticmethod
+    async def get_task(task_id: str, user_id: int) -> dict | None:
+        """查询任务状态"""
+        from backend.src.models.task_model import GenerationTask
+
+        task = await GenerationTask.filter(task_id=task_id, user_id=user_id).first()
+        if not task:
+            return None
+        return {
+            "task_id": task.task_id,
+            "topic": task.topic,
+            "resource_types": json.loads(task.resource_types) if task.resource_types else [],
+            "chat_group_id": task.chat_group_id,
+            "status": task.status,
+            "progress": task.progress,
+            "progress_msg": task.progress_msg,
+            "result": json.loads(task.result) if task.result else None,
+            "error": task.error,
+            "created_at": str(task.created_at),
+            "updated_at": str(task.updated_at),
+        }
+
+    @staticmethod
+    async def list_tasks(user_id: int) -> list[dict]:
+        """列出该用户最近的任务"""
+        from backend.src.models.task_model import GenerationTask
+
+        tasks = await GenerationTask.filter(user_id=user_id).order_by("-created_at").limit(20).all()
+        return [
+            {
+                "task_id": t.task_id,
+                "topic": t.topic,
+                "resource_types": json.loads(t.resource_types) if t.resource_types else [],
+                "status": t.status,
+                "progress": t.progress,
+                "progress_msg": t.progress_msg,
+                "error": t.error,
+                "created_at": str(t.created_at),
+            }
+            for t in tasks
+        ]
+
+    @staticmethod
+    async def init_tasks():
+        """启动时清理未完成任务（进程重启后未完成的任务标记为失败）"""
+        from backend.src.models.task_model import GenerationTask
+
+        abandoned = await GenerationTask.filter(status__in=["pending", "running"]).all()
+        for t in abandoned:
+            t.status = "failed"
+            t.error = "服务重启，任务已中止"
+            await t.save()
+
+
+# ═══════════════════════════════════════════════
+#  后台任务执行
+# ═══════════════════════════════════════════════
+
+async def _run_generation_task(db_id: int, task_id: str):
+    """后台运行资源生成任务，更新 DB 进度并推送 SSE"""
+    from backend.src.models.task_model import GenerationTask
+
+    try:
+        task = await GenerationTask.filter(id=db_id).first()
+        if not task:
+            return
+
+        resource_types = json.loads(task.resource_types) if task.resource_types else ["document"]
+        chat_group_id = task.chat_group_id or 0
+        user_id = task.user_id
+        topic = task.topic
+
+        task.status = "running"
+        task.progress = 5
+        task.progress_msg = "正在初始化…"
+        await task.save()
+        await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 5, "progress_msg": "正在初始化…"})
+
+        # 构建 graph 初始状态
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
+        topic = initial_state["topic"]
+
+        # 更新 topic（可能从聊天记录提取）
+        if topic != task.topic:
+            task.topic = topic
+            await task.save()
+
+        final_resources: dict = {}
+        final_passed = False
+        final_retry = 0
+        final_file_urls: dict = {}
+        yielded_types: set[str] = set()
+        total_types = len(resource_types)
+
+        task.progress = 10
+        task.progress_msg = "AI 规划中…"
+        await task.save()
+        await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 10, "progress_msg": "AI 规划中…"})
+
+        async for chunk in resource_graph.astream(initial_state, stream_mode="values"):
+            resources = chunk.get("generated_resources", {})
+            if resources:
+                final_resources = resources
+                # 统计已产出的类型数
+                for rt in resources.keys():
+                    if rt not in yielded_types:
+                        yielded_types.add(rt)
+                        done = len(yielded_types)
+                        pct = 20 + int((done / max(total_types, 1)) * 40)  # 20-60%
+                        task.progress = min(pct, 85)
+                        task.progress_msg = f"正在生成「{rt}」…"
+                        await task.save()
+                        await _notify_task_sse(task_id, {
+                            "type": "progress",
+                            "resource_type": rt,
+                            "progress": task.progress,
+                            "progress_msg": task.progress_msg,
+                        })
+
+            chunk_file_urls = chunk.get("file_urls", {})
+            if chunk_file_urls:
+                final_file_urls.update(chunk_file_urls)
+            final_passed = chunk.get("review_passed", False)
+            final_retry = chunk.get("retry_count", 0)
+
+        # 审核阶段
+        task.progress = 70
+        task.progress_msg = "AI 审核中…"
+        await task.save()
+        await _notify_task_sse(task_id, {"type": "status", "progress": 70, "progress_msg": "AI 审核中…"})
+
+        # 保存到 DB
+        task.progress = 85
+        task.progress_msg = "正在保存…"
+        await task.save()
+        await _notify_task_sse(task_id, {"type": "status", "progress": 85, "progress_msg": "正在保存…"})
+
+        saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry,
+                                      file_urls=final_file_urls)
+
+        # 保存到聊天历史
+        await _save_generation_to_history(user_id, chat_group_id, topic, saved)
+
+        # 记录结果
+        result_data = [
+            {
+                "resource_id": r["resource_id"],
+                "file_type": r["resource_type"],
+                "topic": r["topic"],
+                "download_url": f"/resource/{r['resource_id']}/download",
+            }
+            for r in saved
+        ]
+
+        task.status = "success"
+        task.progress = 100
+        task.progress_msg = "生成完成"
+        task.result = json.dumps(result_data, ensure_ascii=False)
+        await task.save()
+
+        await _notify_task_sse(task_id, {
+            "type": "done",
+            "status": "success",
+            "progress": 100,
+            "result": result_data,
+        })
+        await _notify_task_sse(task_id, {"type": "__close__"})
+
+    except Exception as e:
+        logger.exception("生成任务失败 task_id=%s", task_id)
+        try:
+            task = await GenerationTask.filter(id=db_id).first()
+            if task:
+                task.status = "failed"
+                task.error = str(e)
+                await task.save()
+                await _notify_task_sse(task_id, {
+                    "type": "done",
+                    "status": "failed",
+                    "error": str(e),
+                })
+                await _notify_task_sse(task_id, {"type": "__close__"})
+        except Exception:
+            logger.exception("更新失败任务状态出错 task_id=%s", task_id)
