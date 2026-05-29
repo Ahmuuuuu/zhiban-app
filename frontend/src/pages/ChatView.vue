@@ -394,7 +394,7 @@
 </template>
 
 <script setup>
-import { computed, ref, nextTick, onMounted } from 'vue'
+import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   downloadWithToken,
@@ -408,7 +408,8 @@ import {
   upsertAgentActionSkill,
   resolveApiUrl
 } from '../api/apis'
-import { detectGenerationIntent, executeGeneration } from '../composables/useResourceGeneration'
+import { detectGenerationIntent } from '../composables/useResourceGeneration'
+import { useGenerationTaskQueue } from '../composables/useGenerationTaskQueue'
 import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
@@ -438,6 +439,8 @@ const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
 const router = useRouter()
+const { tasks: generationTasks, startTask: startGenerationTask } = useGenerationTaskQueue()
+const boundGenerationTaskMessages = new Map()
 
 const resourceTools = [
   {
@@ -1670,6 +1673,74 @@ const handleGenerationDone = async eventData => {
   await loadConversationList()
 }
 
+const attachGenerationTaskToMessage = (task, messageId) => {
+  if (!task?.id || boundGenerationTaskMessages.get(task.id) === messageId) return
+  boundGenerationTaskMessages.set(task.id, messageId)
+
+  let fileCursor = 0
+  let imageCursor = 0
+  let doneHandled = false
+
+  watch(
+    () => [task.progress, task.status, task.files.length, task.images.length, task.updatedAt],
+    async () => {
+      const target = messages.value.find(item => item.id === messageId)
+
+      if (target) {
+        target.content = task.status === 'failed'
+          ? (task.error || '资源生成失败，请稍后再试。')
+          : (task.progress || '正在生成资源...')
+        target.time = getNowTime()
+      }
+
+      while (fileCursor < task.files.length) {
+        await appendFileMessage(task.files[fileCursor])
+        fileCursor += 1
+      }
+
+      while (imageCursor < task.images.length) {
+        appendImageMessage(task.images[imageCursor])
+        imageCursor += 1
+      }
+
+      if (task.status === 'done' && !doneHandled) {
+        doneHandled = true
+        await handleGenerationDone(task.doneEvent || {})
+      }
+
+      await scrollToBottom()
+    },
+    { immediate: true }
+  )
+}
+
+const addGenerationTaskMessage = task => {
+  const existing = messages.value.find(item => item.generationTaskId === task.id)
+  const messageId = existing?.id || `generation-message-${task.id}`
+
+  if (!existing) {
+    messages.value.push({
+      id: messageId,
+      role: 'assistant',
+      type: 'text',
+      generationTaskId: task.id,
+      content: task.progress || '正在生成资源...',
+      time: getNowTime()
+    })
+  }
+
+  attachGenerationTaskToMessage(task, messageId)
+}
+
+const restoreGenerationTasksInChat = () => {
+  generationTasks.forEach(task => {
+    const isRecent = Date.now() - task.updatedAt < 10 * 60 * 1000
+    if (task.status === 'running' || isRecent) {
+      addGenerationTaskMessage(task)
+    }
+  })
+}
+
 
 //获取对话消息
 const sendMessage = async () => {
@@ -1723,15 +1794,9 @@ const sendMessage = async () => {
     if (!target) return
 
     if (activeTool?.generateMode) {
-      await executeGeneration(backendText, activeTool, activeConversationId.value, {
-        onProgress: (msg) => { target.content = msg; target.time = getNowTime() },
-        onFile: async (fileData) => { await appendFileMessage(fileData) },
-        onImage: (imageData) => { appendImageMessage(imageData) },
-        onDone: async (eventData) => {
-          target.time = getNowTime()
-          await handleGenerationDone(eventData)
-        },
-      })
+      const task = startGenerationTask(backendText, activeTool, activeConversationId.value)
+      target.generationTaskId = task.id
+      attachGenerationTaskToMessage(task, loadingMessageId)
       await scrollToBottom()
       return
     }
@@ -1739,15 +1804,9 @@ const sendMessage = async () => {
     // 关键词检测 — 自动路由到资源/图片生成
     const detectedTool = detectGenerationIntent(text)
     if (detectedTool?.generateMode) {
-      await executeGeneration(text, detectedTool, activeConversationId.value, {
-        onProgress: (msg) => { target.content = msg; target.time = getNowTime() },
-        onFile: async (fileData) => { await appendFileMessage(fileData) },
-        onImage: (imageData) => { appendImageMessage(imageData) },
-        onDone: async (eventData) => {
-          target.time = getNowTime()
-          await handleGenerationDone(eventData)
-        },
-      })
+      const task = startGenerationTask(text, detectedTool, activeConversationId.value)
+      target.generationTaskId = task.id
+      attachGenerationTaskToMessage(task, loadingMessageId)
       await scrollToBottom()
       return
     }
@@ -1852,6 +1911,7 @@ const openConversation = async (conversationId) => {
 
     messages.value = buildMessagesFromHistory(records, conversationId)
     await appendPresentationCardsFromHistory(records, messages.value)
+    restoreGenerationTasksInChat()
     await scrollToBottom()
   } catch (error) {
     console.error('获取历史对话详情失败：', error)
@@ -1892,6 +1952,7 @@ const handleEnter = (event) => {
 
 onMounted(() => {
   loadConversationList()
+  restoreGenerationTasksInChat()
 })
 </script>
 
