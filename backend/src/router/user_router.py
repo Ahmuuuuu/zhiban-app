@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Body, UploadFile, File
 from backend.src.service.userservice import UserService
 from backend.src.utils.jwt import create_access_token, get_user_id_from_token
-from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
+from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User, SendEmailCode, RegisterByEmail, LoginByEmail
 
 router = APIRouter(prefix = "/user", tags = ["用户"])
 
@@ -45,7 +45,49 @@ async def login(data : Login_User):
             }
     except HTTPException:
         raise HTTPException(500, "服务器错误")
-    
+
+
+@router.post("/send_email_code")
+async def send_email_code(data: SendEmailCode = Body(...)):
+    try:
+        _, msg = await UserService.send_email_code(data.email, data.purpose)
+        if msg != "success":
+            return {"code": 400, "msg": msg}
+        return {"code": 200, "msg": "验证码已发送"}
+    except HTTPException:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.post("/register_by_email")
+async def register_by_email(data: RegisterByEmail = Body(...)):
+    try:
+        user, msg = await UserService.register_by_email(data.email, data.code, data.password, data.username)
+        if user is None:
+            return {"code": 400, "msg": msg}
+        return {
+            "code": 200,
+            "msg": msg,
+            "data": {"id": create_access_token(user.id), "username": user.username},
+        }
+    except HTTPException:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.post("/login_by_email")
+async def login_by_email(data: LoginByEmail = Body(...)):
+    try:
+        user, msg = await UserService.login_by_email(data.email, data.code)
+        if user is None:
+            return {"code": 400, "msg": msg}
+        return {
+            "code": 200,
+            "msg": msg,
+            "data": {"id": create_access_token(user.id)},
+        }
+    except HTTPException:
+        raise HTTPException(500, "服务器错误")
+
+
 @router.get("/read_user")
 async def read(user_id : int = Depends(get_user_id_from_token)):
     try : 

@@ -9,7 +9,7 @@ from backend.src.models.usermodel import User
 
 logger = logging.getLogger(__name__)
 from backend.src.models.portraitmodel import User_picture
-from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User
+from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User, SendEmailCode, RegisterByEmail, LoginByEmail
 from backend.src.utils.pwintohash import get_password_hash, verify_password
 
 
@@ -131,6 +131,99 @@ class UserService():
         user.avatar = None
         await user.save()
         return user, "头像删除成功"
+
+    @staticmethod
+    async def send_email_code(email: str, purpose: str = "login"):
+        """发送邮箱验证码"""
+        from datetime import datetime, timedelta
+        import random
+        from backend.src.models.email_code_model import EmailVerificationCode
+        from backend.src.utils.email_sender import send_email
+
+        # 1 分钟内不能重复发
+        recent = await EmailVerificationCode.filter(
+            email=email, purpose=purpose, used=False,
+            created_at__gte=datetime.now() - timedelta(minutes=1),
+        ).order_by("-created_at").first()
+        if recent:
+            return None, "请 1 分钟后再试"
+
+        code = f"{random.randint(100000, 999999)}"
+        expires_at = datetime.now() + timedelta(minutes=10)
+
+        await EmailVerificationCode.create(
+            email=email, code=code, purpose=purpose, expires_at=expires_at
+        )
+
+        ok = send_email(
+            to_email=email,
+            subject="智伴 - 邮箱验证码",
+            body=f"您的验证码是：{code}，有效期 10 分钟。如非本人操作，请忽略。",
+        )
+        if not ok:
+            return None, "邮件发送失败，请检查邮箱地址或稍后重试"
+        return {"msg": "验证码已发送"}, "success"
+
+    @staticmethod
+    async def register_by_email(email: str, code: str, password: str, username: str):
+        """邮箱注册 — 验证码校验后创建用户"""
+        from datetime import datetime
+        from backend.src.models.email_code_model import EmailVerificationCode
+        from tortoise.exceptions import IntegrityError
+
+        # 校验验证码
+        record = await EmailVerificationCode.filter(
+            email=email, code=code, purpose="register", used=False,
+            expires_at__gte=datetime.now(),
+        ).order_by("-created_at").first()
+        if not record:
+            return None, "验证码无效或已过期"
+
+        # 检查用户名
+        exists = await User.filter(username=username).first()
+        if exists:
+            return None, "用户名已被占用"
+
+        try:
+            user = await User.create(
+                username=username,
+                password=get_password_hash(password),
+                email=email,
+            )
+            # 创建画像记录
+            from backend.src.models.portraitmodel import User_picture
+            picture = await User_picture.create()
+            user.picture = picture
+            await user.save()
+
+            # 标记验证码已用
+            record.used = True
+            await record.save()
+
+            return user, "注册成功"
+        except IntegrityError:
+            return None, "注册失败，请稍后重试"
+
+    @staticmethod
+    async def login_by_email(email: str, code: str):
+        """邮箱验证码登录 — 校验验证码后直接登录"""
+        from datetime import datetime
+        from backend.src.models.email_code_model import EmailVerificationCode
+
+        record = await EmailVerificationCode.filter(
+            email=email, code=code, purpose="login", used=False,
+            expires_at__gte=datetime.now(),
+        ).order_by("-created_at").first()
+        if not record:
+            return None, "验证码无效或已过期"
+
+        user = await User.filter(email=email).first()
+        if not user:
+            return None, "该邮箱未注册"
+
+        record.used = True
+        await record.save()
+        return user, "登录成功"
 
     @staticmethod
     async def delete_user(user_id : int, data : Delete_User) : 
