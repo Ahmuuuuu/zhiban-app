@@ -1,12 +1,6 @@
 <template>
   <div class="mindmap-preview" :class="`mindmap-preview--${layoutProfile.name}`" @click="openFullscreen">
     <div ref="mapEl" class="mindmap-canvas"></div>
-    <div class="mindmap-preview__tools" @click.stop>
-      <button type="button" aria-label="缩小" @click="zoomPreviewOut">-</button>
-      <span>{{ Math.round(previewScale * 100) }}%</span>
-      <button type="button" aria-label="放大" @click="zoomPreviewIn">+</button>
-      <button type="button" aria-label="适应画面" @click="zoomPreviewFit">fit</button>
-    </div>
     <div v-if="!fullscreenOpen" class="mindmap-hint">点击放大预览</div>
     <div v-if="errorText && !fullscreenOpen" class="mindmap-fallback">
       <strong>{{ fallbackTitle }}</strong>
@@ -21,6 +15,7 @@
         @click.self="closeFullscreen"
       >
         <div class="mindmap-overlay__toolbar">
+          <button type="button" class="mindmap-overlay__back" @click="closeFullscreen">返回聊天</button>
           <span class="mindmap-overlay__title">{{ fallbackTitle }}</span>
           <div class="mindmap-overlay__actions">
             <button type="button" @click="zoomOut" title="缩小">−</button>
@@ -53,6 +48,10 @@ const props = defineProps({
   title: {
     type: String,
     default: ''
+  },
+  openSignal: {
+    type: Number,
+    default: 0
   }
 })
 
@@ -62,7 +61,6 @@ const errorText = ref('')
 const overlayError = ref('')
 const fullscreenOpen = ref(false)
 const currentScale = ref(1)
-const previewScale = ref(1)
 const layoutProfile = ref({ name: 'balanced', title: '平衡结构' })
 let mind = null
 let overlayMind = null
@@ -342,7 +340,6 @@ const renderMap = async () => {
     requestAnimationFrame(() => {
       mind?.scaleFit?.()
       mind?.toCenter?.()
-      previewScale.value = 1
     })
   } catch (error) {
     console.error('Mindmap render failed:', error)
@@ -424,28 +421,10 @@ const zoomFit = () => {
   currentScale.value = 1
 }
 
-const zoomPreviewIn = () => {
-  if (!mind) return
-  const next = Math.min(previewScale.value + 0.25, 3)
-  mind.scale(next)
-  previewScale.value = next
-}
-
-const zoomPreviewOut = () => {
-  if (!mind) return
-  const next = Math.max(previewScale.value - 0.25, 0.25)
-  mind.scale(next)
-  previewScale.value = next
-}
-
-const zoomPreviewFit = () => {
-  if (!mind) return
-  mind.scaleFit()
-  mind.toCenter()
-  previewScale.value = 1
-}
-
 watch(() => [props.content, props.title], renderMap, { deep: true })
+watch(() => props.openSignal, value => {
+  if (value) openFullscreen()
+})
 onMounted(renderMap)
 
 onBeforeUnmount(() => {
@@ -482,48 +461,6 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 620px;
   min-height: 520px;
-}
-
-.mindmap-preview__tools {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 5;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px;
-  border: 1px solid rgba(22, 63, 143, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 8px 22px rgba(35, 59, 92, 0.12);
-}
-
-.mindmap-preview__tools button {
-  min-width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(22, 63, 143, 0.08);
-  color: #163f8f;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.mindmap-preview__tools button:hover {
-  background: #163f8f;
-  color: #fff;
-}
-
-.mindmap-preview__tools span {
-  min-width: 42px;
-  color: #45617e;
-  font-size: 11px;
-  font-weight: 900;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
 }
 
 .mindmap-hint {
@@ -663,6 +600,23 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mindmap-overlay__back {
+  min-width: 82px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mindmap-overlay__back:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .mindmap-overlay__actions {
