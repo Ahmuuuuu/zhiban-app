@@ -475,6 +475,8 @@ const saveDialog = ref({
   message: null
 })
 
+const getResponseData = (res) => res?.data ?? res ?? {}
+
 const normalizeList = (res) => {
   const data = getResponseData(res)
   const list = data?.data || data?.records || data?.list || data

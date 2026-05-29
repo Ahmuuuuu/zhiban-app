@@ -22,13 +22,13 @@
               ref="fileInputRef"
               class="file-input"
               type="file"
-              accept=".txt,.md,.csv,.json,.pdf,.docx,text/plain,text/markdown,text/csv,application/json,application/pdf"
+              accept=".txt,.md,.csv,.json,.pdf,.docx,.mp4,text/plain,text/markdown,text/csv,application/json,application/pdf,video/mp4"
               @change="handleFileChange"
             />
 
             <div class="upload-mark">文</div>
             <h2>{{ selectedFile ? selectedFile.name : '选择或拖入文字文件' }}</h2>
-            <p>{{ selectedFile ? fileMetaText : '当前支持 txt、pdf、docx、md、csv、json 等文字文件' }}</p>
+            <p>{{ selectedFile ? fileMetaText : '当前支持 txt、pdf、docx、md、csv、json、mp4 等文件' }}</p>
 
             <div class="upload-actions">
               <button type="button" class="primary-btn" @click="openFilePicker">
@@ -134,7 +134,7 @@ const statusType = ref('')
 const uploading = ref(false)
 const isDragging = ref(false)
 
-const allowedExtensions = ['txt', 'md', 'csv', 'json', 'pdf', 'docx']
+const allowedExtensions = ['txt', 'md', 'csv', 'json', 'pdf', 'docx', 'mp4']
 
 // 与后端 KB_CATEGORIES 对齐
 const categoryOptions = [
@@ -157,7 +157,12 @@ const openFilePicker = () => {
   fileInputRef.value?.click()
 }
 
-const isTextFile = (file) => {
+const isVideoFile = (file) => {
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  return file.type.startsWith('video/') || extension === 'mp4'
+}
+
+const isAllowedFile = (file) => {
   const extension = file.name.split('.').pop()?.toLowerCase()
   return file.type.startsWith('text/') || allowedExtensions.includes(extension)
 }
@@ -180,8 +185,8 @@ const readFile = (file) => {
 const loadFile = async (file) => {
   if (!file) return
 
-  if (!isTextFile(file)) {
-    setStatus('当前仅支持文字文件，请选择 txt、md、csv 或 json 文件', 'error')
+  if (!isAllowedFile(file)) {
+    setStatus('当前仅支持文字文件或视频文件，请选择 txt、md、csv、json、pdf、docx 或 mp4 文件', 'error')
     return
   }
 
@@ -189,12 +194,16 @@ const loadFile = async (file) => {
   materialTitle.value = materialTitle.value || file.name.replace(/\.[^.]+$/, '')
   setStatus('')
 
-  try {
-    const text = await readFile(file)
-    previewText.value = text.slice(0, 3000)
-  } catch (error) {
-    clearFile()
-    setStatus(error.message || '文件读取失败', 'error')
+  if (isVideoFile(file)) {
+    previewText.value = '[视频文件] 将直接存储，不入库文本解析'
+  } else {
+    try {
+      const text = await readFile(file)
+      previewText.value = text.slice(0, 3000)
+    } catch (error) {
+      clearFile()
+      setStatus(error.message || '文件读取失败', 'error')
+    }
   }
 }
 
