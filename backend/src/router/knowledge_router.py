@@ -1,4 +1,6 @@
+import hashlib
 import logging
+import shutil
 from pathlib import Path
 import tempfile
 import os
@@ -9,10 +11,16 @@ from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.utils.file_processor import extract_text, chunk_text
 from backend.src.utils.knowledge_base import ingest, list_all, list_grouped, get_by_id, update, delete
 from backend.src.utils.admin_check import is_admin
+from backend.src.models.knowledgemodel import KnowledgeVector
+
+logger = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent.parent.parent / "static"
+VIDEO_DIR = STATIC_DIR / "videos"
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库"])
 
-ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx"}
+ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".mp4"}
 
 
 @router.post("/upload")
@@ -45,6 +53,41 @@ async def upload_document(
             return {
                 "code": 400,
                 "msg": f"不支持的文件格式 {suffix}，仅支持 {', '.join(ALLOWED_EXTENSIONS)}",
+            }
+
+        # ── MP4 视频：直接存 static/videos/，不入库 embedding ──
+        if suffix == ".mp4":
+            VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+            ts = int(__import__("time").time())
+            safe_name = f"{user_id}_{ts}_{file.filename}"
+            dest = VIDEO_DIR / safe_name
+
+            content_bytes = await file.read()
+            dest.write_bytes(content_bytes)
+
+            doc_title = title.strip() if title else Path(file.filename).stem
+            doc_id = hashlib.sha256((doc_title + str(ts)).encode()).hexdigest()[:16]
+            video_url = f"/static/videos/{safe_name}"
+
+            await KnowledgeVector.create(
+                doc_id=doc_id,
+                title=doc_title,
+                category="video",
+                content=video_url,
+                embedding="[]",
+                visibility="private",
+                user_id=user_id,
+            )
+            logger.info("视频上传成功 path=%s title=%s", video_url, doc_title)
+            return {
+                "code": 200,
+                "msg": "视频上传成功",
+                "data": {
+                    "filename": file.filename,
+                    "title": doc_title,
+                    "url": video_url,
+                    "doc_id": doc_id,
+                },
             }
 
         # ── 保存临时文件 ──
