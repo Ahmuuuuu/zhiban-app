@@ -145,7 +145,12 @@
             class="chat-mindmap-preview"
             :content="message.content"
             :title="message.filename"
+            :open-signal="message.mindmapPreviewSignal || 0"
           />
+
+          <div v-else-if="isMindmapFile(message)" class="file-placeholder">
+            思维导图已生成，可以加载预览。
+          </div>
 
           <div v-else-if="isVideoFile(message)" class="file-placeholder">
             动态课件已生成，可以打开预览。
@@ -164,6 +169,9 @@
           <div v-if="message.previewUrl || message.downloadUrl || message.fileId || message.content" class="file-actions">
             <button v-if="isPptFile(message) && canOpenPptPreview(message)" type="button" @click="openPptPreview(message)">
               {{ pptPreview.loading && pptPreview.messageId === message.id ? '加载中...' : '预览' }}
+            </button>
+            <button v-if="isMindmapFile(message)" type="button" @click="openMindmapLargePreview(message)">
+              {{ message.mindmapPreviewLoading ? '加载中...' : '预览' }}
             </button>
             <button v-if="isVideoFile(message) && message.previewUrl" type="button" @click="openPresentationPlayer(message)">打开课件</button>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
@@ -439,7 +447,12 @@ const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
 const router = useRouter()
-const { tasks: generationTasks, startTask: startGenerationTask } = useGenerationTaskQueue()
+const {
+  tasks: generationTasks,
+  startTask: startGenerationTask,
+  hydrateTasks: hydrateGenerationTasks,
+  maybeGeneratePresentation
+} = useGenerationTaskQueue()
 const boundGenerationTaskMessages = new Map()
 
 const resourceTools = [
@@ -733,12 +746,19 @@ const getRecordTime = (record) => {
   return record?.created_time || record?.created_at || record?.createTime || record?.updated_at || record?.updateTime
 }
 
+const getTimeValue = value => {
+  const time = new Date(value || 0).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
 const getRecordId = (record, fallback) => {
   return record?.id || record?.index || fallback
 }
 
 const buildMessagesFromHistory = (records, conversationId) => {
   return records
+    .slice()
+    .sort((a, b) => getTimeValue(getRecordTime(a)) - getTimeValue(getRecordTime(b)))
     .flatMap((item, index) => {
       const time = formatTime(getRecordTime(item))
       const id = getRecordId(item, index)
@@ -816,7 +836,9 @@ const normalizeHistoryGroups = (res) => {
   const groups = data?.data || data
 
   if (Array.isArray(groups)) {
-    return groups.reverse()
+    return groups
+      .slice()
+      .sort((a, b) => getTimeValue(getRecordTime(b)) - getTimeValue(getRecordTime(a)))
   }
 
   if (!groups || typeof groups !== 'object') {
@@ -825,16 +847,18 @@ const normalizeHistoryGroups = (res) => {
 
   return Object.entries(groups).map(([groupId, records]) => {
     const list = Array.isArray(records) ? records : []
-    const firstRecord = list[0] || {}
-    const lastRecord = list[list.length - 1] || firstRecord
+    const sortedList = list.slice().sort((a, b) => getTimeValue(getRecordTime(a)) - getTimeValue(getRecordTime(b)))
+    const firstRecord = sortedList[0] || {}
+    const lastRecord = sortedList[sortedList.length - 1] || firstRecord
 
     return {
       id: Number(groupId) || firstRecord.chat_group_id || groupId,
+      sortTime: getTimeValue(getRecordTime(lastRecord)),
       title: stripInternalInstructions(firstRecord.req) || `对话 ${groupId}`,
       lastMessage: stripInternalInstructions(lastRecord.req) || lastRecord.res || '',
       time: formatTime(getRecordTime(lastRecord))
     }
-  }).reverse()
+  }).sort((a, b) => b.sortTime - a.sortTime)
 }
 
 const escapeHtml = (value) => {
@@ -1456,6 +1480,9 @@ const appendFileMessage = async fileData => {
 
   if (fallbackIndex === -1) {
     messages.value.push(fileMessage)
+    if (isMindmapFile(fileMessage) && !fileMessage.content) {
+      await hydrateMindmapPreview(fileMessage)
+    }
     return
   }
 
@@ -1464,6 +1491,9 @@ const appendFileMessage = async fileData => {
     ...fileMessage,
     content: fileMessage.content || messages.value[fallbackIndex].content,
     centerSaveStatus: messages.value[fallbackIndex].centerSaveStatus || fileMessage.centerSaveStatus
+  }
+  if (isMindmapFile(messages.value[fallbackIndex]) && !messages.value[fallbackIndex].content) {
+    await hydrateMindmapPreview(messages.value[fallbackIndex])
   }
 }
 
@@ -1644,6 +1674,41 @@ const isMindmapFile = message => {
     text.includes('导图')
 }
 
+const hydrateMindmapPreview = async (message, openAfterLoad = false) => {
+  const resourceId = getFileResourceId(message)
+  if (message.content) {
+    if (openAfterLoad) {
+      message.mindmapPreviewSignal = (message.mindmapPreviewSignal || 0) + 1
+    }
+    return
+  }
+  if (!resourceId || message.mindmapPreviewLoading) return
+
+  message.mindmapPreviewLoading = true
+  try {
+    const res = await getGeneratedResource(resourceId)
+    const data = getResponseData(res)?.data || getResponseData(res)
+    Object.assign(message, {
+      content: data.content || data.preview || data.preview_content || message.content || '',
+      filename: data.filename || data.title || data.topic || message.filename,
+      fileType: data.resource_type || data.file_type || message.fileType || 'mindmap',
+      downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || message.downloadUrl)
+    })
+    if (openAfterLoad && message.content) {
+      message.mindmapPreviewSignal = (message.mindmapPreviewSignal || 0) + 1
+    }
+  } catch (error) {
+    console.error('[ChatView] load mindmap preview failed:', error)
+    if (openAfterLoad) window.alert('思维导图预览加载失败，请稍后重试')
+  } finally {
+    message.mindmapPreviewLoading = false
+  }
+}
+
+const openMindmapLargePreview = async message => {
+  await hydrateMindmapPreview(message, true)
+}
+
 const isVideoFile = message => {
   const text = String(`${message?.fileType || ''} ${message?.filename || ''} ${message?.title || ''}`).toLowerCase()
   return text.includes('video') || text.includes('视频')
@@ -1690,10 +1755,20 @@ const attachGenerationTaskToMessage = (task, messageId) => {
       const target = messages.value.find(item => item.id === messageId)
 
       if (target) {
-        target.content = task.status === 'failed'
-          ? (task.error || '资源生成失败，请稍后再试。')
-          : (task.progress || '正在生成资源...')
+        if (task.status === 'failed') {
+          target.content = task.error || '资源生成失败，请稍后再试。'
+        } else {
+          let text = task.progress || '正在生成资源...'
+          if (task.images.length > 0 || task.files.length > 0) {
+            text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim()
+          }
+          target.content = text
+        }
         target.time = getNowTime()
+      }
+
+      if (task.status === 'done' && task.tool?.generateMode === 'video') {
+        await maybeGeneratePresentation(task)
       }
 
       while (fileCursor < task.files.length) {
@@ -1914,6 +1989,9 @@ const openConversation = async (conversationId) => {
 
     messages.value = buildMessagesFromHistory(records, conversationId)
     await appendPresentationCardsFromHistory(records, messages.value)
+    await hydrateGenerationTasks().catch(error => {
+      console.warn('[ChatView] restore generation tasks failed:', error)
+    })
     restoreGenerationTasksInChat()
     await scrollToBottom()
   } catch (error) {
@@ -1953,7 +2031,10 @@ const handleEnter = (event) => {
   sendMessage()
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await hydrateGenerationTasks().catch(error => {
+    console.warn('[ChatView] restore generation tasks failed:', error)
+  })
   loadConversationList()
   restoreGenerationTasksInChat()
 })

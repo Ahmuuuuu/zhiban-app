@@ -92,6 +92,16 @@ export function getGeneratedResources(): Promise<unknown>;
 
 export function getGeneratedResource(resourceId: number | string): Promise<unknown>;
 
+export function createResourceGenerationTask(data: {
+  topic: string;
+  resource_types: string[];
+  chat_group_id?: number | string | null;
+}): Promise<unknown>;
+
+export function getResourceGenerationTask(taskId: number | string): Promise<unknown>;
+
+export function getResourceGenerationTasks(): Promise<unknown>;
+
 export function likeResource(resourceId: number | string): Promise<unknown>;
 
 export function unlikeResource(resourceId: number | string): Promise<unknown>;
