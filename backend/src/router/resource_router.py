@@ -1,9 +1,11 @@
+import asyncio
+import json
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Depends, Body, Query, Header
+from fastapi import APIRouter, HTTPException, Depends, Body, Query, Header, Request
 from fastapi.responses import StreamingResponse
 
-from backend.src.service.resource_service import ResourceService
+from backend.src.service.resource_service import ResourceService, _subscribe_task_sse, _unsubscribe_task_sse
 from backend.src.service.skill_service import SkillService
 from backend.src.schemas.resource import GenerateResourceRequest
 from backend.src.schemas.skill import UpsertSkillRequest
@@ -58,6 +60,85 @@ async def generate_resource_stream(
         ResourceService.generate_stream(data.topic, user_id, data.resource_types, data.chat_group_id),
         media_type = "text/event-stream",
     )
+
+
+# ═══════════════════════════════════════════
+#  任务系统
+# ═══════════════════════════════════════════
+
+@router.post("/generate/task")
+async def create_generation_task(
+    user_id: int = Depends(get_user_id_from_token),
+    data: GenerateResourceRequest = Body(...),
+):
+    try:
+        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id)
+        return {"code": 200, "msg": "success", "data": result}
+    except Exception:
+        raise HTTPException(500, "创建任务失败")
+
+
+@router.get("/generate/task/{task_id}")
+async def get_generation_task(
+    task_id: str,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    try:
+        result = await ResourceService.get_task(task_id, user_id)
+        if result is None:
+            return {"code": 404, "msg": "任务不存在"}
+        return {"code": 200, "msg": "success", "data": result}
+    except Exception:
+        raise HTTPException(500, "查询任务失败")
+
+
+@router.get("/generate/tasks")
+async def list_generation_tasks(
+    user_id: int = Depends(get_user_id_from_token),
+):
+    try:
+        result = await ResourceService.list_tasks(user_id)
+        return {"code": 200, "msg": "success", "data": result}
+    except Exception:
+        raise HTTPException(500, "查询任务列表失败")
+
+
+@router.get("/generate/task/{task_id}/stream")
+async def stream_generation_task(
+    task_id: str,
+    request: Request,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    """SSE 订阅任务进度"""
+
+    async def event_stream():
+        q = _subscribe_task_sse(task_id)
+        try:
+            # 先推送当前状态
+            task_data = await ResourceService.get_task(task_id, user_id)
+            if task_data:
+                if task_data["status"] in ("success", "failed"):
+                    yield f"data: {json.dumps({'type': 'done', **task_data}, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                yield f"data: {json.dumps({'type': 'status', **task_data}, ensure_ascii=False)}\n\n"
+
+            # 持续监听队列
+            while True:
+                if await request.is_disconnected():
+                    break
+                if q:
+                    data = q.pop(0)
+                    if data.get("type") == "__close__":
+                        yield "data: [DONE]\n\n"
+                        return
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                else:
+                    await asyncio.sleep(0.3)
+        finally:
+            _unsubscribe_task_sse(task_id, q)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/list")
