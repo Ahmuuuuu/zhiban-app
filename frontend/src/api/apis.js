@@ -485,7 +485,18 @@ export function generatePresentation(data) {
     method: 'post',
     data: {
       topic: data.topic,
-      voice: data.voice || 'zh-CN-XiaoxiaoNeural'
+      voice: data.voice || 'zh-CN-XiaoxiaoNeural',
+      chapters: data.chapters || undefined
+    }
+  })
+}
+
+export function previewPresentation(data) {
+  return request({
+    url: '/presentation/preview',
+    method: 'post',
+    data: {
+      topic: data.topic
     }
   })
 }
