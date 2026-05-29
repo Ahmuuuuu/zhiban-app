@@ -389,6 +389,40 @@ export function getGeneratedResource(resourceId) {
   return request.get(`/resource/${resourceId}`)
 }
 
+export function likeResource(resourceId) {
+  return requestFirstAvailable([
+    () => request.post(`/resource/${resourceId}/like`),
+    () => request.post(`/resource/like/${resourceId}`),
+    () => request.post('/resource/like', { resource_id: Number(resourceId) })
+  ])
+}
+
+export function unlikeResource(resourceId) {
+  return requestFirstAvailable([
+    () => request.delete(`/resource/${resourceId}/like`),
+    () => request.delete(`/resource/like/${resourceId}`),
+    () => request({ url: '/resource/like', method: 'delete', data: { resource_id: Number(resourceId) } })
+  ])
+}
+
+export function favoriteResource(resourceId) {
+  return requestFirstAvailable([
+    () => request.post(`/resource/${resourceId}/favorite`),
+    () => request.post(`/resource/${resourceId}/collect`),
+    () => request.post(`/resource/favorite/${resourceId}`),
+    () => request.post('/resource/favorite', { resource_id: Number(resourceId) })
+  ])
+}
+
+export function unfavoriteResource(resourceId) {
+  return requestFirstAvailable([
+    () => request.delete(`/resource/${resourceId}/favorite`),
+    () => request.delete(`/resource/${resourceId}/collect`),
+    () => request.delete(`/resource/favorite/${resourceId}`),
+    () => request({ url: '/resource/favorite', method: 'delete', data: { resource_id: Number(resourceId) } })
+  ])
+}
+
 export function narrateResource(resourceId, options = {}) {
   return request({
     url: '/video/narrate',
