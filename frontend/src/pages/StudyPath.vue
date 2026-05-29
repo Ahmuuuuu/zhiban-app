@@ -624,23 +624,24 @@ const formatHistoryDate = value => {
 }
 
 const subjectTeacherRules = [
-  { label: '数学', keywords: ['数学', '高数', '代数', '几何', '函数', '微积分', '概率', '统计'] },
-  { label: '语文', keywords: ['语文', '作文', '阅读理解', '古诗', '文言文', '现代文'] },
-  { label: '英语', keywords: ['英语', '雅思', '托福', '四六级', '词汇', '语法', '写作', '听力', '口语'] },
-  { label: '物理', keywords: ['物理', '力学', '电磁', '热学', '光学'] },
-  { label: '化学', keywords: ['化学', '有机', '无机', '方程式', '实验'] },
-  { label: '生物', keywords: ['生物', '细胞', '遗传', '生态'] },
-  { label: '历史', keywords: ['历史', '近代史', '世界史', '古代史'] },
-  { label: '地理', keywords: ['地理', '地图', '气候', '地形'] },
-  { label: '政治', keywords: ['政治', '道法', '思想品德', '马克思'] },
-  { label: '编程', keywords: ['编程', '程序', '代码', 'Python', 'JavaScript', 'Java', 'C++', '算法', '前端', '后端'] },
-  { label: '计算机', keywords: ['计算机', '网络', '数据库', '操作系统', '数据结构'] },
-  { label: 'AI', keywords: ['AI', '人工智能', '机器学习', '深度学习', '大模型'] },
-  { label: '音乐', keywords: ['音乐', '乐理', '钢琴', '吉他'] },
-  { label: '美术', keywords: ['美术', '绘画', '素描', '色彩'] }
+  { label: '英语', weight: 8, keywords: ['英语', '英文', 'english', '雅思', '托福', '四六级', 'cet', 'ielts', 'toefl'] },
+  { label: '计算机', weight: 8, keywords: ['微机', '微机原理', '微处理器', '计算机组成', '组成原理', '单片机', '汇编', '8086', 'cpu', '寄存器', '计算机'] },
+  { label: 'AI', weight: 8, keywords: ['人工智能', '机器学习', '深度学习', '大模型', '神经网络', 'ai'] },
+  { label: '数学', weight: 6, keywords: ['数学', '高数', '代数', '几何', '函数', '微积分', '概率', '统计'] },
+  { label: '语文', weight: 6, keywords: ['语文', '作文', '古诗', '文言文', '现代文'] },
+  { label: '物理', weight: 6, keywords: ['物理', '力学', '电磁', '热学', '光学'] },
+  { label: '化学', weight: 6, keywords: ['化学', '有机', '无机', '方程式', '实验'] },
+  { label: '生物', weight: 6, keywords: ['生物', '细胞', '遗传', '生态'] },
+  { label: '历史', weight: 6, keywords: ['历史', '近代史', '世界史', '古代史'] },
+  { label: '地理', weight: 6, keywords: ['地理', '地图', '气候', '地形'] },
+  { label: '政治', weight: 6, keywords: ['政治', '道法', '思想品德', '马克思'] },
+  { label: '编程', weight: 5, keywords: ['编程', '程序设计', '代码', 'python', 'javascript', 'java', 'c++', '前端', '后端'] },
+  { label: '音乐', weight: 6, keywords: ['音乐', '乐理', '钢琴', '吉他'] },
+  { label: '美术', weight: 6, keywords: ['美术', '绘画', '素描', '色彩'] }
 ]
 
 const inferPathSubject = (state, fallback = '') => {
+  const directText = [fallback, state?.goal].filter(Boolean).join(' ').toLowerCase()
   const text = [
     fallback,
     state?.goal,
@@ -650,11 +651,25 @@ const inferPathSubject = (state, fallback = '') => {
   ].filter(Boolean).join(' ')
 
   const lowerText = text.toLowerCase()
-  const matched = subjectTeacherRules.find(rule =>
-    rule.keywords.some(keyword => lowerText.includes(String(keyword).toLowerCase()))
-  )
 
-  if (matched) return matched.label
+  const directMatch = subjectTeacherRules.find(rule =>
+    rule.keywords.some(keyword => directText.includes(String(keyword).toLowerCase()))
+  )
+  if (directMatch) return directMatch.label
+
+  const scored = subjectTeacherRules
+    .map(rule => {
+      const score = rule.keywords.reduce((sum, keyword) => {
+        const key = String(keyword).toLowerCase()
+        if (!key || !lowerText.includes(key)) return sum
+        return sum + (directText.includes(key) ? rule.weight * 2 : rule.weight)
+      }, 0)
+      return { label: rule.label, score }
+    })
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+
+  if (scored[0]) return scored[0].label
   const compactGoal = String(state?.goal || fallback || '').replace(/学习路径|学习|入门|进阶|复习|规划|计划/g, '').trim()
   return compactGoal.slice(0, 8) || '学习'
 }
@@ -674,6 +689,13 @@ const announceGeneratedPathTeacher = (runId, state, fallbackSubject = '') => {
   if (announcedGenerationRunIds.has(runId)) return
   announcedGenerationRunIds.add(runId)
   announcePathTeacher(state, fallbackSubject)
+}
+
+const announcePathTeacherAfterOverlay = async (state, fallbackSubject = '') => {
+  await nextTick()
+  window.setTimeout(() => {
+    announcePathTeacher(pathState.value || state, fallbackSubject)
+  }, 260)
 }
 
 const loadPathHistory = async () => {
@@ -698,11 +720,34 @@ const closePathHistory = () => {
   historyError.value = ''
 }
 
+const loadCurrentPathAfterSelect = async pathId => {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      if (attempt > 0) await delay(350)
+      const result = await getCurrentLearningPath()
+      const current = normalizePath(result)
+      const matchesPath = !pathId || !current.pathId || String(current.pathId) === String(pathId)
+      if (current?.nodes?.length && matchesPath) return current
+    } catch (err) {
+      console.warn('[StudyPath] reload selected current path failed:', err)
+    }
+  }
+
+  return null
+}
+
 const selectLearningPath = async item => {
   await enrollLearningPath(item.pathId).catch(err => {
     const status = err?.response?.status
     if (![400, 404, 409].includes(status)) throw err
   })
+
+  const currentPath = await loadCurrentPathAfterSelect(item.pathId)
+  if (currentPath) {
+    setPathState(currentPath)
+    return currentPath
+  }
+
   const [detail, progress] = await Promise.all([
     getLearningPathDetail(item.pathId),
     getLearningPathProgress(item.pathId)
@@ -719,7 +764,7 @@ const switchPath = async item => {
   try {
     const selected = await selectLearningPath(item)
     closePathHistory()
-    announcePathTeacher(selected, item.subject)
+    await announcePathTeacherAfterOverlay(selected, item.subject)
   } catch (err) {
     historyError.value = err?.response?.data?.detail || err?.message || '切换学习路径失败'
   } finally {
@@ -1664,10 +1709,11 @@ const mountStudyPath = async () => {
     loading.value = true
     error.value = ''
     try {
-      await selectLearningPath({
+      const selected = await selectLearningPath({
         pathId: String(Array.isArray(queryPathId) ? queryPathId[0] : queryPathId),
         subject: '学习路径'
       })
+      await announcePathTeacherAfterOverlay(selected, '学习路径')
     } catch (err) {
       error.value = err?.response?.data?.detail || err?.message || '切换学习路径失败，请稍后再试。'
     } finally {

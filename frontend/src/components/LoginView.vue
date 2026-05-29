@@ -24,15 +24,46 @@
 
             <form @submit.prevent="handleSubmit">
               <div class="form-item">
-                <label>用户名 / 邮箱</label>
+                <label>{{ isRegister ? '用户名' : '用户名 / 邮箱' }}</label>
                 <input
                   v-model="form.account"
                   type="text"
                   autocomplete="username"
-                  placeholder="请输入用户名或邮箱"
+                  :placeholder="isRegister ? '请输入用户名' : '请输入用户名或邮箱'"
                   @focus="isTyping = true"
                   @blur="isTyping = false"
                 />
+              </div>
+
+              <div v-if="isRegister" class="form-item">
+                <label>绑定邮箱</label>
+                <input
+                  v-model.trim="form.email"
+                  type="email"
+                  autocomplete="email"
+                  placeholder="请输入邮箱"
+                  @focus="isTyping = true"
+                  @blur="isTyping = false"
+                />
+              </div>
+
+              <div v-if="isRegister" class="form-item">
+                <label>邮箱验证码</label>
+                <div class="code-box">
+                  <input
+                    v-model.trim="form.code"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="6"
+                    placeholder="请输入验证码"
+                    @focus="isTyping = true"
+                    @blur="isTyping = false"
+                  />
+                  <button type="button" :disabled="codeLoading || codeCountdown > 0" @click="sendRegisterCode">
+                    {{ codeButtonText }}
+                  </button>
+                </div>
               </div>
 
               <div class="form-item">
@@ -74,8 +105,8 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
-import { login, register } from '../api/apis'
+import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { login, registerByEmail, sendEmailCode } from '../api/apis'
 import AnimatedCharacters from './AnimatedCharacters.vue'; 
 defineProps({
   visible: {
@@ -91,17 +122,28 @@ const emit = defineEmits(['close', 'login', 'register'])
 const isRegister = ref(false)
 const showPassword = ref(false)
 const loading = ref(false)
+const codeLoading = ref(false)
+const codeCountdown = ref(0)
 const errorMessage = ref('')
 const successMessage = ref('')
+let codeTimer = null
 
 const form = reactive({
   account: '',
+  email: '',
+  code: '',
   password: ''
 })
 
 const buttonText = computed(() => {
   if (loading.value) return isRegister.value ? '注册中...' : '登录中...'
   return isRegister.value ? '注册' : '登录'
+})
+
+const codeButtonText = computed(() => {
+  if (codeLoading.value) return '发送中...'
+  if (codeCountdown.value > 0) return `${codeCountdown.value}s`
+  return '获取验证码'
 })
 
 const resetMessage = () => {
@@ -120,9 +162,21 @@ const toggleMode = () => {
   resetMessage()
 }
 
+const isValidEmail = email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim())
+
 const validateForm = () => {
   if (!form.account.trim() || !form.password.trim()) {
     errorMessage.value = '请输入用户名/邮箱和密码'
+    return false
+  }
+
+  if (isRegister.value && !isValidEmail(form.email)) {
+    errorMessage.value = '请输入正确的绑定邮箱'
+    return false
+  }
+
+  if (isRegister.value && !form.code.trim()) {
+    errorMessage.value = '请输入邮箱验证码'
     return false
   }
 
@@ -169,6 +223,47 @@ const checkResponse = (result) => {
   }
 }
 
+const startCodeCountdown = () => {
+  if (codeTimer) window.clearInterval(codeTimer)
+  codeCountdown.value = 60
+  codeTimer = window.setInterval(() => {
+    codeCountdown.value -= 1
+    if (codeCountdown.value <= 0) {
+      codeCountdown.value = 0
+      window.clearInterval(codeTimer)
+      codeTimer = null
+    }
+  }, 1000)
+}
+
+const sendRegisterCode = async () => {
+  resetMessage()
+  if (!isValidEmail(form.email)) {
+    errorMessage.value = '请输入正确的绑定邮箱'
+    return
+  }
+
+  codeLoading.value = true
+  try {
+    const result = await sendEmailCode({
+      email: form.email.trim(),
+      purpose: 'register'
+    })
+    checkResponse(result)
+    successMessage.value = '验证码已发送，请查看邮箱'
+    startCodeCountdown()
+  } catch (error) {
+    errorMessage.value =
+      error?.response?.data?.detail ||
+      error?.response?.data?.msg ||
+      error?.response?.data?.message ||
+      error?.message ||
+      '验证码发送失败，请稍后重试'
+  } finally {
+    codeLoading.value = false
+  }
+}
+
 const handleSubmit = async () => {
   resetMessage()
 
@@ -178,9 +273,11 @@ const handleSubmit = async () => {
 
   try {
     if (isRegister.value) {
-      const result = await register({
+      const result = await registerByEmail({
         username: form.account.trim(),
-        password: form.password
+        email: form.email.trim(),
+        password: form.password,
+        code: form.code.trim()
       })
 
       checkResponse(result)
@@ -188,6 +285,7 @@ const handleSubmit = async () => {
       successMessage.value = '注册成功，请登录'
       isRegister.value = false
       form.password = ''
+      form.code = ''
       return
     }
 
@@ -208,6 +306,10 @@ const handleSubmit = async () => {
     loading.value = false
   }
 }
+
+onBeforeUnmount(() => {
+  if (codeTimer) window.clearInterval(codeTimer)
+})
 </script>
 
 <style scoped>
@@ -330,6 +432,36 @@ const handleSubmit = async () => {
 
 .password-box {
   position: relative;
+}
+
+.code-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 10px;
+}
+
+.code-box button {
+  height: 46px;
+  border: 1px solid rgba(24, 63, 143, 0.18);
+  border-radius: 12px;
+  background: #ffffff;
+  color: #183f8f;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.code-box button:hover:not(:disabled) {
+  border-color: #638fc2;
+  background: rgba(99, 143, 194, 0.1);
+}
+
+.code-box button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 .password-box input {
