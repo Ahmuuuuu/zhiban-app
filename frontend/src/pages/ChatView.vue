@@ -8,9 +8,6 @@
         <button class="menu-btn" type="button" aria-label="打开最近对话" @click="showHistoryPanel = !showHistoryPanel">
           <Menu :size="34" stroke-width="1.25" />
         </button>
-        <button class="menu-btn" type="button" aria-label="管理个人智能体 Skill" title="管理个人智能体 Skill" @click="openSkillPanel">
-          <Bot :size="31" stroke-width="1.35" />
-        </button>
       </div>
       <UserAccountButton variant="home" logged-out-meta="点击登录" />
     </header>
@@ -223,10 +220,6 @@
         <Plus :size="17" stroke-width="1.7" />
         开启新对话
       </button>
-      <button type="button" @click="openSkillPanel">
-        <Bot :size="17" stroke-width="1.7" />
-        智能体能力
-      </button>
     </div>
 
     <textarea
@@ -321,83 +314,7 @@
       </section>
     </Teleport>
 
-    <Teleport to="body">
-      <section v-if="skillPanel.visible" class="skill-dialog" @click.self="closeSkillPanel">
-        <article class="skill-dialog__panel">
-          <header class="skill-dialog__header">
-            <div>
-              <span>Personal Agent</span>
-              <h2>智能体能力</h2>
-            </div>
-            <button type="button" aria-label="关闭 Skill 管理" @click="closeSkillPanel">
-              <X :size="20" />
-            </button>
-          </header>
-
-          <div class="skill-dialog__body">
-            <aside class="skill-list-pane">
-              <div class="skill-list-head">
-                <strong>当前智能体能力</strong>
-                <button type="button" @click="loadAgentSkills">刷新</button>
-              </div>
-
-              <p v-if="skillPanel.loading" class="skill-empty">正在加载...</p>
-              <p v-else-if="!agentSkills.length" class="skill-empty">暂无自定义智能体能力</p>
-
-              <template v-else>
-                <article
-                  v-for="skill in agentSkills"
-                  :key="skill.skill_id || skill.resource_type || skill.name"
-                  class="skill-list-item"
-                >
-                  <span>
-                    <strong>{{ skill.name }}</strong>
-                    <small>{{ skill.tool_description || '可执行能力' }}</small>
-                  </span>
-                  <button
-                    class="skill-delete-btn"
-                    type="button"
-                    aria-label="删除 Skill"
-                    @click.stop="removeSkill(skill)"
-                  >
-                    <Trash2 :size="15" />
-                  </button>
-                </article>
-              </template>
-            </aside>
-
-            <form class="skill-editor" @submit.prevent="saveSkill">
-              <div class="skill-editor__top">
-                <div>
-                  <span>Add Agent</span>
-                  <h3>添加智能体能力</h3>
-                </div>
-                <button type="submit" :disabled="skillPanel.saving || !canSaveSkill">
-                  <Plus :size="16" />
-                  添加
-                </button>
-              </div>
-
-              <label>
-                <span>能力名称</span>
-                <input v-model.trim="skillForm.name" type="text" placeholder="例如：天气查询" />
-              </label>
-
-              <label>
-                <span>能力说明</span>
-                <textarea
-                  v-model.trim="skillForm.tool_description"
-                  rows="6"
-                  placeholder="例如：当我询问城市天气时，帮我查询并总结当前天气。"
-                ></textarea>
-              </label>
-
-              <p v-if="skillPanel.error" class="skill-error">{{ skillPanel.error }}</p>
-            </form>
-          </div>
-        </article>
-      </section>
-    </Teleport>
+    <Teleport to="body">    </Teleport>
   </div>
 </template>
 
@@ -406,14 +323,11 @@ import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   downloadWithToken,
-  deleteAgentSkill,
-  getAgentSkills,
   streamChatMessage,
   getConversationList,
   getConversationMessages,
   getGeneratedResource,
   getPresentations,
-  upsertAgentActionSkill,
   resolveApiUrl
 } from '../api/apis'
 import { detectGenerationIntent } from '../composables/useResourceGeneration'
@@ -429,7 +343,6 @@ import {
   Menu,
   Mic,
   MoreHorizontal,
-  Music,
   Plus,
   Presentation,
   CircleHelp,
@@ -456,13 +369,6 @@ const {
 const boundGenerationTaskMessages = new Map()
 
 const resourceTools = [
-  {
-    label: 'music',
-    icon: Music,
-    prompt: '帮我生成一份音乐学习资源：',
-    generateMode: 'resource',
-    resourceTypes: ['document']
-  },
   {
     label: 'image',
     icon: Image,
@@ -491,12 +397,6 @@ const resourceTools = [
     prompt: '帮我生成一个学习视频：',
     generateMode: 'video',
     resourceTypes: ['document']
-  },
-  {
-    label: 'skill',
-    icon: Bot,
-    prompt: '帮我学习并创建一个智能体能力：',
-    agentSkillMode: true
   },
   {
     label: 'mindmap',
@@ -529,12 +429,10 @@ const selectResourceTool = tool => {
 const selectedResourceToolName = computed(() => {
   const label = selectedResourceTool.value?.label
   const names = {
-    music: '音乐',
     image: '图片',
     ppt: 'PPT',
     word: 'Word',
     video: '视频',
-    skill: '智能体能力',
     mindmap: '思维导图',
     quiz: '题目'
   }
