@@ -134,7 +134,10 @@ export function getNarrationVoices(): Promise<unknown>;
 export function generatePresentation(data: {
   topic: string;
   voice?: string;
+  chapters?: string[];
 }): Promise<unknown>;
+
+export function previewPresentation(data: { topic: string }): Promise<unknown>;
 
 export function getPresentations(): Promise<unknown>;
 
