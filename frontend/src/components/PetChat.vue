@@ -138,7 +138,7 @@ const normalizePetHistoryGroups = (res: any) => {
         lastMessage: stripTypedInstruction(lastRecord.req || lastRecord.res) || "",
         time: formatPetTime(getRecordTime(lastRecord)),
       };
-    });
+    }).reverse();
 };
 
 const buildPetMessagesFromHistory = (records: any[], conversationId: number | string) =>
@@ -208,9 +208,13 @@ const createNewPetChat = () => {
 
 const scrollPetMessagesToBottom = async () => {
   await nextTick();
-  const el = messagesRef.value;
-  if (!el) return;
-  el.scrollTop = el.scrollHeight;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const el = messagesRef.value;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+    });
+  });
 };
 
 const escapeHtml = (value: string) =>
