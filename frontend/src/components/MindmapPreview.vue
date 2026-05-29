@@ -383,6 +383,7 @@ const openFullscreen = () => {
     }
   })
   document.addEventListener('keydown', handleKeydown)
+  document.addEventListener('wheel', handleOverlayWheel, { passive: false })
 }
 
 const closeFullscreen = () => {
@@ -392,12 +393,25 @@ const closeFullscreen = () => {
     overlayMind = null
   }
   document.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('wheel', handleOverlayWheel)
 }
 
 const handleKeydown = (e) => {
   if (e.key === 'Escape') {
     closeFullscreen()
   }
+}
+
+const handleOverlayWheel = (e) => {
+  if (!overlayMind) return
+  const delta = -e.deltaY / 200
+  const next = Math.max(0.25, Math.min(3, currentScale.value + delta))
+  const rect = overlayEl.value?.getBoundingClientRect()
+  overlayMind.scale(next, {
+    x: rect ? e.clientX - rect.left : e.clientX,
+    y: rect ? e.clientY - rect.top : e.clientY
+  })
+  currentScale.value = next
 }
 
 const zoomIn = () => {
