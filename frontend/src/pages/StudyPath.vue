@@ -453,6 +453,7 @@ const historyLoading = ref(false)
 const historyError = ref('')
 const pathHistory = ref([])
 const switchingPathId = ref('')
+const announcedGenerationRunIds = new Set()
 const {
   canNarrateResource,
   toggleNarration,
@@ -622,6 +623,59 @@ const formatHistoryDate = value => {
   return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
+const subjectTeacherRules = [
+  { label: '数学', keywords: ['数学', '高数', '代数', '几何', '函数', '微积分', '概率', '统计'] },
+  { label: '语文', keywords: ['语文', '作文', '阅读理解', '古诗', '文言文', '现代文'] },
+  { label: '英语', keywords: ['英语', '雅思', '托福', '四六级', '词汇', '语法', '写作', '听力', '口语'] },
+  { label: '物理', keywords: ['物理', '力学', '电磁', '热学', '光学'] },
+  { label: '化学', keywords: ['化学', '有机', '无机', '方程式', '实验'] },
+  { label: '生物', keywords: ['生物', '细胞', '遗传', '生态'] },
+  { label: '历史', keywords: ['历史', '近代史', '世界史', '古代史'] },
+  { label: '地理', keywords: ['地理', '地图', '气候', '地形'] },
+  { label: '政治', keywords: ['政治', '道法', '思想品德', '马克思'] },
+  { label: '编程', keywords: ['编程', '程序', '代码', 'Python', 'JavaScript', 'Java', 'C++', '算法', '前端', '后端'] },
+  { label: '计算机', keywords: ['计算机', '网络', '数据库', '操作系统', '数据结构'] },
+  { label: 'AI', keywords: ['AI', '人工智能', '机器学习', '深度学习', '大模型'] },
+  { label: '音乐', keywords: ['音乐', '乐理', '钢琴', '吉他'] },
+  { label: '美术', keywords: ['美术', '绘画', '素描', '色彩'] }
+]
+
+const inferPathSubject = (state, fallback = '') => {
+  const text = [
+    fallback,
+    state?.goal,
+    state?.stage,
+    ...(state?.diagnosis?.weakPoints || []),
+    ...(state?.nodes || []).flatMap(node => [node.title, node.summary, node.description, ...(node.resourceTypes || [])])
+  ].filter(Boolean).join(' ')
+
+  const lowerText = text.toLowerCase()
+  const matched = subjectTeacherRules.find(rule =>
+    rule.keywords.some(keyword => lowerText.includes(String(keyword).toLowerCase()))
+  )
+
+  if (matched) return matched.label
+  const compactGoal = String(state?.goal || fallback || '').replace(/学习路径|学习|入门|进阶|复习|规划|计划/g, '').trim()
+  return compactGoal.slice(0, 8) || '学习'
+}
+
+const announcePathTeacher = (state, fallbackSubject = '') => {
+  if (!state?.nodes?.length) return
+  const subject = inferPathSubject(state, fallbackSubject)
+  window.dispatchEvent(new CustomEvent('zhiban-pet-notice', {
+    detail: {
+      message: `我是你的${subject}老师，有问题可以找我解答。`,
+      duration: 5600
+    }
+  }))
+}
+
+const announceGeneratedPathTeacher = (runId, state, fallbackSubject = '') => {
+  if (announcedGenerationRunIds.has(runId)) return
+  announcedGenerationRunIds.add(runId)
+  announcePathTeacher(state, fallbackSubject)
+}
+
 const loadPathHistory = async () => {
   historyLoading.value = true
   historyError.value = ''
@@ -655,6 +709,7 @@ const selectLearningPath = async item => {
   ])
   const selected = normalizeSelectedPath(detail, progress, item)
   setPathState(selected)
+  return selected
 }
 
 const switchPath = async item => {
@@ -662,8 +717,9 @@ const switchPath = async item => {
   switchingPathId.value = String(item.pathId)
   historyError.value = ''
   try {
-    await selectLearningPath(item)
+    const selected = await selectLearningPath(item)
     closePathHistory()
+    announcePathTeacher(selected, item.subject)
   } catch (err) {
     historyError.value = err?.response?.data?.detail || err?.message || '切换学习路径失败'
   } finally {
@@ -722,10 +778,14 @@ const generateNewPath = async () => {
 
     if (firstResult?.type === 'current') {
       topicInput.value = ''
+      announceGeneratedPathTeacher(runId, pathState.value, subject)
       generatePromise.then(done => {
         if (runId !== generationRunId.value || done?.type !== 'generated') return
         const generatedPath = normalizePath(done.result)
-        if (generatedPath?.nodes?.length) setPathState(generatedPath)
+        if (generatedPath?.nodes?.length) {
+          setPathState(generatedPath)
+          announceGeneratedPathTeacher(runId, generatedPath, subject)
+        }
       })
       return
     }
@@ -735,8 +795,10 @@ const generateNewPath = async () => {
       const generatedPath = normalizePath(firstResult.result)
       if (generatedPath?.nodes?.length) {
         setPathState(generatedPath)
+        announceGeneratedPathTeacher(runId, generatedPath, subject)
       } else {
-        await recoverGeneratedPathFromCurrent()
+        const recovered = await recoverGeneratedPathFromCurrent()
+        if (recovered) announceGeneratedPathTeacher(runId, pathState.value, subject)
       }
       topicInput.value = ''
       refreshGeneratedPathInBackground()
@@ -748,6 +810,7 @@ const generateNewPath = async () => {
     const recovered = await recoverGeneratedPathFromCurrent()
     if (recovered) {
       topicInput.value = ''
+      announceGeneratedPathTeacher(runId, pathState.value, subject)
       return
     }
 

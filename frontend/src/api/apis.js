@@ -389,6 +389,26 @@ export function getGeneratedResource(resourceId) {
   return request.get(`/resource/${resourceId}`)
 }
 
+export function createResourceGenerationTask(data) {
+  return request({
+    url: '/resource/generate/task',
+    method: 'post',
+    data: {
+      topic: data.topic,
+      resource_types: data.resource_types,
+      chat_group_id: Number(data.chat_group_id || 0)
+    }
+  })
+}
+
+export function getResourceGenerationTask(taskId) {
+  return request.get(`/resource/generate/task/${taskId}`)
+}
+
+export function getResourceGenerationTasks() {
+  return request.get('/resource/generate/tasks')
+}
+
 export function likeResource(resourceId) {
   return requestFirstAvailable([
     () => request.post(`/resource/${resourceId}/like`),
