@@ -13,6 +13,7 @@ from backend.src.ai_core.llm_config import llm
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
 from backend.src.models.exam_model import ExamRecord, KnowledgeMastery
+from backend.src.service.notification_service import check_and_create_node_unlocked, check_and_create_quiz_failed
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.portraitmodel import User_picture
 from backend.src.models.usermodel import User
@@ -179,6 +180,10 @@ class PathService:
             if status == "unlocked":
                 first_node = node
 
+        # 通知：首节点已解锁
+        if first_node:
+            await check_and_create_node_unlocked(user_id, first_node.topic, path.id, first_node.id)
+
         # 只为首个解锁节点预生成资源 + 测验，其余按需懒加载
         node_results = {}
         if first_node:
@@ -297,6 +302,10 @@ class PathService:
             if status == "unlocked" and not first_node:
                 first_node = node
             created.append({"node_id": node.id, "topic": node.topic, "status": status})
+
+        # 通知：首节点已解锁
+        if first_node:
+            await check_and_create_node_unlocked(user_id, first_node.topic, path_id, first_node.id)
 
         # 自动为首个节点生成资源
         resources = []
@@ -620,6 +629,7 @@ class PathService:
         else:
             progress.node_status = "in_progress"
             await progress.save()
+            await check_and_create_quiz_failed(user_id, node.topic, path_id, node_id)
 
         # 更新画像 traits
         await PathService._update_portrait_from_mastery(user_id)
@@ -760,6 +770,8 @@ class PathService:
         await UserPathProgress.filter(
             user_id=user_id, path_id=path_id, node_id=next_node.id
         ).update(node_status="unlocked")
+
+        await check_and_create_node_unlocked(user_id, next_node.topic, path_id, next_node.id)
 
         # 自动为新节点生成学习资源
         try:
