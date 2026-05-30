@@ -7,6 +7,7 @@ from pathlib import Path
 
 from backend.src.models.presentation_model import Presentation
 from backend.src.models.resource_model import GeneratedResource
+from backend.src.models.notification_model import Notification
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +258,13 @@ async def _generate_chapters(record_id: int, topic: str, user_id: int, voice: st
         # 全部完成
         await _flush(record, topic, chapters, "ready")
         logger.info("[课件] 全部生成完成 record=%d", record_id)
+        await Notification.create(
+            type="resource",
+            title="课件制作完成",
+            content=f"「{topic}」课件已生成，共 {len(chapters)} 章，可播放",
+            target_url=f"/presentation?id={record_id}",
+            target_user_id=user_id,
+        )
 
     except Exception as e:
         logger.exception("[课件] 生成失败 record=%d", record_id)
@@ -266,6 +274,13 @@ async def _generate_chapters(record_id: int, topic: str, user_id: int, voice: st
             record.error_message = str(e)[:500]
             await record.save()
         await _notify_sse(record_id, {"status": "failed", "error": str(e)[:200]})
+        await Notification.create(
+            type="resource",
+            title="课件生成失败",
+            content=f"「{topic}」课件生成失败：{str(e)[:100]}",
+            target_url="/resource",
+            target_user_id=user_id,
+        )
 
 
 async def _flush(record, topic: str, chapters: list, status: str):

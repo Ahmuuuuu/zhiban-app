@@ -1,6 +1,5 @@
 import hashlib
 import logging
-import shutil
 from pathlib import Path
 import tempfile
 import os
@@ -27,6 +26,7 @@ ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".mp4"}
 async def upload_document(
     user_id: int = Depends(get_user_id_from_token),
     file: UploadFile = File(...),
+    cover: UploadFile | None = File(None),
     title: str = Form(None),
     visibility: str = Form("private"),
     category: str = Form("knowledge_point"),
@@ -36,6 +36,7 @@ async def upload_document(
     - visibility='private'（默认）：仅上传者可见
     - visibility='public'：需管理员权限，全员可见
     - category: 前端自定义分类字符串
+    - cover: 可选封面图，存到 /static/covers/
     """
     tmp_path = None
     try:
@@ -54,6 +55,19 @@ async def upload_document(
                 "code": 400,
                 "msg": f"不支持的文件格式 {suffix}，仅支持 {', '.join(ALLOWED_EXTENSIONS)}",
             }
+
+        # ── 处理可选封面图 ──
+        cover_url = None
+        if cover and cover.filename:
+            import uuid
+            COVERS_DIR = STATIC_DIR / "covers"
+            COVERS_DIR.mkdir(parents=True, exist_ok=True)
+            cover_ext = Path(cover.filename).suffix.lower() or ".jpg"
+            cover_name = f"cover_{uuid.uuid4().hex}{cover_ext}"
+            cover_path = COVERS_DIR / cover_name
+            cover_bytes = await cover.read()
+            cover_path.write_bytes(cover_bytes)
+            cover_url = f"/static/covers/{cover_name}"
 
         # ── MP4 视频：直接存 static/videos/，不入库 embedding ──
         if suffix == ".mp4":
@@ -75,7 +89,8 @@ async def upload_document(
                 category="video",
                 content=video_url,
                 embedding="[]",
-                visibility="private",
+                visibility=visibility,
+                cover_url=cover_url or "/static/covers/default_video.svg",
                 user_id=user_id,
             )
             logger.info("视频上传成功 path=%s title=%s", video_url, doc_title)
@@ -115,6 +130,7 @@ async def upload_document(
                 user_id=user_id,
                 visibility=visibility,
                 category=category,
+                cover_url=cover_url if idx == 0 else None,
             )
             results.append(msg)
 

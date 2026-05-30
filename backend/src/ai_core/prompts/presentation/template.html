@@ -504,19 +504,23 @@ function loadAudioForChapter(chapterIdx) {
   var sec = SECTIONS[chapterIdx];
   if (!sec) { audioQueue = []; return; }
 
-  // 有 slides 的章节：加载全部音频到队列，实现连续播放
+  // 优先从 slides 的 audio_url 构建队列（新结构）
+  audioQueue = [];
   if (sec.slides && sec.slides.length > 0) {
-    audioQueue = [];
+    var found = false;
     for (var si = 0; si < sec.slides.length; si++) {
       var sl = sec.slides[si];
       if (sl.audio_url) {
         audioQueue.push({audio_url: sl.audio_url, duration_ms: sl.duration_ms, word_timings: sl.word_timings || []});
+        found = true;
       }
+    }
+    // slides 存在但没有 audio_url（旧结构），降级到 audio_segments
+    if (!found && sec.audio_segments && sec.audio_segments.length > 0) {
+      audioQueue = sec.audio_segments.slice();
     }
   } else if (sec.audio_segments && sec.audio_segments.length > 0) {
     audioQueue = sec.audio_segments.slice();
-  } else {
-    audioQueue = [];
   }
   audioIndex = 0;
 }
@@ -604,6 +608,14 @@ function updateUI() {
   }
   document.getElementById('chapter-indicator').textContent = label;
 }
+
+// ══════════════════════════════════════════════
+//  Word reveal helpers (stubs — actual karaoke is handled by updateKaraoke below)
+// ══════════════════════════════════════════════
+function getActiveWordRoot() { return null; }
+function prepareTimedWords(root) { /* karaoke handled by updateKaraoke */ }
+function resetWordReveal(root) { resetKaraoke(); }
+function updateWordReveal() { updateKaraoke(); }
 
 // ══════════════════════════════════════════════
 //  Karaoke 逐字高亮
