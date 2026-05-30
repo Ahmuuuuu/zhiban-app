@@ -98,12 +98,14 @@ async def ingest(
     user_id: int = None,
     visibility: str = "private",
     category: str = "knowledge_point",
+    cover_url: str | None = None,
 ) -> str:
     """
     向知识库添加一条资料。
     - user_id=None: 系统上传（需管理员权限）
     - visibility='public': 全员可见; 'private': 仅上传者可见
     - category: 见 KB_CATEGORIES
+    - cover_url: 可选封面图 URL，不传则按 category 使用默认封面
     """
     try:
         if len(content.strip()) < 50:
@@ -129,6 +131,17 @@ async def ingest(
                 return f"「{title}」已存在，已更新权限"
             return f"「{title}」已存在，跳过"
 
+        if not cover_url:
+            category_cover_map = {
+                "knowledge_point": "document",
+                "exercise": "exercise",
+                "textbook": "document",
+                "note": "document",
+                "case_study": "document",
+                "reference": "document",
+            }
+            cover_url = f"/static/covers/default_{category_cover_map.get(category, '')}.svg"
+
         await KnowledgeVector.create(
             doc_id=doc_id,
             title=title,
@@ -137,6 +150,7 @@ async def ingest(
             user_id=user_id,
             visibility=visibility,
             category=category,
+            cover_url=cover_url,
         )
         label = "公开" if visibility == "public" else "私有"
         return f"「{title}」已入库（{len(content)}字，{label}，{category}）"
@@ -158,7 +172,7 @@ async def list_all(user_id: int = None, visibility: str = None) -> list[dict]:
         qs = qs.filter(visibility=visibility)
 
     records = await qs.order_by("-created_at").values(
-        "doc_id", "title", "content", "category", "user_id", "visibility", "created_at"
+        "doc_id", "title", "content", "category", "user_id", "visibility", "cover_url", "created_at"
     )
     return list(records)
 
@@ -177,7 +191,7 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
         qs = qs.filter(visibility=visibility)
 
     records = await qs.order_by("-created_at").values(
-        "doc_id", "title", "content", "category", "user_id", "visibility", "created_at"
+        "doc_id", "title", "content", "category", "user_id", "visibility", "cover_url", "created_at"
     )
 
     groups: dict[str, dict] = {}
@@ -195,6 +209,7 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
                 "preview": r["content"][:200],
                 "visibility": r["visibility"],
                 "uploader_id": r["user_id"],
+                "cover_url": r.get("cover_url"),
                 "created_at": str(r["created_at"]),
             }
         groups[base]["chunks"] += 1
@@ -208,7 +223,7 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
 async def get_by_id(doc_id: str) -> dict | None:
     """根据 doc_id 获取单条知识库记录"""
     record = await KnowledgeVector.filter(doc_id=doc_id).values(
-        "doc_id", "title", "content", "category", "user_id", "visibility", "created_at"
+        "doc_id", "title", "content", "category", "user_id", "visibility", "cover_url", "created_at"
     ).first()
     return record
 

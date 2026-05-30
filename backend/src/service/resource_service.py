@@ -14,6 +14,7 @@ from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.agent_skill_model import AgentSkill
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
+from backend.src.models.notification_model import Notification
 from backend.src.utils.database import init_db
 from backend.src.utils.json_parser import parse_llm_json
 from backend.src.utils.mindmap import parse_mindmap_text
@@ -215,6 +216,13 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
     }
 
 
+def build_cover_url(resource_type: str, file_url: str | None, resource_id: int) -> str | None:
+    """根据资源类型和文件URL生成封面图URL"""
+    if resource_type == "image" and file_url:
+        return file_url
+    return f"/static/covers/default_{resource_type}.svg"
+
+
 async def _save_resources(topic: str, user_id: int, generated: dict, review_passed: bool, retry_count: int,
                           file_urls: dict | None = None) -> list[dict]:
     """存库并返回记录列表"""
@@ -233,6 +241,10 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
             file_url=file_urls.get(rt),
             user=user,
         )
+        # 设置封面
+        cover_url = build_cover_url(rt, file_urls.get(rt), record.id)
+        if cover_url:
+            await GeneratedResource.filter(id=record.id).update(cover_url=cover_url)
         saved.append({
             "resource_id": record.id,
             "topic": record.topic,
@@ -241,6 +253,7 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
             "review_passed": record.review_passed,
             "retry_count": record.retry_count,
             "file_url": record.file_url,
+            "cover_url": cover_url,
         })
     return saved
 
@@ -467,6 +480,7 @@ class ResourceService:
             "download_count": record.download_count,
             "like_count": record.like_count,
             "favorite_count": record.favorite_count,
+            "cover_url": record.cover_url,
         }
 
         # 当前用户的交互状态
@@ -533,6 +547,7 @@ class ResourceService:
                 "download_count": r.download_count,
                 "like_count": r.like_count,
                 "favorite_count": r.favorite_count,
+                "cover_url": r.cover_url,
             }
             # 附带当前用户的交互状态
             from backend.src.models.study_model import ResourceLike, ResourceCollection
@@ -770,6 +785,16 @@ async def _run_generation_task(db_id: int, task_id: str):
         })
         await _notify_task_sse(task_id, {"type": "__close__"})
 
+        type_labels = {"document": "文献", "exercise": "习题", "mindmap": "思维导图", "ppt": "PPT", "image": "图片"}
+        type_names = [type_labels.get(r["resource_type"], r["resource_type"]) for r in saved]
+        await Notification.create(
+            type="resource",
+            title="资源生成完成",
+            content=f"「{task.topic}」的{'、'.join(type_names)}已生成，共 {len(saved)} 份",
+            target_url="/resource",
+            target_user_id=user_id,
+        )
+
     except Exception as e:
         logger.exception("生成任务失败 task_id=%s", task_id)
         try:
@@ -784,5 +809,12 @@ async def _run_generation_task(db_id: int, task_id: str):
                     "error": str(e),
                 })
                 await _notify_task_sse(task_id, {"type": "__close__"})
+                await Notification.create(
+                    type="resource",
+                    title="资源生成失败",
+                    content=f"「{task.topic}」生成失败：{str(e)[:100]}",
+                    target_url="/resource",
+                    target_user_id=task.user_id,
+                )
         except Exception:
             logger.exception("更新失败任务状态出错 task_id=%s", task_id)
