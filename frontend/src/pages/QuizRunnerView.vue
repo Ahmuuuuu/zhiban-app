@@ -271,7 +271,7 @@ const goNext = async () => {
     radial-gradient(ellipse 72% 44% at 10% 0%, rgba(209, 244, 250, 0.46), transparent 70%),
     linear-gradient(135deg, #fafafa 0%, rgb(237, 249, 252) 52%, #fafafa 100%);
   color: #163f8f;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Open Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .runner-header {

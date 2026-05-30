@@ -124,13 +124,23 @@ const handleAvatarUpdated = event => {
   avatarUrl.value = normalizeAvatarUrl(event?.detail?.avatar || localStorage.getItem('avatar') || '')
 }
 
+const handleLogout = () => {
+  token.value = ''
+  username.value = ''
+  userRole.value = ''
+  major.value = ''
+  avatarUrl.value = ''
+}
+
 onMounted(() => {
   window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  window.addEventListener('zhiban:user-logged-out', handleLogout)
   loadAccountInfo()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  window.removeEventListener('zhiban:user-logged-out', handleLogout)
 })
 </script>
 

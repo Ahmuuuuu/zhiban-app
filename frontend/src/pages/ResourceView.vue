@@ -2,7 +2,9 @@
   <main class="resource-page">
     <header class="resource-header">
       <div class="header-title-row">
-        <router-link class="home-pill" to="/">返回首页</router-link>
+        <router-link to="/resources" class="back-btn" aria-label="返回资源中心">
+          <ChevronLeft :size="22" />
+        </router-link>
         <div class="title-block">
         <p>My Resources</p>
         <h1>我的学习资源</h1>
@@ -65,7 +67,15 @@
             </div>
 
             <div class="resource-cover">
-              <img :src="resource.coverUrl" :alt="resource.title" loading="lazy" @error="handleImageError($event)" />
+              <video
+                v-if="resource.coverType === 'video'"
+                class="resource-cover__video"
+                :src="resource.previewUrl"
+                preload="metadata"
+                muted
+                playsinline
+              ></video>
+              <img v-else :src="resource.coverUrl" :alt="resource.title" loading="lazy" @error="handleImageError($event)" />
             </div>
 
             <h2>{{ resource.title || '未命名资源' }}</h2>
@@ -235,14 +245,15 @@ import {
   PauseCircle,
   Video,
   Volume2,
-  RefreshCw
+  RefreshCw,
+  ChevronLeft
 } from 'lucide-vue-next'
 import { downloadWithToken, getGeneratedImages, getGeneratedResource, getGeneratedResources, getStudyResources, resolveApiUrl } from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
-import { getResourceCoverUrl } from '../utils/resourceCover'
+import { getExplicitResourceCoverUrl, getResourceCoverUrl } from '../utils/resourceCover'
 
 const router = useRouter()
 const resources = ref([])
@@ -276,6 +287,16 @@ const categoryLabelMap = {
   video: '视频',
 }
 
+const attachResourceCover = (resource, rawItem = {}) => {
+  const explicitCover = getExplicitResourceCoverUrl({ ...resource, ...rawItem })
+  const shouldUseVideoFrame = !explicitCover && isVideoResource(resource) && resource.previewUrl
+  return {
+    ...resource,
+    coverUrl: explicitCover || getResourceCoverUrl({ ...resource, ...rawItem }),
+    coverType: shouldUseVideoFrame ? 'video' : 'image'
+  }
+}
+
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
 
@@ -295,10 +316,7 @@ const normalizeResources = data => {
       previewUrl: item.previewUrl || item.preview_url || videoUrl || '',
       downloadUrl: item.downloadUrl || item.download_url || videoUrl || ''
     }
-    return {
-      ...resource,
-      coverUrl: getResourceCoverUrl({ ...resource, ...item })
-    }
+    return attachResourceCover(resource, item)
   })
 }
 
@@ -333,10 +351,7 @@ const normalizeGeneratedResources = data => {
       previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || ''),
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
     }
-    return {
-      ...resource,
-      coverUrl: getResourceCoverUrl({ ...resource, ...item })
-    }
+    return attachResourceCover(resource, item)
   })
 }
 
@@ -362,10 +377,7 @@ const normalizeGeneratedImages = data => {
       previewUrl: resolveApiUrl(url),
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || url || (imageId ? `/image/${imageId}/download` : ''))
     }
-    return {
-      ...resource,
-      coverUrl: getResourceCoverUrl({ ...resource, ...item })
-    }
+    return attachResourceCover(resource, item)
   })
 }
 
@@ -531,7 +543,7 @@ const buildEditedPptHtml = resource => {
   <title>${title}</title>
   <style>
     @page { size: 13.333in 7.5in; margin: 0; }
-    body { margin: 0; font-family: "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif; color: #163f8f; background: #f4fbfd; }
+    body { margin: 0; font-family: "Open Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif; color: #163f8f; background: #f4fbfd; }
     .slide { box-sizing: border-box; width: 13.333in; height: 7.5in; padding: .55in .72in; page-break-after: always; background: linear-gradient(135deg, #fff 0%, #edf9fc 100%); display: flex; flex-direction: column; justify-content: center; position: relative; }
     .meta { position: absolute; top: .32in; right: .5in; color: #5f8fc3; font-size: 12pt; font-weight: 700; }
     h1 { margin: 0 0 .38in; text-align: center; font-size: 38pt; line-height: 1.15; }
@@ -658,6 +670,26 @@ onBeforeUnmount(stopCurrentAudio)
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(20, 55, 97, 0.15);
+  background: rgba(255, 255, 255, 0.62);
+  color: #143761;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.back-btn:hover {
+  background: rgba(255, 255, 255, 0.86);
+  transform: translateX(-2px);
 }
 
 .home-pill {
@@ -872,6 +904,14 @@ onBeforeUnmount(stopCurrentAudio)
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.resource-cover__video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 .resource-card:hover {

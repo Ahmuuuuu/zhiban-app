@@ -1,15 +1,16 @@
 ﻿<template>
   <div class="chat-page">
+    <div class="chat-bg-deco" aria-hidden="true">
+      <span class="sweep sweep-one"></span>
+      <span class="sweep sweep-two"></span>
+    </div>
+
     <header class="sketch-topbar">
       <div class="topbar-left">
-        <router-link class="round-icon-btn home-link" to="/" aria-label="返回首页">
-          <House :size="30" stroke-width="1.6" />
-        </router-link>
         <button class="menu-btn" type="button" aria-label="打开最近对话" @click="showHistoryPanel = !showHistoryPanel">
           <Menu :size="34" stroke-width="1.25" />
         </button>
       </div>
-      <UserAccountButton variant="home" logged-out-meta="点击登录" />
     </header>
 
     <aside class="history-panel" :class="{ open: showHistoryPanel }">
@@ -68,17 +69,17 @@
     <h1>ready to create<br>your <span class="empty-chat__sub">learning resources ?</span></h1>
     <div class="resource-hero-visual" aria-hidden="true">
       <article class="hero-card hero-card--left">
-        <span class="hero-card__icon">▰</span>
+        <span class="hero-card__icon hero-card__icon1" >▰</span>
         <strong>整理资料</strong>
         <p>把笔记、文档和知识点快速归纳成学习资源。</p>
       </article>
       <article class="hero-card hero-card--center">
-        <span class="hero-card__icon">✦</span>
+        <span class="hero-card__icon hero-card__icon2" >✦</span>
         <strong>生成内容</strong>
         <p>PPT、图片、题目和思维导图都可以从对话开始。</p>
       </article>
       <article class="hero-card hero-card--right">
-        <span class="hero-card__icon">☑</span>
+        <span class="hero-card__icon hero-card__icon3" >☑</span>
         <strong>开始练习</strong>
         <p>生成题目后进入题库，一题一题完成练习。</p>
       </article>
@@ -332,13 +333,11 @@ import {
 } from '../api/apis'
 import { detectGenerationIntent } from '../composables/useResourceGeneration'
 import { useGenerationTaskQueue } from '../composables/useGenerationTaskQueue'
-import UserAccountButton from '../components/UserAccountButton.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import {
   FileText,
   GitBranch,
-  House,
   Image,
   Menu,
   Mic,
@@ -1787,10 +1786,64 @@ onMounted(async () => {
   height: 100vh;
   overflow: hidden;
   color: var(--primary);
-  background:
-    radial-gradient(ellipse 70% 42% at 8% 0%, rgba(209, 244, 250, 0.42), transparent 68%),
-    linear-gradient(135deg, #fafafa 0%, #edf9fc 54%, #fafafa 100%);
-  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f1f7fb;
+  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* 聊天背景装饰圆圈 — 与首页 hero-background 一致 */
+.chat-bg-deco {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background: #f1f7fb;
+  overflow: hidden;
+}
+
+.chat-bg-deco::before,
+.chat-bg-deco::after {
+  content: "";
+  position: absolute;
+  background: #e9eff3;
+  border-radius: 50%;
+}
+
+/* 右上大圆 — 只露左下角，大幅左上移 */
+.chat-bg-deco::before {
+  width: clamp(1000px, 130vw, 1600px);
+  height: clamp(1000px, 130vw, 1600px);
+  right: -25%;
+  top: -135%;
+}
+
+/* 底部圆 — 只露圆顶，靠右 */
+.chat-bg-deco::after {
+  width: clamp(500px, 60vw, 720px);
+  height: clamp(500px, 60vw, 720px);
+  right: -18%;
+  bottom: -62%;
+}
+
+.sweep {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  background: #e9eff3;
+}
+
+/* 左边圆 — 放大上移，只露右下角 */
+.sweep-one {
+  width: clamp(500px, 60vw, 720px);
+  height: clamp(500px, 60vw, 720px);
+  left: -32%;
+  top: -30%;
+}
+
+/* 右侧辅助圆 */
+.sweep-two {
+  width: clamp(300px, 36vw, 480px);
+  height: clamp(300px, 36vw, 480px);
+  right: clamp(-200px, -12vw, -100px);
+  top: 55%;
 }
 
 .sketch-topbar {
@@ -2055,15 +2108,15 @@ onMounted(async () => {
 .empty-chat h1 {
   margin: 0;
   max-width: 880px;
-  color: #25344a;
+  color: #143761;
   font-size: clamp(28px, 2.8vw, 52px);
-  font-weight: 400;
-  line-height: 1.22;
+  font-weight: 500;
+  line-height: 1.66;
   text-align: center;
 }
 
 .empty-chat__sub {
-  color: #163f8f;
+  color: #6091bc;
 }
 
 .resource-hero-visual {
@@ -2115,7 +2168,7 @@ onMounted(async () => {
   width: 36px;
   height: 36px;
   border-radius: 13px;
-  background: rgba(201, 220, 233, 0.48);
+  
   color: var(--primary);
   display: inline-flex;
   align-items: center;
@@ -2123,6 +2176,16 @@ onMounted(async () => {
   font-size: 18px;
   font-weight: 900;
 }
+.hero-card__icon1{
+  background: #cee5e2;
+}
+.hero-card__icon2{
+  background: #e8dfcf;
+}
+.hero-card__icon3{
+  background: #6898c0;
+}
+
 
 .hero-card strong {
   color: #171d2d;

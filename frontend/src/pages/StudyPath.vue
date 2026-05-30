@@ -2,7 +2,6 @@
   <main class="study-panel">
     <header class="panel-header">
       <div class="header-title-row">
-        <router-link class="home-pill" to="/">返回首页</router-link>
         <div>
         <p class="eyebrow">Study Path</p>
           <h1>学习路径</h1>
