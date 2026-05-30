@@ -57,11 +57,39 @@ def _inject_user_id(tool, user_id: str):
     )
 
 
+def _inject_chat_group_id(tool, chat_group_id: int):
+    """为 get_used_history 注入当前聊天组 ID"""
+    original_coro = tool.coroutine
+    if tool.args_schema:
+        fields = {}
+        for name, field_info in tool.args_schema.model_fields.items():
+            if name not in ("chat_group_id",):
+                fields[name] = (field_info.annotation, field_info)
+        new_schema = create_model(f"{tool.name}_scoped_input", **fields) if fields else None
+    else:
+        new_schema = None
+
+    async def _scoped(**kwargs):
+        kwargs["chat_group_id"] = chat_group_id
+        return await original_coro(**kwargs)
+
+    _scoped.__name__ = tool.name
+    return StructuredTool.from_function(
+        coroutine=_scoped,
+        name=tool.name,
+        description=(tool.description or ""),
+        args_schema=new_schema,
+    )
+
+
+_MAX_HISTORY_TURNS = 20
+
 class UnifiedChat:
     _instances: list["UnifiedChat"] = []
 
-    def __init__(self, user_id: int, session_id: str | None = None):
+    def __init__(self, user_id: int, chat_group_id: int | None = None, session_id: str | None = None):
         self.user_id = user_id
+        self.chat_group_id = chat_group_id
         self.session_id = session_id or f"unified_{user_id}"
         self._raw_executor = None
         self._action_tools_loaded = False
@@ -132,6 +160,7 @@ class UnifiedChat:
         ])
 
         uid = str(self.user_id)
+        gid = self.chat_group_id or 0
         tools = [
             _inject_user_id(search_knowledge_base, uid),
             _inject_user_id(ingest_document, uid),
@@ -140,7 +169,7 @@ class UnifiedChat:
             _inject_user_id(delete_knowledge, uid),
             _inject_user_id(read_portrait, uid),
             _inject_user_id(update_portrait, uid),
-            _inject_user_id(get_used_history, uid),
+            _inject_chat_group_id(_inject_user_id(get_used_history, uid), gid),
             web_search,
             _inject_user_id(read_skill, uid),
             _inject_user_id(upsert_skill, uid),
@@ -191,6 +220,8 @@ class UnifiedChat:
         })
         self._history.append(HumanMessage(content=message))
         self._history.append(AIMessage(content=response["output"]))
+        if len(self._history) > _MAX_HISTORY_TURNS * 2:
+            self._history = self._history[-_MAX_HISTORY_TURNS * 2:]
         return response["output"]
 
     async def stream(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = ""):
@@ -266,3 +297,5 @@ class UnifiedChat:
 
         self._history.append(HumanMessage(content=message))
         self._history.append(AIMessage(content=full_response))
+        if len(self._history) > _MAX_HISTORY_TURNS * 2:
+            self._history = self._history[-_MAX_HISTORY_TURNS * 2:]

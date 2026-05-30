@@ -8,6 +8,7 @@ from backend.src.models.exam_model import KnowledgeMastery, ExamRecord
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.path_model import LearningPath, UserPathProgress
 from backend.src.service.portrait_service import build_learning_guidance, PortraitRadarService
+from backend.src.service.notification_service import check_and_create_weekly_report
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,9 @@ class StudyService:
     @staticmethod
     async def get_stats(user_id: int) -> dict:
         """聚合学习统计"""
+
+        # 检查并生成周报
+        await check_and_create_weekly_report(user_id)
 
         # ── 学习时长 ──
         today = date.today()
