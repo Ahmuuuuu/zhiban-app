@@ -86,7 +86,7 @@ def _get_or_create_chat(user_id: int, chat_group_id: int) -> UnifiedChat:
     if instance_key not in _chat_instances:
         if len(_chat_instances) >= _MAX_CHAT_INSTANCES:
             _chat_instances.popitem(last=False)
-        _chat_instances[instance_key] = UnifiedChat(user_id=user_id)
+        _chat_instances[instance_key] = UnifiedChat(user_id=user_id, chat_group_id=chat_group_id)
     else:
         _chat_instances.move_to_end(instance_key)
     return _chat_instances[instance_key]

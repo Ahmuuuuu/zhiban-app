@@ -14,6 +14,7 @@ from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.json_parser import parse_llm_json
+from backend.src.service.notification_service import check_and_create_ai_tip
 
 
 def _weight(difficulty: str, question_type: str) -> float:
@@ -357,6 +358,8 @@ class ExamService:
                     mastery.mastery_level = "beginner"
                 mastery.last_practiced_at = datetime.now()
                 await mastery.save()
+
+        await check_and_create_ai_tip(user_id)
 
         from backend.src.service.path_service import PathService
         try:
