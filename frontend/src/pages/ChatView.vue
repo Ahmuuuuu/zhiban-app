@@ -1717,7 +1717,7 @@ const loadConversationList = async () => {
   try {
     const res = await getConversationList()
 
-    recentChats.value = normalizeHistoryGroups(res).map(item => {
+    const chatGroups = normalizeHistoryGroups(res).map(item => {
       const id = item.id || item.conversationId || item.chat_group_id
 
       return {
@@ -1727,6 +1727,29 @@ const loadConversationList = async () => {
         time: item.time || formatTime(item.updateTime || item.created_time)
       }
     })
+
+    // 把有生成任务但没 chat_history 记录的对话也加进去
+    const existingIds = new Set(chatGroups.map(g => String(g.id)))
+    for (const task of generationTasks) {
+      const gid = String(task.chatGroupId)
+      if (!gid || gid === '0' || gid === 'null' || existingIds.has(gid)) continue
+      existingIds.add(gid)
+      chatGroups.push({
+        id: gid,
+        title: task.text || '资源生成',
+        lastMessage: task.progress || '正在生成资源...',
+        time: formatTime(task.updatedAt)
+      })
+    }
+
+    // 按时间降序
+    chatGroups.sort((a, b) => {
+      const ta = typeof a.time === 'number' ? a.time : 0
+      const tb = typeof b.time === 'number' ? b.time : 0
+      return tb - ta
+    })
+
+    recentChats.value = chatGroups
   } catch (error) {
     console.error('获取历史对话失败：', error)
   }

@@ -61,6 +61,7 @@ const normalizeTaskFiles = (taskData: any) => {
 }
 
 const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
+  const prevStatus = task.status
   task.backendTaskId = taskData?.task_id || taskData?.taskId || task.backendTaskId
   task.chatGroupId = taskData?.chat_group_id || taskData?.chatGroupId || task.chatGroupId
   task.status = toFrontendStatus(String(taskData?.status || 'running'))
@@ -74,6 +75,12 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
     resources: task.files,
   }
   task.updatedAt = Date.now()
+
+  // 任务完成/失败时通知 TopNav 刷新铃铛（模块级，不受组件卸载影响）
+  if (prevStatus === 'running' && task.status !== 'running') {
+    console.log('[GenerationTask] 任务状态变更，发送通知刷新事件', { taskId: task.backendTaskId, prevStatus, newStatus: task.status })
+    window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
+  }
 }
 
 const upsertBackendTask = (taskData: any, tool?: ResourceToolConfig) => {
@@ -153,18 +160,24 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.status = 'done'
       task.progress = task.progress || '资源已生成'
       task.updatedAt = Date.now()
+      console.log('[GenerationTask] legacy 任务完成，发送通知刷新事件', { taskId: task.backendTaskId })
+      window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
     },
     onError: err => {
       task.error = err || '资源生成失败，请稍后再试。'
       task.status = 'failed'
       task.progress = task.error
       task.updatedAt = Date.now()
+      console.log('[GenerationTask] legacy 任务失败，发送通知刷新事件', { taskId: task.backendTaskId })
+      window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
     },
   }).catch(error => {
     task.error = error?.message || '资源生成失败，请稍后再试。'
     task.status = 'failed'
     task.progress = task.error
     task.updatedAt = Date.now()
+    console.log('[GenerationTask] legacy 任务异常，发送通知刷新事件', { taskId: task.backendTaskId })
+    window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
   })
 }
 
