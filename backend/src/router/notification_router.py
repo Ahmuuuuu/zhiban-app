@@ -29,8 +29,9 @@ async def list_notifications(
     total = await qs.count()
 
     # 未读 = 可见总数 - 已读条数
+    visible_ids = await qs.values_list("id", flat=True)
     read_ids = await UserNotification.filter(
-        user_id=user_id, is_read=True, notification_id__in=qs.values_list("id", flat=True)
+        user_id=user_id, is_read=True, notification_id__in=visible_ids
     ).values_list("notification_id", flat=True)
     read_set = set(read_ids)
     unread_count = total - len(read_set)
