@@ -15,6 +15,7 @@ class GeneratedResource(Model):
     favorite_count = fields.IntField(default=0, description="收藏数")
     last_viewed_at = fields.DatetimeField(null=True, description="最近查看时间")
     file_url = fields.CharField(max_length=512, null=True, description="资源文件URL（图片/音频等外部文件）")
+    cover_url = fields.CharField(max_length=512, null=True, description="资源封面图URL")
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

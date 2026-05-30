@@ -19,6 +19,7 @@ class KnowledgeVector(Model):
     content = fields.TextField(description="文本块内容")
     embedding = fields.TextField(description="向量嵌入，JSON 数组字符串")
     visibility = fields.CharField(max_length=10, default="private", description="public=全员可见, private=仅上传者")
+    cover_url = fields.CharField(max_length=512, null=True, description="资源封面图URL")
     created_at = fields.DatetimeField(auto_now_add=True, null=True)
 
     user = fields.ForeignKeyField(

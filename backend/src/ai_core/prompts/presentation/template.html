@@ -1,707 +1,1237 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{TITLE}} - 学习课件</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif; background: #0a0a1a; color: #e0e0e0; overflow: hidden; height: 100vh; width: 100vw; }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}} - 学习课件</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-  /* ─── 容器 ─── */
-  #player { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
-  #stage { flex: 1; position: relative; overflow: hidden; }
-  .chapter { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s ease; pointer-events: none; padding: 60px 80px; }
-  .chapter.active { opacity: 1; pointer-events: auto; }
+    body {
+      font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+      background: #0a0a1a;
+      color: #e0e0e0;
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
 
-  /* ─── 进度条 (控制栏上方) 可拖动 ─── */
-  #progress-bar { width: 100%; height: 24px; cursor: pointer; padding: 0; flex-shrink: 0; display: flex; align-items: center; position: relative; }
-  #progress-track { position: absolute; left: 0; right: 0; height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px; }
-  #progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #4f8cff, #a78bfa); border-radius: 2px; position: relative; transition: width 0.05s; }
-  #progress-thumb { position: absolute; right: -7px; top: 50%; width: 16px; height: 16px; background: #fff; border-radius: 50%; transform: translateY(-50%); box-shadow: 0 2px 6px rgba(0,0,0,0.4); cursor: grab; }
-  #progress-thumb::after { content: ''; position: absolute; inset: -8px; border-radius: 50%; }
+    /* ─── 容器 ─── */
+    #player {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
 
-  /* ─── 控制栏 (底部) ─── */
-  #controls { display: flex; align-items: center; justify-content: center; gap: 20px; padding: 16px 32px; background: rgba(10,10,30,0.5); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-top: 1px solid rgba(255,255,255,0.08); z-index: 50; }
-  #controls button { background: none; border: none; color: #ccc; font-size: 20px; cursor: pointer; padding: 8px 16px; border-radius: 8px; transition: all 0.2s; font-family: "Segoe UI Symbol", Arial, sans-serif; }
-  #controls button:hover { color: #fff; background: rgba(255,255,255,0.12); }
-  #controls button:active { transform: scale(0.95); }
-  #controls button.primary { background: rgba(79,140,255,0.25); color: #8ab4ff; }
-  #controls button.primary:hover { background: rgba(79,140,255,0.4); color: #fff; }
-  #chapter-indicator { color: #888; font-size: 14px; min-width: 120px; text-align: center; }
-  #time-display { color: #666; font-size: 13px; min-width: 80px; text-align: right; font-variant-numeric: tabular-nums; }
+    #stage {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
 
-  /* ─── 章节导航点 ─── */
-  #chapter-dots { display: flex; gap: 8px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.2); cursor: pointer; transition: all 0.3s; }
-  .dot.active { background: #4f8cff; box-shadow: 0 0 8px rgba(79,140,255,0.5); }
-  .dot.done { background: rgba(79,140,255,0.4); }
+    .chapter {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      pointer-events: none;
+      padding: 60px 80px;
+    }
 
-  /* ─── 章节 1: 学科介绍（多页幻灯片） ─── */
-  .chapter-intro { padding: 0; }
-  .chapter-intro .slide-container { padding: 40px 100px; overflow-y: auto; }
-  .intro-content { max-width: 900px; margin: 0 auto; text-align: left; font-size: 18px; line-height: 1.8; color: #ccc; }
-  .intro-content h1 { font-size: 48px; font-weight: 700; color: #fff; margin-bottom: 16px; background: linear-gradient(135deg, #4f8cff, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-  .intro-content h2 { font-size: 28px; font-weight: 600; color: #e0e0e0; margin-bottom: 20px; margin-top: 10px; padding-bottom: 10px; border-bottom: 2px solid rgba(79,140,255,0.2); }
-  .intro-content p { margin-bottom: 14px; }
-  .intro-content ul { list-style: none; margin: 10px 0; }
-  .intro-content ul li { padding-left: 20px; margin-bottom: 8px; position: relative; }
-  .intro-content ul li::before { content: "●"; color: #4f8cff; position: absolute; left: 0; font-size: 10px; top: 6px; }
-  .intro-content blockquote { border-left: 3px solid #4f8cff; padding-left: 16px; margin: 12px 0; color: #999; font-style: italic; }
+    .chapter.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
 
-  /* ─── 章节 2: 思维导图 ─── */
-  .chapter-mindmap { padding: 30px; }
-  .chapter-mindmap h2 { position: absolute; top: 30px; left: 50%; transform: translateX(-50%); font-size: 24px; color: #888; letter-spacing: 2px; }
-  #mindmap-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-  #mindmap-container svg { max-width: 95%; max-height: 85%; }
+    /* ─── 进度条 (控制栏上方) 可拖动 ─── */
+    #progress-bar {
+      width: 100%;
+      height: 24px;
+      cursor: pointer;
+      padding: 0;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      position: relative;
+    }
 
-  /* ─── 章节 3: PPT ─── */
-  .chapter-ppt { padding: 0; }
-  .slide-container { width: 100%; height: 100%; display: flex; flex-direction: column; padding: 60px 100px; overflow-y: auto; }
-  .slide-container .slide-number { position: absolute; bottom: 80px; right: 60px; font-size: 14px; color: #555; }
-  .slide-container .slide-nav { display: flex; gap: 12px; align-items: center; margin-top: 20px; }
-  .slide-container .slide-nav button { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #aaa; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-  .slide-container .slide-nav button:hover { background: rgba(255,255,255,0.15); color: #fff; }
-  .slide-content { flex: 1; display: flex; flex-direction: column; justify-content: center; max-width: 1000px; margin: 0 auto; width: 100%; }
-  .slide-content h2 { font-size: 36px; font-weight: 700; color: #fff; margin-bottom: 8px; padding-bottom: 16px; border-bottom: 3px solid rgba(79,140,255,0.3); }
-  .slide-content ul { list-style: none; margin-top: 24px; }
-  .slide-content ul li { font-size: 20px; line-height: 1.7; color: #ccc; margin-bottom: 14px; padding-left: 24px; position: relative; }
-  .slide-content ul li::before { content: "●"; color: #4f8cff; position: absolute; left: 0; font-size: 12px; top: 6px; }
-  .slide-content ul li strong { color: #7aa9ff; }
+    #progress-track {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+    }
 
-  /* ─── Karaoke 逐字显现 ─── */
-  .kw { display: inline; opacity: 0; }
-  .kw.done { opacity: 1; transition: opacity 0.12s ease; }
+    #progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4f8cff, #a78bfa);
+      border-radius: 2px;
+      position: relative;
+      transition: width 0.05s;
+    }
 
-  /* ─── 全局键盘提示 ─── */
-  .hint { position: fixed; top: 20px; right: 24px; color: #444; font-size: 13px; z-index: 50; }
+    #progress-thumb {
+      position: absolute;
+      right: -7px;
+      top: 50%;
+      width: 16px;
+      height: 16px;
+      background: #fff;
+      border-radius: 50%;
+      transform: translateY(-50%);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+      cursor: grab;
+    }
 
-  /* ─── 蓝天白云动态背景 ─── */
-  body { background: linear-gradient(180deg, #4A90D9 0%, #7EC8E3 35%, #A8DDF0 60%, #D4EEF7 85%, #F0F8FF 100%); }
-  #bg-clouds { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
-  .cloud-group { position: absolute; display: flex; align-items: center; justify-content: center; animation: cloudDrift linear infinite; }
-  .cloud-group .c { position: absolute; border-radius: 50%; background: rgba(255,255,255,0.75); }
-  .cloud-group .c.shadow { background: rgba(255,255,255,0.35); }
-  @keyframes cloudDrift { 0% { transform: translateX(-25vw); } 100% { transform: translateX(105vw); } }
-  /* 云团 1 — 大朵 */
-  .cloud-1 { top: 8%; font-size: 1px; animation-duration: 75s; }
-  .cloud-1 .c:nth-child(1) { width: 220em; height: 60em; top: 0; left: 0; }
-  .cloud-1 .c:nth-child(2) { width: 160em; height: 70em; top: -15em; left: 40em; }
-  .cloud-1 .c:nth-child(3) { width: 150em; height: 50em; top: 10em; left: 70em; }
-  .cloud-1 .c:nth-child(4) { width: 200em; height: 65em; top: 5em; left: -30em; }
-  /* 云团 2 — 中朵 */
-  .cloud-2 { top: 20%; font-size: 0.7px; animation-duration: 95s; animation-delay: -20s; }
-  .cloud-2 .c:nth-child(1) { width: 180em; height: 50em; top: 0; left: 0; }
-  .cloud-2 .c:nth-child(2) { width: 130em; height: 55em; top: -12em; left: 35em; }
-  .cloud-2 .c:nth-child(3) { width: 120em; height: 40em; top: 8em; left: 60em; }
-  .cloud-2 .c.shadow { width: 250em; height: 30em; bottom: -20em; left: -20em; background: rgba(255,255,255,0.2); filter: blur(8em); }
-  /* 云团 3 — 小朵高飘 */
-  .cloud-3 { top: 5%; font-size: 0.5px; animation-duration: 120s; animation-delay: -45s; }
-  .cloud-3 .c:nth-child(1) { width: 120em; height: 35em; top: 0; left: 0; }
-  .cloud-3 .c:nth-child(2) { width: 90em; height: 40em; top: -10em; left: 25em; }
-  .cloud-3 .c:nth-child(3) { width: 80em; height: 30em; top: 5em; left: 40em; }
-  /* 云团 4 — 低处薄云 */
-  .cloud-4 { top: 45%; font-size: 0.9px; animation-duration: 85s; animation-delay: -60s; opacity: 0.6; }
-  .cloud-4 .c:nth-child(1) { width: 300em; height: 40em; top: 0; left: 0; }
-  .cloud-4 .c:nth-child(2) { width: 200em; height: 35em; top: -8em; left: 80em; }
-  .cloud-4 .c.shadow { width: 400em; height: 25em; bottom: -15em; left: -40em; background: rgba(255,255,255,0.15); filter: blur(6em); }
+    #progress-thumb::after {
+      content: '';
+      position: absolute;
+      inset: -8px;
+      border-radius: 50%;
+    }
 
-  /* ── 内容层 — 半透毛玻璃效果，蓝天透出来 ── */
-  #player { position: relative; z-index: 1; width: 100vw; height: 100vh; display: flex; flex-direction: column; background: rgba(10,10,30,0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    /* ─── 控制栏 (底部) ─── */
+    #controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 16px 32px;
+      background: rgba(10, 10, 30, 0.5);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      z-index: 50;
+    }
 
-  /* ─── 动画 ─── */
-  @keyframes fadeInUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-  .chapter.active .content > * { animation: fadeInUp 0.25s ease forwards; }
-  .chapter.active .content > *:nth-child(1) { animation-delay: 0.05s; }
-  .chapter.active .content > *:nth-child(2) { animation-delay: 0.1s; }
-  .chapter.active .content > *:nth-child(3) { animation-delay: 0.15s; }
+    #controls button {
+      background: none;
+      border: none;
+      color: #ccc;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      transition: all 0.2s;
+      font-family: "Segoe UI Symbol", Arial, sans-serif;
+    }
 
-  /* Word-by-word narration reveal */
-  .timed-word {
-    display: inline-block;
-    opacity: 0.18;
-    transform: translateY(7px) scale(0.98);
-    transition: opacity 0.2s ease, transform 0.22s ease, color 0.18s ease, text-shadow 0.18s ease;
-    will-change: opacity, transform;
-  }
-  .timed-word.is-visible {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  .timed-word.is-current {
-    color: #fff3a5;
-    text-shadow: 0 0 12px rgba(255, 222, 96, 0.45);
-  }
+    #controls button:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.12);
+    }
 
-  /* ─── 空状态 ─── */
-  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #555; }
-  .empty-state .icon { font-size: 64px; margin-bottom: 16px; opacity: 0.3; }
-</style>
+    #controls button:active {
+      transform: scale(0.95);
+    }
+
+    #controls button.primary {
+      background: rgba(79, 140, 255, 0.25);
+      color: #8ab4ff;
+    }
+
+    #controls button.primary:hover {
+      background: rgba(79, 140, 255, 0.4);
+      color: #fff;
+    }
+
+    #chapter-indicator {
+      color: #888;
+      font-size: 14px;
+      min-width: 120px;
+      text-align: center;
+    }
+
+    #time-display {
+      color: #666;
+      font-size: 13px;
+      min-width: 80px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ─── 章节导航点 ─── */
+    #chapter-dots {
+      display: flex;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .dot.active {
+      background: #4f8cff;
+      box-shadow: 0 0 8px rgba(79, 140, 255, 0.5);
+    }
+
+    .dot.done {
+      background: rgba(79, 140, 255, 0.4);
+    }
+
+    /* ─── 章节 1: 学科介绍（多页幻灯片） ─── */
+    .chapter-intro {
+      padding: 0;
+    }
+
+    .chapter-intro .slide-container {
+      padding: 40px 100px;
+      overflow-y: auto;
+    }
+
+    .intro-content {
+      max-width: 900px;
+      margin: 0 auto;
+      text-align: left;
+      font-size: 18px;
+      line-height: 1.8;
+      color: #ccc;
+    }
+
+    .intro-content h1 {
+      font-size: 48px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, #4f8cff, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .intro-content h2 {
+      font-size: 28px;
+      font-weight: 600;
+      color: #e0e0e0;
+      margin-bottom: 20px;
+      margin-top: 10px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid rgba(79, 140, 255, 0.2);
+    }
+
+    .intro-content p {
+      margin-bottom: 14px;
+    }
+
+    .intro-content ul {
+      list-style: none;
+      margin: 10px 0;
+    }
+
+    .intro-content ul li {
+      padding-left: 20px;
+      margin-bottom: 8px;
+      position: relative;
+    }
+
+    .intro-content ul li::before {
+      content: "●";
+      color: #4f8cff;
+      position: absolute;
+      left: 0;
+      font-size: 10px;
+      top: 6px;
+    }
+
+    .intro-content blockquote {
+      border-left: 3px solid #4f8cff;
+      padding-left: 16px;
+      margin: 12px 0;
+      color: #999;
+      font-style: italic;
+    }
+
+    /* ─── 章节 2: 思维导图 ─── */
+    .chapter-mindmap {
+      padding: 30px;
+    }
+
+    .chapter-mindmap h2 {
+      position: absolute;
+      top: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 24px;
+      color: #888;
+      letter-spacing: 2px;
+    }
+
+    #mindmap-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #mindmap-container svg {
+      max-width: 95%;
+      max-height: 85%;
+    }
+
+    /* ─── 章节 3: PPT ─── */
+    .chapter-ppt {
+      padding: 0;
+    }
+
+    .slide-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 60px 100px;
+      overflow-y: auto;
+    }
+
+    .slide-container .slide-number {
+      position: absolute;
+      bottom: 80px;
+      right: 60px;
+      font-size: 14px;
+      color: #555;
+    }
+
+    .slide-container .slide-nav {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-top: 20px;
+    }
+
+    .slide-container .slide-nav button {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #aaa;
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .slide-container .slide-nav button:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    .slide-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      max-width: 1000px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .slide-content h2 {
+      font-size: 36px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 8px;
+      padding-bottom: 16px;
+      border-bottom: 3px solid rgba(79, 140, 255, 0.3);
+    }
+
+    .slide-content ul {
+      list-style: none;
+      margin-top: 24px;
+    }
+
+    .slide-content ul li {
+      font-size: 20px;
+      line-height: 1.7;
+      color: #ccc;
+      margin-bottom: 14px;
+      padding-left: 24px;
+      position: relative;
+    }
+
+    .slide-content ul li::before {
+      content: "●";
+      color: #4f8cff;
+      position: absolute;
+      left: 0;
+      font-size: 12px;
+      top: 6px;
+    }
+
+    .slide-content ul li strong {
+      color: #7aa9ff;
+    }
+
+    /* ─── Karaoke 逐字显现 ─── */
+    .kw {
+      display: inline;
+      opacity: 0;
+    }
+
+    .kw.done {
+      opacity: 1;
+      transition: opacity 0.12s ease;
+    }
+
+    /* ─── 全局键盘提示 ─── */
+    .hint {
+      position: fixed;
+      top: 20px;
+      right: 24px;
+      color: #444;
+      font-size: 13px;
+      z-index: 50;
+    }
+
+    /* ─── 蓝天白云动态背景 ─── */
+    body {
+      background: linear-gradient(180deg, #4A90D9 0%, #7EC8E3 35%, #A8DDF0 60%, #D4EEF7 85%, #F0F8FF 100%);
+    }
+
+    #bg-clouds {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .cloud-group {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: cloudDrift linear infinite;
+    }
+
+    .cloud-group .c {
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.75);
+    }
+
+    .cloud-group .c.shadow {
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    @keyframes cloudDrift {
+      0% {
+        transform: translateX(-25vw);
+      }
+
+      100% {
+        transform: translateX(105vw);
+      }
+    }
+
+    /* 云团 1 — 大朵 */
+    .cloud-1 {
+      top: 8%;
+      font-size: 1px;
+      animation-duration: 75s;
+    }
+
+    .cloud-1 .c:nth-child(1) {
+      width: 220em;
+      height: 60em;
+      top: 0;
+      left: 0;
+    }
+
+    .cloud-1 .c:nth-child(2) {
+      width: 160em;
+      height: 70em;
+      top: -15em;
+      left: 40em;
+    }
+
+    .cloud-1 .c:nth-child(3) {
+      width: 150em;
+      height: 50em;
+      top: 10em;
+      left: 70em;
+    }
+
+    .cloud-1 .c:nth-child(4) {
+      width: 200em;
+      height: 65em;
+      top: 5em;
+      left: -30em;
+    }
+
+    /* 云团 2 — 中朵 */
+    .cloud-2 {
+      top: 20%;
+      font-size: 0.7px;
+      animation-duration: 95s;
+      animation-delay: -20s;
+    }
+
+    .cloud-2 .c:nth-child(1) {
+      width: 180em;
+      height: 50em;
+      top: 0;
+      left: 0;
+    }
+
+    .cloud-2 .c:nth-child(2) {
+      width: 130em;
+      height: 55em;
+      top: -12em;
+      left: 35em;
+    }
+
+    .cloud-2 .c:nth-child(3) {
+      width: 120em;
+      height: 40em;
+      top: 8em;
+      left: 60em;
+    }
+
+    .cloud-2 .c.shadow {
+      width: 250em;
+      height: 30em;
+      bottom: -20em;
+      left: -20em;
+      background: rgba(255, 255, 255, 0.2);
+      filter: blur(8em);
+    }
+
+    /* 云团 3 — 小朵高飘 */
+    .cloud-3 {
+      top: 5%;
+      font-size: 0.5px;
+      animation-duration: 120s;
+      animation-delay: -45s;
+    }
+
+    .cloud-3 .c:nth-child(1) {
+      width: 120em;
+      height: 35em;
+      top: 0;
+      left: 0;
+    }
+
+    .cloud-3 .c:nth-child(2) {
+      width: 90em;
+      height: 40em;
+      top: -10em;
+      left: 25em;
+    }
+
+    .cloud-3 .c:nth-child(3) {
+      width: 80em;
+      height: 30em;
+      top: 5em;
+      left: 40em;
+    }
+
+    /* 云团 4 — 低处薄云 */
+    .cloud-4 {
+      top: 45%;
+      font-size: 0.9px;
+      animation-duration: 85s;
+      animation-delay: -60s;
+      opacity: 0.6;
+    }
+
+    .cloud-4 .c:nth-child(1) {
+      width: 300em;
+      height: 40em;
+      top: 0;
+      left: 0;
+    }
+
+    .cloud-4 .c:nth-child(2) {
+      width: 200em;
+      height: 35em;
+      top: -8em;
+      left: 80em;
+    }
+
+    .cloud-4 .c.shadow {
+      width: 400em;
+      height: 25em;
+      bottom: -15em;
+      left: -40em;
+      background: rgba(255, 255, 255, 0.15);
+      filter: blur(6em);
+    }
+
+    /* ── 内容层 — 半透毛玻璃效果，蓝天透出来 ── */
+    #player {
+      position: relative;
+      z-index: 1;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: rgba(10, 10, 30, 0.55);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+
+    /* ─── 动画 ─── */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .chapter.active .content>* {
+      animation: fadeInUp 0.25s ease forwards;
+    }
+
+    .chapter.active .content>*:nth-child(1) {
+      animation-delay: 0.05s;
+    }
+
+    .chapter.active .content>*:nth-child(2) {
+      animation-delay: 0.1s;
+    }
+
+    .chapter.active .content>*:nth-child(3) {
+      animation-delay: 0.15s;
+    }
+
+    /* Word-by-word narration reveal */
+    .timed-word {
+      display: inline-block;
+      opacity: 0.18;
+      transform: translateY(7px) scale(0.98);
+      transition: opacity 0.2s ease, transform 0.22s ease, color 0.18s ease, text-shadow 0.18s ease;
+      will-change: opacity, transform;
+    }
+
+    .timed-word.is-visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .timed-word.is-current {
+      color: #fff3a5;
+      text-shadow: 0 0 12px rgba(255, 222, 96, 0.45);
+    }
+
+    /* ─── 空状态 ─── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #555;
+    }
+
+    .empty-state .icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+      opacity: 0.3;
+    }
+  </style>
 </head>
+
 <body>
 
-<div id="bg-clouds">
-  <div class="cloud-group cloud-1">
-    <div class="c"></div><div class="c"></div><div class="c"></div><div class="c"></div>
+  <div id="bg-clouds">
+    <div class="cloud-group cloud-1">
+      <div class="c"></div>
+      <div class="c"></div>
+      <div class="c"></div>
+      <div class="c"></div>
+    </div>
+    <div class="cloud-group cloud-2">
+      <div class="c"></div>
+      <div class="c"></div>
+      <div class="c"></div>
+      <div class="c shadow"></div>
+    </div>
+    <div class="cloud-group cloud-3">
+      <div class="c"></div>
+      <div class="c"></div>
+      <div class="c"></div>
+    </div>
+    <div class="cloud-group cloud-4">
+      <div class="c"></div>
+      <div class="c"></div>
+      <div class="c shadow"></div>
+    </div>
   </div>
-  <div class="cloud-group cloud-2">
-    <div class="c"></div><div class="c"></div><div class="c"></div><div class="c shadow"></div>
+
+  <div id="player">
+    <div id="stage">
+      <!-- chapters rendered by JS -->
+    </div>
+
+    <div id="progress-bar" onclick="handleProgressClick(event)" onmousedown="startDragProgress(event)">
+      <div id="progress-track">
+        <div id="progress-fill">
+          <div id="progress-thumb"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="controls">
+      <button id="btn-prev" onclick="prevChapter()" title="上一章">◀◀</button>
+      <button id="btn-play" class="primary" onclick="togglePlay()" title="播放/暂停">▶</button>
+      <button id="btn-next" onclick="nextChapter()" title="下一章">▶▶</button>
+      <span id="chapter-indicator">1 / 3</span>
+      <div id="chapter-dots"></div>
+      <span id="time-display">00:00</span>
+    </div>
   </div>
-  <div class="cloud-group cloud-3">
-    <div class="c"></div><div class="c"></div><div class="c"></div>
-  </div>
-  <div class="cloud-group cloud-4">
-    <div class="c"></div><div class="c"></div><div class="c shadow"></div>
-  </div>
-</div>
 
-<div id="player">
-  <div id="stage">
-    <!-- chapters rendered by JS -->
-  </div>
+  <div class="hint">空格切换播放 · ← → 切换章节</div>
 
-  <div id="progress-bar" onclick="handleProgressClick(event)" onmousedown="startDragProgress(event)">
-    <div id="progress-track"><div id="progress-fill"><div id="progress-thumb"></div></div></div>
-  </div>
+  <script>
+    // ══════════════════════════════════════════════
+    //  Data
+    // ══════════════════════════════════════════════
+    var SECTIONS = {{ SECTIONS }};
+    var TITLE = {{ TITLE_JSON }};
 
-  <div id="controls">
-    <button id="btn-prev" onclick="prevChapter()" title="上一章">◀◀</button>
-    <button id="btn-play" class="primary" onclick="togglePlay()" title="播放/暂停">▶</button>
-    <button id="btn-next" onclick="nextChapter()" title="下一章">▶▶</button>
-    <span id="chapter-indicator">1 / 3</span>
-    <div id="chapter-dots"></div>
-    <span id="time-display">00:00</span>
-  </div>
-</div>
+    // ══════════════════════════════════════════════
+    //  State
+    // ══════════════════════════════════════════════
+    var currentChapter = 0;
+    var currentSlide = 0;       // for ppt type sub-navigation
+    var isPlaying = false;
+    var audioQueue = [];
+    var currentAudio = null;
+    var audioIndex = 0;
+    var totalChapters = SECTIONS.length;
+    var chapterTimers = [];
 
-<div class="hint">空格切换播放 · ← → 切换章节</div>
+    // 全片音频总时长（毫秒），用于进度条
+    var totalDurationMs = 0;
+    SECTIONS.forEach(function (s) { totalDurationMs += s.total_duration_ms || 0; });
 
-<script>
-// ══════════════════════════════════════════════
-//  Data
-// ══════════════════════════════════════════════
-var SECTIONS = {{SECTIONS}};
-var TITLE = {{TITLE_JSON}};
-
-// ══════════════════════════════════════════════
-//  State
-// ══════════════════════════════════════════════
-var currentChapter = 0;
-var currentSlide = 0;       // for ppt type sub-navigation
-var isPlaying = false;
-var audioQueue = [];
-var currentAudio = null;
-var audioIndex = 0;
-var totalChapters = SECTIONS.length;
-var chapterTimers = [];
-
-// 全片音频总时长（毫秒），用于进度条
-var totalDurationMs = 0;
-SECTIONS.forEach(function(s) { totalDurationMs += s.total_duration_ms || 0; });
-
-function getCompletedMs() {
-  var ms = 0;
-  for (var i = 0; i < currentChapter; i++) ms += SECTIONS[i].total_duration_ms || 0;
-  // 当前章节：有 slides 的累积已翻页时长
-  var sec = SECTIONS[currentChapter];
-  if (sec && sec.slides) {
-    for (var i = 0; i < currentSlide; i++)
-      ms += (sec.slides[i].duration_ms) || 0;
-  }
-  for (var i = 0; i < audioIndex; i++) ms += (audioQueue[i] && audioQueue[i].duration_ms) || 0;
-  if (currentAudio) ms += currentAudio.currentTime * 1000;
-  return ms;
-}
-
-function formatTime(sec) {
-  var m = Math.floor(sec / 60);
-  var s = Math.floor(sec % 60);
-  return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-}
-
-function updateProgress() {
-  var completedMs = getCompletedMs();
-  var pct = totalDurationMs > 0 ? (completedMs / totalDurationMs) * 100 : 0;
-  document.getElementById('progress-fill').style.width = Math.min(pct, 100) + '%';
-  var totalSec = Math.floor(totalDurationMs / 1000);
-  document.getElementById('time-display').textContent = formatTime(completedMs / 1000) + ' / ' + formatTime(totalSec);
-}
-
-// ══════════════════════════════════════════════
-//  Seek — 拖动 / 点击进度条
-// ══════════════════════════════════════════════
-function handleProgressClick(event) {
-  var rect = document.getElementById('progress-bar').getBoundingClientRect();
-  var x = event.clientX - rect.left;
-  var fraction = x / rect.width;
-  seekTo(fraction);
-}
-
-var _dragActive = false;
-
-function startDragProgress(event) {
-  _dragActive = true;
-  handleProgressClick(event);
-  document.addEventListener('mousemove', _onDrag);
-  document.addEventListener('mouseup', _stopDrag);
-}
-
-function _onDrag(event) {
-  if (!_dragActive) return;
-  event.preventDefault();
-  var rect = document.getElementById('progress-bar').getBoundingClientRect();
-  var x = Math.max(0, Math.min(event.clientX - rect.left, rect.width));
-  document.getElementById('progress-fill').style.width = (x / rect.width * 100) + '%';
-}
-
-function _stopDrag(event) {
-  _dragActive = false;
-  document.removeEventListener('mousemove', _onDrag);
-  document.removeEventListener('mouseup', _stopDrag);
-  handleProgressClick(event);
-}
-
-function seekTo(fraction) {
-  fraction = Math.max(0, Math.min(1, fraction));
-  var targetMs = fraction * totalDurationMs;
-  if (targetMs < 50) targetMs = 0;
-  if (targetMs > totalDurationMs - 500) targetMs = totalDurationMs;
-
-  // 找目标章节
-  var acc = 0;
-  for (var c = 0; c < SECTIONS.length; c++) {
-    var dur = SECTIONS[c].total_duration_ms || 0;
-    if (acc + dur > targetMs || c === SECTIONS.length - 1) {
-      var offsetInChapter = targetMs - acc;
-      var wasPlaying = isPlaying;
-
-      stopAudio();
-      goToChapter(c);
-
-      // 有 slides 的章节：找目标页
-      var sec = SECTIONS[c];
-      if (sec.slides && sec.slides.length > 0) {
-        var slideAcc = 0;
-        for (var s = 0; s < sec.slides.length; s++) {
-          var slideDur = sec.slides[s].duration_ms || 0;
-          if (slideAcc + slideDur > offsetInChapter || s === sec.slides.length - 1) {
-            if (s !== currentSlide) showSlide(s);
-            offsetInChapter -= slideAcc;
-            break;
-          }
-          slideAcc += slideDur;
-        }
+    function getCompletedMs() {
+      var ms = 0;
+      for (var i = 0; i < currentChapter; i++) ms += SECTIONS[i].total_duration_ms || 0;
+      // 当前章节：有 slides 的累积已翻页时长
+      var sec = SECTIONS[currentChapter];
+      if (sec && sec.slides) {
+        for (var i = 0; i < currentSlide; i++)
+          ms += (sec.slides[i].duration_ms) || 0;
       }
+      for (var i = 0; i < audioIndex; i++) ms += (audioQueue[i] && audioQueue[i].duration_ms) || 0;
+      if (currentAudio) ms += currentAudio.currentTime * 1000;
+      return ms;
+    }
 
-      // 在当前音频队列中找到对应段
-      var segAcc = 0;
-      for (var a = 0; a < audioQueue.length; a++) {
-        var segDur = (audioQueue[a] && audioQueue[a].duration_ms) || 0;
-        if (segAcc + segDur > offsetInChapter || a === audioQueue.length - 1) {
-          audioIndex = a;
-          if (wasPlaying) {
-            playAudioQueue();
-            var seekInSec = Math.max(0, (offsetInChapter - segAcc) / 1000);
-            if (currentAudio && seekInSec > 0.5) {
-              var doSeek = function() {
-                if (currentAudio.readyState >= 2) {
-                  currentAudio.currentTime = Math.min(seekInSec, (currentAudio.duration || 9999) - 0.1);
-                } else {
-                  currentAudio.addEventListener('canplay', function() {
-                    currentAudio.currentTime = Math.min(seekInSec, (currentAudio.duration || 9999) - 0.1);
-                  }, {once: true});
-                }
-              };
-              doSeek();
+    function formatTime(sec) {
+      var m = Math.floor(sec / 60);
+      var s = Math.floor(sec % 60);
+      return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function updateProgress() {
+      var completedMs = getCompletedMs();
+      var pct = totalDurationMs > 0 ? (completedMs / totalDurationMs) * 100 : 0;
+      document.getElementById('progress-fill').style.width = Math.min(pct, 100) + '%';
+      var totalSec = Math.floor(totalDurationMs / 1000);
+      document.getElementById('time-display').textContent = formatTime(completedMs / 1000) + ' / ' + formatTime(totalSec);
+    }
+
+    // ══════════════════════════════════════════════
+    //  Seek — 拖动 / 点击进度条
+    // ══════════════════════════════════════════════
+    function handleProgressClick(event) {
+      var rect = document.getElementById('progress-bar').getBoundingClientRect();
+      var x = event.clientX - rect.left;
+      var fraction = x / rect.width;
+      seekTo(fraction);
+    }
+
+    var _dragActive = false;
+
+    function startDragProgress(event) {
+      _dragActive = true;
+      handleProgressClick(event);
+      document.addEventListener('mousemove', _onDrag);
+      document.addEventListener('mouseup', _stopDrag);
+    }
+
+    function _onDrag(event) {
+      if (!_dragActive) return;
+      event.preventDefault();
+      var rect = document.getElementById('progress-bar').getBoundingClientRect();
+      var x = Math.max(0, Math.min(event.clientX - rect.left, rect.width));
+      document.getElementById('progress-fill').style.width = (x / rect.width * 100) + '%';
+    }
+
+    function _stopDrag(event) {
+      _dragActive = false;
+      document.removeEventListener('mousemove', _onDrag);
+      document.removeEventListener('mouseup', _stopDrag);
+      handleProgressClick(event);
+    }
+
+    function seekTo(fraction) {
+      fraction = Math.max(0, Math.min(1, fraction));
+      var targetMs = fraction * totalDurationMs;
+      if (targetMs < 50) targetMs = 0;
+      if (targetMs > totalDurationMs - 500) targetMs = totalDurationMs;
+
+      // 找目标章节
+      var acc = 0;
+      for (var c = 0; c < SECTIONS.length; c++) {
+        var dur = SECTIONS[c].total_duration_ms || 0;
+        if (acc + dur > targetMs || c === SECTIONS.length - 1) {
+          var offsetInChapter = targetMs - acc;
+          var wasPlaying = isPlaying;
+
+          stopAudio();
+          goToChapter(c);
+
+          // 有 slides 的章节：找目标页
+          var sec = SECTIONS[c];
+          if (sec.slides && sec.slides.length > 0) {
+            var slideAcc = 0;
+            for (var s = 0; s < sec.slides.length; s++) {
+              var slideDur = sec.slides[s].duration_ms || 0;
+              if (slideAcc + slideDur > offsetInChapter || s === sec.slides.length - 1) {
+                if (s !== currentSlide) showSlide(s);
+                offsetInChapter -= slideAcc;
+                break;
+              }
+              slideAcc += slideDur;
             }
           }
-          break;
+
+          // 在当前音频队列中找到对应段
+          var segAcc = 0;
+          for (var a = 0; a < audioQueue.length; a++) {
+            var segDur = (audioQueue[a] && audioQueue[a].duration_ms) || 0;
+            if (segAcc + segDur > offsetInChapter || a === audioQueue.length - 1) {
+              audioIndex = a;
+              if (wasPlaying) {
+                playAudioQueue();
+                var seekInSec = Math.max(0, (offsetInChapter - segAcc) / 1000);
+                if (currentAudio && seekInSec > 0.5) {
+                  var doSeek = function () {
+                    if (currentAudio.readyState >= 2) {
+                      currentAudio.currentTime = Math.min(seekInSec, (currentAudio.duration || 9999) - 0.1);
+                    } else {
+                      currentAudio.addEventListener('canplay', function () {
+                        currentAudio.currentTime = Math.min(seekInSec, (currentAudio.duration || 9999) - 0.1);
+                      }, { once: true });
+                    }
+                  };
+                  doSeek();
+                }
+              }
+              break;
+            }
+            segAcc += segDur;
+          }
+
+          updateProgress();
+          updateWordReveal();
+          return;
         }
-        segAcc += segDur;
+        acc += dur;
       }
-
-      updateProgress();
-      updateWordReveal();
-      return;
     }
-    acc += dur;
-  }
-}
 
-// ══════════════════════════════════════════════
-//  Render
-// ══════════════════════════════════════════════
-function render() {
-  var stage = document.getElementById('stage');
-  stage.innerHTML = '';
+    // ══════════════════════════════════════════════
+    //  Render
+    // ══════════════════════════════════════════════
+    function render() {
+      var stage = document.getElementById('stage');
+      stage.innerHTML = '';
 
-  SECTIONS.forEach(function(sec, idx) {
-    var div = document.createElement('div');
-    div.className = 'chapter chapter-' + sec.type + (idx === 0 ? ' active' : '');
-    div.dataset.index = idx;
+      SECTIONS.forEach(function (sec, idx) {
+        var div = document.createElement('div');
+        div.className = 'chapter chapter-' + sec.type + (idx === 0 ? ' active' : '');
+        div.dataset.index = idx;
 
-    if (sec.type === 'intro') {
-      var slidesHtml = '';
-      for (var si = 0; si < sec.slides.length; si++) {
-        var sl = sec.slides[si];
-        slidesHtml += '<div class="slide-container" style="display:' + (si === 0 ? 'flex' : 'none') + '" data-slide="' + si + '">' +
-          '<div class="slide-content intro-content">' + sl.content_html + '</div>' +
-          '<div class="slide-number">' + (si + 1) + ' / ' + sec.slides.length + '</div>' +
-          '<div class="slide-nav">' +
-          '<button onclick="prevSlide()">◀ 上一页</button>' +
-          '<button onclick="nextSlide()">下一页 ▶</button>' +
-          '</div></div>';
-      }
-      div.innerHTML = slidesHtml;
-      // 将正文文本逐字包装为 kw  span
-      div.querySelectorAll('.slide-container').forEach(function(c) { wrapChars(c); });
-    } else if (sec.type === 'mindmap') {
-      div.innerHTML = '<h2>思维导图</h2><div id="mindmap-container">' + sec.content_html + '</div>';
-    } else if (sec.type === 'ppt') {
-      var slidesHtml = '';
-      for (var si = 0; si < sec.slides.length; si++) {
-        var sl = sec.slides[si];
-        var activeClass = si === 0 ? ' active-slide' : '';
-        var bulletsHtml = '';
-        if (sl.bullets && sl.bullets.length) {
-          bulletsHtml = '<ul>';
-          sl.bullets.forEach(function(b) {
-            bulletsHtml += '<li>' + b + '</li>';
-          });
-          bulletsHtml += '</ul>';
+        if (sec.type === 'intro') {
+          var slidesHtml = '';
+          for (var si = 0; si < sec.slides.length; si++) {
+            var sl = sec.slides[si];
+            slidesHtml += '<div class="slide-container" style="display:' + (si === 0 ? 'flex' : 'none') + '" data-slide="' + si + '">' +
+              '<div class="slide-content intro-content">' + sl.content_html + '</div>' +
+              '<div class="slide-number">' + (si + 1) + ' / ' + sec.slides.length + '</div>' +
+              '<div class="slide-nav">' +
+              '<button onclick="prevSlide()">◀ 上一页</button>' +
+              '<button onclick="nextSlide()">下一页 ▶</button>' +
+              '</div></div>';
+          }
+          div.innerHTML = slidesHtml;
+          // 将正文文本逐字包装为 kw  span
+          div.querySelectorAll('.slide-container').forEach(function (c) { wrapChars(c); });
+        } else if (sec.type === 'mindmap') {
+          div.innerHTML = '<h2>思维导图</h2><div id="mindmap-container">' + sec.content_html + '</div>';
+        } else if (sec.type === 'ppt') {
+          var slidesHtml = '';
+          for (var si = 0; si < sec.slides.length; si++) {
+            var sl = sec.slides[si];
+            var activeClass = si === 0 ? ' active-slide' : '';
+            var bulletsHtml = '';
+            if (sl.bullets && sl.bullets.length) {
+              bulletsHtml = '<ul>';
+              sl.bullets.forEach(function (b) {
+                bulletsHtml += '<li>' + b + '</li>';
+              });
+              bulletsHtml += '</ul>';
+            }
+            slidesHtml += '<div class="slide-container' + activeClass + '" data-slide="' + si + '" style="display:' + (si === 0 ? 'flex' : 'none') + '">' +
+              '<div class="slide-content"><h2>' + escHtml(sl.title) + '</h2>' + bulletsHtml + '</div>' +
+              '<div class="slide-number">' + (si + 1) + ' / ' + sec.slides.length + '</div>' +
+              '<div class="slide-nav">' +
+              '<button onclick="prevSlide()">◀ 上一页</button>' +
+              '<button onclick="nextSlide()">下一页 ▶</button>' +
+              '</div></div>';
+          }
+          div.innerHTML = slidesHtml;
+          div.querySelectorAll('.slide-container').forEach(function (c) { wrapChars(c); });
         }
-        slidesHtml += '<div class="slide-container' + activeClass + '" data-slide="' + si + '" style="display:' + (si === 0 ? 'flex' : 'none') + '">' +
-          '<div class="slide-content"><h2>' + escHtml(sl.title) + '</h2>' + bulletsHtml + '</div>' +
-          '<div class="slide-number">' + (si + 1) + ' / ' + sec.slides.length + '</div>' +
-          '<div class="slide-nav">' +
-          '<button onclick="prevSlide()">◀ 上一页</button>' +
-          '<button onclick="nextSlide()">下一页 ▶</button>' +
-          '</div></div>';
-      }
-      div.innerHTML = slidesHtml;
-      div.querySelectorAll('.slide-container').forEach(function(c) { wrapChars(c); });
-    }
 
-    stage.appendChild(div);
-  });
-
-  // Dots
-  var dotsContainer = document.getElementById('chapter-dots');
-  dotsContainer.innerHTML = '';
-  SECTIONS.forEach(function(_, idx) {
-    var dot = document.createElement('span');
-    dot.className = 'dot' + (idx === 0 ? ' active' : '');
-    dot.onclick = function() { goToChapter(idx); };
-    dotsContainer.appendChild(dot);
-  });
-
-  updateUI();
-  updateProgress();
-  loadAudioForChapter(0);
-  prepareTimedWords(getActiveWordRoot());
-  resetWordReveal(getActiveWordRoot());
-}
-
-function escHtml(s) {
-  if (!s) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// 将 .slide-content 内的文本节点逐字包装为 <kw> 标签（导航按钮、页码不受影响）
-function wrapChars(container) {
-  var content = container.querySelector('.slide-content');
-  if (!content) return;
-  var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
-  var nodes = [];
-  while (walker.nextNode()) nodes.push(walker.currentNode);
-  var charIndex = 0;
-  nodes.forEach(function(textNode) {
-    var text = textNode.textContent;
-    if (!text) return;
-    var frag = document.createDocumentFragment();
-    for (var i = 0; i < text.length; i++) {
-      var ch = text[i];
-      if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
-        frag.appendChild(document.createTextNode(ch));
-      } else {
-        var kw = document.createElement('kw');
-        kw.className = 'kw';
-        kw.dataset.i = charIndex++;
-        kw.textContent = ch;
-        frag.appendChild(kw);
-      }
-    }
-    textNode.parentNode.replaceChild(frag, textNode);
-  });
-  return charIndex;
-}
-
-// ══════════════════════════════════════════════
-//  Chapter Navigation
-// ══════════════════════════════════════════════
-function goToChapter(idx) {
-  if (idx < 0 || idx >= totalChapters) return;
-  stopAudio();
-  document.querySelectorAll('.chapter').forEach(function(el, i) {
-    el.classList.toggle('active', i === idx);
-  });
-  document.querySelectorAll('.dot').forEach(function(el, i) {
-    el.classList.toggle('active', i === idx);
-  });
-  currentChapter = idx;
-  currentSlide = 0;
-  audioIndex = 0;
-  updateUI();
-  updateProgress();
-  resetKaraoke();
-  loadAudioForChapter(idx);
-  prepareTimedWords(getActiveWordRoot());
-  resetWordReveal(getActiveWordRoot());
-  if (isPlaying) playAudioQueue();
-}
-
-function nextChapter() { goToChapter(Math.min(currentChapter + 1, totalChapters - 1)); }
-function prevChapter() { goToChapter(Math.max(currentChapter - 1, 0)); }
-
-// ─── PPT slide sub-navigation ───
-function nextSlide() {
-  var sec = SECTIONS[currentChapter];
-  if (!sec || !sec.slides) return;
-  if (currentSlide < sec.slides.length - 1) {
-    showSlide(currentSlide + 1);
-  } else {
-    nextChapter();
-  }
-}
-
-function prevSlide() {
-  if (currentSlide > 0) {
-    showSlide(currentSlide - 1);
-  }
-}
-
-function showSlide(idx) {
-  var containers = document.querySelectorAll('.chapter.active .slide-container');
-  containers.forEach(function(el, i) {
-    el.style.display = i === idx ? 'flex' : 'none';
-  });
-  currentSlide = idx;
-  updateUI();
-  updateProgress();
-  resetKaraoke();
-  // 同步音频索引到当前页，不重新加载音频队列，保持连续播放
-  audioIndex = idx;
-  if (isPlaying) {
-    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-    playAudioQueue();
-  }
-}
-
-// ══════════════════════════════════════════════
-//  Audio
-// ══════════════════════════════════════════════
-function loadAudioForChapter(chapterIdx) {
-  var sec = SECTIONS[chapterIdx];
-  if (!sec) { audioQueue = []; return; }
-
-  // 有 slides 的章节：加载全部音频到队列，实现连续播放
-  if (sec.slides && sec.slides.length > 0) {
-    audioQueue = [];
-    for (var si = 0; si < sec.slides.length; si++) {
-      var sl = sec.slides[si];
-      if (sl.audio_url) {
-        audioQueue.push({audio_url: sl.audio_url, duration_ms: sl.duration_ms, word_timings: sl.word_timings || []});
-      }
-    }
-  } else if (sec.audio_segments && sec.audio_segments.length > 0) {
-    audioQueue = sec.audio_segments.slice();
-  } else {
-    audioQueue = [];
-  }
-  audioIndex = 0;
-}
-
-function playAudioQueue() {
-  if (audioQueue.length === 0 || audioIndex >= audioQueue.length) {
-    // Chapter finished
-    isPlaying = false;
-    document.getElementById('btn-play').textContent = '▶';
-    // Auto advance to next chapter
-    if (currentChapter < totalChapters - 1) {
-      setTimeout(function() { nextChapter(); }, 400);
-    }
-    return;
-  }
-
-  var seg = audioQueue[audioIndex];
-  if (!seg || !seg.audio_url) {
-    audioIndex++;
-    playAudioQueue();
-    return;
-  }
-
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
-  }
-
-  currentAudio = new Audio(seg.audio_url);
-  currentAudio.play().catch(function(e) { console.warn('Audio play error:', e); });
-  updateWordReveal();
-  currentAudio.onended = function() {
-    audioIndex++;
-    // 自动翻页：一段音频播完自动进入下一张幻灯片
-    var sec = SECTIONS[currentChapter];
-    if (sec && sec.slides && sec.slides.length > 1 && currentSlide < sec.slides.length - 1) {
-      var containers = document.querySelectorAll('.chapter.active .slide-container');
-      containers.forEach(function(el, i) {
-        el.style.display = i === currentSlide + 1 ? 'flex' : 'none';
+        stage.appendChild(div);
       });
-      currentSlide++;
+
+      // Dots
+      var dotsContainer = document.getElementById('chapter-dots');
+      dotsContainer.innerHTML = '';
+      SECTIONS.forEach(function (_, idx) {
+        var dot = document.createElement('span');
+        dot.className = 'dot' + (idx === 0 ? ' active' : '');
+        dot.onclick = function () { goToChapter(idx); };
+        dotsContainer.appendChild(dot);
+      });
+
       updateUI();
+      updateProgress();
+      loadAudioForChapter(0);
       prepareTimedWords(getActiveWordRoot());
       resetWordReveal(getActiveWordRoot());
     }
-    updateProgress();
-    playAudioQueue();
-  };
-  currentAudio.ontimeupdate = function() {
-    updateProgress();
-    updateKaraoke();
-  };
-}
 
-function stopAudio() {
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-}
+    function escHtml(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
 
-function togglePlay() {
-  if (isPlaying) {
-    if (currentAudio) currentAudio.pause();
-    isPlaying = false;
-    document.getElementById('btn-play').textContent = '▶';
-  } else {
-    isPlaying = true;
-    document.getElementById('btn-play').textContent = '⏸';
-    if (audioQueue.length === 0 || audioIndex >= audioQueue.length) {
+    // 将 .slide-content 内的文本节点逐字包装为 <kw> 标签（导航按钮、页码不受影响）
+    function wrapChars(container) {
+      var content = container.querySelector('.slide-content');
+      if (!content) return;
+      var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
+      var nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      var charIndex = 0;
+      nodes.forEach(function (textNode) {
+        var text = textNode.textContent;
+        if (!text) return;
+        var frag = document.createDocumentFragment();
+        for (var i = 0; i < text.length; i++) {
+          var ch = text[i];
+          if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            frag.appendChild(document.createTextNode(ch));
+          } else {
+            var kw = document.createElement('kw');
+            kw.className = 'kw';
+            kw.dataset.i = charIndex++;
+            kw.textContent = ch;
+            frag.appendChild(kw);
+          }
+        }
+        textNode.parentNode.replaceChild(frag, textNode);
+      });
+      return charIndex;
+    }
+
+    // ══════════════════════════════════════════════
+    //  Chapter Navigation
+    // ══════════════════════════════════════════════
+    function goToChapter(idx) {
+      if (idx < 0 || idx >= totalChapters) return;
+      stopAudio();
+      document.querySelectorAll('.chapter').forEach(function (el, i) {
+        el.classList.toggle('active', i === idx);
+      });
+      document.querySelectorAll('.dot').forEach(function (el, i) {
+        el.classList.toggle('active', i === idx);
+      });
+      currentChapter = idx;
+      currentSlide = 0;
+      audioIndex = 0;
+      updateUI();
+      updateProgress();
+      resetKaraoke();
+      loadAudioForChapter(idx);
+      prepareTimedWords(getActiveWordRoot());
+      resetWordReveal(getActiveWordRoot());
+      if (isPlaying) playAudioQueue();
+    }
+
+    function nextChapter() { goToChapter(Math.min(currentChapter + 1, totalChapters - 1)); }
+    function prevChapter() { goToChapter(Math.max(currentChapter - 1, 0)); }
+
+    // ─── PPT slide sub-navigation ───
+    function nextSlide() {
+      var sec = SECTIONS[currentChapter];
+      if (!sec || !sec.slides) return;
+      if (currentSlide < sec.slides.length - 1) {
+        showSlide(currentSlide + 1);
+      } else {
+        nextChapter();
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlide > 0) {
+        showSlide(currentSlide - 1);
+      }
+    }
+
+    function showSlide(idx) {
+      var containers = document.querySelectorAll('.chapter.active .slide-container');
+      containers.forEach(function (el, i) {
+        el.style.display = i === idx ? 'flex' : 'none';
+      });
+      currentSlide = idx;
+      updateUI();
+      updateProgress();
+      resetKaraoke();
+      // 同步音频索引到当前页，不重新加载音频队列，保持连续播放
+      audioIndex = idx;
+      if (isPlaying) {
+        if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+        playAudioQueue();
+      }
+    }
+
+    // ══════════════════════════════════════════════
+    //  Audio
+    // ══════════════════════════════════════════════
+    function loadAudioForChapter(chapterIdx) {
+      var sec = SECTIONS[chapterIdx];
+      if (!sec) { audioQueue = []; return; }
+
+      // 优先从 slides 的 audio_url 构建队列（新结构）
+      audioQueue = [];
+      if (sec.slides && sec.slides.length > 0) {
+        var found = false;
+        for (var si = 0; si < sec.slides.length; si++) {
+          var sl = sec.slides[si];
+          if (sl.audio_url) {
+            audioQueue.push({ audio_url: sl.audio_url, duration_ms: sl.duration_ms, word_timings: sl.word_timings || [] });
+            found = true;
+          }
+        }
+        // slides 存在但没有 audio_url（旧结构），降级到 audio_segments
+        if (!found && sec.audio_segments && sec.audio_segments.length > 0) {
+          audioQueue = sec.audio_segments.slice();
+        }
+      } else if (sec.audio_segments && sec.audio_segments.length > 0) {
+        audioQueue = sec.audio_segments.slice();
+      }
       audioIndex = 0;
     }
-    playAudioQueue();
-  }
-}
 
-// ══════════════════════════════════════════════
-//  UI Updates
-// ══════════════════════════════════════════════
-function updateUI() {
-  var sec = SECTIONS[currentChapter];
-  var label = (currentChapter + 1) + ' / ' + totalChapters;
-  if (sec) {
-    var names = {intro: '学科介绍', mindmap: '思维导图', ppt: 'PPT讲解'};
-    label = (names[sec.type] || sec.type);
-    if (sec.slides) label += ' ' + (currentSlide + 1) + '/' + sec.slides.length;
-    label += '  (' + (currentChapter + 1) + '/' + totalChapters + ')';
-  }
-  document.getElementById('chapter-indicator').textContent = label;
-}
+    function playAudioQueue() {
+      if (audioQueue.length === 0 || audioIndex >= audioQueue.length) {
+        // Chapter finished
+        isPlaying = false;
+        document.getElementById('btn-play').textContent = '▶';
+        // Auto advance to next chapter
+        if (currentChapter < totalChapters - 1) {
+          setTimeout(function () { nextChapter(); }, 400);
+        }
+        return;
+      }
 
-// ══════════════════════════════════════════════
-//  Timed-word stubs — 逐词显隐已由 karaoke 系统接管
-// ══════════════════════════════════════════════
-function getActiveWordRoot() {
-  var containers = document.querySelectorAll('.chapter.active .slide-container');
-  return containers[currentSlide] || document.querySelector('.chapter.active');
-}
-function prepareTimedWords(root) { /* noop — handled by wrapChars */ }
-function resetWordReveal(root) { /* noop — handled by resetKaraoke */ }
-function updateWordReveal() { /* noop — handled by updateKaraoke */ }
+      var seg = audioQueue[audioIndex];
+      if (!seg || !seg.audio_url) {
+        audioIndex++;
+        playAudioQueue();
+        return;
+      }
 
-// ══════════════════════════════════════════════
-//  Karaoke 逐字高亮
-// ══════════════════════════════════════════════
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+      }
 
-// 匀速字符时间轴：总时长 / 字数，每字均分，保证严格从左到右
-function _getCharTimings(slide, totalChars) {
-  if (slide._charTimings) return slide._charTimings;
-  // 优先用 word_timestamps 的末字结束时算总时长
-  var wts = slide.word_timestamps;
-  var totalDur;
-  if (wts && wts.length) {
-    var last = wts[wts.length - 1];
-    totalDur = last.offset_ms + last.duration_ms;
-  } else if (slide.duration_ms) {
-    totalDur = slide.duration_ms;
-  } else {
-    slide._charTimings = null;
-    return null;
-  }
-  var perChar = totalDur / totalChars;
-  var timings = new Array(totalChars);
-  for (var i = 0; i < totalChars; i++) timings[i] = Math.round(i * perChar);
-  slide._charTimings = timings;
-  return timings;
-}
+      currentAudio = new Audio(seg.audio_url);
+      currentAudio.play().catch(function (e) { console.warn('Audio play error:', e); });
+      updateWordReveal();
+      currentAudio.onended = function () {
+        audioIndex++;
+        // 自动翻页：一段音频播完自动进入下一张幻灯片
+        var sec = SECTIONS[currentChapter];
+        if (sec && sec.slides && sec.slides.length > 1 && currentSlide < sec.slides.length - 1) {
+          var containers = document.querySelectorAll('.chapter.active .slide-container');
+          containers.forEach(function (el, i) {
+            el.style.display = i === currentSlide + 1 ? 'flex' : 'none';
+          });
+          currentSlide++;
+          updateUI();
+          prepareTimedWords(getActiveWordRoot());
+          resetWordReveal(getActiveWordRoot());
+        }
+        updateProgress();
+        playAudioQueue();
+      };
+      currentAudio.ontimeupdate = function () {
+        updateProgress();
+        updateKaraoke();
+      };
+    }
 
-function updateKaraoke() {
-  var sec = SECTIONS[currentChapter];
-  if (!sec || !sec.slides) return;
-  var slide = sec.slides[currentSlide];
-  if (!slide) return;
+    function stopAudio() {
+      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    }
 
-  var containers = document.querySelectorAll('.chapter.active .slide-container');
-  var container = containers[currentSlide];
-  if (!container) return;
-  var chars = container.querySelectorAll('.kw');
-  if (!chars.length) return;
+    function togglePlay() {
+      if (isPlaying) {
+        if (currentAudio) currentAudio.pause();
+        isPlaying = false;
+        document.getElementById('btn-play').textContent = '▶';
+      } else {
+        isPlaying = true;
+        document.getElementById('btn-play').textContent = '⏸';
+        if (audioQueue.length === 0 || audioIndex >= audioQueue.length) {
+          audioIndex = 0;
+        }
+        playAudioQueue();
+      }
+    }
 
-  if (!currentAudio || currentAudio.paused) {
-    for (var i = 0; i < chars.length; i++) chars[i].className = 'kw';
-    return;
-  }
+    // ══════════════════════════════════════════════
+    //  UI Updates
+    // ══════════════════════════════════════════════
+    function updateUI() {
+      var sec = SECTIONS[currentChapter];
+      var label = (currentChapter + 1) + ' / ' + totalChapters;
+      if (sec) {
+        var names = { intro: '学科介绍', mindmap: '思维导图', ppt: 'PPT讲解' };
+        label = (names[sec.type] || sec.type);
+        if (sec.slides) label += ' ' + (currentSlide + 1) + '/' + sec.slides.length;
+        label += '  (' + (currentChapter + 1) + '/' + totalChapters + ')';
+      }
+      document.getElementById('chapter-indicator').textContent = label;
+    }
 
-  var currentTimeMs = currentAudio.currentTime * 1000;
-  var timings = _getCharTimings(slide, chars.length);
-  if (!timings) return;
+    // ══════════════════════════════════════════════
+    //  Word reveal helpers (stubs — actual karaoke is handled by updateKaraoke below)
+    // ══════════════════════════════════════════════
+    function getActiveWordRoot() { return null; }
+    function prepareTimedWords(root) { /* karaoke handled by updateKaraoke */ }
+    function resetWordReveal(root) { resetKaraoke(); }
+    function updateWordReveal() { updateKaraoke(); }
 
-  // 二分查找当前时间已reveal的字数
-  var lo = 0, hi = timings.length;
-  while (lo < hi) {
-    var mid = (lo + hi) >>> 1;
-    if (timings[mid] <= currentTimeMs) lo = mid + 1;
-    else hi = mid;
-  }
+    // ══════════════════════════════════════════════
+    //  Karaoke 逐字高亮
+    // ══════════════════════════════════════════════
 
-  for (var i = 0; i < chars.length; i++) {
-    chars[i].className = i < lo ? 'kw done' : 'kw';
-  }
-}
+    // 匀速字符时间轴：总时长 / 字数，每字均分，保证严格从左到右
+    function _getCharTimings(slide, totalChars) {
+      if (slide._charTimings) return slide._charTimings;
+      // 优先用 word_timestamps 的末字结束时算总时长
+      var wts = slide.word_timestamps;
+      var totalDur;
+      if (wts && wts.length) {
+        var last = wts[wts.length - 1];
+        totalDur = last.offset_ms + last.duration_ms;
+      } else if (slide.duration_ms) {
+        totalDur = slide.duration_ms;
+      } else {
+        slide._charTimings = null;
+        return null;
+      }
+      var perChar = totalDur / totalChars;
+      var timings = new Array(totalChars);
+      for (var i = 0; i < totalChars; i++) timings[i] = Math.round(i * perChar);
+      slide._charTimings = timings;
+      return timings;
+    }
 
-function resetKaraoke() {
-  document.querySelectorAll('.chapter.active .kw').forEach(function(el) { el.className = 'kw'; });
-}
+    function updateKaraoke() {
+      var sec = SECTIONS[currentChapter];
+      if (!sec || !sec.slides) return;
+      var slide = sec.slides[currentSlide];
+      if (!slide) return;
 
-// ══════════════════════════════════════════════
-//  Keyboard
-// ══════════════════════════════════════════════
-document.addEventListener('keydown', function(e) {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-  else if (e.code === 'ArrowRight') {
-    var sec = SECTIONS[currentChapter];
-    if (sec && sec.slides && sec.slides.length > 0) nextSlide();
-    else nextChapter();
-  }
-  else if (e.code === 'ArrowLeft') {
-    var sec = SECTIONS[currentChapter];
-    if (sec && sec.slides && sec.slides.length > 0 && currentSlide > 0) { prevSlide(); }
-    else { prevChapter(); }
-  }
-});
+      var containers = document.querySelectorAll('.chapter.active .slide-container');
+      var container = containers[currentSlide];
+      if (!container) return;
+      var chars = container.querySelectorAll('.kw');
+      if (!chars.length) return;
 
-// ══════════════════════════════════════════════
-//  Init
-// ══════════════════════════════════════════════
-render();
-</script>
+      if (!currentAudio || currentAudio.paused) {
+        for (var i = 0; i < chars.length; i++) chars[i].className = 'kw';
+        return;
+      }
+
+      var currentTimeMs = currentAudio.currentTime * 1000;
+      var timings = _getCharTimings(slide, chars.length);
+      if (!timings) return;
+
+      // 二分查找当前时间已reveal的字数
+      var lo = 0, hi = timings.length;
+      while (lo < hi) {
+        var mid = (lo + hi) >>> 1;
+        if (timings[mid] <= currentTimeMs) lo = mid + 1;
+        else hi = mid;
+      }
+
+      for (var i = 0; i < chars.length; i++) {
+        chars[i].className = i < lo ? 'kw done' : 'kw';
+      }
+    }
+
+    function resetKaraoke() {
+      document.querySelectorAll('.chapter.active .kw').forEach(function (el) { el.className = 'kw'; });
+    }
+
+    // ══════════════════════════════════════════════
+    //  Keyboard
+    // ══════════════════════════════════════════════
+    document.addEventListener('keydown', function (e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+      else if (e.code === 'ArrowRight') {
+        var sec = SECTIONS[currentChapter];
+        if (sec && sec.slides && sec.slides.length > 0) nextSlide();
+        else nextChapter();
+      }
+      else if (e.code === 'ArrowLeft') {
+        var sec = SECTIONS[currentChapter];
+        if (sec && sec.slides && sec.slides.length > 0 && currentSlide > 0) { prevSlide(); }
+        else { prevChapter(); }
+      }
+    });
+
+    // ══════════════════════════════════════════════
+    //  Init
+    // ══════════════════════════════════════════════
+    render();
+  </script>
 </body>
+
 </html>
