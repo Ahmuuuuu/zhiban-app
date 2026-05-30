@@ -2,7 +2,6 @@
   <main class="study-panel">
     <header class="panel-header">
       <div class="header-title-row">
-        <router-link class="home-pill" to="/">&#x8FD4;&#x56DE;&#x9996;&#x9875;</router-link>
         <div>
           <p class="eyebrow">Study Status</p>
           <h1>&#x5B66;&#x4E60;&#x60C5;&#x51B5;</h1>
@@ -10,7 +9,6 @@
         </div>
       </div>
 
-      <UserAccountButton class="header-account" variant="home" logged-out-meta="&#x70B9;&#x51FB;&#x767B;&#x5F55;" />
     </header>
 
     <div class="dashboard-board">
@@ -202,7 +200,7 @@ import {
   UserRound
 } from 'lucide-vue-next'
 import { getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
-import UserAccountButton from '../components/UserAccountButton.vue'
+
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
 
 const zh = codes => codes.map(code => String.fromCharCode(code)).join('')

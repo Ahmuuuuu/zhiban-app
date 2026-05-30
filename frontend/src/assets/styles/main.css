@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --color-bg: #fdfbf6;
+  --color-bg: #f1f7fb;
   --color-card: #ffffff;
   --color-primary: #2f6b2f;
   --color-primary-dark: #1f4f24;
@@ -20,7 +20,7 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family:
-    Inter,
+    "Open Sans",
     "Noto Sans SC",
     "PingFang SC",
     "Microsoft YaHei",

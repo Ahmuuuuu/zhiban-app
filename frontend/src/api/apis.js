@@ -691,3 +691,21 @@ export function generatePathNodeQuiz(pathId, nodeId) {
     method: 'post'
   })
 }
+
+// ── 消息通知 API ──
+
+export function getNotifications(page = 1, size = 20) {
+  return request.get('/notification/list', { params: { page, size } })
+}
+
+export function getUnreadNotificationCount() {
+  return request.get('/notification/unread-count')
+}
+
+export function markNotificationRead(notificationId) {
+  return request.post(`/notification/${notificationId}/read`)
+}
+
+export function markAllNotificationsRead() {
+  return request.post('/notification/read-all')
+}

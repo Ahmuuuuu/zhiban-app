@@ -106,6 +106,12 @@
           </div>
 
           <div v-if="previewText" class="preview-box">
+            <img
+              v-if="videoCoverUrl"
+              class="video-cover-preview"
+              :src="videoCoverUrl"
+              alt="视频封面预览"
+            />
             {{ previewText }}
           </div>
 
@@ -125,6 +131,8 @@ import { uploadStudyMaterial } from '../api/apis'
 const fileInputRef = ref(null)
 const selectedFile = ref(null)
 const previewText = ref('')
+const videoCoverBlob = ref(null)
+const videoCoverUrl = ref('')
 const materialTitle = ref('')
 const materialDescription = ref('')
 const visibility = ref('private')
@@ -182,6 +190,67 @@ const readFile = (file) => {
   })
 }
 
+const revokeVideoCover = () => {
+  if (videoCoverUrl.value) URL.revokeObjectURL(videoCoverUrl.value)
+  videoCoverUrl.value = ''
+  videoCoverBlob.value = null
+}
+
+const captureVideoFirstFrame = file => new Promise((resolve, reject) => {
+  const video = document.createElement('video')
+  const objectUrl = URL.createObjectURL(file)
+  let settled = false
+
+  const cleanup = () => {
+    URL.revokeObjectURL(objectUrl)
+    video.removeAttribute('src')
+    video.load()
+  }
+
+  const fail = error => {
+    if (settled) return
+    settled = true
+    cleanup()
+    reject(error)
+  }
+
+  video.preload = 'metadata'
+  video.muted = true
+  video.playsInline = true
+  video.src = objectUrl
+
+  video.addEventListener('loadedmetadata', () => {
+    video.currentTime = Math.min(0.1, Math.max(video.duration || 0, 0))
+  }, { once: true })
+
+  video.addEventListener('seeked', () => {
+    if (settled) return
+    const width = video.videoWidth || 1280
+    const height = video.videoHeight || 720
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      fail(new Error('视频封面生成失败'))
+      return
+    }
+
+    ctx.drawImage(video, 0, 0, width, height)
+    canvas.toBlob(blob => {
+      if (!blob) {
+        fail(new Error('视频封面生成失败'))
+        return
+      }
+      settled = true
+      cleanup()
+      resolve(blob)
+    }, 'image/jpeg', 0.88)
+  }, { once: true })
+
+  video.addEventListener('error', () => fail(new Error('视频封面生成失败')), { once: true })
+})
+
 const loadFile = async (file) => {
   if (!file) return
 
@@ -193,9 +262,18 @@ const loadFile = async (file) => {
   selectedFile.value = file
   materialTitle.value = materialTitle.value || file.name.replace(/\.[^.]+$/, '')
   setStatus('')
+  revokeVideoCover()
 
   if (isVideoFile(file)) {
     previewText.value = '[视频文件] 将直接存储，不入库文本解析'
+    try {
+      const blob = await captureVideoFirstFrame(file)
+      videoCoverBlob.value = blob
+      videoCoverUrl.value = URL.createObjectURL(blob)
+    } catch (error) {
+      console.warn('[StudyImport] capture video cover failed:', error)
+      setStatus('视频已选择，但第一帧封面生成失败，仍可继续上传。', 'error')
+    }
   } else {
     try {
       const text = await readFile(file)
@@ -220,6 +298,7 @@ const clearFile = () => {
   selectedFile.value = null
   previewText.value = ''
   statusMessage.value = ''
+  revokeVideoCover()
 
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
@@ -237,6 +316,9 @@ const submitMaterial = async () => {
   formData.append('title', materialTitle.value.trim() || selectedFile.value.name)
   formData.append('visibility', visibility.value)
   formData.append('category', category.value)
+  if (videoCoverBlob.value) {
+    formData.append('cover', new File([videoCoverBlob.value], `${selectedFile.value.name.replace(/\.[^.]+$/, '')}_cover.jpg`, { type: 'image/jpeg' }))
+  }
 
   try {
     const res = await uploadStudyMaterial(formData)
@@ -646,6 +728,16 @@ const submitMaterial = async () => {
 
 .preview-box {
   padding: 18px;
+}
+
+.video-cover-preview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  object-fit: cover;
+  display: block;
+  box-shadow: 0 12px 28px rgba(22, 63, 143, 0.12);
 }
 
 .empty-preview {

@@ -52,7 +52,7 @@ const resourceKind = resource => {
   return 'document'
 }
 
-export const getResourceCoverUrl = resource => {
+export const getExplicitResourceCoverUrl = resource => {
   const explicitCover =
     resource?.coverUrl ||
     resource?.cover_url ||
@@ -60,7 +60,12 @@ export const getResourceCoverUrl = resource => {
     resource?.thumbnail_url ||
     resource?.thumb_url ||
     ''
-  if (explicitCover) return resolveApiUrl(explicitCover)
+  return explicitCover ? resolveApiUrl(explicitCover) : ''
+}
+
+export const getResourceCoverUrl = resource => {
+  const explicitCover = getExplicitResourceCoverUrl(resource)
+  if (explicitCover) return explicitCover
 
   const kind = resourceKind(resource)
   if (kind === 'image' && resource?.previewUrl) return resolveApiUrl(resource.previewUrl)

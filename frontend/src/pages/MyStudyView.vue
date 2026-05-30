@@ -2,10 +2,6 @@
   <div class="my-full-page">
     <main class="main">
       <header class="topbar">
-        <router-link class="home-pill" to="/" aria-label="返回首页">
-          首页
-        </router-link>
-
         <div class="title-block">
           <p>Mine</p>
           <h1>我的</h1>
@@ -16,7 +12,6 @@
           <input type="search" placeholder="搜索我的资料..." />
         </label>
 
-        <UserAccountButton variant="dark" meta-type="major" logged-out-name="未登录" />
       </header>
 
       <section class="my-page">
@@ -81,7 +76,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { BookOpenText, ChartNoAxesColumnIncreasing, Route, Search } from 'lucide-vue-next'
-import UserAccountButton from '../components/UserAccountButton.vue'
+
 
 const route = useRoute()
 const router = useRouter()
@@ -139,7 +134,7 @@ watch(() => route.path, path => {
     radial-gradient(ellipse 72% 44% at 10% 0%, rgba(209, 244, 250, 0.46), transparent 70%),
     linear-gradient(135deg, #fafafa 0%, rgb(237, 249, 252) 52%, #fafafa 100%);
   color: #163f8f;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Open Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   display: grid;
   overflow: hidden;
 }

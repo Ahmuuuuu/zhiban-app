@@ -11,6 +11,7 @@ import MyStudyView from '../pages/MyStudyView.vue'
 import MyProfile from '../pages/MyAccount/MyProfile.vue'
 import QuizRunnerView from '../pages/QuizRunnerView.vue'
 import PresentationPlayerView from '../pages/PresentationPlayerView.vue'
+import NotificationCenterView from '../pages/NotificationCenterView.vue'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -99,6 +100,11 @@ const router = createRouter({
       path: '/profile',
       name: 'profile',
       component: MyProfile
+    },
+    {
+      path: '/notifications',
+      name: 'notifications',
+      component: NotificationCenterView
     }
   ]
 })

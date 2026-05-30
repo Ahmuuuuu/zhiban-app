@@ -16,7 +16,6 @@
       </div>
 
       <div class="header-actions">
-        <button class="home-btn" type="button" @click="goHome">返回首页</button>
         <button class="edit-btn" type="button" @click="toggleEdit">
           {{ isEditing ? '取消编辑' : hasProfile ? '编辑资料' : '完善资料' }}
         </button>
@@ -258,10 +257,6 @@ const toggleEdit = () => {
     return
   }
   startEdit()
-}
-
-const goHome = () => {
-  router.push('/')
 }
 
 const buildProfilePayload = () => ({
@@ -528,6 +523,7 @@ const logout = () => {
   localStorage.removeItem('identity')
   localStorage.removeItem('avatar')
   dispatchAvatarUpdated('')
+  window.dispatchEvent(new CustomEvent('zhiban:user-logged-out'))
   router.push('/')
 }
 
@@ -541,7 +537,7 @@ onBeforeUnmount(revokeCropUrl)
   padding: 26px 30px 30px;
   background: #fdfcf7;
   color: #163f8f;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Open Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   box-sizing: border-box;
 }
 

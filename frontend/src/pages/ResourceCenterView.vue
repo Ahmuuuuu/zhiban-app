@@ -1,10 +1,6 @@
 ﻿<template>
   <main class="resource-center-page">
     <header class="center-header">
-      <router-link class="home-pill" to="/">
-        &#x9996;&#x9875;
-      </router-link>
-
       <div class="title-block">
         <h1>资源中心</h1>
       </div>
@@ -23,11 +19,6 @@
         <router-link class="import-link" to="/study-import">
           资料导入
         </router-link>
-        <UserAccountButton
-          variant="dark"
-          logged-out-name="未登录"
-          @login="loadResources"
-        />
       </div>
     </header>
 
@@ -79,7 +70,15 @@
             </div>
 
             <div class="resource-cover">
-              <img :src="resource.coverUrl" :alt="resource.title" loading="lazy" @error="handleImageError($event)" />
+              <video
+                v-if="resource.coverType === 'video'"
+                class="resource-cover__video"
+                :src="resource.previewUrl"
+                preload="metadata"
+                muted
+                playsinline
+              ></video>
+              <img v-else :src="resource.coverUrl" :alt="resource.title" loading="lazy" @error="handleImageError($event)" />
             </div>
 
             <h2>{{ resource.title || '未命名资源' }}</h2>
@@ -343,11 +342,11 @@ import {
   unlikeResource
 } from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
-import UserAccountButton from '../components/UserAccountButton.vue'
+
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
-import { getResourceCoverUrl } from '../utils/resourceCover'
+import { getExplicitResourceCoverUrl, getResourceCoverUrl } from '../utils/resourceCover'
 
 const router = useRouter()
 const resources = ref([])
@@ -404,6 +403,16 @@ const normalizeReactionFields = item => ({
   isFavorited: pickBoolean(item.is_favorited, item.isFavorited, item.favorited, item.collected, item.is_collected, item.has_favorited)
 })
 
+const attachResourceCover = (resource, rawItem = {}) => {
+  const explicitCover = getExplicitResourceCoverUrl({ ...resource, ...rawItem })
+  const shouldUseVideoFrame = !explicitCover && isVideoResource(resource) && resource.previewUrl
+  return {
+    ...resource,
+    coverUrl: explicitCover || getResourceCoverUrl({ ...resource, ...rawItem }),
+    coverType: shouldUseVideoFrame ? 'video' : 'image'
+  }
+}
+
 const normalizeResources = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
 
@@ -426,10 +435,7 @@ const normalizeResources = data => {
       downloadUrl: item.downloadUrl || item.download_url || videoUrl || '',
       ...normalizeReactionFields(item)
     }
-    return {
-      ...resource,
-      coverUrl: getResourceCoverUrl({ ...resource, ...item })
-    }
+    return attachResourceCover(resource, item)
   })
 }
 
@@ -465,10 +471,7 @@ const normalizeGeneratedResources = data => {
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
       ...normalizeReactionFields(item)
     }
-    return {
-      ...resource,
-      coverUrl: getResourceCoverUrl({ ...resource, ...item })
-    }
+    return attachResourceCover(resource, item)
   })
 }
 
@@ -495,10 +498,7 @@ const normalizeGeneratedImages = data => {
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || url || (imageId ? `/image/${imageId}/download` : '')),
       ...normalizeReactionFields(item)
     }
-    return {
-      ...resource,
-      coverUrl: getResourceCoverUrl({ ...resource, ...item })
-    }
+    return attachResourceCover(resource, item)
   })
 }
 
@@ -807,8 +807,16 @@ const formatDate = (value, withTime = false) => {
   })
 }
 
-onMounted(loadResources)
-onBeforeUnmount(stopCurrentAudio)
+const handleUserLogin = () => { loadResources() }
+
+onMounted(() => {
+  loadResources()
+  window.addEventListener('zhiban:user-logged-in', handleUserLogin)
+})
+onBeforeUnmount(() => {
+  stopCurrentAudio()
+  window.removeEventListener('zhiban:user-logged-in', handleUserLogin)
+})
 </script>
 
 <style scoped>
@@ -818,7 +826,7 @@ onBeforeUnmount(stopCurrentAudio)
   padding: 26px 34px 30px;
   background: #fdfcf7;
   color: #163f8f;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Open Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -1567,6 +1575,14 @@ onBeforeUnmount(stopCurrentAudio)
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.resource-cover__video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 .resource-card::after {
