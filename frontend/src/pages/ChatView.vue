@@ -499,22 +499,28 @@ const buildMessagesFromHistory = (records, conversationId) => {
   return records
     .slice()
     .sort((a, b) => getTimeValue(getRecordTime(a)) - getTimeValue(getRecordTime(b)))
-    .flatMap((item, index) => {
+    .map((item, index) => {
       const time = formatTime(getRecordTime(item))
       const id = getRecordId(item, index)
+      const content = item.content || item.req || ''
 
-      const assistantMessage = normalizeHistoryAssistantMessage(item, `${conversationId}-${id}-res`, time)
-      return [
-        {
-          id: `${conversationId}-${id}-req`,
-          role: 'user',
-          type: 'text',
-          content: stripInternalInstructions(item.req),
+      if (item.role === 'assistant') {
+        return normalizeHistoryAssistantMessage(
+          { ...item, res: content, content },
+          `${conversationId}-${id}`,
           time
-        },
-        assistantMessage
-      ].filter(message => message.type !== 'text' || message.content)
+        )
+      }
+
+      return {
+        id: `${conversationId}-${id}`,
+        role: 'user',
+        type: 'text',
+        content: stripInternalInstructions(content),
+        time
+      }
     })
+    .filter(message => message.type !== 'text' || message.content)
 }
 
 const normalizePresentationTopic = value => String(value || '')
@@ -523,7 +529,7 @@ const normalizePresentationTopic = value => String(value || '')
   .trim()
 
 const isVideoHistoryRecord = record => {
-  const text = String(`${record?.req || ''} ${record?.res || record?.content || record?.answer || ''}`)
+  const text = String(`${record?.req || record?.content || ''} ${record?.res || record?.content || record?.answer || ''}`)
   return /(视频|video|课程视频|教学视频|动态课件)/i.test(text)
 }
 
@@ -539,10 +545,11 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
     const existingIds = new Set(targetMessages.map(message => String(message.presentation?.id || message.fileId || '')).filter(Boolean))
 
     for (const record of videoRecords) {
-      const reqTopic = normalizePresentationTopic(stripInternalInstructions(record.req))
+      const rawReq = record.req || record.content || ''
+      const reqTopic = normalizePresentationTopic(stripInternalInstructions(rawReq))
       const presentation = presentations.find(item => {
         const itemTopic = normalizePresentationTopic(item.topic)
-        return itemTopic && reqTopic && (itemTopic === reqTopic || item.topic === record.req)
+        return itemTopic && reqTopic && (itemTopic === reqTopic || item.topic === rawReq)
       })
 
       if (!presentation?.file_url) continue
@@ -1479,6 +1486,7 @@ const handleGenerationDone = async eventData => {
   }
 
   await loadConversationList()
+  window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
 }
 
 const attachGenerationTaskToMessage = (task, messageId) => {
@@ -1523,7 +1531,12 @@ const attachGenerationTaskToMessage = (task, messageId) => {
 
       if (task.status === 'done' && !doneHandled) {
         doneHandled = true
-        await handleGenerationDone(task.doneEvent || {})
+        const doneEvent = task.doneEvent || {}
+        // 同步 chatGroupId（新对话在任务期间才获得 ID）
+        if (doneEvent.chat_group_id && !task.chatGroupId) {
+          task.chatGroupId = doneEvent.chat_group_id
+        }
+        await handleGenerationDone(doneEvent)
       }
 
       await scrollToBottom()
@@ -1533,25 +1546,42 @@ const attachGenerationTaskToMessage = (task, messageId) => {
 }
 
 const addGenerationTaskMessage = task => {
-  const existing = messages.value.find(item => item.generationTaskId === task.id)
-  const messageId = existing?.id || `generation-message-${task.id}`
+  const userMsgId = `generation-user-${task.id}`
+  const existingUser = messages.value.find(item => item.id === userMsgId)
+  const existingAssistant = messages.value.find(item => item.generationTaskId === task.id)
+  const assistantMsgId = existingAssistant?.id || `generation-message-${task.id}`
 
-  if (!existing) {
+  // 恢复用户发送的生成请求消息
+  if (!existingUser && task.text) {
     messages.value.push({
-      id: messageId,
-      role: 'assistant',
+      id: userMsgId,
+      role: 'user',
       type: 'text',
-      generationTaskId: task.id,
-      content: task.progress || '正在生成资源...',
-      time: getNowTime()
+      content: task.text,
+      time: formatTime(task.createdAt)
     })
   }
 
-  attachGenerationTaskToMessage(task, messageId)
+  // 恢复助手生成进度消息
+  if (!existingAssistant) {
+    messages.value.push({
+      id: assistantMsgId,
+      role: 'assistant',
+      type: 'text',
+      generationTaskId: task.id,
+      content: task.status === 'failed' ? task.error : (task.progress || '正在生成资源...'),
+      time: formatTime(task.updatedAt)
+    })
+  }
+
+  attachGenerationTaskToMessage(task, assistantMsgId)
 }
 
 const restoreGenerationTasksInChat = () => {
+  const currentChatId = String(activeConversationId.value)
   generationTasks.forEach(task => {
+    // 只恢复当前对话组的任务，防止跨对话泄露
+    if (String(task.chatGroupId) !== currentChatId) return
     const isRecent = Date.now() - task.updatedAt < 10 * 60 * 1000
     if (task.status === 'running' || isRecent) {
       addGenerationTaskMessage(task)
@@ -1693,7 +1723,7 @@ const loadConversationList = async () => {
       return {
         id,
         title: stripTypedResourceInstruction(item.title || item.req) || `对话 ${id}`,
-        lastMessage: stripTypedResourceInstruction(item.lastMessage || item.req) || '',
+        lastMessage: stripTypedResourceInstruction(item.lastMessage || item.last_message || item.req) || '',
         time: item.time || formatTime(item.updateTime || item.created_time)
       }
     })
@@ -1764,7 +1794,7 @@ onMounted(async () => {
     console.warn('[ChatView] restore generation tasks failed:', error)
   })
   loadConversationList()
-  restoreGenerationTasksInChat()
+  // restoreGenerationTasksInChat 在 openConversation 里按对话组恢复，不在这里
 })
 </script>
 
