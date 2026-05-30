@@ -64,6 +64,9 @@ onMounted(() => {
   fetchUnread()
   pollTimer = setInterval(fetchUnread, 30_000)
   window.addEventListener('zhiban:notification-read', handleNotifRead)
+  window.addEventListener('zhiban:notification-update', () => {
+    fetchUnread()
+  })
   window.addEventListener('zhiban:user-logged-in', () => {
     // Refresh unread count shortly after login
     setTimeout(fetchUnread, 1000)
@@ -73,6 +76,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearInterval(pollTimer)
   window.removeEventListener('zhiban:notification-read', handleNotifRead)
+  window.removeEventListener('zhiban:notification-update', fetchUnread)
 })
 </script>
 

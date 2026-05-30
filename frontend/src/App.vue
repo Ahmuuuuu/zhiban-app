@@ -26,7 +26,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, shallowRef } from 'vue'
+import { ref, watch, nextTick, shallowRef, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TopNav from './components/TopNav.vue'
 import StudyPet from './components/StudyPet.vue'
@@ -137,19 +137,25 @@ async function animate(fromPath, toPath) {
   }, DURATION + 80)
 }
 
-// ---- route watcher ----
+// ---- initial load: wait for router to be ready ----
+onMounted(async () => {
+  await router.isReady()
+  const currentRoute = router.currentRoute.value
+  const comp = resolveComponent(currentRoute)
+  if (comp && !currentPane.value) {
+    currentPane.value = { key: currentRoute.fullPath, component: comp }
+    lastPath = currentRoute.fullPath
+  }
+})
+
+// ---- route watcher: handle navigation ----
 watch(
   () => route.fullPath,
   (to, from) => {
-    if (!from) {
-      const c = resolveComponent(route)
-      if (c) { currentPane.value = { key: to, component: c }; lastPath = to }
-      return
-    }
+    if (!from) return // handled by onMounted above
     if (to === from || to === lastPath) return
     animate(from, to)
-  },
-  { immediate: true }
+  }
 )
 </script>
 
