@@ -56,7 +56,7 @@
             :key="resource.doc_id"
             class="resource-card"
             :class="{ selected: selectedResource?.doc_id === resource.doc_id }"
-            @click="openResourcePreview(resource)"
+            @click="openResource(resource)"
           >
             <div class="card-top">
               <span class="type-mark">
@@ -168,7 +168,7 @@
             :key="resource.doc_id"
             class="hot-resource-card"
             type="button"
-            @click="openResourcePreview(resource)"
+            @click="openResource(resource)"
           >
             <span class="hot-resource-card__rank">{{ resource.hotRank }}</span>
             <span class="hot-resource-card__body">
@@ -459,7 +459,7 @@ const normalizeGeneratedResources = data => {
       filename,
       slides: Array.isArray(item.slides) ? item.slides : [],
       narration: item.narration || null,
-      content: isQuiz ? '包含选择题、填空题等多种题型的练习资源' : (item.preview || item.preview_content || item.content || ''),
+      content: item.content || item.preview || item.preview_content || (isQuiz ? '包含选择题、填空题等多种题型的练习资源' : ''),
       type: isMindmap ? 'mindmap' : resourceType,
       category: isQuiz ? 'exercise' : isMindmap ? 'mindmap' : 'reference',
       categoryLabel: isMindmap ? '思维导图' : (isQuiz ? '练习题库' : 'AI 生成'),
@@ -586,6 +586,14 @@ const openResourcePreview = async resource => {
   }
 }
 
+const openResource = resource => {
+  if (isQuizResource(resource)) {
+    startResourceQuiz(resource)
+    return
+  }
+  openResourcePreview(resource)
+}
+
 const closeResourcePreview = () => {
   stopCurrentAudio()
   previewOpen.value = false
@@ -649,6 +657,7 @@ const startResourceQuiz = async resource => {
       title: resource.title,
       filename: resource.filename,
       fileType: resource.type || 'exercise',
+      questions: data.questions || data.items || (Array.isArray(data.data) ? data.data : null),
       content: data.content || resource.content || ''
     })
 
@@ -1295,9 +1304,9 @@ onBeforeUnmount(() => {
 
 .center-header {
   display: grid;
-  grid-template-columns: 62px 150px minmax(280px, 1fr) 64px auto;
+  grid-template-columns: max-content minmax(320px, 1fr) max-content max-content;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
 .home-pill,
@@ -1366,8 +1375,11 @@ onBeforeUnmount(() => {
 }
 
 .header-actions {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 12px;
+  min-width: max-content;
 }
 
 .icon-btn {
@@ -1394,6 +1406,7 @@ onBeforeUnmount(() => {
   border-color: rgba(22, 63, 143, 0.92);
   background: #163f8f;
   color: #fafafa;
+  white-space: nowrap;
   box-shadow:
     0 14px 30px rgba(22, 63, 143, 0.18),
     inset 0 1px 0 rgba(250, 250, 250, 0.18);

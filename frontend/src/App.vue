@@ -84,6 +84,17 @@ async function animate(fromPath, toPath) {
 
   const key = toPath + '::' + Date.now()
 
+  if (toPath.startsWith('/chat') || fromPath.startsWith('/chat')) {
+    currentPane.value = { key, component: comp }
+    nextPane.value = null
+    currentX.value = 0
+    nextX.value = 100
+    isSliding.value = false
+    lastPath = toPath
+    locked = false
+    return
+  }
+
   // First visit — no animation
   if (!currentPane.value) {
     currentPane.value = { key, component: comp }
