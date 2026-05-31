@@ -1578,10 +1578,21 @@ const addGenerationTaskMessage = task => {
 }
 
 const restoreGenerationTasksInChat = () => {
-  const currentChatId = String(activeConversationId.value)
+  const currentChatId = activeConversationId.value == null ? '' : String(activeConversationId.value)
   generationTasks.forEach(task => {
-    // 只恢复当前对话组的任务，防止跨对话泄露
-    if (String(task.chatGroupId) !== currentChatId) return
+    const taskChatId = task.chatGroupId == null ? '' : String(task.chatGroupId)
+    const hasActiveChat = Boolean(currentChatId)
+    const belongsToCurrentChat = hasActiveChat && taskChatId === currentChatId
+    const belongsToDraftChat = !hasActiveChat && (!taskChatId || taskChatId === '0' || taskChatId === 'null')
+
+    // 已经拿到后端会话 ID 的运行中任务，在直接回到聊天页时也要展示出来。
+    const shouldShowRunningTask = !hasActiveChat && task.status === 'running'
+    if (!belongsToCurrentChat && !belongsToDraftChat && !shouldShowRunningTask) return
+
+    if (!hasActiveChat && taskChatId && taskChatId !== '0' && taskChatId !== 'null') {
+      activeConversationId.value = task.chatGroupId
+    }
+
     const isRecent = Date.now() - task.updatedAt < 10 * 60 * 1000
     if (task.status === 'running' || isRecent) {
       addGenerationTaskMessage(task)
@@ -1816,8 +1827,8 @@ onMounted(async () => {
   await hydrateGenerationTasks().catch(error => {
     console.warn('[ChatView] restore generation tasks failed:', error)
   })
+  restoreGenerationTasksInChat()
   loadConversationList()
-  // restoreGenerationTasksInChat 在 openConversation 里按对话组恢复，不在这里
 })
 </script>
 

@@ -28,6 +28,64 @@ export interface GenerationTask {
 const tasks = reactive<GenerationTask[]>([])
 const pollingTaskIds = new Set<string>()
 
+const persistTasks = () => {
+  try {
+    window.localStorage.setItem(
+      'zhiban_generation_tasks',
+      JSON.stringify(tasks.slice(0, 30).map(task => ({
+        id: task.id,
+        backendTaskId: task.backendTaskId,
+        text: task.text,
+        tool: task.tool,
+        chatGroupId: task.chatGroupId,
+        status: task.status,
+        progress: task.progress,
+        error: task.error,
+        files: task.files,
+        images: task.images,
+        doneEvent: task.doneEvent,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      }))),
+    )
+  } catch {
+    // localStorage may be unavailable in private browsing or during SSR-like tests.
+  }
+}
+
+const restorePersistedTasks = () => {
+  try {
+    const raw = window.localStorage.getItem('zhiban_generation_tasks')
+    const list = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(list)) return
+
+    list.forEach(item => {
+      if (!item?.id || tasks.some(task => task.id === item.id)) return
+      const isRecent = Date.now() - Number(item.updatedAt || 0) < 60 * 60 * 1000
+      if (item.status !== 'running' && !isRecent) return
+      tasks.push(reactive({
+        id: item.id,
+        backendTaskId: item.backendTaskId || '',
+        text: item.text || '',
+        tool: item.tool || { label: 'resource', generateMode: 'resource', resourceTypes: ['document'] },
+        chatGroupId: item.chatGroupId ?? null,
+        status: item.status || 'running',
+        progress: item.progress || '正在生成资源...',
+        error: item.error || '',
+        files: Array.isArray(item.files) ? item.files : [],
+        images: Array.isArray(item.images) ? item.images : [],
+        doneEvent: item.doneEvent || null,
+        createdAt: Number(item.createdAt || Date.now()),
+        updatedAt: Number(item.updatedAt || Date.now()),
+      }) as GenerationTask)
+    })
+  } catch {
+    // Ignore malformed cache.
+  }
+}
+
+restorePersistedTasks()
+
 const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
 
 const makeLocalTaskId = (taskId = '') => taskId ? `generation-${taskId}` : `generation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -75,6 +133,7 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
     resources: task.files,
   }
   task.updatedAt = Date.now()
+  persistTasks()
 
   // 任务完成/失败时通知 TopNav 刷新铃铛（模块级，不受组件卸载影响）
   if (prevStatus === 'running' && task.status !== 'running') {
@@ -143,23 +202,35 @@ const pollBackendTask = (task: GenerationTask) => {
 
 const runLegacyFrontendTask = (task: GenerationTask) => {
   void executeGeneration(task.text, task.tool, task.chatGroupId, {
+    onSubmitted: data => {
+      const submitData: any = data || {}
+      task.backendTaskId = submitData?.task_id || submitData?.taskId || submitData?.id || task.backendTaskId
+      task.chatGroupId = submitData?.chat_group_id || submitData?.chatGroupId || task.chatGroupId
+      task.updatedAt = Date.now()
+      persistTasks()
+    },
     onProgress: msg => {
       task.progress = msg
       task.updatedAt = Date.now()
+      persistTasks()
     },
     onFile: fileData => {
       task.files.push(fileData)
       task.updatedAt = Date.now()
+      persistTasks()
     },
     onImage: imageData => {
       task.images.push(imageData)
       task.updatedAt = Date.now()
+      persistTasks()
     },
     onDone: eventData => {
       task.doneEvent = eventData || null
+      task.chatGroupId = (eventData as any)?.chat_group_id || (eventData as any)?.chatGroupId || task.chatGroupId
       task.status = 'done'
       task.progress = task.progress || '资源已生成'
       task.updatedAt = Date.now()
+      persistTasks()
       console.log('[GenerationTask] legacy 任务完成，发送通知刷新事件', { taskId: task.backendTaskId })
       window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
     },
@@ -168,6 +239,7 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.status = 'failed'
       task.progress = task.error
       task.updatedAt = Date.now()
+      persistTasks()
       console.log('[GenerationTask] legacy 任务失败，发送通知刷新事件', { taskId: task.backendTaskId })
       window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
     },
@@ -176,6 +248,7 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
     task.status = 'failed'
     task.progress = task.error
     task.updatedAt = Date.now()
+    persistTasks()
     console.log('[GenerationTask] legacy 任务异常，发送通知刷新事件', { taskId: task.backendTaskId })
     window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
   })
@@ -219,6 +292,7 @@ const maybeGeneratePresentation = async (task: GenerationTask) => {
     task.progress = task.error
   } finally {
     task.updatedAt = Date.now()
+    persistTasks()
   }
 }
 
@@ -241,6 +315,7 @@ export function useGenerationTaskQueue() {
     })
 
     tasks.unshift(task)
+    persistTasks()
 
     if (tool.generateMode === 'image') {
       runLegacyFrontendTask(task)
