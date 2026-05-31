@@ -19,10 +19,11 @@ class StudySession(Model):
 
 
 class ResourceReadStatus(Model):
-    """资源已读标记"""
+    """资源已读标记 + 使用时长"""
     id = fields.IntField(pk=True)
     is_read = fields.BooleanField(default=False)
     read_at = fields.DatetimeField(null=True)
+    duration_seconds = fields.IntField(default=0, description="累计使用时长（秒）")
 
     user = fields.ForeignKeyField("models.User", related_name="resource_reads", on_delete=fields.CASCADE)
     resource = fields.ForeignKeyField("models.GeneratedResource", related_name="read_statuses", on_delete=fields.CASCADE)
