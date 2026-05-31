@@ -9,6 +9,7 @@ class StudySession(Model):
     date = fields.DateField(description="日期")
     total_seconds = fields.IntField(default=0, description="当日累计学习秒数")
     last_heartbeat_at = fields.DatetimeField(null=True)
+    path_id = fields.IntField(null=True, description="关联的学习路径ID，用于分路径统计")
 
     user = fields.ForeignKeyField("models.User", related_name="study_sessions", on_delete=fields.CASCADE)
 
