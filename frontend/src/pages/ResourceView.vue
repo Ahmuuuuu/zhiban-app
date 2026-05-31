@@ -53,7 +53,7 @@
             v-for="resource in filteredResources"
             :key="resource.doc_id"
             class="resource-card"
-            @click="openResourcePreview(resource)"
+            @click="openResource(resource)"
           >
             <div class="card-top">
               <span class="type-mark">
@@ -338,7 +338,7 @@ const normalizeGeneratedResources = data => {
       sourceId: String(resourceId || ''),
       title: item.title || item.topic || fileTitleWithoutExtension(filename),
       filename,
-      content: isQuiz ? '这是一套生成题目，进入题库后开始练习。' : (item.preview || item.preview_content || item.content || ''),
+      content: item.content || item.preview || item.preview_content || (isQuiz ? '这是一套生成题目，进入题库后开始练习。' : ''),
       slides: Array.isArray(item.slides) ? item.slides : [],
       narration: item.narration || null,
       type: isMindmap ? 'mindmap' : resourceType,
@@ -439,6 +439,14 @@ const openResourcePreview = async resource => {
       console.error('加载资源详情失败：', error)
     }
   }
+}
+
+const openResource = resource => {
+  if (isQuizResource(resource)) {
+    startResourceQuiz(resource)
+    return
+  }
+  openResourcePreview(resource)
 }
 
 const closeResourcePreview = () => {
@@ -585,6 +593,7 @@ const startResourceQuiz = async resource => {
       title: resource.title,
       filename: resource.filename,
       fileType: resource.type || 'exercise',
+      questions: data.questions || data.items || (Array.isArray(data.data) ? data.data : null),
       content: data.content || resource.content || ''
     })
 

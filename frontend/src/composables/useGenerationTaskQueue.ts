@@ -27,11 +27,24 @@ export interface GenerationTask {
 
 const tasks = reactive<GenerationTask[]>([])
 const pollingTaskIds = new Set<string>()
+const GENERATION_TASKS_STORAGE_KEY = 'zhiban_generation_tasks_v2'
+
+const isViewingGenerationPage = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return false
+  const route = window.location.hash || window.location.pathname || ''
+  return !document.hidden && route.includes('/chat')
+}
+
+const dispatchNotificationUpdateIfAway = () => {
+  if (!isViewingGenerationPage()) {
+    window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
+  }
+}
 
 const persistTasks = () => {
   try {
     window.localStorage.setItem(
-      'zhiban_generation_tasks',
+      GENERATION_TASKS_STORAGE_KEY,
       JSON.stringify(tasks.slice(0, 30).map(task => ({
         id: task.id,
         backendTaskId: task.backendTaskId,
@@ -55,7 +68,7 @@ const persistTasks = () => {
 
 const restorePersistedTasks = () => {
   try {
-    const raw = window.localStorage.getItem('zhiban_generation_tasks')
+    const raw = window.localStorage.getItem(GENERATION_TASKS_STORAGE_KEY)
     const list = raw ? JSON.parse(raw) : []
     if (!Array.isArray(list)) return
 
@@ -138,7 +151,7 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
   // 任务完成/失败时通知 TopNav 刷新铃铛（模块级，不受组件卸载影响）
   if (prevStatus === 'running' && task.status !== 'running') {
     console.log('[GenerationTask] 任务状态变更，发送通知刷新事件', { taskId: task.backendTaskId, prevStatus, newStatus: task.status })
-    window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
+    dispatchNotificationUpdateIfAway()
   }
 }
 
@@ -232,7 +245,7 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.updatedAt = Date.now()
       persistTasks()
       console.log('[GenerationTask] legacy 任务完成，发送通知刷新事件', { taskId: task.backendTaskId })
-      window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
+      dispatchNotificationUpdateIfAway()
     },
     onError: err => {
       task.error = err || '资源生成失败，请稍后再试。'
@@ -241,7 +254,7 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.updatedAt = Date.now()
       persistTasks()
       console.log('[GenerationTask] legacy 任务失败，发送通知刷新事件', { taskId: task.backendTaskId })
-      window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
+      dispatchNotificationUpdateIfAway()
     },
   }).catch(error => {
     task.error = error?.message || '资源生成失败，请稍后再试。'
@@ -250,7 +263,7 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
     task.updatedAt = Date.now()
     persistTasks()
     console.log('[GenerationTask] legacy 任务异常，发送通知刷新事件', { taskId: task.backendTaskId })
-    window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
+    dispatchNotificationUpdateIfAway()
   })
 }
 

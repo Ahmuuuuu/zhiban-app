@@ -364,6 +364,7 @@ const {
   maybeGeneratePresentation
 } = useGenerationTaskQueue()
 const boundGenerationTaskMessages = new Map()
+const ACTIVE_GENERATION_TASK_KEY = 'zhiban_active_generation_task_id'
 
 const resourceTools = [
   {
@@ -1539,6 +1540,10 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         await handleGenerationDone(doneEvent)
       }
 
+      if (task.status !== 'running' && window.localStorage.getItem(ACTIVE_GENERATION_TASK_KEY) === task.id) {
+        window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
+      }
+
       await scrollToBottom()
     },
     { immediate: true }
@@ -1547,17 +1552,21 @@ const attachGenerationTaskToMessage = (task, messageId) => {
 
 const addGenerationTaskMessage = task => {
   const userMsgId = `generation-user-${task.id}`
-  const existingUser = messages.value.find(item => item.id === userMsgId)
+  const cleanTaskText = stripInternalInstructions(task.text)
+  const existingUser = messages.value.find(item => (
+    item.id === userMsgId ||
+    (item.role === 'user' && stripInternalInstructions(item.content) === cleanTaskText)
+  ))
   const existingAssistant = messages.value.find(item => item.generationTaskId === task.id)
   const assistantMsgId = existingAssistant?.id || `generation-message-${task.id}`
 
   // 恢复用户发送的生成请求消息
-  if (!existingUser && task.text) {
+  if (!existingUser && cleanTaskText) {
     messages.value.push({
       id: userMsgId,
       role: 'user',
       type: 'text',
-      content: task.text,
+      content: cleanTaskText,
       time: formatTime(task.createdAt)
     })
   }
@@ -1579,19 +1588,14 @@ const addGenerationTaskMessage = task => {
 
 const restoreGenerationTasksInChat = () => {
   const currentChatId = activeConversationId.value == null ? '' : String(activeConversationId.value)
+  const activeTaskId = !currentChatId ? window.localStorage.getItem(ACTIVE_GENERATION_TASK_KEY) : ''
+
   generationTasks.forEach(task => {
     const taskChatId = task.chatGroupId == null ? '' : String(task.chatGroupId)
     const hasActiveChat = Boolean(currentChatId)
     const belongsToCurrentChat = hasActiveChat && taskChatId === currentChatId
-    const belongsToDraftChat = !hasActiveChat && (!taskChatId || taskChatId === '0' || taskChatId === 'null')
-
-    // 已经拿到后端会话 ID 的运行中任务，在直接回到聊天页时也要展示出来。
-    const shouldShowRunningTask = !hasActiveChat && task.status === 'running'
-    if (!belongsToCurrentChat && !belongsToDraftChat && !shouldShowRunningTask) return
-
-    if (!hasActiveChat && taskChatId && taskChatId !== '0' && taskChatId !== 'null') {
-      activeConversationId.value = task.chatGroupId
-    }
+    const belongsToActiveTask = !hasActiveChat && activeTaskId && task.id === activeTaskId
+    if (!belongsToCurrentChat && !belongsToActiveTask) return
 
     const isRecent = Date.now() - task.updatedAt < 10 * 60 * 1000
     if (task.status === 'running' || isRecent) {
@@ -1642,6 +1646,7 @@ const sendMessage = async () => {
 
     if (activeTool?.generateMode) {
       const task = startGenerationTask(backendText, activeTool, activeConversationId.value)
+      window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
       attachGenerationTaskToMessage(task, loadingMessageId)
       await scrollToBottom()
@@ -1652,6 +1657,7 @@ const sendMessage = async () => {
     const detectedTool = detectGenerationIntent(text)
     if (detectedTool?.generateMode) {
       const task = startGenerationTask(text, detectedTool, activeConversationId.value)
+      window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
       attachGenerationTaskToMessage(task, loadingMessageId)
       await scrollToBottom()
@@ -1824,11 +1830,14 @@ const handleEnter = (event) => {
 }
 
 onMounted(async () => {
-  await hydrateGenerationTasks().catch(error => {
-    console.warn('[ChatView] restore generation tasks failed:', error)
-  })
   restoreGenerationTasksInChat()
-  loadConversationList()
+  await Promise.all([
+    hydrateGenerationTasks().catch(error => {
+      console.warn('[ChatView] restore generation tasks failed:', error)
+    }),
+    loadConversationList()
+  ])
+  restoreGenerationTasksInChat()
 })
 </script>
 
