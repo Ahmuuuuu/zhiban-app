@@ -46,7 +46,8 @@ const fetchUnread = async () => {
   try {
     const res = await getUnreadNotificationCount()
     console.log('[TopNav] fetchUnread 原始响应:', res)
-    const data = res?.data || res || {}
+    const raw = res?.data || res || {}
+    const data = raw?.data || raw
     console.log('[TopNav] fetchUnread 解析后:', data, 'unread_count:', data.unread_count)
     if (typeof data.unread_count === 'number') {
       unreadCount.value = data.unread_count
@@ -67,26 +68,31 @@ const handleNotifRead = () => {
   fetchUnread()
 }
 
+const handleNotifUpdate = () => {
+  console.log('[TopNav] 收到 zhiban:notification-update 事件，刷新未读数')
+  fetchUnread()
+  // 二次确认：后端 Notification.create 可能晚于 task.status 更新
+  setTimeout(fetchUnread, 2000)
+}
+
+const handleUserLoggedIn = () => {
+  // Refresh unread count shortly after login
+  setTimeout(fetchUnread, 1000)
+}
+
 onMounted(() => {
   fetchUnread()
   pollTimer = setInterval(fetchUnread, 30_000)
   window.addEventListener('zhiban:notification-read', handleNotifRead)
-  window.addEventListener('zhiban:notification-update', () => {
-    console.log('[TopNav] 收到 zhiban:notification-update 事件，刷新未读数')
-    fetchUnread()
-    // 二次确认：后端 Notification.create 可能晚于 task.status 更新
-    setTimeout(fetchUnread, 2000)
-  })
-  window.addEventListener('zhiban:user-logged-in', () => {
-    // Refresh unread count shortly after login
-    setTimeout(fetchUnread, 1000)
-  })
+  window.addEventListener('zhiban:notification-update', handleNotifUpdate)
+  window.addEventListener('zhiban:user-logged-in', handleUserLoggedIn)
 })
 
 onBeforeUnmount(() => {
   clearInterval(pollTimer)
   window.removeEventListener('zhiban:notification-read', handleNotifRead)
-  window.removeEventListener('zhiban:notification-update', fetchUnread)
+  window.removeEventListener('zhiban:notification-update', handleNotifUpdate)
+  window.removeEventListener('zhiban:user-logged-in', handleUserLoggedIn)
 })
 </script>
 

@@ -18,6 +18,7 @@ import httpx
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 from backend.src.models.image_model import GeneratedImage
+from backend.src.models.notification_model import Notification
 
 
 HOST = "cn-huadong-1.xf-yun.com"
@@ -87,6 +88,13 @@ async def _save_image_history(info: dict, images: list[dict]) -> None:
         chat_group_id=info.get("chat_group_id"),
         req=info.get("prompt", ""),
         res="\n".join(lines),
+    )
+    await Notification.create(
+        type="resource",
+        title="图片生成完成",
+        content=f"「{info.get('prompt', '图片')}」已生成，共 {len(images)} 张",
+        target_url=f"/chat?chat_group_id={info.get('chat_group_id')}",
+        target_user_id=info.get("user_id"),
     )
     info["history_saved"] = True
 

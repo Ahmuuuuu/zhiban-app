@@ -53,7 +53,7 @@ function resolveComponent(targetRoute) {
 }
 
 // ---- nav order for slide direction ----
-const navOrder = ['/', '/chat', '/learning-resources', '/learning-path', '/learning-situation']
+const navOrder = ['/', '/chat', '/resources', '/learning-resources', '/learning-path', '/learning-situation']
 function navIndex(p) {
   const i = navOrder.indexOf(p)
   if (i !== -1) return i

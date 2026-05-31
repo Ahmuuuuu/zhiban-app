@@ -44,6 +44,7 @@ export function detectGenerationIntent(text: string): ResourceToolConfig | null 
 }
 
 export type GenerationCallbacks = {
+  onSubmitted?: (data: unknown) => void
   onProgress?: (msg: string) => void
   onFile?: (fileData: unknown) => void
   onImage?: (imageData: unknown) => void
@@ -114,6 +115,7 @@ export async function executeGeneration(
         chat_group_id: Number(chatGroupId || 0),
       })
       const submitData = unwrapResponseData(submitRes)
+      callbacks.onSubmitted?.(submitData)
       const taskId = submitData?.task_id || submitData?.taskId || submitData?.id
 
       if (!taskId) {
