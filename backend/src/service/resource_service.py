@@ -42,6 +42,20 @@ _FILE_EXT_MAP = {
 }
 
 
+async def _generate_resource_title(topic: str, type_names: list[str]) -> str:
+    """用 LLM 为生成的学习资源起一个简洁标题"""
+    try:
+        types_str = "、".join(type_names)
+        resp = await llm.ainvoke(
+            f"为以下学习资源生成一个简洁标题（10字以内，只返回标题文本）：主题是「{topic}」，资源类型：{types_str}"
+        )
+        title = resp.content.strip().strip("《》「」\"'\"\"")
+        return title[:20] if title else f"「{topic}」学习资源"
+    except Exception:
+        logger.exception("生成资源标题失败")
+        return f"「{topic}」学习资源"
+
+
 # ─── 任务 SSE 通知队列 ───
 _task_sse_queues: dict[str, list] = {}
 
@@ -777,19 +791,23 @@ async def _run_generation_task(db_id: int, task_id: str):
         task.result = json.dumps(result_data, ensure_ascii=False)
         await task.save()
 
+        # 生成标题
+        type_labels = {"document": "文献", "exercise": "习题", "mindmap": "思维导图", "ppt": "PPT", "image": "图片"}
+        type_names = [type_labels.get(r["resource_type"], r["resource_type"]) for r in saved]
+        gen_title = await _generate_resource_title(task.topic, type_names)
+
         await _notify_task_sse(task_id, {
             "type": "done",
             "status": "success",
             "progress": 100,
+            "title": gen_title,
             "result": result_data,
         })
         await _notify_task_sse(task_id, {"type": "__close__"})
 
-        type_labels = {"document": "文献", "exercise": "习题", "mindmap": "思维导图", "ppt": "PPT", "image": "图片"}
-        type_names = [type_labels.get(r["resource_type"], r["resource_type"]) for r in saved]
         await Notification.create(
             type="resource",
-            title="资源生成完成",
+            title=gen_title,
             content=f"「{task.topic}」的{'、'.join(type_names)}已生成，共 {len(saved)} 份",
             target_url="/resource",
             target_user_id=user_id,
