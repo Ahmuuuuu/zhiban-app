@@ -32,20 +32,23 @@ class StudyService:
         return {"today_seconds": session.total_seconds}
 
     @staticmethod
-    async def mark_read(user_id: int, resource_id: int) -> dict:
-        """标记资源为已读"""
+    async def mark_read(user_id: int, resource_id: int, duration_seconds: int = 0) -> dict:
+        """标记资源为已读，可选上报使用时长"""
         resource = await GeneratedResource.filter(id=resource_id).first()
         if not resource:
             raise ValueError("资源不存在")
         status, created = await ResourceReadStatus.get_or_create(
             user_id=user_id, resource_id=resource_id,
-            defaults={"is_read": True, "read_at": datetime.now()},
+            defaults={"is_read": True, "read_at": datetime.now(), "duration_seconds": max(duration_seconds, 0)},
         )
-        if not created and not status.is_read:
-            status.is_read = True
-            status.read_at = datetime.now()
+        if not created:
+            if not status.is_read:
+                status.is_read = True
+                status.read_at = datetime.now()
+            if duration_seconds > 0:
+                status.duration_seconds += duration_seconds
             await status.save()
-        return {"resource_id": resource_id, "is_read": True}
+        return {"resource_id": resource_id, "is_read": True, "duration_seconds": status.duration_seconds}
 
     @staticmethod
     async def mark_unread(user_id: int, resource_id: int) -> dict:

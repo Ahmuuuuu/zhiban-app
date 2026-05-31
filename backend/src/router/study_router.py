@@ -33,10 +33,14 @@ async def get_path_stats(user_id: int = Depends(get_user_id_from_token)):
 
 
 @router.post("/resource/{resource_id}/mark-read")
-async def mark_read(resource_id: int, user_id: int = Depends(get_user_id_from_token)):
-    """标记资源为已读"""
+async def mark_read(
+    resource_id: int,
+    user_id: int = Depends(get_user_id_from_token),
+    duration_seconds: int = Query(0, description="可选，本次使用时长（秒）"),
+):
+    """标记资源为已读，可选上报使用时长"""
     try:
-        result = await StudyService.mark_read(user_id, resource_id)
+        result = await StudyService.mark_read(user_id, resource_id, duration_seconds)
         return {"code": 200, "msg": "已标记为已读", "data": result}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
