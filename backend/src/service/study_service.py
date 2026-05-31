@@ -1,12 +1,13 @@
 """学习统计服务 — 心跳、汇总、资源已读"""
 
+import json
 import logging
 from datetime import date, datetime, timedelta
 
 from backend.src.models.study_model import StudySession, ResourceReadStatus, ResourceCollection
 from backend.src.models.exam_model import KnowledgeMastery, ExamRecord
 from backend.src.models.resource_model import GeneratedResource
-from backend.src.models.path_model import LearningPath, UserPathProgress
+from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
 from backend.src.service.portrait_service import build_learning_guidance, PortraitRadarService
 from backend.src.service.notification_service import check_and_create_weekly_report
 
@@ -16,8 +17,8 @@ logger = logging.getLogger(__name__)
 class StudyService:
 
     @staticmethod
-    async def heartbeat(user_id: int) -> dict:
-        """前端每 30 秒调用一次，累计今日学习时长"""
+    async def heartbeat(user_id: int, path_id: int | None = None) -> dict:
+        """前端每 30 秒调用一次，累计今日学习时长。path_id 可选，用于分路径统计"""
         today = date.today()
         session, _ = await StudySession.get_or_create(
             user_id=user_id, date=today,
@@ -25,6 +26,8 @@ class StudyService:
         )
         session.total_seconds += 30
         session.last_heartbeat_at = datetime.now()
+        if path_id is not None:
+            session.path_id = path_id
         await session.save()
         return {"today_seconds": session.total_seconds}
 
@@ -203,6 +206,136 @@ class StudyService:
                 "completion_rate": round(completed_sessions / max(total_sessions, 1), 2),
             },
             "learning_guidance": guidance,
+        }
+
+    @staticmethod
+    async def get_path_stats(user_id: int) -> dict:
+        """分路径统计：学习时长、进度、薄弱点"""
+        paths_result = []
+
+        # 用户已加入的路径
+        enrolled_progress = await UserPathProgress.filter(user_id=user_id).values("path_id")
+        path_ids = list({p["path_id"] for p in enrolled_progress})
+        if not path_ids:
+            return {"paths": [], "untracked_time": {}, "total_time": 0, "overall_weak_points": []}
+        path_records = await LearningPath.filter(id__in=path_ids).prefetch_related("nodes").all()
+
+        # ── 学习时长：按 path_id 分组 ──
+        sessions = await StudySession.filter(user_id=user_id).all()
+        path_time: dict[int, int] = {}
+        total_time = 0
+        today = date.today()
+        today_path_time: dict[int, int] = {}
+        week_ago = today - timedelta(days=6)
+        week_path_time: dict[int, int] = {}
+
+        for s in sessions:
+            if s.total_seconds > 0:
+                total_time += s.total_seconds
+                pid = s.path_id or 0
+                path_time[pid] = path_time.get(pid, 0) + s.total_seconds
+                if s.date and s.date >= week_ago:
+                    week_path_time[pid] = week_path_time.get(pid, 0) + s.total_seconds
+                if s.date == today:
+                    today_path_time[pid] = today_path_time.get(pid, 0) + s.total_seconds
+
+        # ── 用户所有知识点掌握度（薄弱点用） ──
+        mastery_all = await KnowledgeMastery.filter(user_id=user_id).all()
+        mastery_map: dict[str, dict] = {}
+        for m in mastery_all:
+            mastery_map[m.knowledge_tag] = {
+                "tag": m.knowledge_tag,
+                "accuracy": round(m.correct_count / max(m.total_attempts, 1), 2),
+                "level": m.mastery_level,
+                "total_attempts": m.total_attempts,
+            }
+
+        for p in path_records:
+            # ── 进度 ──
+            progress_records = await UserPathProgress.filter(path_id=p.id, user_id=user_id).all()
+            nodes = p.nodes or []
+            total_nodes = len(nodes)
+            completed_nodes = sum(1 for r in progress_records if r.node_status == "completed")
+            in_progress = sum(1 for r in progress_records if r.node_status == "in_progress")
+            unlocked = sum(1 for r in progress_records if r.node_status == "unlocked")
+
+            current_node = None
+            for r in progress_records:
+                if r.node_status in ("unlocked", "in_progress"):
+                    node = next((n for n in nodes if n.id == r.node_id), None)
+                    current_node = node.topic if node else None
+                    break
+
+            # ── 路径薄弱点：匹配该路径节点的 knowledge_tags ──
+            path_tags = set()
+            for n in nodes:
+                if n.knowledge_tags:
+                    try:
+                        tags = json.loads(n.knowledge_tags)
+                        if isinstance(tags, list):
+                            path_tags.update(tags)
+                    except Exception:
+                        pass
+
+            weak_points = []
+            for tag in path_tags:
+                if tag in mastery_map:
+                    m = mastery_map[tag]
+                    if m["level"] in ("beginner", "learning"):
+                        weak_points.append({**m, "source": "mastery"})
+                else:
+                    # 路径中存在但未曾练习过的知识点
+                    weak_points.append({
+                        "tag": tag, "accuracy": 0, "level": "beginner",
+                        "total_attempts": 0, "source": "untouched",
+                    })
+
+            # 按掌握度排序：beginner 优先
+            weak_points.sort(key=lambda w: (0 if w["level"] == "beginner" else 1, w["accuracy"]))
+
+            paths_result.append({
+                "path_id": p.id,
+                "subject": p.subject or "",
+                "difficulty": p.difficulty,
+                "study_time": {
+                    "total_seconds": path_time.get(p.id, 0),
+                    "week_seconds": week_path_time.get(p.id, 0),
+                    "today_seconds": today_path_time.get(p.id, 0),
+                },
+                "progress": {
+                    "total_nodes": total_nodes,
+                    "completed_nodes": completed_nodes,
+                    "in_progress_nodes": in_progress,
+                    "unlocked_nodes": unlocked,
+                    "current_node": current_node,
+                    "percentage": round(completed_nodes / max(total_nodes, 1) * 100),
+                },
+                "weak_points": weak_points,
+            })
+
+        # 未绑定路径的学习时长汇总
+        untracked_time = {
+            "total_seconds": path_time.get(0, 0),
+            "week_seconds": week_path_time.get(0, 0),
+            "today_seconds": today_path_time.get(0, 0),
+        }
+
+        # ── 全局汇总 ──
+        overall_weak = []
+        for m in mastery_all:
+            if m.mastery_level in ("beginner", "learning"):
+                overall_weak.append({
+                    "tag": m.knowledge_tag,
+                    "accuracy": round(m.correct_count / max(m.total_attempts, 1), 2),
+                    "level": m.mastery_level,
+                    "total_attempts": m.total_attempts,
+                })
+
+        return {
+            "paths": paths_result,
+            "untracked_time": untracked_time,
+            "total_time": total_time,
+            "overall_weak_points": overall_weak,
         }
 
     @staticmethod

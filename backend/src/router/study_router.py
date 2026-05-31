@@ -1,6 +1,6 @@
 """学习统计路由"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.src.service.study_service import StudyService
 from backend.src.utils.jwt import get_user_id_from_token
@@ -9,9 +9,12 @@ router = APIRouter(prefix="/study", tags=["学习统计"])
 
 
 @router.post("/heartbeat")
-async def heartbeat(user_id: int = Depends(get_user_id_from_token)):
+async def heartbeat(
+    user_id: int = Depends(get_user_id_from_token),
+    path_id: int = Query(None, description="可选，当前学习路径ID，用于分路径统计"),
+):
     """前端每 30 秒调用一次，累计学习时长"""
-    result = await StudyService.heartbeat(user_id)
+    result = await StudyService.heartbeat(user_id, path_id)
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -19,6 +22,13 @@ async def heartbeat(user_id: int = Depends(get_user_id_from_token)):
 async def get_stats(user_id: int = Depends(get_user_id_from_token)):
     """聚合学习统计：时长、薄弱点、路径、资源、答题"""
     result = await StudyService.get_stats(user_id)
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.get("/path-stats")
+async def get_path_stats(user_id: int = Depends(get_user_id_from_token)):
+    """分路径统计：每个路径的学习时长、进度、薄弱知识点"""
+    result = await StudyService.get_path_stats(user_id)
     return {"code": 200, "msg": "success", "data": result}
 
 
