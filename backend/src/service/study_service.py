@@ -253,6 +253,46 @@ class StudyService:
                 "total_attempts": m.total_attempts,
             }
 
+        # ── 资源使用数据：收集所有路径的资源 ID ──
+        all_resource_ids: set[int] = set()
+        path_resource_ids: dict[int, set[int]] = {}
+        for p in path_records:
+            progress_records = await UserPathProgress.filter(path_id=p.id, user_id=user_id).all()
+            ids: set[int] = set()
+            for r in progress_records:
+                if r.resource_ids:
+                    try:
+                        ids.update(json.loads(r.resource_ids))
+                    except Exception:
+                        pass
+            path_resource_ids[p.id] = ids
+            all_resource_ids.update(ids)
+
+        # 批量查询已读状态
+        read_statuses = await ResourceReadStatus.filter(
+            user_id=user_id,
+            resource_id__in=list(all_resource_ids),
+        ).all() if all_resource_ids else []
+        read_map: dict[int, dict] = {}
+        for rs in read_statuses:
+            read_map[rs.resource_id] = {"is_read": rs.is_read, "duration_seconds": rs.duration_seconds}
+
+        # 批量查询资源基础数据
+        resources = await GeneratedResource.filter(
+            id__in=list(all_resource_ids),
+            user_id=user_id,
+        ).all() if all_resource_ids else []
+        res_map: dict[int, dict] = {}
+        for r in resources:
+            res_map[r.id] = {
+                "resource_id": r.id,
+                "resource_type": r.resource_type,
+                "topic": r.topic,
+                "view_count": r.view_count or 0,
+                "download_count": r.download_count or 0,
+                "last_viewed_at": str(r.last_viewed_at) if r.last_viewed_at else None,
+            }
+
         for p in path_records:
             # ── 进度 ──
             progress_records = await UserPathProgress.filter(path_id=p.id, user_id=user_id).all()
@@ -296,6 +336,30 @@ class StudyService:
             # 按掌握度排序：beginner 优先
             weak_points.sort(key=lambda w: (0 if w["level"] == "beginner" else 1, w["accuracy"]))
 
+            # ── 路径资源使用情况 ──
+            resource_list = []
+            read_count = 0
+            total_resource_duration = 0
+            for rid in path_resource_ids.get(p.id, set()):
+                rinfo = res_map.get(rid, {})
+                rstatus = read_map.get(rid, {})
+                is_read = rstatus.get("is_read", False)
+                duration = rstatus.get("duration_seconds", 0)
+                if is_read:
+                    read_count += 1
+                total_resource_duration += duration
+                resource_list.append({
+                    "resource_id": rid,
+                    "resource_type": rinfo.get("resource_type", ""),
+                    "topic": rinfo.get("topic", ""),
+                    "is_read": is_read,
+                    "duration_seconds": duration,
+                    "view_count": rinfo.get("view_count", 0),
+                    "download_count": rinfo.get("download_count", 0),
+                    "last_viewed_at": rinfo.get("last_viewed_at"),
+                })
+            resource_total = len(resource_list)
+
             paths_result.append({
                 "path_id": p.id,
                 "subject": p.subject or "",
@@ -312,6 +376,13 @@ class StudyService:
                     "unlocked_nodes": unlocked,
                     "current_node": current_node,
                     "percentage": round(completed_nodes / max(total_nodes, 1) * 100),
+                },
+                "resources": {
+                    "total": resource_total,
+                    "read_count": read_count,
+                    "unread_count": resource_total - read_count,
+                    "total_duration_seconds": total_resource_duration,
+                    "list": resource_list,
                 },
                 "weak_points": weak_points,
             })
