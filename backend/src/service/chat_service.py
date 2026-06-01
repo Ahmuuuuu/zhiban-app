@@ -43,39 +43,63 @@ async def _build_portrait_context(user_id: int) -> str:
     """构建用户画像 + 知识点掌握度 + 六维雷达的上下文文本"""
     try:
         from backend.src.service.portrait_service import PortraitChatHistory_Service, PortraitRadarService
+
+        user = await User.filter(id=user_id).first()
         portrait, _ = await PortraitChatHistory_Service.read_portrait(user_id)
-        if not portrait or not portrait.get("traits"):
-            return ""
-        traits = portrait["traits"]
+        traits = portrait.get("traits", {}) if portrait else {}
         lines = []
-        for key, label in [
-            ("strengths", "强项"), ("weaknesses", "弱项"), ("interest", "兴趣"),
-            ("knowbase", "知识基础"), ("learning_pace", "学习节奏"), ("commonmis", "常见误区"),
-        ]:
-            val = traits.get(key)
-            if val and isinstance(val, dict) and val.get("value"):
-                lines.append(f"- {label}：{val['value']}")
-        mastery = traits.get("knowledge_mastery")
-        if mastery and isinstance(mastery, list):
-            tags = [f"{m.get('tag', '')}({m.get('level', '')})" for m in mastery[:8] if m.get("tag")]
-            if tags:
-                lines.append(f"- 知识点掌握度：{'、'.join(tags)}")
-        # 六维雷达
-        try:
-            radar = await PortraitRadarService.get(user_id)
-            if radar and radar.get("dimensions"):
-                lines.append(PortraitRadarService.format_for_prompt(radar))
-        except Exception:
-            pass
-        # 学习指导
-        try:
-            from backend.src.service.portrait_service import build_learning_guidance
-            guidance = await build_learning_guidance(user_id)
-            if guidance:
-                lines.append(guidance)
-        except Exception:
-            pass
-        return "用户画像：\n" + "\n".join(lines) if lines else ""
+
+        # 用户基本信息 + 专业课程体系
+        if user:
+            info_parts = []
+            if user.major:
+                info_parts.append(f"专业：{user.major}")
+            if user.grade:
+                info_parts.append(f"年级：{user.grade}")
+            if user.university:
+                info_parts.append(f"学校：{user.university}")
+            if info_parts:
+                lines.append("【用户背景】")
+                lines.append("、".join(info_parts))
+            # 专业课程（从画像 traits 中读取，由 curriculum_service 同步）
+            curriculum = traits.get("curriculum_courses") if traits else None
+            if curriculum and isinstance(curriculum, list) and len(curriculum) > 0:
+                lines.append(f"【专业课程】{'、'.join(curriculum)}（以上为该专业当前阶段核心课程，请结合课程内容辅助学习）")
+
+        if traits:
+            if lines:
+                lines.append("")
+            for key, label in [
+                ("strengths", "强项"), ("weaknesses", "弱项"), ("interest", "兴趣"),
+                ("knowbase", "知识基础"), ("learning_pace", "学习节奏"), ("commonmis", "常见误区"),
+            ]:
+                val = traits.get(key)
+                if val and isinstance(val, dict) and val.get("value"):
+                    lines.append(f"- {label}：{val['value']}")
+            mastery = traits.get("knowledge_mastery")
+            if mastery and isinstance(mastery, list):
+                tags = [f"{m.get('tag', '')}({m.get('level', '')})" for m in mastery[:8] if m.get("tag")]
+                if tags:
+                    lines.append(f"- 知识点掌握度：{'、'.join(tags)}")
+            # 六维雷达
+            try:
+                radar = await PortraitRadarService.get(user_id)
+                if radar and radar.get("dimensions"):
+                    lines.append(PortraitRadarService.format_for_prompt(radar))
+            except Exception:
+                pass
+            # 学习指导
+            try:
+                from backend.src.service.portrait_service import build_learning_guidance
+                guidance = await build_learning_guidance(user_id)
+                if guidance:
+                    lines.append(guidance)
+            except Exception:
+                pass
+
+        if not lines:
+            return ""
+        return "用户画像：\n" + "\n".join(lines)
     except Exception:
         logger.exception("构建画像上下文失败 user_id=%s", user_id)
         return ""

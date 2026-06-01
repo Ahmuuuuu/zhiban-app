@@ -73,6 +73,9 @@ class UserService():
         if not user :
             return None, "未查找到用户"
         else :
+            major_changed = data.major is not None and data.major != user.major
+            grade_changed = data.grade is not None and data.grade != user.grade
+
             if data.username is not None:
                 user.username = data.username
             if data.university is not None:
@@ -88,6 +91,13 @@ class UserService():
             if data.profile is not None and len(data.profile) <= 200:
                 user.profile = data.profile
             await user.save()
+
+            # 专业或年级变更时，异步同步课程体系到画像（不阻塞响应）
+            if major_changed or grade_changed:
+                import asyncio
+                from backend.src.service.curriculum_service import sync_to_portrait
+                asyncio.ensure_future(sync_to_portrait(user_id, user.major or "", user.grade or ""))
+
             return user, "信息修改成功"
         
     @staticmethod
