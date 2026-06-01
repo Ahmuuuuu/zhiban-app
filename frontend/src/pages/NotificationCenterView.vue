@@ -124,6 +124,40 @@ const goBack = () => {
   }
 }
 
+const normalizeNotificationTarget = item => {
+  const rawUrl = String(item?.target_url || item?.targetUrl || '').trim()
+  if (!rawUrl) return ''
+
+  if (/^https?:\/\//i.test(rawUrl)) return rawUrl
+
+  const [rawPath, rawQuery = ''] = rawUrl.split('?')
+  const params = new URLSearchParams(rawQuery)
+  const path = rawPath.replace(/\/+$/, '') || '/'
+
+  const resourcePathMatch = path.match(/^\/resource\/([^/]+)$/)
+  if (path === '/resource' || path === '/resources' || path === '/learning-resources' || resourcePathMatch) {
+    const id = params.get('resource_id') || params.get('resourceId') || params.get('id') || resourcePathMatch?.[1]
+    const query = new URLSearchParams()
+    if (id) {
+      query.set('resource_id', id)
+    } else {
+      query.set('open', 'latest')
+    }
+    return `/resources?${query.toString()}`
+  }
+
+  if (path === '/presentation') {
+    const query = params.toString()
+    return `/presentation-player${query ? `?${query}` : ''}`
+  }
+
+  if (path === '/study-stats') {
+    return '/learning-situation'
+  }
+
+  return rawUrl
+}
+
 const loadList = async () => {
   loading.value = true
   try {
@@ -151,8 +185,13 @@ const handleClick = async (item) => {
       window.dispatchEvent(new CustomEvent('zhiban:notification-read'))
     } catch { /* ignore */ }
   }
-  if (item.target_url) {
-    router.push(item.target_url)
+  const target = normalizeNotificationTarget(item)
+  if (target) {
+    if (/^https?:\/\//i.test(target)) {
+      window.location.href = target
+    } else {
+      router.push(target)
+    }
   }
 }
 
