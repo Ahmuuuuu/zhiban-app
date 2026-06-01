@@ -321,7 +321,7 @@
 
 <script setup>
 import { computed, ref, nextTick, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   downloadWithToken,
   streamChatMessage,
@@ -356,6 +356,7 @@ import { saveGeneratedResourceRef } from '../utils/savedResources'
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
+const route = useRoute()
 const router = useRouter()
 const {
   tasks: generationTasks,
@@ -1245,12 +1246,12 @@ const appendFileMessage = async fileData => {
   }
 }
 
-const appendImageMessage = imageData => {
+const normalizeImageFileMessage = imageData => {
   const imageId = imageData?.image_id || imageData?.imageId || imageData?.id || ''
   const imageUrl = resolveApiUrl(imageData?.url || imageData?.image_url || imageData?.imageUrl || '')
   const filename = imageData?.filename || imageData?.name || `生成图片${imageId ? `-${imageId}` : ''}.jpg`
 
-  appendFileMessage({
+  return normalizeFileMessage({
     resourceKind: 'image',
     file_id: imageId || imageUrl || `image-${Date.now()}`,
     file_type: 'image',
@@ -1259,6 +1260,25 @@ const appendImageMessage = imageData => {
     download_url: imageId ? `/image/${imageId}/download` : imageUrl,
     content: imageData?.prompt || ''
   })
+}
+
+const appendImageMessage = (imageData, targetMessageId = '') => {
+  const fileMessage = normalizeImageFileMessage(imageData)
+  const target = targetMessageId ? messages.value.find(item => item.id === targetMessageId) : null
+
+  if (target) {
+    Object.assign(target, {
+      ...fileMessage,
+      id: target.id,
+      role: 'assistant',
+      generationTaskId: target.generationTaskId,
+      content: fileMessage.content || target.content || '',
+      time: getNowTime()
+    })
+    return
+  }
+
+  appendFileMessage(fileMessage)
 }
 
 const centerSaveLabel = message => {
@@ -1526,7 +1546,10 @@ const attachGenerationTaskToMessage = (task, messageId) => {
       }
 
       while (imageCursor < task.images.length) {
-        appendImageMessage(task.images[imageCursor])
+        appendImageMessage(
+          task.images[imageCursor],
+          task.tool?.generateMode === 'image' && imageCursor === 0 ? messageId : ''
+        )
         imageCursor += 1
       }
 
@@ -1809,6 +1832,18 @@ const openConversation = async (conversationId) => {
   }
 }
 
+const routeChatGroupId = () => {
+  const raw = route.query.chat_group_id || route.query.chatGroupId || route.query.conversationId
+  return Array.isArray(raw) ? raw[0] : raw
+}
+
+const openConversationFromRoute = async () => {
+  const chatGroupId = routeChatGroupId()
+  if (!chatGroupId || String(activeConversationId.value || '') === String(chatGroupId)) return false
+  await openConversation(chatGroupId)
+  return true
+}
+
 // 新建对话
 const createNewChat = () => {
   activeConversationId.value = null
@@ -1830,15 +1865,24 @@ const handleEnter = (event) => {
 }
 
 onMounted(async () => {
-  restoreGenerationTasksInChat()
   await Promise.all([
     hydrateGenerationTasks().catch(error => {
       console.warn('[ChatView] restore generation tasks failed:', error)
     }),
     loadConversationList()
   ])
+  if (await openConversationFromRoute()) return
   restoreGenerationTasksInChat()
 })
+
+watch(
+  () => route.fullPath,
+  () => {
+    openConversationFromRoute().catch(error => {
+      console.warn('[ChatView] open conversation from route failed:', error)
+    })
+  }
+)
 </script>
 
 <style scoped>

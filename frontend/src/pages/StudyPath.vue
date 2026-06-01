@@ -114,32 +114,43 @@
                   <div v-if="node._resLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
 
                   <template v-else-if="node._resources?.length">
-                    <div
-                      v-for="resource in node._resources"
-                      :key="resource.id"
-                      class="branch-resource-row"
-                    >
-                      <button
-                        class="branch-resource"
-                        type="button"
+                    <div class="branch-resource-flow">
+                      <article
+                        v-for="(resource, resourceIndex) in node._resources"
+                        :key="resource.id"
+                        class="branch-resource-card"
                         @click="previewNodeResource(resource)"
                       >
-                        <span class="branch-resource__icon">
-                          <FileImage v-if="isImageResource(resource)" :size="15" />
-                          <Presentation v-else-if="isPptResource(resource)" :size="15" />
-                          <GitBranch v-else-if="isMindmapResource(resource)" :size="15" />
-                          <FileText v-else :size="15" />
-                        </span>
-                        <span>{{ resource.title }}</span>
-                      </button>
-                      <button
-                        v-if="canPreviewResource(resource)"
-                        class="branch-mini-action"
-                        type="button"
-                        @click="previewNodeResource(resource)"
-                      >
-                        预览
-                      </button>
+                        <div class="branch-resource-cover">
+                          <img :src="resource.coverUrl" :alt="resource.title" loading="lazy" />
+                        </div>
+                        <div class="branch-resource-main">
+                          <div class="branch-resource-title-row">
+                            <span class="branch-resource__icon">
+                              <FileImage v-if="isImageResource(resource)" :size="16" />
+                              <Presentation v-else-if="isPptResource(resource)" :size="16" />
+                              <GitBranch v-else-if="isMindmapResource(resource)" :size="16" />
+                              <FileText v-else :size="16" />
+                            </span>
+                            <strong>{{ resource.title }}</strong>
+                          </div>
+                          <div class="branch-resource-meta">
+                            <span>{{ resource.typeLabel }}</span>
+                            <span :class="{ read: resource.isRead }">{{ resourceReadLabel(resource) }}</span>
+                          </div>
+                        </div>
+                        <div class="branch-resource-actions">
+                          <span class="branch-resource-index">{{ resourceIndex + 1 }}</span>
+                          <button
+                            v-if="canPreviewResource(resource)"
+                            class="branch-mini-action"
+                            type="button"
+                            @click.stop="previewNodeResource(resource)"
+                          >
+                            预览
+                          </button>
+                        </div>
+                      </article>
                     </div>
                   </template>
 
@@ -186,17 +197,53 @@
           </article>
         </div>
 
-        <aside class="diagnosis-panel">
-          <h2>轻量诊断</h2>
-          <div class="diagnosis-block">
-            <span>薄弱点</span>
-            <strong>{{ pathState.diagnosis.weakPoints.join(' / ') }}</strong>
-          </div>
-          <div class="diagnosis-block">
-            <span>最近成绩</span>
-            <strong>{{ pathState.diagnosis.latestScore }} 分</strong>
-          </div>
-          <p>{{ pathState.diagnosis.recommendation }}</p>
+        <aside class="side-panels">
+          <section class="path-situation-panel">
+            <header>
+              <span>Path Status</span>
+              <h2>本路径学习情况</h2>
+            </header>
+
+            <div v-if="pathStatsLoading" class="situation-state">正在读取学习情况...</div>
+            <div v-else-if="pathStatsError" class="situation-state">{{ pathStatsError }}</div>
+            <template v-else-if="selectedPathStats">
+              <div class="situation-meter">
+                <div>
+                  <strong>{{ selectedPathStats.progress.percentage }}%</strong>
+                  <span>{{ selectedPathStats.progress.completedNodes }}/{{ selectedPathStats.progress.totalNodes }} 节点</span>
+                </div>
+                <div class="situation-bar">
+                  <span :style="{ width: `${selectedPathStats.progress.percentage}%` }"></span>
+                </div>
+              </div>
+
+              <div class="situation-grid">
+                <div v-for="item in pathSituationCards" :key="item.label">
+                  <span>{{ item.label }}</span>
+                  <strong>{{ item.value }}</strong>
+                </div>
+              </div>
+
+              <div v-if="selectedPathStats.weakPoints.length" class="path-weak-list">
+                <span>薄弱知识点</span>
+                <strong>{{ selectedPathStats.weakPoints.map(item => item.tag).join(' / ') }}</strong>
+              </div>
+            </template>
+            <div v-else class="situation-state">暂无该路径的学习记录</div>
+          </section>
+
+          <section class="diagnosis-panel">
+            <h2>轻量诊断</h2>
+            <div class="diagnosis-block">
+              <span>薄弱点</span>
+              <strong>{{ pathState.diagnosis.weakPoints.join(' / ') }}</strong>
+            </div>
+            <div class="diagnosis-block">
+              <span>最近成绩</span>
+              <strong>{{ pathState.diagnosis.latestScore }} 分</strong>
+            </div>
+            <p>{{ pathState.diagnosis.recommendation }}</p>
+          </section>
         </aside>
       </section>
     </template>
@@ -288,6 +335,13 @@
                         <strong>{{ resource.title }}</strong>
                         <span>{{ resource.typeLabel }}</span>
                       </div>
+                    </div>
+
+                    <div class="resource-read-row">
+                      <span :class="{ read: resource.isRead }">{{ resourceReadLabel(resource) }}</span>
+                      <button type="button" @click.stop="toggleResourceRead(resource)">
+                        {{ resource.isRead ? '标为未读' : '标为已读' }}
+                      </button>
                     </div>
 
                     <div v-if="isImageResource(resource) && resource.previewUrl" class="file-image-preview">
@@ -412,13 +466,14 @@ import { useRoute } from 'vue-router'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2 } from 'lucide-vue-next'
 import {
   getCurrentLearningPath, generateLearningPath,
-  getLearningPaths, getLearningPathDetail, getLearningPathProgress, enrollLearningPath,
-  generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, resolveApiUrl
+  getLearningPaths, getLearningPathDetail, getLearningPathProgress, getStudyPathStats, sendStudyHeartbeat, enrollLearningPath,
+  generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
+import { getExplicitResourceCoverUrl, getResourceCoverUrl } from '../utils/resourceCover'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 const route = useRoute()
@@ -447,11 +502,17 @@ const nodeQuizData = ref(null)
 const nodeSessionId = ref('')
 const previewResource = ref(null)
 const previewLoading = ref(false)
+const previewOpenedAt = ref(0)
 const historyOpen = ref(false)
 const historyLoading = ref(false)
 const historyError = ref('')
 const pathHistory = ref([])
 const switchingPathId = ref('')
+const pathStatsLoading = ref(false)
+const pathStatsError = ref('')
+const selectedPathStats = ref(null)
+const pathStatsRequestId = ref(0)
+let heartbeatTimer = null
 const announcedGenerationRunIds = new Set()
 const {
   canNarrateResource,
@@ -613,6 +674,102 @@ const normalizeSelectedPath = (detailResult, progressResult, historyItem = null)
       }
     })
   })
+}
+
+const secondsToMinutes = seconds => Math.round(Number(seconds || 0) / 60)
+
+const normalizePathStats = raw => {
+  const data = unwrapApiData(raw) || {}
+  const list = Array.isArray(data.paths) ? data.paths : Array.isArray(data.learning_paths) ? data.learning_paths : []
+  const currentPathId = String(pathState.value?.pathId || '')
+  const item = list.find(path => String(path.path_id || path.pathId || path.id || '') === currentPathId)
+  if (!item) return null
+
+  const progress = item.progress || {}
+  const studyTime = item.study_time || item.studyTime || {}
+  const weakPoints = Array.isArray(item.weak_points)
+    ? item.weak_points
+    : Array.isArray(item.weakPoints)
+      ? item.weakPoints
+      : []
+  const totalNodes = Number(progress.total_nodes ?? progress.totalNodes ?? item.total_nodes ?? item.totalNodes ?? 0)
+  const completedNodes = Number(progress.completed_nodes ?? progress.completedNodes ?? item.completed_nodes ?? item.completedNodes ?? 0)
+  const percentage = Number(progress.percentage ?? progress.percent ?? (totalNodes ? (completedNodes / totalNodes) * 100 : 0))
+
+  return {
+    pathId: String(item.path_id || item.pathId || item.id || ''),
+    subject: item.subject || item.goal || pathState.value?.goal || '学习路径',
+    difficulty: item.difficulty || '',
+    studyTime: {
+      todayMinutes: secondsToMinutes(studyTime.today_seconds ?? studyTime.todaySeconds),
+      weekMinutes: secondsToMinutes(studyTime.week_seconds ?? studyTime.weekSeconds),
+      totalMinutes: secondsToMinutes(studyTime.total_seconds ?? studyTime.totalSeconds)
+    },
+    progress: {
+      totalNodes: Number.isFinite(totalNodes) ? totalNodes : 0,
+      completedNodes: Number.isFinite(completedNodes) ? completedNodes : 0,
+      inProgressNodes: Number(progress.in_progress_nodes ?? progress.inProgressNodes ?? 0),
+      unlockedNodes: Number(progress.unlocked_nodes ?? progress.unlockedNodes ?? 0),
+      currentNode: progress.current_node || progress.currentNode || '',
+      percentage: Math.max(0, Math.min(100, Math.round(Number.isFinite(percentage) ? percentage : 0)))
+    },
+    weakPoints: weakPoints
+      .map(item => ({
+        tag: item.tag || item.name || item.knowledge_tag || '',
+        accuracy: Number(item.accuracy ?? item.correct_rate ?? 0),
+        level: item.level || '',
+        attempts: Number(item.total_attempts || 0)
+      }))
+      .filter(item => item.tag)
+      .slice(0, 4)
+  }
+}
+
+const loadSelectedPathStats = async pathId => {
+  const normalizedPathId = String(pathId || '')
+  if (!normalizedPathId) {
+    selectedPathStats.value = null
+    return
+  }
+
+  const requestId = pathStatsRequestId.value + 1
+  pathStatsRequestId.value = requestId
+  pathStatsLoading.value = true
+  pathStatsError.value = ''
+  try {
+    const result = await getStudyPathStats()
+    if (requestId !== pathStatsRequestId.value || String(pathState.value?.pathId || '') !== normalizedPathId) return
+    selectedPathStats.value = normalizePathStats(result)
+  } catch (err) {
+    if (requestId !== pathStatsRequestId.value) return
+    selectedPathStats.value = null
+    pathStatsError.value = err?.response?.data?.detail || err?.message || '学习情况加载失败'
+  } finally {
+    if (requestId === pathStatsRequestId.value) pathStatsLoading.value = false
+  }
+}
+
+const stopPathHeartbeat = () => {
+  if (!heartbeatTimer) return
+  window.clearInterval(heartbeatTimer)
+  heartbeatTimer = null
+}
+
+const reportPathHeartbeat = async () => {
+  const pathId = pathState.value?.pathId
+  if (!pathId) return
+  try {
+    await sendStudyHeartbeat(pathId)
+  } catch (err) {
+    console.warn('[StudyPath] heartbeat failed:', err)
+  }
+}
+
+const startPathHeartbeat = pathId => {
+  stopPathHeartbeat()
+  if (!pathId) return
+  reportPathHeartbeat()
+  heartbeatTimer = window.setInterval(reportPathHeartbeat, 30000)
 }
 
 const formatHistoryDate = value => {
@@ -784,13 +941,19 @@ const fetchCurrentPath = async (options = {}) => {
       const cached = loadPathFromCache()
       if (cached) {
         pathState.value = cached
+        startPathHeartbeat(cached.pathId)
+        loadSelectedPathStats(cached.pathId)
       } else {
         pathState.value = null
+        selectedPathStats.value = null
+        stopPathHeartbeat()
       }
     } else {
       const cached = loadPathFromCache()
       if (cached) {
         pathState.value = cached
+        startPathHeartbeat(cached.pathId)
+        loadSelectedPathStats(cached.pathId)
         error.value = ''
       } else {
         error.value = err?.response?.data?.detail || err?.message || '加载学习路径失败，请稍后再试。'
@@ -879,6 +1042,20 @@ const progressPercent = computed(() => {
   const total = Math.max(nodes.length - 1, 1)
   const doneCount = nodes.filter(n => n.status === 'done').length
   return Math.min(100, Math.round((doneCount / total) * 100))
+})
+
+const pathSituationCards = computed(() => {
+  const stats = selectedPathStats.value
+  if (!stats) return []
+
+  return [
+    { label: '当前节点', value: stats.progress.currentNode || currentNode.value?.title || '暂无' },
+    { label: '今日学习', value: `${stats.studyTime.todayMinutes} min` },
+    { label: '本周学习', value: `${stats.studyTime.weekMinutes} min` },
+    { label: '累计学习', value: `${stats.studyTime.totalMinutes} min` },
+    { label: '进行中节点', value: `${stats.progress.inProgressNodes}` },
+    { label: '已解锁节点', value: `${stats.progress.unlockedNodes}` }
+  ]
 })
 
 const statusLabel = status => ({
@@ -1160,8 +1337,20 @@ const normalizeNodeResources = (resources, node = null) =>
     const fallbackType = node?.resourceTypes?.[i] || node?.resourceTypes?.[0] || 'document'
     const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || fallbackType
     const title = r.title || r.topic || r.filename || r.file_name || r.name || node?.title || `学习资料 ${i + 1}`
-    return {
+    const readStatus = r.read_status || r.readStatus || {}
+    const isRead = Boolean(r.is_read ?? r.isRead ?? readStatus.is_read ?? readStatus.isRead ?? false)
+    const durationSeconds = Number(
+      r.duration_seconds ??
+      r.durationSeconds ??
+      r.read_duration_seconds ??
+      r.readDurationSeconds ??
+      readStatus.duration_seconds ??
+      readStatus.durationSeconds ??
+      0
+    )
+    const resource = {
       id: resourceId || `res-${i}`,
+      doc_id: resourceId ? `path-resource-${resourceId}` : `path-resource-${node?.id || 'node'}-${i}`,
       resourceId,
       title,
       filename: r.filename || r.file_name || r.name || `${title}_${fileType}`,
@@ -1172,6 +1361,14 @@ const normalizeNodeResources = (resources, node = null) =>
       slides: Array.isArray(r.slides) ? r.slides : [],
       previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || ''),
       downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || (resourceId ? `/resource/${resourceId}/download` : '')),
+      isRead,
+      readAt: r.read_at || r.readAt || readStatus.read_at || readStatus.readAt || '',
+      durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0,
+    }
+    const explicitCover = getExplicitResourceCoverUrl({ ...resource, ...r })
+    return {
+      ...resource,
+      coverUrl: explicitCover || getResourceCoverUrl({ ...resource, ...r })
     }
   })
 
@@ -1300,8 +1497,20 @@ const hydratePathForRender = state => {
 
 const setPathState = state => {
   const hydrated = hydratePathForRender(state)
+  const previousPathId = String(pathState.value?.pathId || '')
   pathState.value = hydrated
   if (hydrated) savePathToCache(hydrated)
+  const nextPathId = String(hydrated?.pathId || '')
+  if (!nextPathId) {
+    selectedPathStats.value = null
+    pathStatsError.value = ''
+    stopPathHeartbeat()
+    return
+  }
+  startPathHeartbeat(nextPathId)
+  if (nextPathId !== previousPathId || !selectedPathStats.value) {
+    loadSelectedPathStats(nextPathId)
+  }
 }
 
 const delay = ms => new Promise(resolve => window.setTimeout(resolve, ms))
@@ -1604,6 +1813,66 @@ const downloadNodeResource = async resource => {
   }
 }
 
+const getResourceIdentity = resource => String(resource?.resourceId || resource?.resource_id || resource?.id || getResourceIdFromUrl(resource?.downloadUrl) || '')
+
+const formatReadDuration = seconds => {
+  const total = Math.max(0, Math.round(Number(seconds || 0)))
+  if (total < 60) return `${total} 秒`
+  const minutes = Math.floor(total / 60)
+  const rest = total % 60
+  if (minutes < 60) return rest ? `${minutes} 分 ${rest} 秒` : `${minutes} 分`
+  const hours = Math.floor(minutes / 60)
+  const minuteRest = minutes % 60
+  return minuteRest ? `${hours} 小时 ${minuteRest} 分` : `${hours} 小时`
+}
+
+const resourceReadLabel = resource => {
+  const duration = Number(resource?.durationSeconds || resource?.duration_seconds || 0)
+  const durationText = duration > 0 ? ` · ${formatReadDuration(duration)}` : ''
+  return `${resource?.isRead ? '已读' : '未读'}${durationText}`
+}
+
+const patchResourceReadState = (resource, patch) => {
+  const id = getResourceIdentity(resource)
+  if (!id) return
+  const next = { ...resource, ...patch }
+  updateResourceInNodes(next)
+  if (previewResource.value && getResourceIdentity(previewResource.value) === id) {
+    previewResource.value = { ...previewResource.value, ...patch }
+  }
+}
+
+const markResourceReadWithDuration = async (resource, durationSeconds = 0) => {
+  const resourceId = getResourceIdentity(resource)
+  if (!resourceId) return null
+  const result = await markStudyResourceRead(resourceId, durationSeconds)
+  const data = getResponseData(result)
+  const nextDuration = Number(data.duration_seconds ?? data.durationSeconds ?? ((resource?.durationSeconds || 0) + Math.max(0, Math.round(durationSeconds || 0))))
+  const patch = {
+    isRead: data.is_read ?? data.isRead ?? true,
+    durationSeconds: Number.isFinite(nextDuration) ? Math.max(0, nextDuration) : resource?.durationSeconds || 0,
+    readAt: data.read_at || data.readAt || resource?.readAt || new Date().toISOString()
+  }
+  patchResourceReadState(resource, patch)
+  return patch
+}
+
+const toggleResourceRead = async resource => {
+  const resourceId = getResourceIdentity(resource)
+  if (!resourceId) return
+  try {
+    if (resource.isRead) {
+      await markStudyResourceUnread(resourceId)
+      patchResourceReadState(resource, { isRead: false, readAt: '' })
+    } else {
+      await markResourceReadWithDuration(resource, 0)
+    }
+  } catch (err) {
+    console.error('[StudyPath] update resource read state failed:', err)
+    error.value = err?.response?.data?.detail || err?.message || '更新资源阅读状态失败'
+  }
+}
+
 const getResourceIdFromUrl = url => {
   const match = String(url || '').match(/\/resource\/([^/?#]+)(?:\/download)?/i)
   return match?.[1] || ''
@@ -1614,6 +1883,17 @@ const mergePreviewResource = (resource, detail) => {
   const resourceId = data.resource_id || data.resourceId || data.id || resource.resourceId || resource.id || ''
   const fileType = data.file_type || data.fileType || data.resource_type || data.resourceType || resource.fileType || resource.type
   const title = data.title || data.topic || data.filename || data.name || resource.title
+  const readStatus = data.read_status || data.readStatus || {}
+  const durationSeconds = Number(
+    data.duration_seconds ??
+    data.durationSeconds ??
+    data.read_duration_seconds ??
+    data.readDurationSeconds ??
+    readStatus.duration_seconds ??
+    readStatus.durationSeconds ??
+    resource.durationSeconds ??
+    0
+  )
 
   const content = data.content || data.preview || data.text || resource.content || ''
   const slides = Array.isArray(data.slides) && data.slides.length
@@ -1635,19 +1915,24 @@ const mergePreviewResource = (resource, detail) => {
     slides,
     narration: data.narration || resource.narration || null,
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.url || resource.previewUrl || ''),
-    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
+    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+    isRead: Boolean(data.is_read ?? data.isRead ?? readStatus.is_read ?? readStatus.isRead ?? resource.isRead ?? false),
+    readAt: data.read_at || data.readAt || readStatus.read_at || readStatus.readAt || resource.readAt || '',
+    durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0
   }
 }
 
 const updateResourceInNodes = resource => {
-  if (!resource?.id || !pathState.value?.nodes) return
+  const resourceId = getResourceIdentity(resource)
+  if (!resourceId || !pathState.value?.nodes) return
+  const matches = item => getResourceIdentity(item) === resourceId
 
   pathState.value = {
     ...pathState.value,
     nodes: pathState.value.nodes.map(node => ({
       ...node,
-      resources: (node.resources || []).map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item),
-      _resources: (node._resources || []).map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item)
+      resources: (node.resources || []).map(item => matches(item) ? { ...item, ...resource } : item),
+      _resources: (node._resources || []).map(item => matches(item) ? { ...item, ...resource } : item)
     }))
   }
 
@@ -1656,15 +1941,19 @@ const updateResourceInNodes = resource => {
     if (updatedNode) selectedNode.value = updatedNode
   }
 
-  nodeResources.value = nodeResources.value.map(item => String(item.id || item.resourceId) === String(resource.id) ? resource : item)
+  nodeResources.value = nodeResources.value.map(item => matches(item) ? { ...item, ...resource } : item)
   savePathToCache(pathState.value)
 }
 
 const previewNodeResource = async resource => {
   previewResource.value = resource
   previewLoading.value = false
+  previewOpenedAt.value = Date.now()
+  markResourceReadWithDuration(resource, 0).catch(err => {
+    console.warn('[StudyPath] mark resource read failed:', err)
+  })
 
-  const resourceId = resource.resourceId || resource.id || getResourceIdFromUrl(resource.downloadUrl)
+  const resourceId = getResourceIdentity(resource)
   if (!resourceId || resource.slides?.length || (!isPptResource(resource) && (resource.content || resource.previewUrl))) return
 
   previewLoading.value = true
@@ -1685,15 +1974,29 @@ const previewNodeResource = async resource => {
 }
 
 const closeResourcePreview = () => {
+  const openedAt = previewOpenedAt.value
+  const resource = previewResource.value
+  if (resource && openedAt) {
+    const durationSeconds = Math.max(1, Math.round((Date.now() - openedAt) / 1000))
+    markResourceReadWithDuration(resource, durationSeconds).catch(err => {
+      console.warn('[StudyPath] save resource reading duration failed:', err)
+    })
+  }
   stopCurrentAudio()
   previewResource.value = null
   previewLoading.value = false
+  previewOpenedAt.value = 0
 }
 
 const resetPath = () => {
   pathState.value = null
   selectedNode.value = null
   newestNodeId.value = ''
+  pathStatsRequestId.value += 1
+  selectedPathStats.value = null
+  pathStatsError.value = ''
+  pathStatsLoading.value = false
+  stopPathHeartbeat()
   showResources.value = false
   nodeResources.value = []
   nodeQuizData.value = null
@@ -1730,7 +2033,10 @@ const mountStudyPath = async () => {
 }
 
 onMounted(mountStudyPath)
-onBeforeUnmount(stopCurrentAudio)
+onBeforeUnmount(() => {
+  stopPathHeartbeat()
+  stopCurrentAudio()
+})
 </script>
 
 <style scoped>
@@ -1830,6 +2136,7 @@ onBeforeUnmount(stopCurrentAudio)
 
 .path-summary article,
 .diagnosis-panel,
+.path-situation-panel,
 .node-card {
   border: 1px solid rgba(22, 63, 143, 0.14);
   background: rgba(250, 250, 250, 0.78);
@@ -1869,6 +2176,13 @@ onBeforeUnmount(stopCurrentAudio)
   grid-template-columns: minmax(0, 1fr) 260px;
   gap: 22px;
   overflow: hidden;
+}
+
+.side-panels {
+  min-height: 0;
+  display: grid;
+  gap: 14px;
+  align-self: start;
 }
 
 .path-track {
@@ -1983,14 +2297,103 @@ onBeforeUnmount(stopCurrentAudio)
   min-height: 0;
   padding: 18px;
   border-radius: 24px;
-  align-self: start;
   display: grid;
   gap: 14px;
 }
 
-.diagnosis-panel h2 {
+.diagnosis-panel h2,
+.path-situation-panel h2 {
   margin: 0;
   font-size: 20px;
+}
+
+.path-situation-panel {
+  padding: 18px;
+  border-radius: 24px;
+  display: grid;
+  gap: 14px;
+}
+
+.path-situation-panel header {
+  display: grid;
+  gap: 4px;
+}
+
+.path-situation-panel header span,
+.situation-state,
+.path-weak-list span,
+.situation-grid span,
+.situation-meter span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.situation-state {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.situation-meter {
+  display: grid;
+  gap: 9px;
+}
+
+.situation-meter > div:first-child {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.situation-meter strong {
+  color: #163f8f;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.situation-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(201, 220, 233, 0.7);
+  overflow: hidden;
+}
+
+.situation-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #163f8f;
+}
+
+.situation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.situation-grid div {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(237, 249, 252, 0.72);
+  display: grid;
+  gap: 4px;
+}
+
+.situation-grid strong,
+.path-weak-list strong {
+  min-width: 0;
+  color: #163f8f;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.path-weak-list {
+  padding-top: 2px;
+  display: grid;
+  gap: 6px;
 }
 
 .diagnosis-block {
@@ -2186,47 +2589,140 @@ onBeforeUnmount(stopCurrentAudio)
   font-weight: 900;
 }
 
-.branch-resource-row {
+.branch-resource-flow {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
-  align-items: center;
+  gap: 12px;
 }
 
-.branch-resource {
+.branch-resource-flow::before {
+  content: "";
+  position: absolute;
+  left: 37px;
+  top: 44px;
+  bottom: 44px;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(95, 143, 195, 0.28);
+}
+
+.branch-resource-card {
+  position: relative;
+  z-index: 1;
+  min-height: 132px;
+  padding: 12px;
+  border: 1px solid rgba(22, 63, 143, 0.13);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 14px 30px rgba(22, 63, 143, 0.08);
+  display: grid;
+  grid-template-columns: 152px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: stretch;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.branch-resource-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(95, 143, 195, 0.46);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.branch-resource-cover {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #e9eff3;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.branch-resource-cover img {
   width: 100%;
-  min-height: 34px;
-  padding: 6px 8px;
-  border: 1px solid rgba(22, 63, 143, 0.12);
-  border-radius: 12px;
-  background: rgba(237, 249, 252, 0.68);
-  color: #163f8f;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 800;
-  text-align: left;
+  height: 100%;
+  min-height: 108px;
+  object-fit: cover;
+  display: block;
+}
+
+.branch-resource-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.branch-resource-title-row {
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  cursor: pointer;
+  gap: 10px;
 }
 
-.branch-resource span:last-child {
+.branch-resource-title-row strong {
   min-width: 0;
+  color: #163f8f;
+  font-size: 17px;
+  line-height: 1.38;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .branch-resource__icon {
-  width: 24px;
-  height: 24px;
+  width: 34px;
+  height: 34px;
   border-radius: 8px;
   background: #c9dce9;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.branch-resource-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.branch-resource-meta span {
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(237, 249, 252, 0.9);
+  color: rgba(22, 63, 143, 0.5);
+  font-size: 12px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+}
+
+.branch-resource-meta span.read {
+  color: #163f8f;
+  background: rgba(201, 220, 233, 0.72);
+}
+
+.branch-resource-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.branch-resource-index {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #163f8f;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .branch-mini-action {
@@ -2740,6 +3236,41 @@ onBeforeUnmount(stopCurrentAudio)
   font-size: 11px;
 }
 
+.resource-read-row {
+  min-height: 30px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.resource-read-row span {
+  color: rgba(22, 63, 143, 0.6);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.resource-read-row span.read {
+  color: #163f8f;
+}
+
+.resource-read-row button {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #163f8f;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .resource-item .file-actions {
   display: flex;
   gap: 6px;
@@ -3091,6 +3622,16 @@ onBeforeUnmount(stopCurrentAudio)
   .path-track {
     overflow: visible;
   }
+
+  .branch-resource-card {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+
+  .branch-resource-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+  }
 }
 
 @media (max-width: 640px) {
@@ -3108,6 +3649,14 @@ onBeforeUnmount(stopCurrentAudio)
 
   .flip-card {
     min-height: 460px;
+  }
+
+  .branch-resource-card {
+    grid-template-columns: 1fr;
+  }
+
+  .branch-resource-cover img {
+    height: 150px;
   }
 }
 </style>
