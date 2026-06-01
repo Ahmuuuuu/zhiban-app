@@ -1610,7 +1610,7 @@ onBeforeUnmount(() => {
 .resource-card {
   min-height: 0;
   max-height: none;
-  height: 286px;
+  height: 330px;
   padding: 14px 15px 16px;
   border-radius: 24px;
   background:
@@ -1623,7 +1623,7 @@ onBeforeUnmount(() => {
 }
 
 .resource-cover {
-  height: 96px;
+  height: 108px;
   border-radius: 16px;
   overflow: hidden;
   background: rgba(237, 249, 252, 0.76);
@@ -1708,6 +1708,8 @@ onBeforeUnmount(() => {
   line-height: 1.55;
   -webkit-line-clamp: 2;
   min-height: 38px;
+  max-height: 38px;
+  flex-shrink: 0;
 }
 
 .resource-card footer {
@@ -1716,16 +1718,19 @@ onBeforeUnmount(() => {
   line-height: 1.2;
   position: relative;
   z-index: 1;
+  flex-shrink: 0;
 }
 
 .resource-card-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-height: 30px;
   width: 100%;
   position: relative;
   z-index: 2;
+  flex-shrink: 0;
 }
 
 .reaction-btn {
