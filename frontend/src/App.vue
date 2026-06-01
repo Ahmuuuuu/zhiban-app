@@ -53,7 +53,8 @@ function resolveComponent(targetRoute) {
 }
 
 // ---- nav order for slide direction ----
-const navOrder = ['/', '/chat', '/resources', '/learning-resources', '/learning-path', '/learning-situation']
+// Must match TopNav order exactly: 首页→AI对话→资源中心→学习路径→学习情况
+const navOrder = ['/', '/chat', '/resources', '/learning-path', '/learning-situation']
 function navIndex(p) {
   const i = navOrder.indexOf(p)
   if (i !== -1) return i
@@ -61,6 +62,19 @@ function navIndex(p) {
     if (p.startsWith(navOrder[j])) return j
   }
   return -1
+}
+
+function slideDirection(fromPath, toPath) {
+  const fi = navIndex(fromPath)
+  const ti = navIndex(toPath)
+  // Both unknown → default forward
+  if (fi === -1 && ti === -1) return 1
+  // Going to a non-nav page → forward (going deeper)
+  if (ti === -1) return 1
+  // Coming from a non-nav page → backward (going back)
+  if (fi === -1) return -1
+  // Both known → compare indices
+  return ti > fi ? 1 : -1
 }
 
 // ---- animation state ----
@@ -84,17 +98,6 @@ async function animate(fromPath, toPath) {
 
   const key = toPath + '::' + Date.now()
 
-  if (toPath.startsWith('/chat') || fromPath.startsWith('/chat')) {
-    currentPane.value = { key, component: comp }
-    nextPane.value = null
-    currentX.value = 0
-    nextX.value = 100
-    isSliding.value = false
-    lastPath = toPath
-    locked = false
-    return
-  }
-
   // First visit — no animation
   if (!currentPane.value) {
     currentPane.value = { key, component: comp }
@@ -103,7 +106,7 @@ async function animate(fromPath, toPath) {
     return
   }
 
-  const dir = navIndex(toPath) < navIndex(fromPath) ? -1 : 1 // -1=back, 1=forward
+  const dir = slideDirection(fromPath, toPath) // -1=back (from left), 1=forward (from right)
 
   // ---- setup: position old + new panes ----
   isSliding.value = false
