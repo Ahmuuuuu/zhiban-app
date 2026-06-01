@@ -188,6 +188,14 @@ export function getExamSessions(): Promise<unknown>;
 
 export function getCurrentLearningPath(): Promise<unknown>;
 
+export function getStudyPathStats(): Promise<unknown>;
+
+export function sendStudyHeartbeat(pathId?: number | string | null): Promise<unknown>;
+
+export function markStudyResourceRead(resourceId: number | string, durationSeconds?: number): Promise<unknown>;
+
+export function markStudyResourceUnread(resourceId: number | string): Promise<unknown>;
+
 export function completeLearningPathNode(nodeId: number | string, sessionId: string): Promise<unknown>;
 
 export function generateLearningPath(data: {

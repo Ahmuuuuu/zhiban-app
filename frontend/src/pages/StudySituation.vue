@@ -89,6 +89,7 @@
                 <span>{{ item.index }}</span>
                 <div>
                   <strong>{{ item.title }}</strong>
+                  <p v-if="item.meta" class="path-meta">{{ item.meta }}</p>
                   <p>{{ item.time }} · {{ item.score }}</p>
                   <div class="path-progress"><span :style="{ width: `${item.percent}%` }"></span></div>
                 </div>
@@ -130,6 +131,7 @@
                 <span>{{ item.index }}</span>
                 <div>
                   <strong>{{ item.title }}</strong>
+                  <p v-if="item.meta" class="path-meta">{{ item.meta }}</p>
                   <p>{{ item.time }} · {{ item.score }}</p>
                 </div>
               </router-link>
@@ -199,7 +201,7 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
-import { getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
+import { getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyPathStats, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
 
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
 
@@ -396,6 +398,11 @@ const completedPaths = ref([])
 const currentPaths = ref([])
 
 const normalizePathCount = value => Math.max(0, Math.round(Number(value || 0)))
+const normalizePathPercent = value => {
+  const number = Number(value || 0)
+  if (!Number.isFinite(number)) return 0
+  return Math.max(0, Math.min(1, number > 1 ? number / 100 : number))
+}
 const pathFallbackTitle = zh([0x5b66, 0x4e60, 0x8def, 0x5f84])
 const completedText = zh([0x5df2, 0x5b8c, 0x6210])
 const nodeText = zh([0x4e2a, 0x8282, 0x70b9])
@@ -413,16 +420,27 @@ const normalizeLearningPaths = result => {
 
   return paths
     .map(item => {
-      const totalNodes = normalizePathCount(item.total_nodes ?? item.totalNodes)
-      const completedNodes = normalizePathCount(item.completed_nodes ?? item.completedNodes)
-      const progress = Number(item.progress ?? (totalNodes ? completedNodes / totalNodes : 0))
+      const progressData = item.progress && typeof item.progress === 'object' ? item.progress : {}
+      const studyTime = item.study_time || item.studyTime || {}
+      const weakList = Array.isArray(item.weak_points)
+        ? item.weak_points
+        : Array.isArray(item.weakPoints)
+          ? item.weakPoints
+          : []
+      const totalNodes = normalizePathCount(item.total_nodes ?? item.totalNodes ?? progressData.total_nodes ?? progressData.totalNodes)
+      const completedNodes = normalizePathCount(item.completed_nodes ?? item.completedNodes ?? progressData.completed_nodes ?? progressData.completedNodes)
+      const progressValue = progressData.percentage ?? progressData.percent ?? item.progress ?? (totalNodes ? completedNodes / totalNodes : 0)
 
       return {
         id: item.path_id ?? item.pathId ?? item.id ?? `${item.goal || item.subject || item.title || ''}-${totalNodes}-${completedNodes}`,
         title: String(item.goal || item.subject || item.title || pathFallbackTitle),
         totalNodes,
         completedNodes,
-        progress: Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0
+        progress: normalizePathPercent(progressValue),
+        currentNode: String(item.current_node || item.currentNode || progressData.current_node || progressData.currentNode || ''),
+        weekMinutes: formatSecondsToMinutes(studyTime.week_seconds ?? studyTime.weekSeconds),
+        totalMinutes: formatSecondsToMinutes(studyTime.total_seconds ?? studyTime.totalSeconds),
+        weakCount: weakList.length
       }
     })
     .filter(item => item.id && (item.totalNodes > 0 || item.completedNodes > 0))
@@ -437,7 +455,12 @@ const formatPathCard = (item, index, isCompleted = false) => {
     title: item.title,
     time: `${item.completedNodes}/${item.totalNodes} ${nodeText}`,
     score: isCompleted ? completedText : `${progressText} ${percent}%`,
-    percent
+    percent,
+    meta: [
+      item.currentNode ? `${zh([0x5f53, 0x524d])} ${item.currentNode}` : '',
+      item.weekMinutes ? `${zh([0x672c, 0x5468])} ${item.weekMinutes} min` : '',
+      item.weakCount ? `${zh([0x8584, 0x5f31])} ${item.weakCount} ${zh([0x9879])}` : ''
+    ].filter(Boolean).join(' · ')
   }
 }
 
@@ -482,11 +505,12 @@ const normalizeGuidance = raw => {
     .slice(0, 4)
 }
 
-const applyStudyStats = (stats, collections = []) => {
+const applyStudyStats = (stats, collections = [], pathStats = null) => {
   const studyTime = stats.study_time || stats.studyTime || {}
   const resources = stats.resources || {}
   const exam = stats.exam_summary || stats.examSummary || {}
-  const paths = normalizeLearningPaths(stats)
+  const dedicatedPaths = normalizeLearningPaths(pathStats)
+  const paths = dedicatedPaths.length ? dedicatedPaths : normalizeLearningPaths(stats)
   const finished = paths.filter(item => item.totalNodes > 0 && item.completedNodes >= item.totalNodes)
   const inProgress = paths.filter(item => item.totalNodes > 0 && item.completedNodes < item.totalNodes)
   const weekMinutes = formatSecondsToMinutes(studyTime.week_seconds ?? studyTime.weekSeconds)
@@ -520,10 +544,11 @@ const loadStudyDashboard = async () => {
   try {
     const statsResult = await getStudyStats()
     const stats = unwrapApiData(statsResult) || {}
-    const [guidanceResult, collectionsResult, weeklyAccuracyResult] = await Promise.allSettled([
+    const [guidanceResult, collectionsResult, weeklyAccuracyResult, pathStatsResult] = await Promise.allSettled([
       getLearningGuidance(),
       getStudyCollections(),
-      getStudyExamWeekly()
+      getStudyExamWeekly(),
+      getStudyPathStats()
     ])
     const guidanceData = guidanceResult.status === 'fulfilled' ? unwrapApiData(guidanceResult.value) : {}
     const collectionsData = collectionsResult.status === 'fulfilled' ? unwrapApiData(collectionsResult.value) : []
@@ -535,13 +560,18 @@ const loadStudyDashboard = async () => {
       console.warn('[StudySituation] load weekly accuracy failed:', weeklyAccuracyResult.reason)
     }
 
+    if (pathStatsResult.status === 'rejected') {
+      console.warn('[StudySituation] load path stats failed:', pathStatsResult.reason)
+    }
+
     if (weeklyAccuracy.points?.length) {
       accuracyData.value = weeklyAccuracy.points
       accuracySummary.value = `${zh([0x6700, 0x8fd1, 0x37, 0x5929])} ${weeklyAccuracy.total || 0} ${zh([0x9898])} - ${zh([0x6b63, 0x786e])} ${weeklyAccuracy.correct || 0} ${zh([0x9898])} - ${zh([0x6b63, 0x786e, 0x7387])} ${toPercent(weeklyAccuracy.accuracy)}`
     } else {
       accuracyData.value = buildRecentDateLabels()
     }
-    applyStudyStats({ ...stats, learning_guidance: guidance }, collections)
+    const pathStats = pathStatsResult.status === 'fulfilled' ? unwrapApiData(pathStatsResult.value) : null
+    applyStudyStats({ ...stats, learning_guidance: guidance }, collections, pathStats)
   } catch (error) {
     console.warn('[StudySituation] load dashboard failed:', error)
   }
@@ -999,6 +1029,12 @@ onBeforeUnmount(() => {
   margin: 6px 0 0;
   color: #5f8fc3;
   font-size: 12px;
+}
+
+.path-list .path-meta {
+  color: rgba(22, 63, 143, 0.6);
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .path-progress {

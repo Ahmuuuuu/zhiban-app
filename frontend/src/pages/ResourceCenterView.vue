@@ -312,7 +312,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   AlertCircle,
   Bookmark,
@@ -348,6 +348,7 @@ import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 import { getExplicitResourceCoverUrl, getResourceCoverUrl } from '../utils/resourceCover'
 
+const route = useRoute()
 const router = useRouter()
 const resources = ref([])
 const selectedResource = ref(null)
@@ -365,6 +366,7 @@ const {
 const keyword = ref('')
 const categories = ['文档', 'PPT', '图片', '视频', '题库', '思维导图']
 const activeCategory = ref(categories[0])
+const pendingNotificationOpen = ref('')
 
 
 // 鏄犲皠 KB_CATEGORIES 鐨勫€?
@@ -519,6 +521,7 @@ const loadResources = async () => {
     const imageResources = normalizeGeneratedImages(imageResult)
     resources.value = [...imageResources, ...generatedBackendResources, ...myResources, ...publicResources]
     selectedResource.value = resources.value[0] || null
+    openNotificationTargetResource()
   } catch (error) {
     if (error?.response?.status === 401) {
       errorMessage.value = '请先登录后再查看资源列表'
@@ -584,6 +587,43 @@ const openResourcePreview = async resource => {
       console.error('加载资源详情失败', error)
     }
   }
+}
+
+const findResourceByNotificationTarget = target => {
+  const normalizedTarget = String(target || '').trim()
+  if (!normalizedTarget) return null
+  if (normalizedTarget === 'latest') {
+    return resources.value.find(item => item.source === 'generated') || resources.value[0] || null
+  }
+
+  return resources.value.find(item => {
+    const ids = [
+      item.sourceId,
+      item.resourceId,
+      item.resource_id,
+      item.id,
+      item.doc_id
+    ].map(value => String(value || ''))
+    return ids.includes(normalizedTarget) ||
+      ids.includes(`generated-${normalizedTarget}`) ||
+      ids.includes(`image-${normalizedTarget}`)
+  }) || null
+}
+
+const openNotificationTargetResource = () => {
+  if (loading.value || !resources.value.length) return
+  const target = String(route.query.resource_id || route.query.resourceId || route.query.id || route.query.open || '').trim()
+  if (!target || pendingNotificationOpen.value === target) return
+
+  const resource = findResourceByNotificationTarget(target)
+  if (!resource) return
+
+  pendingNotificationOpen.value = target
+  if (isQuizResource(resource)) {
+    startResourceQuiz(resource)
+    return
+  }
+  openResourcePreview(resource)
 }
 
 const openResource = resource => {
@@ -817,6 +857,14 @@ const formatDate = (value, withTime = false) => {
 }
 
 const handleUserLogin = () => { loadResources() }
+
+watch(
+  () => route.fullPath,
+  () => {
+    pendingNotificationOpen.value = ''
+    openNotificationTargetResource()
+  }
+)
 
 onMounted(() => {
   loadResources()
