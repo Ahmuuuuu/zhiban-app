@@ -1,5 +1,9 @@
 ﻿<template>
   <main class="resource-center-page">
+    <div class="page-bg-deco" aria-hidden="true">
+      <span class="sweep sweep-one"></span>
+      <span class="sweep sweep-two"></span>
+    </div>
     <header class="center-header">
       <div class="title-block">
         <h1>资源中心</h1>
@@ -1342,12 +1346,64 @@ onBeforeUnmount(() => {
   width: 100vw;
   height: 100vh;
   padding: 28px 34px 28px;
-  background:
-    radial-gradient(ellipse 72% 44% at 10% 0%, rgba(209, 244, 250, 0.46), transparent 70%),
-    linear-gradient(135deg, #fafafa 0%, rgb(237, 249, 252) 52%, #fafafa 100%);
+  position: relative;
+  isolation: isolate;
+  background: #f1f7fb;
   color: #163f8f;
   gap: 20px;
   overflow: hidden;
+}
+
+.page-bg-deco {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: #f1f7fb;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.page-bg-deco::before,
+.page-bg-deco::after,
+.sweep {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  background: #e9eff3;
+}
+
+.page-bg-deco::before,
+.page-bg-deco::after {
+  content: "";
+}
+
+.page-bg-deco::before {
+  width: clamp(540px, 62vw, 760px);
+  height: clamp(540px, 62vw, 760px);
+  left: 50%;
+  top: -96px;
+  transform: translateX(-50%);
+}
+
+.page-bg-deco::after {
+  width: clamp(420px, 48vw, 620px);
+  height: clamp(420px, 48vw, 620px);
+  right: clamp(-280px, -18vw, -170px);
+  bottom: clamp(-310px, -24vw, -210px);
+}
+
+.sweep-one {
+  width: clamp(320px, 34vw, 520px);
+  height: clamp(320px, 34vw, 520px);
+  left: clamp(-250px, -14vw, -140px);
+  top: 118px;
+}
+
+.sweep-two {
+  width: clamp(320px, 34vw, 520px);
+  height: clamp(320px, 34vw, 520px);
+  right: clamp(-220px, -12vw, -130px);
+  top: -92px;
 }
 
 .center-header {
@@ -1610,7 +1666,7 @@ onBeforeUnmount(() => {
 .resource-card {
   min-height: 0;
   max-height: none;
-  height: 286px;
+  height: 330px;
   padding: 14px 15px 16px;
   border-radius: 24px;
   background:
@@ -1623,7 +1679,7 @@ onBeforeUnmount(() => {
 }
 
 .resource-cover {
-  height: 96px;
+  height: 108px;
   border-radius: 16px;
   overflow: hidden;
   background: rgba(237, 249, 252, 0.76);
@@ -1708,6 +1764,8 @@ onBeforeUnmount(() => {
   line-height: 1.55;
   -webkit-line-clamp: 2;
   min-height: 38px;
+  max-height: 38px;
+  flex-shrink: 0;
 }
 
 .resource-card footer {
@@ -1716,16 +1774,19 @@ onBeforeUnmount(() => {
   line-height: 1.2;
   position: relative;
   z-index: 1;
+  flex-shrink: 0;
 }
 
 .resource-card-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-height: 30px;
   width: 100%;
   position: relative;
   z-index: 2;
+  flex-shrink: 0;
 }
 
 .reaction-btn {

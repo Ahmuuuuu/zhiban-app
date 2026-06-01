@@ -203,104 +203,107 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <Transition name="portrait-backdrop-fade">
-    <div v-if="portraitWizardVisible" class="portrait-backdrop" @click="closePortraitOnboarding" />
-  </Transition>
+  <Teleport to="body">
+    <Transition name="portrait-backdrop-fade">
+      <div v-if="portraitWizardVisible" class="portrait-backdrop" @click="closePortraitOnboarding" />
+    </Transition>
 
-  <Transition name="pet-onboarding-pop">
-    <section
-      v-if="portraitPromptVisible"
-      class="pet-onboarding pet-onboarding--prompt"
-      @click.stop
-      @pointerdown.stop
-      @keydown.stop
-    >
-      <p>hi {{ portraitUsername }}，帮助我认识一下你吧！</p>
-      <div class="pet-onboarding__actions">
-        <button type="button" class="pet-onboarding__primary" @click="openPortraitWizard">开始</button>
-        <button type="button" class="pet-onboarding__ghost" @click="skipPortraitOnboarding">跳过</button>
-      </div>
-    </section>
-  </Transition>
-
-  <Transition name="pet-onboarding-pop">
-    <section
-      v-if="portraitCompleteVisible"
-      class="pet-onboarding pet-onboarding--complete"
-      @click.stop
-      @pointerdown.stop
-      @keydown.stop
-    >
-      <p>我现在认识你了！以后请多和我对话吧，让我更了解你，帮助你更好的学习吧！</p>
-    </section>
-  </Transition>
-
-  <Transition name="portrait-wizard-fade">
-    <section
-      v-if="portraitWizardVisible && currentPortraitDimension"
-      class="portrait-wizard"
-      role="dialog"
-      aria-label="小知画像构建"
-      @click.stop
-      @pointerdown.stop
-      @keydown.stop
-    >
-      <header class="portrait-wizard__header">
-        <div>
-          <span>{{ portraitProgressText }}</span>
-          <h3>{{ currentPortraitDimension.title }}</h3>
-          <p>{{ currentPortraitDimension.description }}</p>
+    <Transition name="pet-onboarding-pop">
+      <section
+        v-if="portraitPromptVisible"
+        class="pet-onboarding pet-onboarding--prompt"
+        @click.stop
+        @pointerdown.stop
+        @keydown.stop
+      >
+        <p>hi {{ portraitUsername }}，帮助我认识一下你吧！</p>
+        <div class="pet-onboarding__actions">
+          <button type="button" class="pet-onboarding__primary" @click="openPortraitWizard">开始</button>
+          <button type="button" class="pet-onboarding__ghost" @click="skipPortraitOnboarding">跳过</button>
         </div>
-        <button type="button" @click="skipPortraitOnboarding">跳过</button>
-      </header>
+      </section>
+    </Transition>
 
-      <Transition name="portrait-card-slide" mode="out-in">
-        <article :key="currentPortraitDimension.key" class="portrait-wizard__card">
-          <div class="portrait-wizard__tags">
-            <button
-              v-for="tag in currentPortraitDimension.tags"
-              :key="tag"
-              type="button"
-              :class="{ selected: currentPortraitTags.includes(tag) }"
-              @click="togglePortraitTag(tag)"
-            >
-              {{ tag }}
-            </button>
+    <Transition name="pet-onboarding-pop">
+      <section
+        v-if="portraitCompleteVisible"
+        class="pet-onboarding pet-onboarding--complete"
+        @click.stop
+        @pointerdown.stop
+        @keydown.stop
+      >
+        <p>我现在认识你了！以后请多和我对话吧，让我更了解你，帮助你更好的学习吧！</p>
+      </section>
+    </Transition>
+
+    <Transition name="portrait-wizard-fade">
+      <section
+        v-if="portraitWizardVisible && currentPortraitDimension"
+        class="portrait-wizard"
+        role="dialog"
+        aria-label="小知画像构建"
+        @click.stop
+        @pointerdown.stop
+        @keydown.stop
+      >
+        <header class="portrait-wizard__header">
+          <div>
+            <span>{{ portraitProgressText }}</span>
+            <h3>{{ currentPortraitDimension.title }}</h3>
+            <p>{{ currentPortraitDimension.description }}</p>
           </div>
-        </article>
-      </Transition>
+          <button type="button" @click="skipPortraitOnboarding">跳过</button>
+        </header>
 
-      <p v-if="portraitError" class="portrait-wizard__error">{{ portraitError }}</p>
+        <Transition name="portrait-card-slide" mode="out-in">
+          <article :key="currentPortraitDimension.key" class="portrait-wizard__card">
+            <div class="portrait-wizard__tags">
+              <button
+                v-for="tag in currentPortraitDimension.tags"
+                :key="tag"
+                type="button"
+                :class="{ selected: currentPortraitTags.includes(tag) }"
+                @click="togglePortraitTag(tag)"
+              >
+                {{ tag }}
+              </button>
+            </div>
+          </article>
+        </Transition>
 
-      <footer class="portrait-wizard__footer">
-        <button
-          type="button"
-          class="portrait-wizard__back"
-          :disabled="portraitStep === 0 || portraitSaving"
-          @click="portraitStep -= 1"
-        >
-          上一步
-        </button>
-        <button
-          type="button"
-          class="portrait-wizard__next"
-          :disabled="!canGoNextPortraitStep"
-          @click="goNextPortraitStep"
-        >
-          {{ portraitSaving ? "保存中..." : portraitStep === portraitDimensions.length - 1 ? "完成" : "下一步" }}
-        </button>
-      </footer>
-    </section>
-  </Transition>
+        <p v-if="portraitError" class="portrait-wizard__error">{{ portraitError }}</p>
+
+        <footer class="portrait-wizard__footer">
+          <button
+            type="button"
+            class="portrait-wizard__back"
+            :disabled="portraitStep === 0 || portraitSaving"
+            @click="portraitStep -= 1"
+          >
+            上一步
+          </button>
+          <button
+            type="button"
+            class="portrait-wizard__next"
+            :disabled="!canGoNextPortraitStep"
+            @click="goNextPortraitStep"
+          >
+            {{ portraitSaving ? "保存中..." : portraitStep === portraitDimensions.length - 1 ? "完成" : "下一步" }}
+          </button>
+        </footer>
+      </section>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
 .pet-onboarding {
-  position: absolute;
-  right: calc(100% - 34px);
-  bottom: calc(100% - 28px);
-  z-index: 8;
+  position: fixed;
+  right: 142px;
+  bottom: 176px;
+  z-index: 1245;
   width: min(270px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   padding: 14px;
   border: 1px solid rgba(22, 63, 143, 0.14);
   border-radius: 18px;
@@ -310,6 +313,7 @@ onUnmounted(() => {
   -webkit-backdrop-filter: blur(18px) saturate(145%);
   cursor: default;
   pointer-events: auto;
+  box-sizing: border-box;
 }
 
 .pet-onboarding::after {
@@ -335,11 +339,13 @@ onUnmounted(() => {
 
 .pet-onboarding--complete {
   width: min(360px, calc(100vw - 32px));
+  right: 128px;
 }
 
 .pet-onboarding__actions {
   margin-top: 12px;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -350,12 +356,13 @@ onUnmounted(() => {
 
 .pet-onboarding__primary,
 .pet-onboarding__ghost {
-  height: 26px;
+  min-height: 28px;
   padding: 0 12px;
   border-radius: 999px;
   cursor: pointer;
   font-size: 11px;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .pet-onboarding__primary {
@@ -376,7 +383,8 @@ onUnmounted(() => {
   top: 50%;
   transform: translate(-50%, -50%);
   z-index: 1250;
-  width: min(480px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
   padding: 18px;
   border: 1px solid rgba(22, 63, 143, 0.14);
   border-radius: 26px;
@@ -386,6 +394,10 @@ onUnmounted(() => {
   -webkit-backdrop-filter: blur(22px) saturate(145%);
   cursor: default;
   pointer-events: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .portrait-wizard__header {
@@ -393,6 +405,12 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.portrait-wizard__header > div {
+  min-width: 0;
 }
 
 .portrait-wizard__header span {
@@ -412,6 +430,7 @@ onUnmounted(() => {
   color: #163f8f;
   font-size: 21px;
   line-height: 1.25;
+  word-break: break-word;
 }
 
 .portrait-wizard__header p {
@@ -419,10 +438,11 @@ onUnmounted(() => {
   color: rgba(22, 63, 143, 0.62);
   font-size: 13px;
   line-height: 1.5;
+  word-break: break-word;
 }
 
 .portrait-wizard__header > button {
-  height: 32px;
+  min-height: 32px;
   padding: 0 12px;
   border: 1px solid rgba(201, 220, 233, 0.82);
   border-radius: 999px;
@@ -431,26 +451,30 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 800;
   cursor: pointer;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .portrait-wizard__card {
   margin-top: 16px;
-  min-height: 174px;
+  min-height: 0;
   padding: 16px;
   border-radius: 20px;
   background: radial-gradient(circle at 18% 0%, rgba(209, 244, 250, 0.54), transparent 40%), rgba(250, 250, 250, 0.88);
   border: 1px solid rgba(201, 220, 233, 0.72);
+  overflow: auto;
 }
 
 .portrait-wizard__tags {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
   gap: 9px;
 }
 
 .portrait-wizard__tags button {
-  min-height: 36px;
-  padding: 0 13px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
   border: 1px solid rgba(201, 220, 233, 0.92);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.84);
@@ -458,6 +482,8 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 800;
   cursor: pointer;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
   transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
@@ -477,6 +503,7 @@ onUnmounted(() => {
   margin: 10px 4px 0;
   color: #c2410c;
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 .portrait-wizard__footer {
@@ -484,16 +511,22 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .portrait-wizard__back,
 .portrait-wizard__next {
-  height: 40px;
+  min-width: 0;
+  min-height: 40px;
   padding: 0 18px;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 900;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .portrait-wizard__back {
@@ -581,7 +614,7 @@ onUnmounted(() => {
     position: fixed;
     left: 16px;
     right: 16px;
-    bottom: calc(var(--pet-size) + var(--pet-bottom) + 10px);
+    bottom: 212px;
     width: auto;
   }
 
@@ -596,8 +629,13 @@ onUnmounted(() => {
     bottom: auto;
     transform: translateY(-50%);
     width: auto;
+    max-height: calc(100vh - 28px);
     padding: 14px;
     border-radius: 22px;
+  }
+
+  .portrait-wizard__header {
+    gap: 10px;
   }
 
   .portrait-wizard-fade-enter-from,
@@ -606,8 +644,27 @@ onUnmounted(() => {
   }
 
   .portrait-wizard__card {
-    min-height: 150px;
     padding: 14px;
+  }
+
+  .portrait-wizard__tags {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .portrait-wizard__tags button {
+    min-height: 40px;
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .portrait-wizard__footer {
+    gap: 8px;
+  }
+
+  .portrait-wizard__back,
+  .portrait-wizard__next {
+    flex: 1 1 0;
+    padding: 0 10px;
   }
 }
 </style>

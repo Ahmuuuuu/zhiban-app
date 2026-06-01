@@ -1,5 +1,9 @@
 <template>
   <main class="study-panel">
+    <div class="page-bg-deco" aria-hidden="true">
+      <span class="sweep sweep-one"></span>
+      <span class="sweep sweep-two"></span>
+    </div>
     <header class="panel-header">
       <div class="header-title-row">
         <div>
@@ -591,15 +595,70 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .study-panel {
+  position: relative;
+  isolation: isolate;
   width: 100%;
   height: 100vh;
   min-height: 0;
   padding: 26px 34px 30px;
+  background: #f1f7fb;
   color: #163f8f;
   display: flex;
   flex-direction: column;
   gap: 20px;
   overflow: hidden;
+}
+
+.page-bg-deco {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: #f1f7fb;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.page-bg-deco::before,
+.page-bg-deco::after,
+.sweep {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  background: #e9eff3;
+}
+
+.page-bg-deco::before,
+.page-bg-deco::after {
+  content: "";
+}
+
+.page-bg-deco::before {
+  width: clamp(540px, 62vw, 760px);
+  height: clamp(540px, 62vw, 760px);
+  left: 50%;
+  top: -96px;
+  transform: translateX(-50%);
+}
+
+.page-bg-deco::after {
+  width: clamp(420px, 48vw, 620px);
+  height: clamp(420px, 48vw, 620px);
+  right: clamp(-280px, -18vw, -170px);
+  bottom: clamp(-310px, -24vw, -210px);
+}
+
+.sweep-one {
+  width: clamp(320px, 34vw, 520px);
+  height: clamp(320px, 34vw, 520px);
+  left: clamp(-250px, -14vw, -140px);
+  top: 118px;
+}
+
+.sweep-two {
+  width: clamp(320px, 34vw, 520px);
+  height: clamp(320px, 34vw, 520px);
+  right: clamp(-220px, -12vw, -130px);
+  top: -92px;
 }
 
 .panel-header {

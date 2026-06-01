@@ -1,5 +1,9 @@
 ﻿<template>
   <main class="study-panel">
+    <div class="page-bg-deco" aria-hidden="true">
+      <span class="sweep sweep-one"></span>
+      <span class="sweep sweep-two"></span>
+    </div>
     <header class="panel-header">
       <div class="header-title-row">
         <div>
@@ -137,6 +141,9 @@
                           <div class="branch-resource-meta">
                             <span>{{ resource.typeLabel }}</span>
                             <span :class="{ read: resource.isRead }">{{ resourceReadLabel(resource) }}</span>
+                            <span v-if="resource.viewCount || resource.downloadCount">
+                              {{ resourceUsageLine(resource) }}
+                            </span>
                           </div>
                         </div>
                         <div class="branch-resource-actions">
@@ -221,6 +228,34 @@
                 <div v-for="item in pathSituationCards" :key="item.label">
                   <span>{{ item.label }}</span>
                   <strong>{{ item.value }}</strong>
+                </div>
+              </div>
+
+              <div v-if="selectedPathStats.resourceUsage.total > 0" class="resource-usage-panel">
+                <div class="resource-usage-head">
+                  <span>推荐资源使用</span>
+                  <strong>{{ selectedPathStats.resourceUsage.readCount }}/{{ selectedPathStats.resourceUsage.total }}</strong>
+                </div>
+                <div class="resource-usage-bar">
+                  <span :style="{ width: `${selectedPathStats.resourceUsage.readPercent}%` }"></span>
+                </div>
+                <div class="resource-usage-grid">
+                  <div v-for="item in resourceUsageCards" :key="item.label">
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.value }}</strong>
+                  </div>
+                </div>
+                <div v-if="recentResourceUsage.length" class="recent-resource-list">
+                  <span>最近使用</span>
+                  <button
+                    v-for="resource in recentResourceUsage"
+                    :key="resource.resourceId"
+                    type="button"
+                    @click="openUsageResource(resource)"
+                  >
+                    <strong>{{ resource.title || '学习资料' }}</strong>
+                    <small>{{ resourceUsageLine(resource) }}</small>
+                  </button>
                 </div>
               </div>
 
@@ -342,6 +377,12 @@
                       <button type="button" @click.stop="toggleResourceRead(resource)">
                         {{ resource.isRead ? '标为未读' : '标为已读' }}
                       </button>
+                    </div>
+
+                    <div v-if="hasResourceUsage(resource)" class="resource-usage-row">
+                      <span>浏览 {{ resource.viewCount || 0 }}</span>
+                      <span>下载 {{ resource.downloadCount || 0 }}</span>
+                      <span>使用 {{ formatReadDuration(resource.durationSeconds || 0) }}</span>
                     </div>
 
                     <div v-if="isImageResource(resource) && resource.previewUrl" class="file-image-preview">
@@ -678,6 +719,31 @@ const normalizeSelectedPath = (detailResult, progressResult, historyItem = null)
 
 const secondsToMinutes = seconds => Math.round(Number(seconds || 0) / 60)
 
+const normalizeNumber = value => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+const normalizeResourceUsageItem = item => {
+  const resourceId = String(item.resource_id || item.resourceId || item.id || '')
+  const durationSeconds = normalizeNumber(item.duration_seconds ?? item.durationSeconds ?? item.read_duration_seconds ?? item.readDurationSeconds)
+  const viewCount = normalizeNumber(item.view_count ?? item.viewCount ?? item.views)
+  const downloadCount = normalizeNumber(item.download_count ?? item.downloadCount ?? item.downloads)
+
+  return {
+    resourceId,
+    title: item.topic || item.title || item.filename || item.name || '',
+    type: item.resource_type || item.resourceType || item.file_type || item.fileType || item.type || '',
+    typeLabel: fileTypeLabel(item.resource_type || item.resourceType || item.file_type || item.fileType || item.type || ''),
+    isRead: Boolean(item.is_read ?? item.isRead ?? false),
+    durationSeconds: Math.max(0, durationSeconds),
+    viewCount: Math.max(0, viewCount),
+    downloadCount: Math.max(0, downloadCount),
+    lastViewedAt: item.last_viewed_at || item.lastViewedAt || item.read_at || item.readAt || '',
+    downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
+  }
+}
+
 const normalizePathStats = raw => {
   const data = unwrapApiData(raw) || {}
   const list = Array.isArray(data.paths) ? data.paths : Array.isArray(data.learning_paths) ? data.learning_paths : []
@@ -695,6 +761,23 @@ const normalizePathStats = raw => {
   const totalNodes = Number(progress.total_nodes ?? progress.totalNodes ?? item.total_nodes ?? item.totalNodes ?? 0)
   const completedNodes = Number(progress.completed_nodes ?? progress.completedNodes ?? item.completed_nodes ?? item.completedNodes ?? 0)
   const percentage = Number(progress.percentage ?? progress.percent ?? (totalNodes ? (completedNodes / totalNodes) * 100 : 0))
+  const resourceStats = item.resources || item.resource_usage || item.resourceUsage || {}
+  const resourceList = (
+    Array.isArray(resourceStats.list)
+      ? resourceStats.list
+      : Array.isArray(resourceStats.resources)
+        ? resourceStats.resources
+        : Array.isArray(resourceStats.items)
+          ? resourceStats.items
+          : []
+  ).map(normalizeResourceUsageItem).filter(resource => resource.resourceId)
+  const resourceTotal = normalizeNumber(resourceStats.total ?? resourceStats.total_count ?? resourceStats.totalCount ?? resourceList.length)
+  const readCount = normalizeNumber(resourceStats.read_count ?? resourceStats.readCount ?? resourceList.filter(resource => resource.isRead).length)
+  const totalDurationSeconds = normalizeNumber(
+    resourceStats.total_duration_seconds ??
+    resourceStats.totalDurationSeconds ??
+    resourceList.reduce((sum, resource) => sum + resource.durationSeconds, 0)
+  )
 
   return {
     pathId: String(item.path_id || item.pathId || item.id || ''),
@@ -712,6 +795,16 @@ const normalizePathStats = raw => {
       unlockedNodes: Number(progress.unlocked_nodes ?? progress.unlockedNodes ?? 0),
       currentNode: progress.current_node || progress.currentNode || '',
       percentage: Math.max(0, Math.min(100, Math.round(Number.isFinite(percentage) ? percentage : 0)))
+    },
+    resourceUsage: {
+      total: Math.max(0, resourceTotal),
+      readCount: Math.max(0, readCount),
+      unreadCount: Math.max(0, normalizeNumber(resourceStats.unread_count ?? resourceStats.unreadCount ?? resourceTotal - readCount)),
+      readPercent: Math.max(0, Math.min(100, Math.round(resourceTotal ? (readCount / resourceTotal) * 100 : 0))),
+      totalDurationSeconds: Math.max(0, totalDurationSeconds),
+      totalViews: resourceList.reduce((sum, resource) => sum + resource.viewCount, 0),
+      totalDownloads: resourceList.reduce((sum, resource) => sum + resource.downloadCount, 0),
+      list: resourceList
     },
     weakPoints: weakPoints
       .map(item => ({
@@ -740,6 +833,7 @@ const loadSelectedPathStats = async pathId => {
     const result = await getStudyPathStats()
     if (requestId !== pathStatsRequestId.value || String(pathState.value?.pathId || '') !== normalizedPathId) return
     selectedPathStats.value = normalizePathStats(result)
+    syncResourceUsageFromStats()
   } catch (err) {
     if (requestId !== pathStatsRequestId.value) return
     selectedPathStats.value = null
@@ -747,6 +841,47 @@ const loadSelectedPathStats = async pathId => {
   } finally {
     if (requestId === pathStatsRequestId.value) pathStatsLoading.value = false
   }
+}
+
+const mergeResourceUsage = resource => {
+  const usage = getResourceUsageById(getResourceIdentity(resource))
+  if (!usage) return resource
+
+  return {
+    ...resource,
+    title: resource.title || usage.title,
+    type: resource.type || usage.type,
+    fileType: resource.fileType || usage.type,
+    typeLabel: resource.typeLabel || usage.typeLabel,
+    downloadUrl: resource.downloadUrl || usage.downloadUrl,
+    isRead: Boolean(resource.isRead || usage.isRead),
+    durationSeconds: Math.max(normalizeNumber(resource.durationSeconds), usage.durationSeconds),
+    viewCount: Math.max(normalizeNumber(resource.viewCount), usage.viewCount),
+    downloadCount: Math.max(normalizeNumber(resource.downloadCount), usage.downloadCount),
+    lastViewedAt: resource.lastViewedAt || usage.lastViewedAt,
+    readAt: resource.readAt || usage.lastViewedAt
+  }
+}
+
+const syncResourceUsageFromStats = () => {
+  if (!pathState.value?.nodes?.length || !selectedPathStats.value?.resourceUsage?.list?.length) return
+
+  pathState.value = {
+    ...pathState.value,
+    nodes: pathState.value.nodes.map(node => ({
+      ...node,
+      resources: (node.resources || []).map(mergeResourceUsage),
+      _resources: (node._resources || []).map(mergeResourceUsage)
+    }))
+  }
+
+  if (selectedNode.value) {
+    const updatedNode = pathState.value.nodes.find(node => node.id === selectedNode.value.id)
+    if (updatedNode) selectedNode.value = updatedNode
+  }
+
+  nodeResources.value = nodeResources.value.map(mergeResourceUsage)
+  savePathToCache(pathState.value)
 }
 
 const stopPathHeartbeat = () => {
@@ -1058,6 +1193,31 @@ const pathSituationCards = computed(() => {
   ]
 })
 
+const resourceUsageCards = computed(() => {
+  const usage = selectedPathStats.value?.resourceUsage
+  if (!usage) return []
+
+  return [
+    { label: '已读率', value: `${usage.readPercent}%` },
+    { label: '资源时长', value: formatReadDuration(usage.totalDurationSeconds) },
+    { label: '浏览次数', value: `${usage.totalViews}` },
+    { label: '下载次数', value: `${usage.totalDownloads}` }
+  ]
+})
+
+const recentResourceUsage = computed(() => {
+  const list = selectedPathStats.value?.resourceUsage?.list || []
+  return [...list]
+    .filter(resource => resource.lastViewedAt || resource.isRead || resource.durationSeconds > 0 || resource.viewCount > 0 || resource.downloadCount > 0)
+    .sort((a, b) => {
+      const timeA = new Date(a.lastViewedAt || 0).getTime()
+      const timeB = new Date(b.lastViewedAt || 0).getTime()
+      if (timeA !== timeB) return timeB - timeA
+      return (b.durationSeconds + b.viewCount + b.downloadCount) - (a.durationSeconds + a.viewCount + a.downloadCount)
+    })
+    .slice(0, 3)
+})
+
 const statusLabel = status => ({
   done: '已完成',
   current: '当前任务',
@@ -1330,15 +1490,22 @@ const renderMarkdown = content => {
   return html.join('')
 }
 
+const getResourceUsageById = resourceId => {
+  const id = String(resourceId || '')
+  if (!id) return null
+  return selectedPathStats.value?.resourceUsage?.list?.find(resource => resource.resourceId === id) || null
+}
+
 const normalizeNodeResources = (resources, node = null) =>
   (Array.isArray(resources) ? resources : []).map((item, i) => {
     const r = typeof item === 'object' && item !== null ? item : { resource_id: item }
     const resourceId = r.id || r.resource_id || r.resourceId || r.file_id || r.fileId || ''
+    const usage = getResourceUsageById(resourceId)
     const fallbackType = node?.resourceTypes?.[i] || node?.resourceTypes?.[0] || 'document'
-    const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || fallbackType
-    const title = r.title || r.topic || r.filename || r.file_name || r.name || node?.title || `学习资料 ${i + 1}`
+    const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || usage?.type || fallbackType
+    const title = r.title || r.topic || r.filename || r.file_name || r.name || usage?.title || node?.title || `学习资料 ${i + 1}`
     const readStatus = r.read_status || r.readStatus || {}
-    const isRead = Boolean(r.is_read ?? r.isRead ?? readStatus.is_read ?? readStatus.isRead ?? false)
+    const isRead = Boolean(r.is_read ?? r.isRead ?? readStatus.is_read ?? readStatus.isRead ?? usage?.isRead ?? false)
     const durationSeconds = Number(
       r.duration_seconds ??
       r.durationSeconds ??
@@ -1346,6 +1513,7 @@ const normalizeNodeResources = (resources, node = null) =>
       r.readDurationSeconds ??
       readStatus.duration_seconds ??
       readStatus.durationSeconds ??
+      usage?.durationSeconds ??
       0
     )
     const resource = {
@@ -1360,10 +1528,13 @@ const normalizeNodeResources = (resources, node = null) =>
       content: r.content || r.preview || r.text || '',
       slides: Array.isArray(r.slides) ? r.slides : [],
       previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || ''),
-      downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || (resourceId ? `/resource/${resourceId}/download` : '')),
+      downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || usage?.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
       isRead,
-      readAt: r.read_at || r.readAt || readStatus.read_at || readStatus.readAt || '',
+      readAt: r.read_at || r.readAt || readStatus.read_at || readStatus.readAt || usage?.lastViewedAt || '',
       durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0,
+      viewCount: normalizeNumber(r.view_count ?? r.viewCount ?? usage?.viewCount),
+      downloadCount: normalizeNumber(r.download_count ?? r.downloadCount ?? usage?.downloadCount),
+      lastViewedAt: r.last_viewed_at || r.lastViewedAt || usage?.lastViewedAt || '',
     }
     const explicitCover = getExplicitResourceCoverUrl({ ...resource, ...r })
     return {
@@ -1832,11 +2003,56 @@ const resourceReadLabel = resource => {
   return `${resource?.isRead ? '已读' : '未读'}${durationText}`
 }
 
+const hasResourceUsage = resource =>
+  Boolean(resource?.durationSeconds || resource?.viewCount || resource?.downloadCount)
+
+const resourceUsageLine = resource => {
+  const parts = []
+  if (resource?.viewCount) parts.push(`浏览 ${resource.viewCount}`)
+  if (resource?.downloadCount) parts.push(`下载 ${resource.downloadCount}`)
+  if (resource?.durationSeconds) parts.push(`使用 ${formatReadDuration(resource.durationSeconds)}`)
+  return parts.length ? parts.join(' · ') : (resource?.isRead ? '已读' : '未读')
+}
+
+const patchResourceUsageStats = (resource, patch) => {
+  const resourceId = getResourceIdentity(resource)
+  const stats = selectedPathStats.value
+  if (!resourceId || !stats?.resourceUsage?.list?.length) return
+
+  const list = stats.resourceUsage.list.map(item =>
+    item.resourceId === resourceId
+      ? {
+        ...item,
+        isRead: patch.isRead ?? item.isRead,
+        durationSeconds: Math.max(normalizeNumber(patch.durationSeconds ?? item.durationSeconds), item.durationSeconds),
+        lastViewedAt: patch.readAt || patch.lastViewedAt || item.lastViewedAt
+      }
+      : item
+  )
+  const total = stats.resourceUsage.total || list.length
+  const readCount = list.filter(item => item.isRead).length
+  const totalDurationSeconds = list.reduce((sum, item) => sum + normalizeNumber(item.durationSeconds), 0)
+
+  selectedPathStats.value = {
+    ...stats,
+    resourceUsage: {
+      ...stats.resourceUsage,
+      list,
+      total,
+      readCount,
+      unreadCount: Math.max(0, total - readCount),
+      readPercent: Math.max(0, Math.min(100, Math.round(total ? (readCount / total) * 100 : 0))),
+      totalDurationSeconds
+    }
+  }
+}
+
 const patchResourceReadState = (resource, patch) => {
   const id = getResourceIdentity(resource)
   if (!id) return
   const next = { ...resource, ...patch }
   updateResourceInNodes(next)
+  patchResourceUsageStats(resource, patch)
   if (previewResource.value && getResourceIdentity(previewResource.value) === id) {
     previewResource.value = { ...previewResource.value, ...patch }
   }
@@ -1973,6 +2189,30 @@ const previewNodeResource = async resource => {
   }
 }
 
+const openUsageResource = resource => {
+  const resourceId = String(resource?.resourceId || '')
+  const nodeResource = pathState.value?.nodes
+    ?.flatMap(node => node._resources?.length ? node._resources : node.resources || [])
+    .map(item => normalizeNodeResources([item])[0])
+    .find(item => getResourceIdentity(item) === resourceId)
+
+  previewNodeResource(nodeResource || {
+    id: resourceId,
+    resourceId,
+    title: resource.title || '学习资料',
+    type: resource.type || 'document',
+    fileType: resource.type || 'document',
+    typeLabel: resource.typeLabel || fileTypeLabel(resource.type || 'document'),
+    downloadUrl: resource.downloadUrl,
+    isRead: resource.isRead,
+    durationSeconds: resource.durationSeconds,
+    viewCount: resource.viewCount,
+    downloadCount: resource.downloadCount,
+    lastViewedAt: resource.lastViewedAt,
+    content: ''
+  })
+}
+
 const closeResourcePreview = () => {
   const openedAt = previewOpenedAt.value
   const resource = previewResource.value
@@ -2041,14 +2281,68 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .study-panel {
+  position: relative;
+  isolation: isolate;
   height: 100%;
   min-height: 0;
   padding: 26px 34px 30px;
+  background: #f1f7fb;
   color: #163f8f;
   display: flex;
   flex-direction: column;
   gap: 18px;
   overflow: hidden;
+}
+
+.page-bg-deco {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: #f1f7fb;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.page-bg-deco::before,
+.page-bg-deco::after,
+.sweep {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  background: #e9eff3;
+}
+
+.page-bg-deco::before,
+.page-bg-deco::after {
+  content: "";
+}
+
+.page-bg-deco::before {
+  width: clamp(1000px, 130vw, 1600px);
+  height: clamp(1000px, 130vw, 1600px);
+  right: -25%;
+  top: -135%;
+}
+
+.page-bg-deco::after {
+  width: clamp(500px, 60vw, 720px);
+  height: clamp(500px, 60vw, 720px);
+  right: -18%;
+  bottom: -62%;
+}
+
+.sweep-one {
+  width: clamp(500px, 60vw, 720px);
+  height: clamp(500px, 60vw, 720px);
+  left: -32%;
+  top: -30%;
+}
+
+.sweep-two {
+  width: clamp(320px, 34vw, 520px);
+  height: clamp(320px, 34vw, 520px);
+  right: clamp(-220px, -12vw, -130px);
+  top: -92px;
 }
 
 .panel-header {
@@ -2390,6 +2684,104 @@ onBeforeUnmount(() => {
   line-height: 1.4;
 }
 
+.resource-usage-panel {
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(237, 249, 252, 0.72);
+  display: grid;
+  gap: 10px;
+}
+
+.resource-usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.resource-usage-head span,
+.resource-usage-grid span,
+.recent-resource-list > span,
+.recent-resource-list small,
+.resource-usage-row span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.resource-usage-head strong {
+  color: #163f8f;
+  font-size: 18px;
+}
+
+.resource-usage-bar {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(201, 220, 233, 0.8);
+  overflow: hidden;
+}
+
+.resource-usage-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #5f8fc3;
+}
+
+.resource-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.resource-usage-grid div {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.68);
+  display: grid;
+  gap: 3px;
+}
+
+.resource-usage-grid strong {
+  min-width: 0;
+  color: #163f8f;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.recent-resource-list {
+  display: grid;
+  gap: 6px;
+}
+
+.recent-resource-list button {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgba(22, 63, 143, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #163f8f;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+}
+
+.recent-resource-list button:hover {
+  border-color: rgba(95, 143, 195, 0.46);
+  background: #ffffff;
+}
+
+.recent-resource-list strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
 .path-weak-list {
   padding-top: 2px;
   display: grid;
@@ -2609,16 +3001,16 @@ onBeforeUnmount(() => {
 .branch-resource-card {
   position: relative;
   z-index: 1;
-  min-height: 132px;
+  min-height: 0;
   padding: 12px;
   border: 1px solid rgba(22, 63, 143, 0.13);
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.78);
   box-shadow: 0 14px 30px rgba(22, 63, 143, 0.08);
   display: grid;
-  grid-template-columns: 152px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(168px, 220px) minmax(0, 1fr) auto;
   gap: 14px;
-  align-items: stretch;
+  align-items: center;
   cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
@@ -2631,6 +3023,8 @@ onBeforeUnmount(() => {
 
 .branch-resource-cover {
   min-width: 0;
+  width: 100%;
+  aspect-ratio: 13 / 7;
   overflow: hidden;
   border-radius: 14px;
   background: #e9eff3;
@@ -2640,8 +3034,7 @@ onBeforeUnmount(() => {
 .branch-resource-cover img {
   width: 100%;
   height: 100%;
-  min-height: 108px;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 
@@ -3271,6 +3664,27 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.resource-usage-row {
+  min-height: 28px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.resource-usage-row span {
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(201, 220, 233, 0.45);
+  color: rgba(22, 63, 143, 0.68);
+  display: inline-flex;
+  align-items: center;
+}
+
 .resource-item .file-actions {
   display: flex;
   gap: 6px;
@@ -3624,7 +4038,7 @@ onBeforeUnmount(() => {
   }
 
   .branch-resource-card {
-    grid-template-columns: 120px minmax(0, 1fr);
+    grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
   }
 
   .branch-resource-actions {
@@ -3656,7 +4070,7 @@ onBeforeUnmount(() => {
   }
 
   .branch-resource-cover img {
-    height: 150px;
+    height: 100%;
   }
 }
 </style>
