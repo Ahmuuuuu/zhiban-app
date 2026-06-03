@@ -450,7 +450,6 @@ const openResource = resource => {
 }
 
 const closeResourcePreview = () => {
-  stopCurrentAudio()
   previewOpen.value = false
 }
 
@@ -652,7 +651,6 @@ const formatDate = (value, withTime = false) => {
 }
 
 onMounted(loadResources)
-onBeforeUnmount(stopCurrentAudio)
 </script>
 
 <style scoped>
