@@ -3,11 +3,13 @@ import json
 import logging
 import uuid
 
+from tortoise.expressions import F
+
 logger = logging.getLogger(__name__)
 
 from datetime import datetime, timedelta
 
-from backend.src.ai_core.graph import resource_graph
+from backend.src.ai_core.resource_graph import resource_graph
 from backend.src.utils.prompt_loader import fill_prompt
 from backend.src.ai_core.llm_config import llm
 from backend.src.models.resource_model import GeneratedResource
@@ -139,6 +141,7 @@ async def _find_cached_resources(topic: str, user_id: int, resource_types: list[
         user_id=user_id,
         topic=topic,
         resource_type__in=resource_types,
+        review_passed=True,
         created_at__gte=cutoff,
     ).order_by("-created_at").all()
 
@@ -437,13 +440,13 @@ class ResourceService:
         existing = await ResourceLike.filter(user_id=user_id, resource_id=resource_id).first()
         if existing:
             await existing.delete()
-            resource.like_count = max(0, (resource.like_count or 0) - 1)
-            await resource.save()
+            await GeneratedResource.filter(id=resource_id).update(like_count=F('like_count') - 1)
+            await resource.refresh_from_db()
             return {"liked": False, "like_count": resource.like_count}
         else:
             await ResourceLike.create(user=user, resource=resource)
-            resource.like_count = (resource.like_count or 0) + 1
-            await resource.save()
+            await GeneratedResource.filter(id=resource_id).update(like_count=F('like_count') + 1)
+            await resource.refresh_from_db()
             return {"liked": True, "like_count": resource.like_count}
 
     @staticmethod
@@ -460,13 +463,13 @@ class ResourceService:
         existing = await ResourceCollection.filter(user_id=user_id, resource_id=resource_id).first()
         if existing:
             await existing.delete()
-            resource.favorite_count = max(0, (resource.favorite_count or 0) - 1)
-            await resource.save()
+            await GeneratedResource.filter(id=resource_id).update(favorite_count=F('favorite_count') - 1)
+            await resource.refresh_from_db()
             return {"favorited": False, "favorite_count": resource.favorite_count}
         else:
             await ResourceCollection.create(user=user, resource=resource)
-            resource.favorite_count = (resource.favorite_count or 0) + 1
-            await resource.save()
+            await GeneratedResource.filter(id=resource_id).update(favorite_count=F('favorite_count') + 1)
+            await resource.refresh_from_db()
             return {"favorited": True, "favorite_count": resource.favorite_count}
 
     @staticmethod
@@ -474,10 +477,11 @@ class ResourceService:
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:
             return None
-        # 追踪查看
-        record.view_count += 1
-        record.last_viewed_at = datetime.now()
-        await record.save()
+        # 原子递增查看计数
+        await GeneratedResource.filter(id=resource_id, user_id=user_id).update(
+            view_count=F('view_count') + 1, last_viewed_at=datetime.now()
+        )
+        await record.refresh_from_db()
         content = record.content
         if record.resource_type == "mindmap":
             content = _format_mindmap_content(content)
@@ -580,17 +584,7 @@ class ResourceService:
         ext = _FILE_EXT_MAP.get(record.resource_type, "md")
         filename = f"{record.topic}_{record.resource_type}.{ext}"
         if record.resource_type == "ppt":
-            # 优先：讯飞智文 API 生成的 PPTX（file_url 指向本地文件）
-            if record.file_url:
-                from pathlib import Path as PPath
-                pptx_path = PPath(record.file_url)
-                if pptx_path.exists():
-                    content_bytes = pptx_path.read_bytes()
-                    media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    filename = f"{record.topic}_ppt.pptx"
-                    return content_bytes, filename, media_type
-
-            # 降级：LLM 生成的 markdown → python-pptx（无配图）
+            # LLM 生成的 markdown → python-pptx
             try:
                 from backend.src.utils.pptx_generator import markdown_to_pptx
             except ImportError:
@@ -598,7 +592,7 @@ class ResourceService:
 
             content_bytes = markdown_to_pptx(record.content)
             media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            return content_bytes, filename, media_type
+            return content_bytes, f"{record.topic}_ppt.pptx", media_type
         else:
             return record.content.encode("utf-8"), filename, "text/markdown; charset=utf-8"
 
