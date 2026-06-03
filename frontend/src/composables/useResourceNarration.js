@@ -6,7 +6,9 @@ const narrationState = ref({
   loading: false,
   playing: false,
   sectionIndex: 0,
-  sections: []
+  sections: [],
+  currentTime: 0,
+  duration: 0
 })
 
 let audio = null
@@ -72,8 +74,34 @@ export function useResourceNarration() {
     narrationState.value = {
       ...narrationState.value,
       playing: false,
-      loading: false
+      loading: false,
+      currentTime: 0,
+      duration: 0
     }
+  }
+
+  const pauseNarration = () => {
+    if (!audio) return
+    audio.pause()
+    narrationState.value = { ...narrationState.value, playing: false }
+  }
+
+  const resumeNarration = async () => {
+    if (!audio || !narrationState.value.sections.length) return
+    try {
+      await audio.play()
+      narrationState.value = { ...narrationState.value, playing: true, loading: false }
+    } catch {
+      narrationState.value = { ...narrationState.value, playing: false, loading: false }
+    }
+  }
+
+  const toggleCurrentAudio = async () => {
+    if (narrationState.value.playing) {
+      pauseNarration()
+      return
+    }
+    await resumeNarration()
   }
 
   const playSection = (resourceId, sections, index = 0) => {
@@ -90,14 +118,30 @@ export function useResourceNarration() {
       loading: false,
       playing: true,
       sectionIndex: index,
-      sections
+      sections,
+      currentTime: 0,
+      duration: 0
+    }
+
+    audio.onloadedmetadata = () => {
+      narrationState.value = {
+        ...narrationState.value,
+        duration: Number.isFinite(audio?.duration) ? audio.duration : 0
+      }
+    }
+    audio.ontimeupdate = () => {
+      narrationState.value = {
+        ...narrationState.value,
+        currentTime: audio?.currentTime || 0,
+        duration: Number.isFinite(audio?.duration) ? audio.duration : narrationState.value.duration
+      }
     }
 
     audio.onended = () => {
       if (index + 1 < sections.length) {
         playSection(resourceId, sections, index + 1)
       } else {
-        narrationState.value = { ...narrationState.value, playing: false }
+        narrationState.value = { ...narrationState.value, playing: false, currentTime: 0, duration: 0 }
       }
     }
     audio.onerror = () => {
@@ -130,7 +174,9 @@ export function useResourceNarration() {
       loading: true,
       playing: false,
       sectionIndex: 0,
-      sections: []
+      sections: [],
+      currentTime: 0,
+      duration: 0
     }
 
     try {
@@ -169,6 +215,9 @@ export function useResourceNarration() {
     canNarrateResource,
     getNarratableResourceId,
     toggleNarration,
+    pauseNarration,
+    resumeNarration,
+    toggleCurrentAudio,
     isNarrationLoading,
     isNarrationPlaying,
     stopCurrentAudio
