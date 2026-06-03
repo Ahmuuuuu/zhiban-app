@@ -218,6 +218,8 @@ class ChatService:
         group_history: dict[int, list[dict]] = {}
         for record in records:
             gid = record.chat_group_id
+            if gid is None:
+                continue  # 跳过 chat_group_id 为 NULL 的旧记录
             if gid not in group_history:
                 group_history[gid] = []
             group_history[gid].append({

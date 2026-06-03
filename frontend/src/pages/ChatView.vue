@@ -856,8 +856,6 @@ const formatTime = (timeString) => {
 }
 
 //展示用户信息发送时间
-const hashStr = str => Math.abs(String(str || '').split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)).toString(36)
-
 const getNowTime = () => {
   const now = new Date()
   const h = String(now.getHours()).padStart(2, '0')
@@ -1864,14 +1862,10 @@ const loadConversationList = async () => {
     const res = await getConversationList()
 
     const chatGroups = normalizeHistoryGroups(res).map(item => {
-      const rawId = item.id || item.conversationId || item.chat_group_id
-      const num = Number(rawId)
-      // null / 0 等无效 ID 用 title hash 生成临时 ID，保证侧栏能显示
-      const id = (Number.isFinite(num) && num > 0) ? rawId : `fallback-${hashStr(item.title || item.req || '')}`
+      const id = item.id || item.conversationId || item.chat_group_id
 
       return {
         id,
-        _rawId: rawId,
         title: stripTypedResourceInstruction(item.title || item.req) || `对话 ${id}`,
         lastMessage: stripTypedResourceInstruction(item.lastMessage || item.last_message || item.req) || '',
         time: item.time || formatTime(item.updateTime || item.created_time)
@@ -1879,7 +1873,7 @@ const loadConversationList = async () => {
     })
 
     // 把有生成任务但没 chat_history 记录的对话也加进去
-    const existingIds = new Set(chatGroups.map(g => String(g._rawId || g.id)))
+    const existingIds = new Set(chatGroups.map(g => String(g.id)))
     for (const task of generationTasks) {
       const gid = String(task.chatGroupId)
       const gidNum = Number(gid)
@@ -1887,7 +1881,6 @@ const loadConversationList = async () => {
       existingIds.add(gid)
       chatGroups.push({
         id: gid,
-        _rawId: gid,
         title: task.text || '资源生成',
         lastMessage: task.progress || '正在生成资源...',
         time: formatTime(task.updatedAt)
@@ -1912,19 +1905,14 @@ const openConversation = async (conversationId) => {
   if (historyLoading.value) return
 
   const numericId = Number(conversationId)
-  const isValidId = Number.isFinite(numericId) && numericId > 0
-  const isFallbackId = String(conversationId).startsWith('fallback-')
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    console.warn('[ChatView] 无效对话ID:', conversationId)
+    return
+  }
 
   activeConversationId.value = conversationId
   showHistoryPanel.value = false
   showAddMenu.value = false
-
-  if (!isValidId || isFallbackId) {
-    // fallback ID 或无效 ID → 不调 API
-    messages.value = [{ id: Date.now(), role: 'assistant', type: 'text', content: '该对话记录不完整，请重新生成视频。', time: getNowTime() }]
-    return
-  }
-
   historyLoading.value = true
 
   try {
