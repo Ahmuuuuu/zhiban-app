@@ -5,7 +5,7 @@ from tortoise import Model, fields
 class Notification(Model):
     """通知表 — target_user_id=NULL 表示全员广播"""
     id = fields.IntField(pk=True)
-    type = fields.CharField(max_length=32, default="system", description="resource/reminder/system/weekly_report")
+    type = fields.CharField(max_length=32, default="system", description="resource/reminder/system/weekly_report/ai_tip")
     title = fields.CharField(max_length=128)
     content = fields.TextField()
     target_url = fields.CharField(max_length=256, null=True, description="点击跳转，可空")
