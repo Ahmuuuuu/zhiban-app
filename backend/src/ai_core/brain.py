@@ -1,5 +1,6 @@
 import json
 import logging
+import weakref
 
 import httpx
 from backend.src.ai_core.llm_config import llm
@@ -84,17 +85,17 @@ def _inject_chat_group_id(tool, chat_group_id: int):
 
 _MAX_HISTORY_TURNS = 20
 
-class UnifiedChat:
-    _instances: list["UnifiedChat"] = []
+class Brain:
+    _instances: weakref.WeakSet = weakref.WeakSet()
 
     def __init__(self, user_id: int, chat_group_id: int | None = None, session_id: str | None = None):
         self.user_id = user_id
         self.chat_group_id = chat_group_id
-        self.session_id = session_id or f"unified_{user_id}"
+        self.session_id = session_id or f"brain_{user_id}"
         self._raw_executor = None
         self._action_tools_loaded = False
         self._history: list = []
-        UnifiedChat._instances.append(self)
+        Brain._instances.add(self)
 
     # ── 动态工具工厂 ──
 

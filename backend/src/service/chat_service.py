@@ -2,7 +2,7 @@ import json
 import logging
 from collections import OrderedDict
 
-from backend.src.ai_core.agent import UnifiedChat
+from backend.src.ai_core.brain import Brain
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_CHAT_INSTANCES = 100
 
-_chat_instances: OrderedDict[str, UnifiedChat] = OrderedDict()
+_chat_instances: OrderedDict[str, Brain] = OrderedDict()
 
 
 async def _build_path_context(user_id: int) -> str:
@@ -105,12 +105,12 @@ async def _build_portrait_context(user_id: int) -> str:
         return ""
 
 
-def _get_or_create_chat(user_id: int, chat_group_id: int) -> UnifiedChat:
-    instance_key = f"unified_{user_id}_{chat_group_id}"
+def _get_or_create_chat(user_id: int, chat_group_id: int) -> Brain:
+    instance_key = f"brain_{user_id}_{chat_group_id}"
     if instance_key not in _chat_instances:
         if len(_chat_instances) >= _MAX_CHAT_INSTANCES:
             _chat_instances.popitem(last=False)
-        _chat_instances[instance_key] = UnifiedChat(user_id=user_id, chat_group_id=chat_group_id)
+        _chat_instances[instance_key] = Brain(user_id=user_id, chat_group_id=chat_group_id)
     else:
         _chat_instances.move_to_end(instance_key)
     return _chat_instances[instance_key]
