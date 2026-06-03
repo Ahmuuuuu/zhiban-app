@@ -639,7 +639,6 @@ const openResource = resource => {
 }
 
 const closeResourcePreview = () => {
-  stopCurrentAudio()
   previewOpen.value = false
 }
 
@@ -875,7 +874,6 @@ onMounted(() => {
   window.addEventListener('zhiban:user-logged-in', handleUserLogin)
 })
 onBeforeUnmount(() => {
-  stopCurrentAudio()
   window.removeEventListener('zhiban:user-logged-in', handleUserLogin)
 })
 </script>

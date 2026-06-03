@@ -16,6 +16,21 @@
         <router-link to="/learning-situation" class="nav-pill">学习情况</router-link>
       </nav>
 
+      <section v-if="audioVisible" class="audio-control" aria-label="音频播放控制">
+        <span class="audio-control__wave" :class="{ playing: narrationState.playing }"></span>
+        <div class="audio-control__meta">
+          <strong>{{ currentAudioTitle }}</strong>
+          <span>{{ audioProgressText }}</span>
+        </div>
+        <button type="button" :aria-label="narrationState.playing ? '暂停音频' : '继续播放音频'" @click="toggleCurrentAudio">
+          <Pause v-if="narrationState.playing" :size="15" />
+          <Play v-else :size="15" />
+        </button>
+        <button type="button" aria-label="停止音频" @click="stopCurrentAudio">
+          <Square :size="13" />
+        </button>
+      </section>
+
       <!-- 右侧操作区 -->
       <div class="nav-actions">
         <router-link to="/notifications" class="bell-btn" aria-label="消息中心">
@@ -34,13 +49,38 @@
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, ref } from 'vue'
-import { Bell } from 'lucide-vue-next'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { Bell, Pause, Play, Square } from 'lucide-vue-next'
 import UserAccountButton from './UserAccountButton.vue'
 import { getUnreadNotificationCount } from '../api/apis'
+import { useResourceNarration } from '../composables/useResourceNarration'
 
 const unreadCount = ref(0)
 let pollTimer = null
+const { narrationState, toggleCurrentAudio, stopCurrentAudio } = useResourceNarration()
+
+const audioVisible = computed(() => {
+  return Boolean(narrationState.value.resourceId && (narrationState.value.sections.length || narrationState.value.loading))
+})
+
+const currentAudioTitle = computed(() => {
+  const section = narrationState.value.sections[narrationState.value.sectionIndex]
+  return section?.title || '资源讲解'
+})
+
+const formatAudioTime = seconds => {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0))
+  const min = Math.floor(total / 60)
+  const sec = String(total % 60).padStart(2, '0')
+  return `${min}:${sec}`
+}
+
+const audioProgressText = computed(() => {
+  if (narrationState.value.loading) return '生成中'
+  const current = formatAudioTime(narrationState.value.currentTime)
+  const duration = narrationState.value.duration ? formatAudioTime(narrationState.value.duration) : '--:--'
+  return `${current} / ${duration}`
+})
 
 const fetchUnread = async () => {
   try {
@@ -215,6 +255,91 @@ onBeforeUnmount(() => {
 }
 
 /* 右侧操作区 */
+.audio-control {
+  min-width: 220px;
+  max-width: 310px;
+  height: 42px;
+  padding: 5px 7px 5px 12px;
+  border: 1px solid rgba(20, 55, 97, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #143761;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  box-shadow: 0 6px 18px rgba(20, 55, 97, 0.08);
+}
+
+.audio-control__wave {
+  width: 10px;
+  height: 18px;
+  border-radius: 999px;
+  background: #638fc2;
+  box-shadow:
+    6px 0 0 rgba(99, 143, 194, 0.65),
+    12px 0 0 rgba(99, 143, 194, 0.35);
+  transform-origin: bottom;
+}
+
+.audio-control__wave.playing {
+  animation: audio-wave 0.9s ease-in-out infinite;
+}
+
+.audio-control__meta {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 1px;
+}
+
+.audio-control__meta strong,
+.audio-control__meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-control__meta strong {
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.audio-control__meta span {
+  color: #638fc2;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.audio-control button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #143761;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.audio-control button + button {
+  background: rgba(20, 55, 97, 0.12);
+  color: #143761;
+}
+
+@keyframes audio-wave {
+  0%, 100% {
+    transform: scaleY(0.72);
+  }
+
+  45% {
+    transform: scaleY(1);
+  }
+}
+
 .nav-actions {
   display: flex;
   align-items: center;
@@ -304,6 +429,15 @@ onBeforeUnmount(() => {
     gap: 16px;
   }
 
+  .audio-control {
+    min-width: 150px;
+    max-width: 190px;
+  }
+
+  .audio-control__meta strong {
+    display: none;
+  }
+
   .nav-links {
     gap: 2px;
   }
@@ -322,6 +456,17 @@ onBeforeUnmount(() => {
 @media (max-width: 640px) {
   .topnav {
     height: 56px;
+  }
+
+  .audio-control {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: 62px;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    z-index: 101;
   }
 
   .topnav-inner {
