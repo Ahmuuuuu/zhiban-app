@@ -173,6 +173,7 @@ import LoginView from '../../components/LoginView.vue'
 
 const router = useRouter()
 const defaultAvatar = 'https://api.dicebear.com/7.x/avataaars/svg?seed=Zhiban'
+const AUTO_PATH_PROFILE_KEY = 'zhiban_auto_path_profile_key'
 
 const token = ref(localStorage.getItem('token') || '')
 const loading = ref(false)
@@ -297,10 +298,18 @@ const unwrapApiData = result => result?.data?.data ?? result?.data ?? result
 const triggerProfilePathGeneration = async previousProfile => {
   const major = String(profile.major || '').trim()
   const grade = String(profile.grade || '').trim()
-  const majorChanged = major !== String(previousProfile?.major || '').trim()
-  const gradeChanged = grade !== String(previousProfile?.grade || '').trim()
+  const previousMajor = String(previousProfile?.major || '').trim()
+  const previousGrade = String(previousProfile?.grade || '').trim()
+  const majorChanged = major !== previousMajor
+  const gradeChanged = grade !== previousGrade
+  const profileKey = [
+    String(profile.id || localStorage.getItem('user_id') || profile.username || '').trim(),
+    major,
+    grade
+  ].join('|')
+  const hasGeneratedForProfile = localStorage.getItem(AUTO_PATH_PROFILE_KEY) === profileKey
 
-  if (!major || !grade || (!majorChanged && !gradeChanged)) return
+  if (!previousProfile || !major || !grade || (!majorChanged && !gradeChanged) || hasGeneratedForProfile) return
 
   notifyPet(`正在根据${grade}${major}为你生成学习路径。`, 6000)
 
@@ -309,6 +318,7 @@ const triggerProfilePathGeneration = async previousProfile => {
     const data = unwrapApiData(result) || {}
     const paths = Array.isArray(data.paths) ? data.paths : []
     const firstPath = paths[0] || null
+    if (paths.length) localStorage.setItem(AUTO_PATH_PROFILE_KEY, profileKey)
     window.sessionStorage.setItem('zhiban_path_needs_refresh', '1')
     window.dispatchEvent(new CustomEvent('zhiban:path-generated', {
       detail: { path: firstPath, paths, major, grade, courses: data.courses || [] }

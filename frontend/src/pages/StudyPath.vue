@@ -666,6 +666,7 @@ const unwrapApiData = result => result?.data?.data ?? result?.data ?? result
 
 const normalizeHistoryList = result => {
   const list = unwrapApiData(result)
+  const seen = new Set()
   return (Array.isArray(list) ? list : []).map(item => ({
     pathId: String(item.path_id || item.pathId || item.id || ''),
     subject: item.subject || item.goal || item.title || '学习路径',
@@ -673,7 +674,13 @@ const normalizeHistoryList = result => {
     nodeCount: Number(item.node_count || item.nodeCount || item.total_nodes || 0),
     coverTags: Array.isArray(item.cover_tags || item.coverTags) ? (item.cover_tags || item.coverTags) : [],
     createdAt: item.created_at || item.createdAt || ''
-  })).filter(item => item.pathId)
+  })).filter(item => {
+    if (!item.pathId) return false
+    const dedupKey = `${item.pathId}|${item.subject}`
+    if (seen.has(dedupKey)) return false
+    seen.add(dedupKey)
+    return true
+  })
 }
 
 const normalizeSelectedPath = (detailResult, progressResult, historyItem = null) => {
@@ -2222,7 +2229,6 @@ const closeResourcePreview = () => {
       console.warn('[StudyPath] save resource reading duration failed:', err)
     })
   }
-  stopCurrentAudio()
   previewResource.value = null
   previewLoading.value = false
   previewOpenedAt.value = 0
@@ -2293,7 +2299,6 @@ onMounted(mountStudyPath)
 onBeforeUnmount(() => {
   window.removeEventListener('zhiban:path-generated', handleGeneratedPathEvent)
   stopPathHeartbeat()
-  stopCurrentAudio()
 })
 </script>
 
