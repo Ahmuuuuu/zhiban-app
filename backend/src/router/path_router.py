@@ -10,6 +10,7 @@ from backend.src.schemas.path import (
     EnrollPathRequest,
     SubmitNodeQuizRequest,
     RegeneratePathRequest,
+    GenerateFromProfileRequest,
 )
 
 router = APIRouter(prefix="/path", tags=["学习路径"])
@@ -120,3 +121,52 @@ async def regenerate_path(data: RegeneratePathRequest, user_id: int = Depends(ge
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/generate-from-profile")
+async def generate_paths_from_profile(data: GenerateFromProfileRequest, user_id: int = Depends(get_user_id_from_token)):
+    """根据用户专业 + 年级自动获取课程 → 批量生成学习路径"""
+    from backend.src.models.usermodel import User
+    from backend.src.service.curriculum_service import get_courses
+    from backend.src.models.notification_model import Notification
+
+    user = await User.filter(id=user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not user.major:
+        raise HTTPException(status_code=400, detail="请先在个人资料中设置专业")
+
+    courses = await get_courses(user.major, user.grade or "")
+    courses = courses[:max(1, data.course_limit)]
+
+    paths = []
+    for course in courses:
+        try:
+            result = await PathService.generate_path(course, user_id, data.difficulty, data.node_count)
+            if "error" not in result:
+                paths.append({"path_id": result.get("path_id"), "subject": course, "nodes": result.get("nodes", [])})
+        except Exception:
+            pass  # 单个课程失败不影响其他
+
+    # 发通知
+    course_names = "、".join(c.get("subject", "") for c in paths)
+    grade_text = f"{user.grade}" if user.grade else ""
+    notify = await Notification.create(
+        type="system",
+        title="学习路径已生成",
+        content=f"已根据{grade_text}{user.major}的课程（{course_names}）生成 {len(paths)} 条学习路径",
+        target_url=f"/learning-path?major={user.major}",
+        target_user_id=user_id,
+    )
+
+    return {
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "major": user.major,
+            "grade": user.grade,
+            "courses": [c.get("subject") for c in paths],
+            "paths": paths,
+            "notification_id": notify.id,
+        },
+    }

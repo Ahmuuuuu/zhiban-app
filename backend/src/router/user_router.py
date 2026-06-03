@@ -23,7 +23,9 @@ async def create(data : Create_User):
                 "code" : 409,
                 "msg" : msg
             }
-    except HTTPException :
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(500, "服务器错误")
     
 @router.post("/login_user")
@@ -133,7 +135,9 @@ async def update_information(user_id : int = Depends(get_user_id_from_token), da
                     "id" : create_access_token(user.id)
                 }
             }
-    except HTTPException :
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(500, "服务器错误")
     
 @router.post("/update_user/password")
@@ -153,7 +157,9 @@ async def update_password(user_id : int = Depends(get_user_id_from_token), data 
                     "id" : create_access_token(user.id)
                 }
             }
-    except HTTPException :
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(500, "服务器错误")
     
 @router.post("/avatar")
@@ -170,6 +176,8 @@ async def upload_avatar(user_id: int = Depends(get_user_id_from_token), file: Up
             "msg": msg,
             "data": {"avatar": user.avatar}
         }
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(500, "服务器错误")
 
@@ -180,6 +188,8 @@ async def delete_avatar(user_id: int = Depends(get_user_id_from_token)):
         if user is None:
             return {"code": 404, "msg": msg}
         return {"code": 200, "msg": msg}
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(500, "服务器错误")
 
