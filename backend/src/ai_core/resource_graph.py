@@ -84,8 +84,8 @@ async def leader_node(state: ResourceState) -> dict:
 
 
 async def executor_node(state: ResourceState) -> dict:
-    """多 Executor 并行生成 — 线程池 + 信号量限流。
-    image 类型走两阶段：LLM 生成 prompt → ImageService.generate() 生图。
+    """多 Executor 并行生成，信号量限流。
+    PPT 走 LLM 生成 markdown；image 走两阶段：LLM prompt → ImageService 生图。
     """
     topic = state["topic"]
     resource_types = state.get("resource_types", ["document"])
@@ -123,7 +123,7 @@ async def executor_node(state: ResourceState) -> dict:
     async def gen_one(rt: str, user_id: str) -> tuple[str, str]:
         async with semaphore:
             try:
-                # ppt 类型：rich query → 讯飞智文 API
+                # ppt 类型：LLM 生成 markdown 内容
                 if rt == "ppt":
                     return await _generate_ppt(topic, portrait, guidance, user_id)
                 # image 类型：两阶段生成
@@ -143,22 +143,15 @@ async def executor_node(state: ResourceState) -> dict:
     if feedback:
         retry += 1
 
-    # 分离普通资源和 file_urls
+    # 分离普通资源和 file_urls（image 类型返回特殊 key）
     generated = {}
     file_urls = {}
     for rt, content in results:
         if rt.startswith("image:"):
-            # image 类型返回特殊 key，解析 file_url
             actual_rt = rt.replace("image:", "")
             generated[actual_rt] = content.get("prompt", "")
             if content.get("url"):
                 file_urls[actual_rt] = content["url"]
-        elif rt.startswith("ppt:"):
-            # ppt:api 类型：content 是本地文件路径
-            actual_rt = rt.replace("ppt:", "")
-            generated[actual_rt] = f"PPT 已通过讯飞智文生成：{topic}"
-            if content and isinstance(content, str) and content.endswith(".pptx"):
-                file_urls[actual_rt] = content
         else:
             generated[rt] = content
 
@@ -181,7 +174,7 @@ async def _generate_image(prompt_text: str, user_id: str) -> tuple[str, dict]:
         logger.exception("图片 prompt 生成失败")
         return ("image:error", {"prompt": "", "url": ""})
 
-    # Phase 2: 调 ImageService 生图（讯飞限制 prompt ≤1000字符）
+    # Phase 2: 调 ImageService 生图（prompt 截断保平安）
     try:
         from backend.src.service.image_service import ImageService
         image_prompt = image_prompt[:900]  # 截断保平安
@@ -254,9 +247,9 @@ async def reviewer_node(state: ResourceState) -> dict:
     generated = state.get("generated_resources", {})
 
     async def review_one(rt: str, content: str) -> dict:
-        # API 生成的 PPT/图片跳过文本审核
+        # API 生成的图片跳过文本审核（PPT 为 LLM 生成，需审核）
         file_urls = state.get("file_urls", {})
-        if file_urls.get(rt):
+        if rt != "ppt" and file_urls.get(rt):
             return {"passed": True, "score": 100, "feedback": "API 生成，自动通过"}
         reviewer_path = _REVIEWER_MAP.get(rt, "agent/reviewer_document")
         if not content:
@@ -290,7 +283,7 @@ async def reviewer_node(state: ResourceState) -> dict:
     for (rt, _), result in zip(generated.items(), results):
         passed = result.get("passed", False)
         if isinstance(passed, str):
-            passed = passed.lower() == "true"
+            passed = passed.lower() in ("true", "yes", "1", "是", "pass")
         if not passed:
             all_passed = False
             feedback_parts.append(f"[{rt}] {result.get('feedback', '')}")

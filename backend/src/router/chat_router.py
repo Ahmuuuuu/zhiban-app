@@ -20,7 +20,7 @@ async def new_history(
             "code": 200,
             "msg": "success",
             "data": {
-                "user_id": create_access_token(message.user_id),
+                "token": create_access_token(message.user_id),
                 "chat_group_id": message.chat_group_id,
             },
         }
@@ -45,7 +45,7 @@ async def new_message(
             "code": 200,
             "msg": "success",
             "data": {
-                "user_id": create_access_token(user_id),
+                "token": create_access_token(user_id),
                 "chat_group_id": data.chat_group_id,
             },
         }

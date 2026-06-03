@@ -72,8 +72,8 @@ async def create_action_skill(
             tool_description=tool_description,
         )
         # 通知 UnifiedChat 实例刷新工具列表
-        from backend.src.ai_core.agent import UnifiedChat  # deferred: circular agent<->skill
-        UnifiedChat.rebuild_for_user(int(user_id))
+        from backend.src.ai_core.brain import Brain  # deferred: circular brain<->skill
+        Brain.rebuild_for_user(int(user_id))
         return f"动作 Skill '{result['name']}' 已{ '更新' if result['action'] == 'updated' else '创建' }，现在可以使用了！"
     except ValueError as e:
         return str(e)
@@ -101,6 +101,6 @@ async def delete_skill(resource_type: str, user_id: str):
     from backend.src.service.skill_service import SkillService
     result = await SkillService.delete(user_id=int(user_id), resource_type=resource_type)
     if resource_type.startswith("action:"):
-        from backend.src.ai_core.agent import UnifiedChat  # deferred: circular agent<->skill
-        UnifiedChat.rebuild_for_user(int(user_id))
+        from backend.src.ai_core.brain import Brain  # deferred: circular brain<->skill
+        Brain.rebuild_for_user(int(user_id))
     return result

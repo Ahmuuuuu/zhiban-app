@@ -23,3 +23,10 @@ class SubmitNodeQuizRequest(BaseModel):
 class RegeneratePathRequest(BaseModel):
     """基于最新画像重建路径"""
     path_id: int = Field(description="路径 ID")
+
+
+class GenerateFromProfileRequest(BaseModel):
+    """根据用户专业年级自动生成学习路径"""
+    course_limit: int = Field(default=3, description="最多为几门课程生成路径")
+    difficulty: str = Field(default="medium", description="难度: easy/medium/hard")
+    node_count: int = Field(default=0, description="节点数，0=自动")
