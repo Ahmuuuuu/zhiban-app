@@ -45,17 +45,9 @@ _FILE_EXT_MAP = {
 
 
 async def _generate_resource_title(topic: str, type_names: list[str]) -> str:
-    """用 LLM 为生成的学习资源起一个简洁标题"""
-    try:
-        types_str = "、".join(type_names)
-        resp = await llm.ainvoke(
-            f"为以下学习资源生成一个简洁标题（10字以内，只返回标题文本）：主题是「{topic}」，资源类型：{types_str}"
-        )
-        title = resp.content.strip().strip("《》「」\"'\"\"")
-        return title[:20] if title else f"「{topic}」学习资源"
-    except Exception:
-        logger.exception("生成资源标题失败")
-        return f"「{topic}」学习资源"
+    """为生成的学习资源起一个标题"""
+    types_str = "、".join(type_names)
+    return f"「{topic}」{types_str}"
 
 
 # ─── 任务 SSE 通知队列 ───
@@ -182,35 +174,47 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
     if not topic and chat_group_id > 0:
         topic = await _extract_topic_from_chat(user_id, chat_group_id)
 
+    from backend.src.service.portrait_service import PortraitRadarService, build_learning_guidance
+
     portrait_context = "暂无画像数据"
-    user = await User.filter(id=user_id).first()
-    if user:
+    learning_guidance = ""
+
+    # 并行：画像/用户查询 + 学习指导 + KB搜索 + Skills
+    user_task = User.filter(id=user_id).first()
+    guidance_task = build_learning_guidance(user_id)
+    kb_task = kb_search(topic, top_k=5, user_id=user_id)
+    skills_task = AgentSkill.filter(user_id=user_id, enabled=True).all()
+
+    user, learning_guidance, kb_result, skills = await asyncio.gather(
+        user_task, guidance_task, kb_task, skills_task, return_exceptions=True
+    )
+
+    if isinstance(learning_guidance, Exception):
+        logger.exception("学习指导生成失败 user_id=%s", user_id)
+        learning_guidance = ""
+
+    if isinstance(kb_result, Exception):
+        logger.exception("知识库搜索失败 topic=%s", topic)
+        kb_result = "暂无相关知识库资料"
+
+    if isinstance(skills, Exception):
+        logger.exception("Skills 查询失败 user_id=%s", user_id)
+        skills = []
+
+    if user and not isinstance(user, Exception):
         picture = await user.picture
         if picture:
-            from backend.src.service.portrait_service import PortraitRadarService
             try:
                 radar_data = await PortraitRadarService.get(user_id)
             except Exception:
                 radar_data = None
             portrait_context = "\n".join(format_portrait(picture, show_missing=False, radar_data=radar_data))
 
-    learning_guidance = ""
-    try:
-        from backend.src.service.portrait_service import build_learning_guidance
-        learning_guidance = await build_learning_guidance(user_id)
-    except Exception:
-        logger.exception("学习指导生成失败 user_id=%s", user_id)
-
     kb_context = "暂无相关知识库资料"
-    try:
-        kb_result = await kb_search(topic, top_k=5, user_id=user_id)
-        if kb_result and "暂无" not in kb_result:
-            kb_context = kb_result
-    except Exception:
-        logger.exception("知识库搜索失败 topic=%s", topic)
+    if kb_result and not isinstance(kb_result, Exception) and "暂无" not in str(kb_result):
+        kb_context = kb_result
 
     custom_prompts = {}
-    skills = await AgentSkill.filter(user_id=user_id, enabled=True).all()
     for s in skills:
         if s.resource_type in resource_types and s.system_prompt:
             custom_prompts[s.resource_type] = s.system_prompt
