@@ -537,10 +537,12 @@ const isVideoHistoryRecord = record => {
 
 const appendPresentationCardsFromHistory = async (records, targetMessages) => {
   const videoRecords = records.filter(isVideoHistoryRecord)
+  console.log('[ChatView] 视频历史记录匹配:', { totalRecords: records.length, videoRecords: videoRecords.length, videoRecordReqs: videoRecords.map(r => String(r.req || r.content || '').slice(0, 60)) })
   if (!videoRecords.length) return
 
   try {
     const presentations = normalizeList(await getPresentations())
+    console.log('[ChatView] 已生成的课件列表:', presentations.map(p => ({ id: p.id, topic: p.topic, hasFileUrl: !!p.file_url })))
     if (!presentations.length) return
 
     const existingUrls = new Set(targetMessages.map(message => message.previewUrl).filter(Boolean))
@@ -551,7 +553,10 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
       const reqTopic = normalizePresentationTopic(stripInternalInstructions(rawReq))
       const presentation = presentations.find(item => {
         const itemTopic = normalizePresentationTopic(item.topic)
-        return itemTopic && reqTopic && (itemTopic === reqTopic || item.topic === rawReq)
+        if (!itemTopic || !reqTopic) return false
+        // 放宽匹配：包含关系即可，不再要求完全相等
+        return itemTopic === reqTopic || item.topic === rawReq ||
+          itemTopic.includes(reqTopic) || reqTopic.includes(itemTopic)
       })
 
       if (!presentation?.file_url) continue
@@ -1772,7 +1777,8 @@ const loadConversationList = async () => {
     const existingIds = new Set(chatGroups.map(g => String(g.id)))
     for (const task of generationTasks) {
       const gid = String(task.chatGroupId)
-      if (!gid || gid === '0' || gid === 'null' || existingIds.has(gid)) continue
+      const gidNum = Number(gid)
+      if (!gid || gid === '0' || gid === 'null' || gid === 'undefined' || !Number.isFinite(gidNum) || gidNum <= 0 || existingIds.has(gid)) continue
       existingIds.add(gid)
       chatGroups.push({
         id: gid,
@@ -1799,13 +1805,24 @@ const loadConversationList = async () => {
 const openConversation = async (conversationId) => {
   if (historyLoading.value) return
 
+  // 非整数 ID（如 generationTask 的临时 ID）不能调历史消息接口
+  const numericId = Number(conversationId)
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    console.warn('[ChatView] 跳过无效对话ID:', conversationId)
+    messages.value = [{ id: Date.now(), role: 'assistant', type: 'text', content: '该对话暂无历史记录', time: getNowTime() }]
+    activeConversationId.value = conversationId
+    showHistoryPanel.value = false
+    showAddMenu.value = false
+    return
+  }
+
   activeConversationId.value = conversationId
   showHistoryPanel.value = false
   showAddMenu.value = false
   historyLoading.value = true
 
   try {
-    const res = await getConversationMessages(conversationId)
+    const res = await getConversationMessages(numericId)
     const records = normalizeList(res)
 
     messages.value = buildMessagesFromHistory(records, conversationId)

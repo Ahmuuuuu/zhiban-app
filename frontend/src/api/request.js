@@ -31,6 +31,11 @@ request.interceptors.response.use(
       console.error('登录已过期，请重新登录')
     }
 
+    // 422 诊断日志：打印请求 URL 和参数，帮助定位参数错误
+    if (error.response && error.response.status === 422) {
+      console.error('[422] 请求参数校验失败\n  URL:', error.config?.url, '\n  Method:', error.config?.method, '\n  Params:', error.config?.params, '\n  Data:', error.config?.data)
+    }
+
     return Promise.reject(error)
   }
 )

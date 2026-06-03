@@ -473,8 +473,8 @@ const normalizeGeneratedResources = data => {
       quizId: item.quiz_id || item.quizId || '',
       sessionId: item.session_id || item.sessionId || '',
       created_at: item.created_at || item.createdAt || '',
-      previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || ''),
-      downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+      previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || (isVideoResource({ type: resourceType, filename, title: item.title || item.topic }) ? (item.content || item.preview || '') : '')),
+      downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : (isVideoResource({ type: resourceType, filename, title: item.title || item.topic }) ? (item.content || item.preview || '') : ''))),
       ...normalizeReactionFields(item)
     }
     return attachResourceCover(resource, item)
@@ -569,11 +569,26 @@ const openResourcePreview = async resource => {
   selectedResource.value = resource
   previewOpen.value = true
 
+  // 诊断日志：显示当前资源的视频相关字段
+  console.log('[ResourceCenter] 打开资源预览:', {
+    title: resource.title,
+    source: resource.source,
+    type: resource.type,
+    category: resource.category,
+    previewUrl: resource.previewUrl,
+    content: String(resource.content || '').slice(0, 100),
+    sourceId: resource.sourceId,
+    downloadUrl: resource.downloadUrl
+  })
+
   if (resource?.source === 'generated' && resource?.sourceId && !resource?.fullContent) {
     try {
       const detail = await getGeneratedResource(resource.sourceId)
       const data = detail?.data || detail || {}
       const fullContent = data.content || data.preview || resource.content || ''
+      const isVideo = isVideoResource({ type: data.resource_type || data.file_type || resource.type, category: data.category || resource.category, filename: data.filename || resource.filename })
+      const looksLikeUrl = /^(https?:\/\/|\/static\/|\/resource\/)/.test(String(fullContent).trim())
+      console.log('[ResourceCenter] 获取详情后:', { isVideo, looksLikeUrl, fullContent: String(fullContent).slice(0, 100), dataKeys: Object.keys(data) })
       selectedResource.value = {
         ...resource,
         content: fullContent,
@@ -583,6 +598,7 @@ const openResourcePreview = async resource => {
         filename: data.filename || resource.filename,
         type: isMindmapResource(resource) ? 'mindmap' : (data.resource_type || data.file_type || resource.type),
         sessionId: data.session_id || resource.sessionId || '',
+        previewUrl: (isVideo && looksLikeUrl) ? resolveApiUrl(String(fullContent).trim()) : resource.previewUrl,
         downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl),
         ...normalizeReactionFields({ ...resource, ...data })
       }
@@ -660,8 +676,12 @@ const isMindmapResource = resource => {
 }
 
 const isVideoResource = resource => {
-  const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  return resource?.category === 'video' || text.includes('video') || text.includes('mp4') || text.includes('视频')
+  // 只按 type / category / filename 后缀判定，不拿 title 匹配（标题含"视频"≠真是视频）
+  const typeCat = String(`${resource?.type || ''} ${resource?.category || ''}`).toLowerCase()
+  const filename = String(resource?.filename || '').toLowerCase()
+  return resource?.category === 'video' ||
+    typeCat.includes('video') ||
+    /\.(mp4|webm|ogg|mov|avi|mkv|flv|wmv)($|\s|\?)/i.test(filename)
 }
 
 const getResourceKind = resource => {
