@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from backend.src.service.presentation_service import (
     generate,
+    generate_questions,
     preview,
     get_presentation,
     list_presentations,
@@ -26,16 +27,30 @@ class GenerateRequest(BaseModel):
     topic: str = Field(description="学习话题，必须已通过 /resource/generate 生成过资源")
     voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="EdgeTTS 语音名称")
     chapters: list[str] | None = Field(default=None, description="要生成的章节列表，如 ['intro', 'ppt']，不传则全生成")
+    answers: dict | None = Field(default=None, description="用户作答 {question_id: value}，用于裁剪内容")
 
 
 class PreviewRequest(BaseModel):
     topic: str = Field(description="学习话题")
 
 
+class QuestionsRequest(BaseModel):
+    topic: str = Field(description="学习话题")
+
+
 @router.post("/generate")
 async def generate_presentation(data: GenerateRequest, user_id: int = Depends(get_user_id_from_token)):
     """生成动态 HTML 课件：学科介绍 → 思维导图 → PPT讲解 → EdgeTTS 配音"""
-    result = await generate(data.topic, user_id, voice=data.voice, chapters=data.chapters)
+    result = await generate(data.topic, user_id, voice=data.voice, chapters=data.chapters, answers=data.answers)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/questions")
+async def get_questions(data: QuestionsRequest, user_id: int = Depends(get_user_id_from_token)):
+    """AI 分析资源内容，返回 2-3 个选择题帮助用户聚焦课件方向"""
+    result = await generate_questions(data.topic, user_id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}

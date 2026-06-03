@@ -1,12 +1,36 @@
 """语音旁白服务 — 对文字类资源调用 EdgeTTS 逐段生成旁白 (CRUD)"""
 
+import asyncio
+import hashlib
+import json
 import logging
+import os
 from pathlib import Path
 import shutil
 
 from backend.src.utils.tts_utils import parse_by_type, generate_audio_with_timestamps, NARRATABLE_TYPES
 
 logger = logging.getLogger(__name__)
+
+# EdgeTTS 并发限制，避免触发云端限流
+_TTS_SEMAPHORE = asyncio.Semaphore(5)
+
+
+async def narrate_content(content: str, resource_type: str, voice: str, resource_id: int) -> dict:
+    """从原始内容字符串直接生成旁白（不查 DB，不写 Narration 表），用于裁剪后的内容
+
+    Returns:
+        {"sections": [...]}  与 narrate_resource 返回的 sections 格式一致
+    """
+    sections = parse_by_type(content, resource_type or "document")
+    if not sections:
+        return {"sections": []}
+
+    base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    results = await _generate_sections_audio(sections, voice, base_dir, resource_id)
+    return {"sections": results}
 
 
 async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural", force_regenerate: bool = False):
@@ -53,33 +77,10 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     if not sections:
         return {"error": "无法解析内容，资源可能为空"}
 
-    # 按资源 ID 建子文件夹
     base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    results = []
-    for i, section in enumerate(sections):
-        if not section["text"]:
-            continue
-        filename = f"section{i}_{voice}.mp3"
-        output_path = str(base_dir / filename)
-
-        try:
-            _, word_timestamps = await generate_audio_with_timestamps(section["text"], output_path, voice)
-        except Exception:
-            logger.exception("EdgeTTS 生成失败 section=%d", i)
-            continue
-
-        audio_url = f"/static/audio/{resource_id}/{filename}"
-        results.append({
-            "index": i,
-            "title": section["title"],
-            "text": section["text"],
-            "audio_url": audio_url,
-            "duration_ms": section["duration_ms"],
-            "word_timestamps": word_timestamps,
-        })
-        logger.info("narration resource=%d section=%d dur=%dms words=%d", resource_id, i, section["duration_ms"], len(word_timestamps))
+    results = await _generate_sections_audio(sections, voice, base_dir, resource_id)
 
     # 入库
     record = await Narration.create(
@@ -95,6 +96,71 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
         "voice": voice,
         "cached": False,
     }
+
+
+async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: Path, resource_id: int) -> list[dict]:
+    """并行生成所有段落的 TTS 音频，复用内容哈希缓存"""
+
+    async def _tts_one(i: int, section: dict) -> dict | None:
+        text = section.get("text", "")
+        if not text:
+            return None
+
+        cache_key = hashlib.md5(f"{text}_{voice}".encode()).hexdigest()[:12]
+        output_path = str(base_dir / f"{cache_key}.mp3")
+        json_path = str(base_dir / f"{cache_key}.json")
+        audio_url = f"/static/audio/{resource_id}/{cache_key}.mp3"
+
+        if os.path.exists(output_path) and os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    word_timestamps = json.load(f)
+                return {
+                    "index": i,
+                    "title": section["title"],
+                    "text": text,
+                    "audio_url": audio_url,
+                    "duration_ms": section["duration_ms"],
+                    "word_timestamps": word_timestamps,
+                }
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        async with _TTS_SEMAPHORE:
+            try:
+                _, word_timestamps = await generate_audio_with_timestamps(text, output_path, voice)
+            except Exception:
+                logger.exception("EdgeTTS 生成失败 section=%d", i)
+                return None
+
+        try:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(word_timestamps, f, ensure_ascii=False)
+        except IOError:
+            pass
+
+        logger.info("narration resource=%d section=%d dur=%dms words=%d", resource_id, i, section["duration_ms"], len(word_timestamps))
+        return {
+            "index": i,
+            "title": section["title"],
+            "text": text,
+            "audio_url": audio_url,
+            "duration_ms": section["duration_ms"],
+            "word_timestamps": word_timestamps,
+        }
+
+    tasks = [_tts_one(i, s) for i, s in enumerate(sections)]
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    results = []
+    for r in raw_results:
+        if isinstance(r, dict) and r is not None:
+            results.append(r)
+        elif isinstance(r, Exception):
+            logger.exception("TTS 任务异常: %s", r)
+
+    results.sort(key=lambda x: x["index"])
+    return results
 
 
 async def list_narrations(user_id: int) -> list[dict]:

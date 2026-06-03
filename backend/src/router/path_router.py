@@ -149,19 +149,23 @@ async def generate_paths_from_profile(data: GenerateFromProfileRequest, user_id:
     courses = await get_courses(user.major, user.grade or "")
     courses = courses[:max(1, data.course_limit)]
 
+    import asyncio
+    results = await asyncio.gather(
+        *[PathService.generate_path(course, user_id, data.difficulty, data.node_count) for course in courses],
+        return_exceptions=True,
+    )
+
     new_paths = []
     cached_count = 0
-    for course in courses:
-        try:
-            result = await PathService.generate_path(course, user_id, data.difficulty, data.node_count)
-            if "error" in result:
-                continue
-            if result.get("cached"):
-                cached_count += 1
-            else:
-                new_paths.append({"path_id": result.get("path_id"), "subject": course, "nodes": result.get("nodes", [])})
-        except Exception:
-            pass
+    for course, result in zip(courses, results):
+        if isinstance(result, Exception):
+            continue
+        if "error" in result:
+            continue
+        if result.get("cached"):
+            cached_count += 1
+        else:
+            new_paths.append({"path_id": result.get("path_id"), "subject": course, "nodes": result.get("nodes", [])})
 
     all_subjects = [p.get("subject") for p in new_paths]
     if new_paths:
