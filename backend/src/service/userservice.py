@@ -13,6 +13,45 @@ from backend.src.schemas.user import Create_User, Login_User, Update_User_Passwo
 from backend.src.utils.pwintohash import get_password_hash, verify_password
 
 
+async def _on_profile_changed(user_id: int, major: str, grade: str):
+    """专业/年级变更时后台执行：同步课程体系 → 生成学习路径 → 发通知"""
+    try:
+        # 1. 同步课程到画像
+        from backend.src.service.curriculum_service import sync_to_portrait
+        courses = await sync_to_portrait(user_id, major, grade)
+
+        if not courses:
+            return
+
+        # 2. 为所有课程生成学习路径（去重由 generate_path 保证）
+        from backend.src.service.path_service import PathService
+        from backend.src.models.notification_model import Notification
+
+        paths = []
+        for course in courses:
+            try:
+                result = await PathService.generate_path(course, user_id, "medium", 0)
+                if "error" not in result:
+                    paths.append(result)
+            except Exception:
+                logger.exception("自动生成路径失败 user=%s course=%s", user_id, course)
+
+        # 3. 发通知
+        if paths:
+            course_names = "、".join(p.get("subject", "") for p in paths)
+            grade_text = f"{grade}" if grade else ""
+            await Notification.create(
+                type="system",
+                title="学习路径已生成",
+                content=f"检测到你的专业/年级更新为{grade_text}{major}，已自动为你生成 {len(paths)} 条学习路径（{course_names}），去看看吧",
+                target_url="/learning-path",
+                target_user_id=user_id,
+            )
+            logger.info("专业/年级变更 → 自动生成路径 user=%s major=%s grade=%s courses=%s", user_id, major, grade, course_names)
+    except Exception:
+        logger.exception("_on_profile_changed 失败 user=%s", user_id)
+
+
 class UserService():
     @staticmethod
     async def create_user(data: Create_User):
@@ -92,11 +131,10 @@ class UserService():
                 user.profile = data.profile
             await user.save()
 
-            # 专业或年级变更时，异步同步课程体系到画像（不阻塞响应）
+            # 专业或年级变更时，后台异步：同步课程体系 + 生成学习路径 + 通知
             if major_changed or grade_changed:
                 import asyncio
-                from backend.src.service.curriculum_service import sync_to_portrait
-                asyncio.ensure_future(sync_to_portrait(user_id, user.major or "", user.grade or ""))
+                asyncio.ensure_future(_on_profile_changed(user_id, user.major or "", user.grade or ""))
 
             return user, "信息修改成功"
         

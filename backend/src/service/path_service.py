@@ -64,8 +64,12 @@ class PathService:
 
     @staticmethod
     async def generate_path(subject: str, user_id: int, difficulty: str = "medium", node_count: int = 0) -> dict:
-        """LLM 生成路径结构 → 存库（node_count=0 自动计算）"""
+        """LLM 生成路径结构 → 存库（node_count=0 自动计算）。同用户同 subject 已存在则跳过。"""
         await init_db()
+
+        existing = await LearningPath.filter(user_id=user_id, subject=subject).first()
+        if existing:
+            return {"path_id": existing.id, "subject": subject, "nodes": [], "cached": True}
 
         portrait_context = "暂无画像数据"
         mastery_context = "暂无掌握度数据"
