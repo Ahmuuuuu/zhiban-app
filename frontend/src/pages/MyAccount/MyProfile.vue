@@ -12,7 +12,7 @@
 
       <div class="user-text">
         <h2>{{ displayValue(profile.username) }}</h2>
-        <p>{{ displayValue(profile.major) }}</p>
+        <p>{{ profileSubtitle }}</p>
       </div>
 
       <div class="header-actions">
@@ -42,6 +42,17 @@
           <label class="form-item">
             <span>专业</span>
             <input v-model.trim="form.major" type="text" placeholder="请输入专业" />
+          </label>
+
+          <label class="form-item">
+            <span>年级</span>
+            <select v-model="form.grade">
+              <option value="">请选择年级</option>
+              <option value="大一">大一</option>
+              <option value="大二">大二</option>
+              <option value="大三">大三</option>
+              <option value="大四">大四</option>
+            </select>
           </label>
 
           <label class="form-item">
@@ -152,6 +163,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   deleteUser,
+  generateLearningPathsFromProfile,
   getUserProfile,
   normalizeAvatarUrl,
   updateUserProfile,
@@ -190,6 +202,7 @@ const profile = reactive({
   id: '',
   username: '',
   major: '',
+  grade: '',
   email: '',
   phonenum: '',
   profile: '',
@@ -201,6 +214,7 @@ const form = reactive({ ...profile })
 const infoItems = [
   { key: 'username', label: '用户名' },
   { key: 'major', label: '专业' },
+  { key: 'grade', label: '年级' },
   { key: 'email', label: '邮箱' },
   { key: 'phonenum', label: '手机号' },
   { key: 'profile', label: '个人简介' }
@@ -208,6 +222,10 @@ const infoItems = [
 
 const hasProfile = computed(() => infoItems.some(item => Boolean(String(profile[item.key] || '').trim())))
 const profileAvatarUrl = computed(() => normalizeAvatarUrl(profile.avatar) || defaultAvatar)
+const profileSubtitle = computed(() => {
+  const parts = [profile.major, profile.grade].map(item => String(item || '').trim()).filter(Boolean)
+  return parts.length ? parts.join(' · ') : displayValue('')
+})
 const cropImageStyle = computed(() => ({
   transform: `translate(${cropOffset.x}px, ${cropOffset.y}px) scale(${cropZoom.value})`
 }))
@@ -262,10 +280,46 @@ const toggleEdit = () => {
 const buildProfilePayload = () => ({
   username: form.username.trim() || null,
   major: form.major.trim() || null,
+  grade: form.grade.trim() || null,
   email: form.email.trim() || null,
   phonenum: form.phonenum.trim() || null,
   profile: form.profile.trim() || null
 })
+
+const notifyPet = (message, duration = 5200) => {
+  window.dispatchEvent(new CustomEvent('zhiban-pet-notice', {
+    detail: { message, duration }
+  }))
+}
+
+const unwrapApiData = result => result?.data?.data ?? result?.data ?? result
+
+const triggerProfilePathGeneration = async previousProfile => {
+  const major = String(profile.major || '').trim()
+  const grade = String(profile.grade || '').trim()
+  const majorChanged = major !== String(previousProfile?.major || '').trim()
+  const gradeChanged = grade !== String(previousProfile?.grade || '').trim()
+
+  if (!major || !grade || (!majorChanged && !gradeChanged)) return
+
+  notifyPet(`正在根据${grade}${major}为你生成学习路径。`, 6000)
+
+  try {
+    const result = await generateLearningPathsFromProfile({ course_limit: 3 })
+    const data = unwrapApiData(result) || {}
+    const paths = Array.isArray(data.paths) ? data.paths : []
+    const firstPath = paths[0] || null
+    window.sessionStorage.setItem('zhiban_path_needs_refresh', '1')
+    window.dispatchEvent(new CustomEvent('zhiban:path-generated', {
+      detail: { path: firstPath, paths, major, grade, courses: data.courses || [] }
+    }))
+    notifyPet(paths.length
+      ? `已按${grade}${major}生成 ${paths.length} 条学习路径，学习路径页已准备好。`
+      : `已根据${grade}${major}更新学习路径。`, 7200)
+  } catch (error) {
+    notifyPet(error?.response?.data?.detail || error?.message || '学习路径自动生成失败，请稍后再试。', 7200)
+  }
+}
 
 const loadProfile = async () => {
   if (!token.value) {
@@ -313,6 +367,7 @@ const saveProfile = async () => {
   saving.value = true
   errorMessage.value = ''
   successMessage.value = ''
+  const previousProfile = { ...profile }
 
   try {
     await updateUserProfile(buildProfilePayload())
@@ -320,6 +375,7 @@ const saveProfile = async () => {
     fillProfile(normalizeProfile(profileResult))
     successMessage.value = '个人信息已保存'
     isEditing.value = false
+    void triggerProfilePathGeneration(previousProfile)
   } catch (error) {
     errorMessage.value =
       error?.response?.data?.detail ||
@@ -701,6 +757,7 @@ button {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #c9dce9;
@@ -712,6 +769,11 @@ textarea {
 }
 
 input {
+  height: 44px;
+  padding: 0 14px;
+}
+
+select {
   height: 44px;
   padding: 0 14px;
 }

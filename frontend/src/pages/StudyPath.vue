@@ -2245,7 +2245,24 @@ const resetPath = () => {
   clearPathCache()
 }
 
+const handleGeneratedPathEvent = async event => {
+  const detail = event?.detail || {}
+  const generatedPath = normalizePath(detail.path)
+  if (generatedPath?.nodes?.length) {
+    setPathState(generatedPath)
+    await announcePathTeacherAfterOverlay(generatedPath, generatedPath.goal)
+    return
+  }
+
+  await delay(600)
+  await fetchCurrentPath({ silent: true })
+  if (pathState.value?.nodes?.length) {
+    await announcePathTeacherAfterOverlay(pathState.value, pathState.value.goal)
+  }
+}
+
 const mountStudyPath = async () => {
+  window.addEventListener('zhiban:path-generated', handleGeneratedPathEvent)
   const queryPathId = route.query.pathId || route.query.path_id
   if (queryPathId) {
     loading.value = true
@@ -2274,6 +2291,7 @@ const mountStudyPath = async () => {
 
 onMounted(mountStudyPath)
 onBeforeUnmount(() => {
+  window.removeEventListener('zhiban:path-generated', handleGeneratedPathEvent)
   stopPathHeartbeat()
   stopCurrentAudio()
 })
