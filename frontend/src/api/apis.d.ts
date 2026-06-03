@@ -204,6 +204,12 @@ export function generateLearningPath(data: {
   node_count?: number;
 }): Promise<unknown>;
 
+export function generateLearningPathsFromProfile(data?: {
+  difficulty?: string;
+  node_count?: number;
+  course_limit?: number;
+}): Promise<unknown>;
+
 export function getLearningPaths(): Promise<unknown>;
 
 export function getLearningPathDetail(pathId: number | string): Promise<unknown>;

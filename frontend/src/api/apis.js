@@ -685,6 +685,14 @@ export function generateLearningPath(data) {
   })
 }
 
+export function generateLearningPathsFromProfile(data = {}) {
+  return request({
+    url: '/path/generate-from-profile',
+    method: 'post',
+    data
+  })
+}
+
 export function getLearningPaths() {
   return request.get('/path/list')
 }
