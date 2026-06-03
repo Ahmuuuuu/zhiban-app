@@ -22,6 +22,7 @@ class LearningPath(Model):
 
     class Meta:
         table = "learning_paths"
+        unique_together = [("user_id", "subject")]
 
 
 class PathNode(Model):

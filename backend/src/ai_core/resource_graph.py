@@ -55,7 +55,11 @@ class ResourceState(TypedDict):
 # ═══════════════════════════════════════
 
 async def leader_node(state: ResourceState) -> dict:
-    """LeaderAgent: 分析需求，决定生成哪些资源类型"""
+    """LeaderAgent: 分析需求，决定生成哪些资源类型（用户已指定则跳过 LLM）"""
+    requested = state.get("resource_types") or []
+    if requested:
+        return {"resource_types": requested}
+
     topic = state["topic"]
     portrait = state.get("portrait_context", "")
     kb = state.get("kb_context", "")
@@ -66,20 +70,14 @@ async def leader_node(state: ResourceState) -> dict:
         response = await llm.ainvoke(prompt_text)
     except Exception as e:
         logger.exception("LeaderAgent LLM 调用失败")
-        return {"resource_types": state.get("resource_types", ["document"])}
+        return {"resource_types": ["document"]}
 
     try:
         plan = parse_llm_json(response.content)
     except json.JSONDecodeError:
         plan = {"resource_types": ["document"], "topic": topic, "outline": response.content.strip()}
 
-    # 用户已指定资源类型则尊重用户选择，否则由 Leader 决定
-    requested = state.get("resource_types") or []
-    if requested:
-        resource_types = requested
-    else:
-        resource_types = plan.get("resource_types", ["document"])
-
+    resource_types = plan.get("resource_types", ["document"])
     return {"resource_types": resource_types}
 
 

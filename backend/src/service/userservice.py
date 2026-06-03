@@ -16,6 +16,17 @@ from backend.src.utils.pwintohash import get_password_hash, verify_password
 async def _on_profile_changed(user_id: int, major: str, grade: str):
     """专业/年级变更时后台执行：同步课程体系 → 生成学习路径 → 发通知"""
     try:
+        # 0. 时间窗口防抖：1 小时内不重复执行
+        from datetime import datetime, timedelta
+        from backend.src.models.path_model import LearningPath
+        recent = await LearningPath.filter(
+            user_id=user_id,
+            created_at__gte=datetime.now() - timedelta(hours=1),
+        ).first()
+        if recent:
+            logger.info("_on_profile_changed 跳过（1小时内已生成过路径） user=%s", user_id)
+            return
+
         # 1. 同步课程到画像
         from backend.src.service.curriculum_service import sync_to_portrait
         courses = await sync_to_portrait(user_id, major, grade)
@@ -23,31 +34,38 @@ async def _on_profile_changed(user_id: int, major: str, grade: str):
         if not courses:
             return
 
-        # 2. 为所有课程生成学习路径（去重由 generate_path 保证）
+        # 2. 为所有课程生成学习路径（generate_path 内部去重，cached=True 表示已存在）
         from backend.src.service.path_service import PathService
         from backend.src.models.notification_model import Notification
 
-        paths = []
+        new_paths = []
+        cached_count = 0
         for course in courses:
             try:
                 result = await PathService.generate_path(course, user_id, "medium", 0)
-                if "error" not in result:
-                    paths.append(result)
+                if "error" in result:
+                    continue
+                if result.get("cached"):
+                    cached_count += 1
+                else:
+                    new_paths.append(result)
             except Exception:
                 logger.exception("自动生成路径失败 user=%s course=%s", user_id, course)
 
-        # 3. 发通知
-        if paths:
-            course_names = "、".join(p.get("subject", "") for p in paths)
+        # 3. 发通知（仅当有新路径时）
+        if new_paths:
+            course_names = "、".join(p.get("subject", "") for p in new_paths)
             grade_text = f"{grade}" if grade else ""
+            suffix = f"（另外 {cached_count} 门已存在，已跳过）" if cached_count else ""
             await Notification.create(
                 type="system",
                 title="学习路径已生成",
-                content=f"检测到你的专业/年级更新为{grade_text}{major}，已自动为你生成 {len(paths)} 条学习路径（{course_names}），去看看吧",
+                content=f"检测到你的专业/年级更新为{grade_text}{major}，已自动为你生成 {len(new_paths)} 条学习路径（{course_names}）。{suffix}",
                 target_url="/learning-path",
                 target_user_id=user_id,
             )
-            logger.info("专业/年级变更 → 自动生成路径 user=%s major=%s grade=%s courses=%s", user_id, major, grade, course_names)
+            logger.info("专业/年级变更 → 自动生成路径 user=%s major=%s grade=%s new=%d cached=%d",
+                        user_id, major, grade, len(new_paths), cached_count)
     except Exception:
         logger.exception("_on_profile_changed 失败 user=%s", user_id)
 

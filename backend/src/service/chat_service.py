@@ -39,8 +39,16 @@ async def _build_path_context(user_id: int) -> str:
         return ""
 
 
+import time as _time
+_portrait_cache: dict[int, tuple[float, str]] = {}
+
 async def _build_portrait_context(user_id: int) -> str:
-    """构建用户画像 + 知识点掌握度 + 六维雷达的上下文文本"""
+    """构建用户画像 + 知识点掌握度 + 六维雷达的上下文文本（30s 缓存）"""
+    now = _time.time()
+    if user_id in _portrait_cache:
+        ts, ctx = _portrait_cache[user_id]
+        if now - ts < 30:
+            return ctx
     try:
         from backend.src.service.portrait_service import PortraitChatHistory_Service, PortraitRadarService
 
@@ -98,8 +106,11 @@ async def _build_portrait_context(user_id: int) -> str:
                 pass
 
         if not lines:
-            return ""
-        return "用户画像：\n" + "\n".join(lines)
+            ctx = ""
+        else:
+            ctx = "用户画像：\n" + "\n".join(lines)
+        _portrait_cache[user_id] = (_time.time(), ctx)
+        return ctx
     except Exception:
         logger.exception("构建画像上下文失败 user_id=%s", user_id)
         return ""
