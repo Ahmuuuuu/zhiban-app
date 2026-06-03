@@ -26,7 +26,7 @@
           <Pause v-if="narrationState.playing" :size="15" />
           <Play v-else :size="15" />
         </button>
-        <button type="button" aria-label="停止音频" @click="stopCurrentAudio">
+        <button class="audio-control__close" type="button" aria-label="关闭播放条" @click="stopCurrentAudio">
           <Square :size="13" />
         </button>
       </section>
@@ -256,8 +256,8 @@ onBeforeUnmount(() => {
 
 /* 右侧操作区 */
 .audio-control {
-  min-width: 220px;
-  max-width: 310px;
+  min-width: 300px;
+  max-width: 430px;
   height: 42px;
   padding: 5px 7px 5px 12px;
   border: 1px solid rgba(20, 55, 97, 0.12);
@@ -328,6 +328,11 @@ onBeforeUnmount(() => {
 .audio-control button + button {
   background: rgba(20, 55, 97, 0.12);
   color: #143761;
+}
+
+.audio-control__close {
+  background: rgba(20, 55, 97, 0.1) !important;
+  color: #143761 !important;
 }
 
 @keyframes audio-wave {
@@ -430,8 +435,8 @@ onBeforeUnmount(() => {
   }
 
   .audio-control {
-    min-width: 150px;
-    max-width: 190px;
+    min-width: 220px;
+    max-width: 300px;
   }
 
   .audio-control__meta strong {
@@ -462,7 +467,7 @@ onBeforeUnmount(() => {
     position: fixed;
     left: 12px;
     right: 12px;
-    top: 62px;
+    top: 56px;
     width: auto;
     min-width: 0;
     max-width: none;
