@@ -697,7 +697,10 @@ async def _run_generation_task(db_id: int, task_id: str):
             return
 
         resource_types = json.loads(task.resource_types) if task.resource_types else ["document"]
-        chat_group_id = task.chat_group_id or 0
+        chat_group_id = await _ensure_chat_group_id(user_id, task.chat_group_id or 0)
+        if chat_group_id != (task.chat_group_id or 0):
+            task.chat_group_id = chat_group_id
+            await task.save()
         user_id = task.user_id
         topic = task.topic
 

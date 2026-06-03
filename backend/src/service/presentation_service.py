@@ -87,14 +87,60 @@ async def preview(topic: str, user_id: int) -> dict:
 
 
 async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -> dict:
-    """分析资源内容，生成 2-3 个选择题帮助用户聚焦课件方向"""
+    """分析资源内容或话题本身，生成 2-3 个选择题帮助用户聚焦课件方向"""
     from backend.src.models.usermodel import User
 
     doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
-    if not any([doc, mindmap_data, ppt_data]):
-        return {"error": f"话题「{topic}」暂无已生成的资源"}
+    has_resources = any([doc, mindmap_data, ppt_data])
 
-    # 构建内容摘要（章节标题列表，不传全文以控制 token）
+    # 画像上下文
+    portrait_context = ""
+    user = await User.filter(id=user_id).first()
+    if user:
+        parts = []
+        if user.major:
+            parts.append(f"专业：{user.major}")
+        if user.grade:
+            parts.append(f"年级：{user.grade}")
+        portrait_context = "；".join(parts) if parts else ""
+
+    if has_resources:
+        # 有资源 → 基于实际章节出题
+        questions_list = await _generate_questions_from_content(topic, portrait_context, doc, ppt_data)
+    else:
+        # 无资源 → 基于话题常识出题（与资源生成并行）
+        questions_list = await _generate_questions_from_topic(topic, portrait_context)
+
+    if not questions_list:
+        questions_list = [{
+            "id": "depth",
+            "question": "需要多深的内容？",
+            "multi": False,
+            "options": [
+                {"label": "5分钟概览，了解核心概念", "value": "overview"},
+                {"label": "标准讲解，理解原理和应用", "value": "standard"},
+                {"label": "逐页详解，包含推导和案例", "value": "deep"},
+            ],
+        }]
+
+    # 写入聊天历史
+    if chat_group_id and chat_group_id > 0:
+        from backend.src.models.chat_history_model import ChatHistory
+        try:
+            await ChatHistory.create(
+                user=user,
+                chat_group_id=chat_group_id,
+                req="",
+                res=json.dumps({"type": "presentation_questions", "topic": topic, "questions": questions_list, "_video_hint": "动态课件"}, ensure_ascii=False),
+            )
+        except Exception:
+            logger.exception("保存追问到聊天历史失败")
+
+    return {"questions": questions_list}
+
+
+async def _generate_questions_from_content(topic: str, portrait_context: str, doc, ppt_data) -> list[dict]:
+    """基于已有资源内容生成问题"""
     lines: list[str] = []
     if doc:
         content = doc.content or ""
@@ -119,17 +165,6 @@ async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -
 
     content_summary = "\n".join(lines) if lines else "暂无章节信息"
 
-    # 画像上下文
-    portrait_context = ""
-    user = await User.filter(id=user_id).first()
-    if user:
-        parts = []
-        if user.major:
-            parts.append(f"专业：{user.major}")
-        if user.grade:
-            parts.append(f"年级：{user.grade}")
-        portrait_context = "；".join(parts) if parts else ""
-
     prompt = fill_prompt(
         load_prompt("presentation/questions"),
         topic=topic,
@@ -137,37 +172,44 @@ async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -
         content_summary=content_summary,
     )
 
-    questions_list: list[dict] = []
     try:
         resp = await llm.ainvoke(prompt)
         raw = resp.content.strip()
-        # 清洗 markdown 代码块包裹
         if raw.startswith("```"):
             raw = re.sub(r"^```\w*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw)
         questions_data = json.loads(raw)
-        questions_list = questions_data.get("questions", [])
+        return questions_data.get("questions", [])
     except json.JSONDecodeError:
         logger.warning("AI 问题 JSON 解析失败，降级为默认问题 raw=%s", raw[:200])
-        questions_list = _default_questions(doc, ppt_data)
+        return _default_questions(doc, ppt_data)
     except Exception:
         logger.exception("AI 问题生成失败")
-        questions_list = _default_questions(doc, ppt_data)
+        return _default_questions(doc, ppt_data)
 
-    # 写入聊天历史
-    if chat_group_id and chat_group_id > 0:
-        from backend.src.models.chat_history_model import ChatHistory
-        try:
-            await ChatHistory.create(
-                user=user,
-                chat_group_id=chat_group_id,
-                req="",
-                res=json.dumps({"type": "presentation_questions", "topic": topic, "questions": questions_list, "_video_hint": "动态课件"}, ensure_ascii=False),
-            )
-        except Exception:
-            logger.exception("保存追问到聊天历史失败")
 
-    return {"questions": questions_list}
+async def _generate_questions_from_topic(topic: str, portrait_context: str) -> list[dict]:
+    """无资源时，基于话题常识生成问题"""
+    prompt = fill_prompt(
+        load_prompt("presentation/questions_topic_only"),
+        topic=topic,
+        portrait_context=portrait_context or "暂无画像",
+    )
+
+    try:
+        resp = await llm.ainvoke(prompt)
+        raw = resp.content.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```\w*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+        questions_data = json.loads(raw)
+        return questions_data.get("questions", [])
+    except json.JSONDecodeError:
+        logger.warning("AI 问题（话题模式）JSON 解析失败 raw=%s", raw[:200])
+        return []
+    except Exception:
+        logger.exception("AI 问题（话题模式）生成失败")
+        return []
 
 
 def _default_questions(doc, ppt_data) -> list[dict]:
