@@ -824,6 +824,8 @@ const formatTime = (timeString) => {
 }
 
 //展示用户信息发送时间
+const hashStr = str => Math.abs(String(str || '').split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)).toString(36)
+
 const getNowTime = () => {
   const now = new Date()
   const h = String(now.getHours()).padStart(2, '0')
@@ -1543,6 +1545,8 @@ const attachGenerationTaskToMessage = (task, messageId) => {
 
       if (task.status === 'done' && task.tool?.generateMode === 'video') {
         await maybeGeneratePresentation(task)
+        // 课件生成完后刷新左侧历史列表
+        await loadConversationList()
       }
 
       while (fileCursor < task.files.length) {
@@ -1763,10 +1767,14 @@ const loadConversationList = async () => {
     const res = await getConversationList()
 
     const chatGroups = normalizeHistoryGroups(res).map(item => {
-      const id = item.id || item.conversationId || item.chat_group_id
+      const rawId = item.id || item.conversationId || item.chat_group_id
+      const num = Number(rawId)
+      // null / 0 等无效 ID 用 title hash 生成临时 ID，保证侧栏能显示
+      const id = (Number.isFinite(num) && num > 0) ? rawId : `fallback-${hashStr(item.title || item.req || '')}`
 
       return {
         id,
+        _rawId: rawId,
         title: stripTypedResourceInstruction(item.title || item.req) || `对话 ${id}`,
         lastMessage: stripTypedResourceInstruction(item.lastMessage || item.last_message || item.req) || '',
         time: item.time || formatTime(item.updateTime || item.created_time)
@@ -1774,7 +1782,7 @@ const loadConversationList = async () => {
     })
 
     // 把有生成任务但没 chat_history 记录的对话也加进去
-    const existingIds = new Set(chatGroups.map(g => String(g.id)))
+    const existingIds = new Set(chatGroups.map(g => String(g._rawId || g.id)))
     for (const task of generationTasks) {
       const gid = String(task.chatGroupId)
       const gidNum = Number(gid)
@@ -1782,6 +1790,7 @@ const loadConversationList = async () => {
       existingIds.add(gid)
       chatGroups.push({
         id: gid,
+        _rawId: gid,
         title: task.text || '资源生成',
         lastMessage: task.progress || '正在生成资源...',
         time: formatTime(task.updatedAt)
@@ -1805,20 +1814,20 @@ const loadConversationList = async () => {
 const openConversation = async (conversationId) => {
   if (historyLoading.value) return
 
-  // 非整数 ID（如 generationTask 的临时 ID）不能调历史消息接口
   const numericId = Number(conversationId)
-  if (!Number.isFinite(numericId) || numericId <= 0) {
-    console.warn('[ChatView] 跳过无效对话ID:', conversationId)
-    messages.value = [{ id: Date.now(), role: 'assistant', type: 'text', content: '该对话暂无历史记录', time: getNowTime() }]
-    activeConversationId.value = conversationId
-    showHistoryPanel.value = false
-    showAddMenu.value = false
-    return
-  }
+  const isValidId = Number.isFinite(numericId) && numericId > 0
+  const isFallbackId = String(conversationId).startsWith('fallback-')
 
   activeConversationId.value = conversationId
   showHistoryPanel.value = false
   showAddMenu.value = false
+
+  if (!isValidId || isFallbackId) {
+    // fallback ID 或无效 ID → 不调 API
+    messages.value = [{ id: Date.now(), role: 'assistant', type: 'text', content: '该对话记录不完整，请重新生成视频。', time: getNowTime() }]
+    return
+  }
+
   historyLoading.value = true
 
   try {
@@ -1826,6 +1835,14 @@ const openConversation = async (conversationId) => {
     const records = normalizeList(res)
 
     messages.value = buildMessagesFromHistory(records, conversationId)
+    // 诊断：检查 presentation 匹配
+    try {
+      const presResult = await getPresentations()
+      const presList = normalizeList(presResult)
+      console.log('[ChatView] 已生成课件:', presList.length, '条', presList.map(p => ({ id: p.id, topic: p.topic, file_url: p.file_url })))
+    } catch (e) {
+      console.error('[ChatView] 获取课件列表失败:', e)
+    }
     await appendPresentationCardsFromHistory(records, messages.value)
     await hydrateGenerationTasks().catch(error => {
       console.warn('[ChatView] restore generation tasks failed:', error)
