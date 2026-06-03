@@ -125,8 +125,10 @@ async def regenerate_path(data: RegeneratePathRequest, user_id: int = Depends(ge
 
 @router.post("/generate-from-profile")
 async def generate_paths_from_profile(data: GenerateFromProfileRequest, user_id: int = Depends(get_user_id_from_token)):
-    """根据用户专业 + 年级自动获取课程 → 批量生成学习路径"""
+    """根据用户专业 + 年级自动获取课程 → 批量生成学习路径（1h 内不重复）"""
+    from datetime import datetime, timedelta
     from backend.src.models.usermodel import User
+    from backend.src.models.path_model import LearningPath
     from backend.src.service.curriculum_service import get_courses
     from backend.src.models.notification_model import Notification
 
@@ -136,28 +138,43 @@ async def generate_paths_from_profile(data: GenerateFromProfileRequest, user_id:
     if not user.major:
         raise HTTPException(status_code=400, detail="请先在个人资料中设置专业")
 
+    # 时间窗口防抖
+    recent = await LearningPath.filter(
+        user_id=user_id,
+        created_at__gte=datetime.now() - timedelta(hours=1),
+    ).first()
+    if recent:
+        return {"code": 200, "msg": "1小时内已生成过路径，请稍后再试", "data": {"major": user.major, "grade": user.grade, "courses": [], "paths": []}}
+
     courses = await get_courses(user.major, user.grade or "")
     courses = courses[:max(1, data.course_limit)]
 
-    paths = []
+    new_paths = []
+    cached_count = 0
     for course in courses:
         try:
             result = await PathService.generate_path(course, user_id, data.difficulty, data.node_count)
-            if "error" not in result:
-                paths.append({"path_id": result.get("path_id"), "subject": course, "nodes": result.get("nodes", [])})
+            if "error" in result:
+                continue
+            if result.get("cached"):
+                cached_count += 1
+            else:
+                new_paths.append({"path_id": result.get("path_id"), "subject": course, "nodes": result.get("nodes", [])})
         except Exception:
-            pass  # 单个课程失败不影响其他
+            pass
 
-    # 发通知
-    course_names = "、".join(c.get("subject", "") for c in paths)
-    grade_text = f"{user.grade}" if user.grade else ""
-    notify = await Notification.create(
-        type="system",
-        title="学习路径已生成",
-        content=f"已根据{grade_text}{user.major}的课程（{course_names}）生成 {len(paths)} 条学习路径",
-        target_url=f"/learning-path?major={user.major}",
-        target_user_id=user_id,
-    )
+    all_subjects = [p.get("subject") for p in new_paths]
+    if new_paths:
+        course_names = "、".join(all_subjects)
+        grade_text = f"{user.grade}" if user.grade else ""
+        suffix = f"（另外 {cached_count} 门已存在，已跳过）" if cached_count else ""
+        await Notification.create(
+            type="system",
+            title="学习路径已生成",
+            content=f"已根据{grade_text}{user.major}的课程（{course_names}）生成 {len(new_paths)} 条学习路径。{suffix}",
+            target_url=f"/learning-path?major={user.major}",
+            target_user_id=user_id,
+        )
 
     return {
         "code": 200,
@@ -165,8 +182,7 @@ async def generate_paths_from_profile(data: GenerateFromProfileRequest, user_id:
         "data": {
             "major": user.major,
             "grade": user.grade,
-            "courses": [c.get("subject") for c in paths],
-            "paths": paths,
-            "notification_id": notify.id,
+            "courses": all_subjects,
+            "paths": new_paths,
         },
     }
