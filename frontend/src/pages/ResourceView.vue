@@ -331,6 +331,7 @@ const normalizeGeneratedResources = data => {
     const resourceText = String(`${resourceType} ${filename} ${item.topic || ''} ${item.title || ''}`).toLowerCase()
     const isQuiz = resourceText.includes('exercise') || resourceText.includes('quiz')
     const isMindmap = resourceText.includes('mindmap') || resourceText.includes('mind_map') || resourceText.includes('mind-map') || resourceText.includes('xmind')
+    const isVideoType = resourceText.includes('video') || resourceText.includes('mp4') || resourceText.includes('视频')
 
     const resource = {
       doc_id: `generated-${resourceId}`,
@@ -348,7 +349,7 @@ const normalizeGeneratedResources = data => {
       quizId: item.quiz_id || item.quizId || '',
       sessionId: item.session_id || item.sessionId || '',
       created_at: item.created_at || item.createdAt || '',
-      previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || ''),
+      previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || (isVideoType ? (item.content || item.preview || '') : '')),
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''))
     }
     return attachResourceCover(resource, item)
@@ -424,6 +425,8 @@ const openResourcePreview = async resource => {
       const detail = await getGeneratedResource(resource.sourceId)
       const data = detail?.data || detail || {}
       const fullContent = data.content || data.preview || resource.content || ''
+      const isVideo = (data.resource_type || data.file_type || resource.type || '').toLowerCase().includes('video')
+      const looksLikeUrl = /^(https?:\/\/|\/static\/|\/resource\/)/.test(String(fullContent).trim())
       selectedResource.value = {
         ...resource,
         content: fullContent,
@@ -433,6 +436,7 @@ const openResourcePreview = async resource => {
         filename: data.filename || resource.filename,
         type: isMindmapResource(resource) ? 'mindmap' : (data.resource_type || data.file_type || resource.type),
         sessionId: data.session_id || resource.sessionId || '',
+        previewUrl: (isVideo && looksLikeUrl) ? resolveApiUrl(String(fullContent).trim()) : resource.previewUrl,
         downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl)
       }
     } catch (error) {
@@ -471,8 +475,11 @@ const isMindmapResource = resource => {
 }
 
 const isVideoResource = resource => {
-  const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  return resource?.category === 'video' || text.includes('video') || text.includes('mp4') || text.includes('视频')
+  const typeCat = String(`${resource?.type || ''} ${resource?.category || ''}`).toLowerCase()
+  const filename = String(resource?.filename || '').toLowerCase()
+  return resource?.category === 'video' ||
+    typeCat.includes('video') ||
+    /\.(mp4|webm|ogg|mov|avi|mkv|flv|wmv)($|\s|\?)/i.test(filename)
 }
 
 const getResourceKind = resource => {
