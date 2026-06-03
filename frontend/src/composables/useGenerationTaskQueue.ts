@@ -2,6 +2,7 @@ import { reactive } from 'vue'
 import {
   createResourceGenerationTask,
   generatePresentation,
+  getPresentationQuestions,
   getResourceGenerationTask,
   getResourceGenerationTasks,
 } from '../api/apis'
@@ -270,35 +271,89 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
 const maybeGeneratePresentation = async (task: GenerationTask) => {
   if (task.tool.generateMode !== 'video' || task.status !== 'done') return
   if ((task.doneEvent as any)?.presentation || !task.files.length) return
+  if ((task as any).pendingQuestions || (task as any).questionsShown) return
 
   try {
     task.status = 'running'
-    task.progress = '资源已生成，正在生成动态课件...'
-    const presentationResult: any = await generatePresentation({ topic: task.text })
-    const presentation = unwrapResponseData(presentationResult)
-    const sourceResource: any = task.files[0]
-    const resourceId = sourceResource?.resource_id || sourceResource?.file_id || ''
-    const title = sourceResource?.topic || sourceResource?.title || task.text || '学习视频'
+    task.progress = '资源已生成，正在分析内容...'
+    task.updatedAt = Date.now()
+    persistTasks()
 
-    const presentationFile = {
-      ...sourceResource,
-      file_id: presentation?.id || presentation?.presentation_id || `presentation-${resourceId}`,
-      presentation_id: presentation?.id || presentation?.presentation_id || '',
-      source_resource_id: resourceId,
-      file_type: 'video',
-      resource_type: 'video',
-      resourceKind: 'presentation',
-      filename: `${title}.html`,
-      presentation,
-      preview_url: presentation?.file_url || presentation?.fileUrl || '',
-      file_url: presentation?.file_url || presentation?.fileUrl || '',
-      download_url: '',
-      source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
+    const chatGroupId = task.chatGroupId || (task.doneEvent as any)?.chat_group_id || 0
+    const questionsResult: any = await getPresentationQuestions({ topic: task.text, chat_group_id: chatGroupId })
+    const questions = unwrapResponseData(questionsResult)?.questions || unwrapResponseData(questionsResult)
+
+    if (questions && Array.isArray(questions) && questions.length > 0) {
+      ;(task as any).pendingQuestions = questions
+      task.status = 'done'
+      task.progress = '请选择课件方向以继续...'
+    } else {
+      // 无问题则直接生成
+      await _doGeneratePresentation(task)
     }
-    task.files.splice(0, task.files.length, presentationFile)
-    task.doneEvent = { ...(task.doneEvent as object || {}), presentation }
-    task.status = 'done'
-    task.progress = '动态课件已生成，可以打开预览。'
+  } catch (error: any) {
+    // 问题生成失败 → 降级直接生成课件
+    console.warn('[GenerationTask] 追问生成失败，直接生成课件:', error)
+    try {
+      await _doGeneratePresentation(task)
+    } catch (e: any) {
+      task.status = 'failed'
+      task.error = e?.response?.data?.detail || e?.message || '动态课件生成失败'
+      task.progress = task.error
+    }
+  } finally {
+    task.updatedAt = Date.now()
+    persistTasks()
+  }
+}
+
+const _doGeneratePresentation = async (task: GenerationTask) => {
+  const chatGroupId = task.chatGroupId || (task.doneEvent as any)?.chat_group_id || 0
+  const answers = (task as any)._answers || undefined
+  const presentationResult: any = await generatePresentation({
+    topic: task.text,
+    answers,
+    chat_group_id: chatGroupId,
+  })
+  const presentation = unwrapResponseData(presentationResult)
+  const sourceResource: any = task.files[0]
+  const resourceId = sourceResource?.resource_id || sourceResource?.file_id || ''
+  const title = sourceResource?.topic || sourceResource?.title || task.text || '学习视频'
+
+  const presentationFile = {
+    ...sourceResource,
+    file_id: presentation?.id || presentation?.presentation_id || `presentation-${resourceId}`,
+    presentation_id: presentation?.id || presentation?.presentation_id || '',
+    source_resource_id: resourceId,
+    file_type: 'video',
+    resource_type: 'video',
+    resourceKind: 'presentation',
+    filename: `${title}.html`,
+    presentation,
+    preview_url: presentation?.file_url || presentation?.fileUrl || '',
+    file_url: presentation?.file_url || presentation?.fileUrl || '',
+    download_url: '',
+    source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
+  }
+  task.files.splice(0, task.files.length, presentationFile)
+  task.doneEvent = { ...(task.doneEvent as object || {}), presentation }
+  task.status = 'done'
+  task.progress = '动态课件已生成，可以打开预览。'
+  delete (task as any).pendingQuestions
+  ;(task as any).questionsShown = true
+}
+
+const answerQuestionsAndGenerate = async (task: GenerationTask, answers: Record<string, any>) => {
+  ;(task as any)._answers = answers
+  ;(task as any).questionsShown = true
+  delete (task as any).pendingQuestions
+  task.status = 'running'
+  task.progress = '正在生成动态课件...'
+  task.updatedAt = Date.now()
+  persistTasks()
+
+  try {
+    await _doGeneratePresentation(task)
   } catch (error: any) {
     task.status = 'failed'
     task.error = error?.response?.data?.detail || error?.message || '动态课件生成失败'
@@ -381,6 +436,7 @@ export function useGenerationTaskQueue() {
     startTask,
     hydrateTasks,
     maybeGeneratePresentation,
+    answerQuestionsAndGenerate,
     getTask,
   }
 }
