@@ -658,6 +658,10 @@ const normalizePath = data => {
       quizId: n.quiz_id || n.quizId || null,
       sessionId: n.session_id || n.sessionId || nodeResult.session_id || nodeResult.sessionId || progress.session_id || progress.sessionId || ''
     }
+    }).filter((node, index, arr) => {
+      // 按节点 ID 去重，防止后端返回重复数据
+      const firstIndex = arr.findIndex(n => n.id === node.id)
+      return firstIndex === index
     })
   }
 }
@@ -1669,6 +1673,9 @@ const hydratePathForRender = state => {
         resources,
         _resources: resources
       }
+    }).filter((node, index, arr) => {
+      const firstIndex = arr.findIndex(n => n.id === node.id)
+      return firstIndex === index
     })
   }
 }
