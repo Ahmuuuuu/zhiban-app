@@ -249,6 +249,16 @@
                 @error="handleImageError"
               />
             </template>
+            <template v-else-if="isPresentationResource(selectedResource)">
+              <iframe
+                v-if="selectedResource.previewUrl"
+                class="preview-iframe"
+                :src="selectedResource.previewUrl"
+                frameborder="0"
+                allowfullscreen
+              ></iframe>
+              <p v-else>课件加载中，请稍后...</p>
+            </template>
             <template v-else-if="isVideoResource(selectedResource)">
               <video
                 v-if="selectedResource.previewUrl"
@@ -339,6 +349,7 @@ import {
   getGeneratedImages,
   getGeneratedResource,
   getGeneratedResources,
+  getPresentations,
   getStudyResources,
   likeResource,
   resolveApiUrl,
@@ -508,14 +519,37 @@ const normalizeGeneratedImages = data => {
   })
 }
 
+const normalizePresentations = data => {
+  const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
+  return list.map(item => {
+    const resource = {
+      doc_id: `presentation-${item.id}`,
+      source: 'presentation',
+      sourceId: String(item.id || ''),
+      title: item.topic || '动态课件',
+      filename: `${item.topic || '动态课件'}.html`,
+      content: item.file_url || '',
+      type: 'presentation',
+      category: 'presentation',
+      categoryLabel: 'AI 课件',
+      visibility: 'private',
+      created_at: item.created_at || '',
+      previewUrl: resolveApiUrl(item.file_url || ''),
+      downloadUrl: resolveApiUrl(item.file_url || ''),
+    }
+    return attachResourceCover(resource, item)
+  })
+}
+
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
 
   try {
-    const [publicResult, myResult] = await Promise.all([
+    const [publicResult, myResult, presentationResult] = await Promise.all([
       getStudyResources({ visibility: 'public' }),
-      getStudyResources({ mine: true })
+      getStudyResources({ mine: true }),
+      getPresentations()
     ])
     const publicResources = normalizeResources(publicResult).filter(item => item.visibility === 'public')
     const myResources = normalizeResources(myResult)
@@ -523,7 +557,8 @@ const loadResources = async () => {
     const generatedBackendResources = normalizeGeneratedResources(generatedResult)
     const imageResult = await getGeneratedImages()
     const imageResources = normalizeGeneratedImages(imageResult)
-    resources.value = [...imageResources, ...generatedBackendResources, ...myResources, ...publicResources]
+    const presentationResources = normalizePresentations(presentationResult)
+    resources.value = [...presentationResources, ...imageResources, ...generatedBackendResources, ...myResources, ...publicResources]
     selectedResource.value = resources.value[0] || null
     openNotificationTargetResource()
   } catch (error) {
@@ -676,13 +711,16 @@ const isMindmapResource = resource => {
 }
 
 const isVideoResource = resource => {
-  // 只按 type / category / filename 后缀判定，不拿 title 匹配（标题含"视频"≠真是视频）
+  // 按 type / category / filename 后缀判定，不拿 title 匹配
   const typeCat = String(`${resource?.type || ''} ${resource?.category || ''}`).toLowerCase()
   const filename = String(resource?.filename || '').toLowerCase()
   return resource?.category === 'video' ||
+    resource?.type === 'presentation' ||
     typeCat.includes('video') ||
     /\.(mp4|webm|ogg|mov|avi|mkv|flv|wmv)($|\s|\?)/i.test(filename)
 }
+
+const isPresentationResource = resource => resource?.type === 'presentation' || resource?.category === 'presentation'
 
 const getResourceKind = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
@@ -1303,11 +1341,15 @@ onBeforeUnmount(() => {
   color: #163f8f;
 }
 
+.preview-iframe,
 .preview-video {
   width: 100%;
   max-height: 100%;
+  min-height: 360px;
   border-radius: 12px;
   display: block;
+  border: none;
+  background: #000;
 }
 
 .file-preview-wrap {
