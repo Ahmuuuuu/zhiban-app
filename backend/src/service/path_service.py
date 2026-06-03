@@ -49,15 +49,15 @@ def _compute_node_count(subject: str, picture) -> int:
     is_broad = any(kw in subject for kw in broad_keywords)
     is_narrow = any(kw in subject for kw in narrow_keywords)
 
-    base = 3 if is_narrow else (8 if is_broad else 5)
+    base = 5 if is_narrow else (10 if is_broad else 7)
     wc = len(subject)
     if wc <= 3:
-        base = max(3, base - 1)
+        base = max(5, base - 1)
     elif wc >= 8:
-        base = min(12, base + 2)
+        base = min(15, base + 2)
 
     level_adjust = int((kb_level - 3) * 1.5)
-    return max(3, min(12, base + level_adjust))
+    return max(5, min(15, base + level_adjust))
 
 
 class PathService:
@@ -136,13 +136,20 @@ class PathService:
         if not nodes_data:
             return {"error": "LLM 未返回有效节点"}
 
-        path = await LearningPath.create(
-            subject=subject,
-            difficulty=difficulty,
-            node_count=len(nodes_data),
-            cover_tags=json.dumps([n.get("topic") for n in nodes_data], ensure_ascii=False),
-            user=user,
-        )
+        from tortoise.exceptions import IntegrityError
+        try:
+            path = await LearningPath.create(
+                subject=subject,
+                difficulty=difficulty,
+                node_count=len(nodes_data),
+                cover_tags=json.dumps([n.get("topic") for n in nodes_data], ensure_ascii=False),
+                user=user,
+            )
+        except IntegrityError:
+            existing = await LearningPath.filter(user_id=user_id, subject=subject).first()
+            if existing:
+                return {"path_id": existing.id, "subject": subject, "nodes": [], "cached": True}
+            raise
 
         nodes = []
         created_nodes = []
