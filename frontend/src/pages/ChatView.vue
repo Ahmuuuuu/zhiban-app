@@ -185,6 +185,37 @@
         </div>
 
         <div
+          v-else-if="message.type === 'questions' && !message.answered"
+          class="questions-bubble"
+        >
+          <div
+            v-for="q in message.questions"
+            :key="q.id"
+            class="questions-group"
+          >
+            <p class="questions-prompt">{{ q.question }}</p>
+            <div class="questions-options">
+              <button
+                v-for="opt in q.options"
+                :key="opt.value"
+                class="q-option-btn"
+                :class="{
+                  active: q.multi
+                    ? (message._answers[q.id] || []).includes(opt.value)
+                    : message._answers[q.id] === opt.value
+                }"
+                @click="handleAnswerQuestion(message, q.id, opt.value, q.multi)"
+              >{{ opt.label }}</button>
+            </div>
+          </div>
+          <button
+            class="q-confirm-btn"
+            :disabled="!hasAnyAnswer(message)"
+            @click="handleConfirmAnswers(message)"
+          >确认，开始生成课件</button>
+        </div>
+
+        <div
           v-else-if="message.role === 'assistant'"
           class="bubble rich-bubble markdown-body"
           v-html="renderMarkdown(message.content)"
@@ -362,7 +393,8 @@ const {
   tasks: generationTasks,
   startTask: startGenerationTask,
   hydrateTasks: hydrateGenerationTasks,
-  maybeGeneratePresentation
+  maybeGeneratePresentation,
+  answerQuestionsAndGenerate
 } = useGenerationTaskQueue()
 const boundGenerationTaskMessages = new Map()
 const ACTIVE_GENERATION_TASK_KEY = 'zhiban_active_generation_task_id'
@@ -1500,6 +1532,55 @@ const scrollToBottom = async () => {
   })
 }
 
+// ═══════════════════════════════════════
+//  追问交互处理
+// ═══════════════════════════════════════
+
+const handleAnswerQuestion = (message, questionId, value, multi) => {
+  if (!message._answers) message._answers = {}
+  if (multi) {
+    if (!Array.isArray(message._answers[questionId])) message._answers[questionId] = []
+    const idx = message._answers[questionId].indexOf(value)
+    if (idx >= 0) message._answers[questionId].splice(idx, 1)
+    else message._answers[questionId].push(value)
+  } else {
+    message._answers[questionId] = value
+  }
+}
+
+const hasAnyAnswer = (message) => {
+  if (!message._answers) return false
+  const answers = message._answers
+  return Object.values(answers).some(v => {
+    if (Array.isArray(v)) return v.length > 0
+    return !!v
+  })
+}
+
+const handleConfirmAnswers = async (message) => {
+  const task = generationTasks.find(t => t.id === message.taskId)
+  if (!task) return
+
+  message.answered = true
+
+  // 保存 Q&A 到聊天历史（通过 presentation/question-answers 不需要额外接口）
+  // 直接把追问消息替换为"正在生成课件..."的过渡消息
+  const idx = messages.value.findIndex(m => m.id === message.id)
+  if (idx >= 0) {
+    messages.value.splice(idx, 1, {
+      id: message.id,
+      role: 'assistant',
+      type: 'text',
+      content: '正在根据你的选择生成课件...',
+      time: getNowTime()
+    })
+  }
+
+  await answerQuestionsAndGenerate(task, message._answers || {})
+  await loadConversationList()
+  await scrollToBottom()
+}
+
 const handleGenerationDone = async eventData => {
   const chatGroupId = eventData?.chat_group_id || activeConversationId.value
 
@@ -1547,6 +1628,22 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         await maybeGeneratePresentation(task)
         // 课件生成完后刷新左侧历史列表
         await loadConversationList()
+      }
+
+      // 追问环节：检测 pendingQuestions 并渲染交互消息
+      const pendingQuestions = (task as any).pendingQuestions
+      if (pendingQuestions && !(task as any)._questionsMsgId) {
+        const qMsgId = `questions-${task.id}`
+        ;(task as any)._questionsMsgId = qMsgId
+        messages.value.push({
+          id: qMsgId,
+          role: 'assistant',
+          type: 'questions',
+          taskId: task.id,
+          questions: pendingQuestions,
+          _answers: {},
+          time: getNowTime()
+        })
       }
 
       while (fileCursor < task.files.length) {
@@ -2564,6 +2661,88 @@ watch(
 
 .quiz-action:disabled {
   opacity: 0.62;
+  cursor: not-allowed;
+}
+
+/* ═══════════════════════════════════════
+   追问交互消息
+   ═══════════════════════════════════════ */
+
+.questions-bubble {
+  width: min(520px, 100%);
+  padding: 18px 20px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 18px;
+  border-top-left-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 24px rgba(22, 63, 143, 0.08);
+}
+
+.questions-group {
+  margin-bottom: 14px;
+}
+
+.questions-group:last-of-type {
+  margin-bottom: 16px;
+}
+
+.questions-prompt {
+  margin: 0 0 8px;
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.questions-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.q-option-btn {
+  padding: 6px 14px;
+  border: 1px solid rgba(22, 63, 143, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.q-option-btn:hover {
+  border-color: var(--primary);
+  background: rgba(22, 63, 143, 0.06);
+}
+
+.q-option-btn.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.q-confirm-btn {
+  width: 100%;
+  padding: 9px 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  font-family: inherit;
+}
+
+.q-confirm-btn:hover {
+  opacity: 0.9;
+}
+
+.q-confirm-btn:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 

@@ -131,10 +131,17 @@ export function getNarration(narrationId: number | string): Promise<unknown>;
 
 export function getNarrationVoices(): Promise<unknown>;
 
+export function getPresentationQuestions(data: {
+  topic: string;
+  chat_group_id?: number;
+}): Promise<unknown>;
+
 export function generatePresentation(data: {
   topic: string;
   voice?: string;
   chapters?: string[];
+  answers?: Record<string, unknown>;
+  chat_group_id?: number;
 }): Promise<unknown>;
 
 export function previewPresentation(data: { topic: string }): Promise<unknown>;

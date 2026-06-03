@@ -86,7 +86,7 @@ async def preview(topic: str, user_id: int) -> dict:
     return {"chapters": chapters}
 
 
-async def generate_questions(topic: str, user_id: int) -> dict:
+async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -> dict:
     """分析资源内容，生成 2-3 个选择题帮助用户聚焦课件方向"""
     from backend.src.models.usermodel import User
 
@@ -137,6 +137,7 @@ async def generate_questions(topic: str, user_id: int) -> dict:
         content_summary=content_summary,
     )
 
+    questions_list: list[dict] = []
     try:
         resp = await llm.ainvoke(prompt)
         raw = resp.content.strip()
@@ -145,13 +146,28 @@ async def generate_questions(topic: str, user_id: int) -> dict:
             raw = re.sub(r"^```\w*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw)
         questions_data = json.loads(raw)
-        return {"questions": questions_data.get("questions", [])}
+        questions_list = questions_data.get("questions", [])
     except json.JSONDecodeError:
         logger.warning("AI 问题 JSON 解析失败，降级为默认问题 raw=%s", raw[:200])
-        return {"questions": _default_questions(doc, ppt_data)}
+        questions_list = _default_questions(doc, ppt_data)
     except Exception:
         logger.exception("AI 问题生成失败")
-        return {"questions": _default_questions(doc, ppt_data)}
+        questions_list = _default_questions(doc, ppt_data)
+
+    # 写入聊天历史
+    if chat_group_id and chat_group_id > 0:
+        from backend.src.models.chat_history_model import ChatHistory
+        try:
+            await ChatHistory.create(
+                user=user,
+                chat_group_id=chat_group_id,
+                req="",
+                res=json.dumps({"type": "presentation_questions", "topic": topic, "questions": questions_list, "_video_hint": "动态课件"}, ensure_ascii=False),
+            )
+        except Exception:
+            logger.exception("保存追问到聊天历史失败")
+
+    return {"questions": questions_list}
 
 
 def _default_questions(doc, ppt_data) -> list[dict]:
@@ -356,7 +372,8 @@ async def _notify_sse(presentation_id: int, data: dict):
 # ═══════════════════════════════════════════════
 
 async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural",
-                  chapters: list[str] | None = None, answers: dict | None = None) -> dict:
+                  chapters: list[str] | None = None, answers: dict | None = None,
+                  chat_group_id: int = 0) -> dict:
     """创建课件记录 + 立即出骨架 + 后台补音频（可选 answers 裁剪内容）"""
     from backend.src.models.usermodel import User
     user = await User.filter(id=user_id).first()
@@ -381,6 +398,30 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
 
     record.file_url = f"/static/presentations/{filename}"
     await record.save()
+
+    # 保存到聊天历史
+    if chat_group_id and chat_group_id > 0:
+        from backend.src.models.chat_history_model import ChatHistory
+        try:
+            req_text = topic
+            if answers:
+                req_text = json.dumps({"topic": topic, "answers": answers}, ensure_ascii=False)
+            res_json = json.dumps({
+                "type": "presentation",
+                "id": record.id,
+                "topic": topic,
+                "file_url": record.file_url,
+                "status": "generating",
+                "_video_hint": "动态课件已生成",
+            }, ensure_ascii=False)
+            await ChatHistory.create(
+                user=user,
+                chat_group_id=chat_group_id,
+                req=req_text,
+                res=res_json,
+            )
+        except Exception:
+            logger.exception("保存课件到聊天历史失败")
 
     # 后台两阶段：先出骨架（秒级），再补音频
     asyncio_create_task(_generate_skeleton_then_audio(record.id, topic, user_id, voice, chapters, doc, mindmap_data, ppt_data))

@@ -508,6 +508,17 @@ export function getNarrationVoices() {
   return request.get('/video/voices')
 }
 
+export function getPresentationQuestions(data) {
+  return request({
+    url: '/presentation/questions',
+    method: 'post',
+    data: {
+      topic: data.topic,
+      chat_group_id: data.chat_group_id || 0
+    }
+  })
+}
+
 export function generatePresentation(data) {
   return request({
     url: '/presentation/generate',
@@ -515,7 +526,9 @@ export function generatePresentation(data) {
     data: {
       topic: data.topic,
       voice: data.voice || 'zh-CN-XiaoxiaoNeural',
-      chapters: data.chapters || undefined
+      chapters: data.chapters || undefined,
+      answers: data.answers || undefined,
+      chat_group_id: data.chat_group_id || 0
     }
   })
 }
