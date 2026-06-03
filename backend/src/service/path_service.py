@@ -27,7 +27,7 @@ from backend.src.utils.json_parser import parse_llm_json
 
 
 def _compute_node_count(subject: str, picture) -> int:
-    """动态计算路径节点数 (3-12)，基于 knowbase 水平和学科广度"""
+    """动态计算路径节点数 (8-30)，基于 knowbase 水平和学科广度"""
     traits = {}
     if picture and picture.traits:
         try:
@@ -49,15 +49,15 @@ def _compute_node_count(subject: str, picture) -> int:
     is_broad = any(kw in subject for kw in broad_keywords)
     is_narrow = any(kw in subject for kw in narrow_keywords)
 
-    base = 5 if is_narrow else (10 if is_broad else 7)
+    base = 10 if is_narrow else (20 if is_broad else 15)
     wc = len(subject)
     if wc <= 3:
-        base = max(5, base - 1)
+        base = max(8, base - 2)
     elif wc >= 8:
-        base = min(15, base + 2)
+        base = min(30, base + 3)
 
-    level_adjust = int((kb_level - 3) * 1.5)
-    return max(5, min(15, base + level_adjust))
+    level_adjust = int((kb_level - 3) * 2.0)
+    return max(8, min(30, base + level_adjust))
 
 
 class PathService:

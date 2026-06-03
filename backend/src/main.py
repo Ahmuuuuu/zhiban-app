@@ -84,10 +84,15 @@ async def startup():
     # 预加载 BGE 模型，避免首次知识库操作时等待下载/加载
     from backend.src.utils.knowledge_base import _get_embed_model_async
     await _get_embed_model_async()
+    # 启动定时任务（周报 + AI 建议）
+    from backend.src.utils.scheduler import start
+    start()
 
 
 @app.on_event("shutdown")
 async def shutdown():
+    from backend.src.utils.scheduler import stop
+    stop()
     await close_db()
 
 

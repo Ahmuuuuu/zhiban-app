@@ -1,13 +1,17 @@
-"""学习课件 HTML 生成服务 — 增量生成，产出一章推送一章"""
+"""学习课件 HTML 生成服务 — 先出骨架，后台补音频"""
+
 import json
 import logging
 import re
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 from backend.src.models.presentation_model import Presentation
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.notification_model import Notification
+from backend.src.ai_core.llm_config import llm
+from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +86,253 @@ async def preview(topic: str, user_id: int) -> dict:
     return {"chapters": chapters}
 
 
-# ─── SSE 通知队列 ───
+async def generate_questions(topic: str, user_id: int) -> dict:
+    """分析资源内容，生成 2-3 个选择题帮助用户聚焦课件方向"""
+    from backend.src.models.usermodel import User
+
+    doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
+    if not any([doc, mindmap_data, ppt_data]):
+        return {"error": f"话题「{topic}」暂无已生成的资源"}
+
+    # 构建内容摘要（章节标题列表，不传全文以控制 token）
+    lines: list[str] = []
+    if doc:
+        content = doc.content or ""
+        raw_parts = re.split(r"\n(?=## )", content.strip())
+        if len(raw_parts) <= 1:
+            raw_parts = re.split(r"\n(?=# )", content.strip())
+        titles = []
+        for part in raw_parts:
+            part = part.strip()
+            if not part:
+                continue
+            title = part.split("\n")[0].lstrip("#").strip()
+            titles.append(title)
+        if titles:
+            lines.append(f"【学科介绍】章节：{' | '.join(titles[:10])}")
+    if ppt_data:
+        from backend.src.utils.tts_utils import parse_slides
+        slides_meta = parse_slides(ppt_data.content or "")
+        titles = [m.get("title", "") for m in slides_meta if m.get("title")]
+        if titles:
+            lines.append(f"【PPT讲解】幻灯片：{' | '.join(titles[:15])}")
+
+    content_summary = "\n".join(lines) if lines else "暂无章节信息"
+
+    # 画像上下文
+    portrait_context = ""
+    user = await User.filter(id=user_id).first()
+    if user:
+        parts = []
+        if user.major:
+            parts.append(f"专业：{user.major}")
+        if user.grade:
+            parts.append(f"年级：{user.grade}")
+        portrait_context = "；".join(parts) if parts else ""
+
+    prompt = fill_prompt(
+        load_prompt("presentation/questions"),
+        topic=topic,
+        portrait_context=portrait_context or "暂无画像",
+        content_summary=content_summary,
+    )
+
+    try:
+        resp = await llm.ainvoke(prompt)
+        raw = resp.content.strip()
+        # 清洗 markdown 代码块包裹
+        if raw.startswith("```"):
+            raw = re.sub(r"^```\w*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+        questions_data = json.loads(raw)
+        return {"questions": questions_data.get("questions", [])}
+    except json.JSONDecodeError:
+        logger.warning("AI 问题 JSON 解析失败，降级为默认问题 raw=%s", raw[:200])
+        return {"questions": _default_questions(doc, ppt_data)}
+    except Exception:
+        logger.exception("AI 问题生成失败")
+        return {"questions": _default_questions(doc, ppt_data)}
+
+
+def _default_questions(doc, ppt_data) -> list[dict]:
+    """LLM 失败时的降级：从资源中提取章节标题作为选项"""
+    options: list[dict] = []
+    if doc:
+        content = doc.content or ""
+        raw_parts = re.split(r"\n(?=## )", content.strip())
+        if len(raw_parts) <= 1:
+            raw_parts = re.split(r"\n(?=# )", content.strip())
+        for part in raw_parts[:6]:
+            part = part.strip()
+            if not part:
+                continue
+            title = part.split("\n")[0].lstrip("#").strip()[:30]
+            if title:
+                slug = re.sub(r"\s+", "_", title)
+                options.append({"label": title, "value": slug})
+    if not options and ppt_data:
+        from backend.src.utils.tts_utils import parse_slides
+        slides = parse_slides(ppt_data.content or "")
+        for m in slides[:6]:
+            title = m.get("title", "")[:30]
+            if title:
+                slug = re.sub(r"\s+", "_", title)
+                options.append({"label": title, "value": slug})
+
+    questions = []
+    if options:
+        questions.append({
+            "id": "focus",
+            "question": "你想重点讲哪几个方向？",
+            "multi": True,
+            "options": options,
+        })
+    questions.append({
+        "id": "depth",
+        "question": "需要多深的内容？",
+        "multi": False,
+        "options": [
+            {"label": "5分钟概览，了解核心概念", "value": "overview"},
+            {"label": "标准讲解，理解原理和应用", "value": "standard"},
+            {"label": "逐页详解，包含推导和案例", "value": "deep"},
+        ],
+    })
+    return questions
+
+
+# ─── 内容裁剪 ───
+
+def _crop_content_by_answers(doc, mindmap_data, ppt_data, answers: dict) -> tuple:
+    """根据用户答案裁剪资源内容，返回裁剪后的副本"""
+    focus_vals = _parse_focus_values(answers)
+    depth = answers.get("depth", "standard")
+
+    cropped_doc = _crop_document(doc, focus_vals, depth) if doc else None
+    cropped_ppt = _crop_ppt(ppt_data, focus_vals, depth) if ppt_data else None
+    # mindmap 暂不支持裁剪，保留原样
+    return cropped_doc, mindmap_data, cropped_ppt
+
+
+def _parse_focus_values(answers: dict) -> set[str]:
+    """从 answers 中提取 focus 关键词"""
+    keywords: set[str] = set()
+    for key, val in answers.items():
+        if key.startswith("focus") or key == "focus":
+            if isinstance(val, list):
+                for v in val:
+                    keywords.update(_extract_keywords(v))
+            elif isinstance(val, str):
+                keywords.update(_extract_keywords(val))
+    return keywords
+
+
+def _extract_keywords(val: str) -> set[str]:
+    """从 value 中拆词，如 'supervised_learning' → {'supervised', 'learning'}"""
+    # 同时也保留原始值做子串匹配
+    kw = {val.lower(), val.lower().replace("_", " "), val.lower().replace("_", "")}
+    # 拆词
+    for part in val.lower().replace("_", " ").split():
+        if len(part) > 1:
+            kw.add(part)
+    return kw
+
+
+def _crop_document(record, focus_vals: set[str], depth: str):
+    """裁剪文档内容：只保留匹配的章节，并控制密度"""
+    if not record:
+        return None
+    content = record.content or ""
+    raw_parts = re.split(r"\n(?=## )", content.strip())
+    if len(raw_parts) <= 1:
+        raw_parts = re.split(r"\n(?=# )", content.strip())
+
+    if not focus_vals:
+        new_content = _trim_content_depth(content, depth)
+        return _make_cropped_copy(record, new_content)
+
+    kept: list[str] = []
+    for part in raw_parts:
+        part = part.strip()
+        if not part:
+            continue
+        title = part.split("\n")[0].lstrip("#").strip().lower()
+        text = part.lower()
+        if any(kw in title or kw in text for kw in focus_vals):
+            kept.append(part)
+
+    if not kept:
+        return record
+
+    new_content = "\n\n".join(kept)
+    if depth == "overview":
+        new_content = _trim_content_depth(new_content, depth)
+    return _make_cropped_copy(record, new_content)
+
+
+def _crop_ppt(record, focus_vals: set[str], depth: str):
+    """裁剪 PPT 内容：只保留匹配的幻灯片"""
+    if not record:
+        return None
+    content = record.content or ""
+    slides = re.split(r"\n---\n", content.strip())
+
+    if not focus_vals:
+        new_content = _trim_content_depth(content, depth, is_ppt=True)
+        return _make_cropped_copy(record, new_content)
+
+    kept: list[str] = []
+    for slide in slides:
+        slide = slide.strip()
+        if not slide:
+            continue
+        slide_lower = slide.lower()
+        if any(kw in slide_lower for kw in focus_vals):
+            kept.append(slide)
+
+    if not kept:
+        return record
+
+    new_content = "\n---\n".join(kept)
+    if depth == "overview":
+        new_content = _trim_content_depth(new_content, depth, is_ppt=True)
+    return _make_cropped_copy(record, new_content)
+
+
+def _make_cropped_copy(record, new_content: str):
+    """创建裁剪后的轻量副本，不污染 ORM 对象"""
+    return SimpleNamespace(
+        id=record.id,
+        content=new_content,
+        resource_type=record.resource_type,
+        topic=record.topic,
+    )
+
+
+def _trim_content_depth(content: str, depth: str, is_ppt: bool = False) -> str:
+    """概览模式：每段只保留标题 + 前 2 个 bullet"""
+    if depth != "overview":
+        return content
+    sep = "\n---\n" if is_ppt else "\n\n"
+    blocks = content.split(sep)
+    trimmed: list[str] = []
+    for block in blocks:
+        lines = block.strip().split("\n")
+        kept_lines = []
+        bullet_count = 0
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith(("- ", "* ")):
+                if bullet_count < 2:
+                    kept_lines.append(line)
+                    bullet_count += 1
+            else:
+                kept_lines.append(line)
+        trimmed.append("\n".join(kept_lines))
+    return sep.join(trimmed)
 _sse_queues: dict[int, list] = {}
 
 
 def _subscribe_sse(presentation_id: int):
-    """为 SSE 客户端创建消息队列"""
     q = []
     _sse_queues.setdefault(presentation_id, []).append(q)
     return q
@@ -102,7 +347,6 @@ def _unsubscribe_sse(presentation_id: int, q: list):
 
 
 async def _notify_sse(presentation_id: int, data: dict):
-    """通知所有 SSE 客户端"""
     for q in _sse_queues.get(presentation_id, []):
         q.append(data)
 
@@ -111,22 +355,25 @@ async def _notify_sse(presentation_id: int, data: dict):
 #  对外 API
 # ═══════════════════════════════════════════════
 
-async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural", chapters: list[str] | None = None) -> dict:
-    """创建课件记录 + 启动后台生成，立即返回"""
+async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural",
+                  chapters: list[str] | None = None, answers: dict | None = None) -> dict:
+    """创建课件记录 + 立即出骨架 + 后台补音频（可选 answers 裁剪内容）"""
     from backend.src.models.usermodel import User
     user = await User.filter(id=user_id).first()
     if not user:
         return {"error": "用户不存在"}
 
-    # 检查话题是否有资源
     doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
     if not any([doc, mindmap_data, ppt_data]):
         return {"error": f"话题「{topic}」暂无已生成的资源，请先通过 /resource/generate 生成"}
 
-    # 创建 DB 记录
+    # 用户作答 → 裁剪内容
+    if answers:
+        doc, mindmap_data, ppt_data = _crop_content_by_answers(doc, mindmap_data, ppt_data, answers)
+
     record = await Presentation.create(user=user, topic=topic, status="generating")
 
-    # 保存骨架 HTML（空章节，显示加载中）
+    # 保存初始骨架 HTML
     html = _render_html(topic, [])
     filename = f"{_safe_filename(topic)}_{uuid.uuid4().hex[:8]}.html"
     file_path = PRESENTATION_DIR / filename
@@ -135,14 +382,14 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     record.file_url = f"/static/presentations/{filename}"
     await record.save()
 
-    # 启动后台生成
-    asyncio_create_task(_generate_chapters(record.id, topic, user_id, voice, chapters))
+    # 后台两阶段：先出骨架（秒级），再补音频
+    asyncio_create_task(_generate_skeleton_then_audio(record.id, topic, user_id, voice, chapters, doc, mindmap_data, ppt_data))
 
     return {
         "id": record.id,
         "file_url": record.file_url,
         "status": "generating",
-        "message": "课件生成已启动，可通过 SSE 实时跟踪进度",
+        "message": "课件骨架已生成，音频正在后台补充",
     }
 
 
@@ -192,7 +439,6 @@ async def delete_presentation(presentation_id: int, user_id: int) -> bool:
     if not record:
         return False
 
-    # 删文件
     if record.file_url:
         fname = record.file_url.rsplit("/", 1)[-1]
         fp = PRESENTATION_DIR / fname
@@ -204,60 +450,102 @@ async def delete_presentation(presentation_id: int, user_id: int) -> bool:
 
 
 # ═══════════════════════════════════════════════
-#  后台增量生成
+#  两阶段生成：骨架 → 音频
 # ═══════════════════════════════════════════════
 
-async def _generate_chapters(record_id: int, topic: str, user_id: int, voice: str, selected_chapters: list[str] | None = None):
-    """逐章生成：每完成一章就更新 HTML + 通知 SSE"""
-    from backend.src.service.narration_service import narrate_resource
+async def _generate_skeleton_then_audio(record_id: int, topic: str, user_id: int, voice: str,
+                                         selected_chapters: list[str] | None = None,
+                                         doc=None, mindmap_data=None, ppt_data=None):
+    """阶段1：秒出骨架 → 阶段2：后台逐章补音频"""
+    from backend.src.service.narration_service import narrate_resource, narrate_content
     from backend.src.utils.mindmap import parse_mindmap_text
 
     record = await Presentation.filter(id=record_id).first()
     if not record:
         return
 
-    doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
+    # 未传入则自行拉取
+    if doc is None and mindmap_data is None and ppt_data is None:
+        doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
     chapters = []
+    # 每章：resource 对象 + 是否裁剪过（决定音频来源）
+    audio_tasks: list[dict] = []
 
     try:
-        # ── Ch1: 学科介绍 ──
+        # ── 阶段1：构建无音频骨架 ──
         if selected_chapters is None or "intro" in selected_chapters:
             if doc:
-                logger.info("[课件] 开始生成学科介绍 narration resource=%d", doc.id)
-                narration = await narrate_resource(doc.id, voice)
-                ch = _build_intro_section(doc, narration)
+                ch = _build_intro_skeleton(doc)
                 chapters.append(ch)
-                await _flush(record, topic, chapters, "generating")
-        else:
-            logger.info("[课件] 跳过学科介绍（未选中）")
-
-        # ── Ch2: 思维导图 ──
+                audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": doc})
         if selected_chapters is None or "mindmap" in selected_chapters:
             if mindmap_data:
-                logger.info("[课件] 开始生成思维导图 narration resource=%d", mindmap_data.id)
-                narration = await narrate_resource(mindmap_data.id, voice)
                 parsed = parse_mindmap_text(mindmap_data.content or "")
                 svg = _mindmap_to_svg(parsed)
-                ch = _build_mindmap_section(mindmap_data, svg, narration)
+                ch = _build_mindmap_skeleton(mindmap_data, svg)
                 chapters.append(ch)
-                await _flush(record, topic, chapters, "generating")
-        else:
-            logger.info("[课件] 跳过思维导图（未选中）")
-
-        # ── Ch3: PPT讲解 ──
+                audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": mindmap_data})
         if selected_chapters is None or "ppt" in selected_chapters:
             if ppt_data:
-                logger.info("[课件] 开始生成 PPT 讲解 narration resource=%d", ppt_data.id)
-                narration = await narrate_resource(ppt_data.id, voice)
-                ch = await _build_ppt_section(ppt_data, narration)
+                ch = _build_ppt_skeleton(ppt_data)
                 chapters.append(ch)
-                await _flush(record, topic, chapters, "generating")
-        else:
-            logger.info("[课件] 跳过 PPT 讲解（未选中）")
+                audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": ppt_data})
 
-        # 全部完成
+        # 首章音频先生成，跟着骨架一起刷出去，确保用户打开就能播
+        if audio_tasks:
+            first = audio_tasks[0]
+            res = first["resource"]
+            try:
+                if isinstance(res, SimpleNamespace):
+                    narration = await narrate_content(res.content, res.resource_type, voice, res.id)
+                else:
+                    narration = await narrate_resource(res.id, voice)
+                ch = chapters[first["chapter_idx"]]
+                ch_type = ch.get("type")
+                if ch_type == "intro":
+                    _patch_intro_audio(ch, narration)
+                elif ch_type == "mindmap":
+                    _patch_mindmap_audio(ch, narration)
+                elif ch_type == "ppt":
+                    _patch_ppt_audio(ch, narration)
+                ch["is_audio_ready"] = True
+                logger.info("[课件] 首章音频已就绪 chapter=%d type=%s", first["chapter_idx"], ch_type)
+            except Exception:
+                logger.exception("[课件] 首章旁白生成失败")
+
+        # 骨架立即可看（首章已有音频）
+        await _flush(record, topic, chapters, "generating")
+        logger.info("[课件] 骨架已出 record=%d chapters=%d", record_id, len(chapters))
+
+        # ── 阶段2：其余章节后台补音频 ──
+        for task in audio_tasks[1:]:
+            res = task["resource"]
+            try:
+                if isinstance(res, SimpleNamespace):
+                    narration = await narrate_content(res.content, res.resource_type, voice, res.id)
+                else:
+                    narration = await narrate_resource(res.id, voice)
+            except Exception:
+                logger.exception("[课件] 旁白生成失败 resource=%d", res.id)
+                continue
+
+            idx = task["chapter_idx"]
+            ch = chapters[idx]
+            ch_type = ch.get("type")
+
+            if ch_type == "intro":
+                _patch_intro_audio(ch, narration)
+            elif ch_type == "mindmap":
+                _patch_mindmap_audio(ch, narration)
+            elif ch_type == "ppt":
+                _patch_ppt_audio(ch, narration)
+
+            ch["is_audio_ready"] = True
+            await _flush(record, topic, chapters, "generating")
+            logger.info("[课件] 音频已补 chapter=%d type=%s record=%d", idx, ch_type, record_id)
+
         await _flush(record, topic, chapters, "ready")
-        logger.info("[课件] 全部生成完成 record=%d", record_id)
+        logger.info("[课件] 全部完成 record=%d", record_id)
         await Notification.create(
             type="resource",
             title="课件制作完成",
@@ -321,7 +609,7 @@ def asyncio_create_task(coro):
 
 
 # ═══════════════════════════════════════════════
-#  资源获取 + 章节构建（同之前）
+#  资源获取
 # ═══════════════════════════════════════════════
 
 async def _fetch_resources(topic: str, user_id: int) -> tuple:
@@ -341,33 +629,31 @@ async def _fetch_resources(topic: str, user_id: int) -> tuple:
 
 
 # ═══════════════════════════════════════════════
-#  章节构建（与之前一致）
+#  骨架构建 — 只解析内容，不生成音频
 # ═══════════════════════════════════════════════
 
-def _build_intro_section(record, narration) -> dict:
+def _build_intro_skeleton(record) -> dict:
     content = record.content or ""
-    segments = (narration or {}).get("sections", [])
-
-    # 按 ## 标题切分为多页
     raw_parts = re.split(r"\n(?=## )", content.strip())
     if len(raw_parts) <= 1:
         raw_parts = re.split(r"\n(?=# )", content.strip())
 
     slides = []
-    for i, part in enumerate(raw_parts):
+    for part in raw_parts:
         part = part.strip()
         if not part:
             continue
         html = _md_to_html(part)
         lines = part.split("\n")
         title = lines[0].lstrip("#").strip()
-        seg = segments[i] if i < len(segments) else None
+        text_len = len(part)
+        estimated_dur = int(text_len / 4 * 1000)
         slides.append({
             "title": title,
             "content_html": html,
-            "audio_url": seg["audio_url"] if seg else None,
-            "duration_ms": seg["duration_ms"] if seg else 5000,
-            "word_timestamps": seg.get("word_timestamps", []) if seg else [],
+            "audio_url": None,
+            "duration_ms": estimated_dur,
+            "word_timestamps": [],
         })
 
     total_dur = sum(s.get("duration_ms", 0) for s in slides)
@@ -376,38 +662,38 @@ def _build_intro_section(record, narration) -> dict:
         "title": record.topic,
         "slides": slides,
         "total_duration_ms": total_dur,
+        "is_audio_ready": False,
     }
 
 
-def _build_mindmap_section(record, svg: str, narration) -> dict:
-    segments = (narration or {}).get("sections", [])
-    total_dur = sum(s.get("duration_ms", 0) for s in segments)
+def _build_mindmap_skeleton(record, svg: str) -> dict:
     return {
         "type": "mindmap",
         "title": record.topic,
         "content_html": svg,
-        "audio_segments": segments,
-        "total_duration_ms": total_dur,
+        "audio_segments": [],
+        "total_duration_ms": 30000,
+        "is_audio_ready": False,
     }
 
 
-async def _build_ppt_section(record, narration) -> dict:
+def _build_ppt_skeleton(record) -> dict:
     from backend.src.utils.tts_utils import parse_slides
     content = record.content or ""
     slides_meta = parse_slides(content)
-    segments = (narration or {}).get("sections", [])
 
     slides = []
-    for i, meta in enumerate(slides_meta):
+    for meta in slides_meta:
         bullets = meta.get("bullets") or []
-        seg = segments[i] if i < len(segments) else None
+        text = meta.get("text", "")
+        estimated_dur = len(text) / 4 * 1000 if text else 5000
         slides.append({
             "title": meta.get("title", ""),
             "bullets": bullets,
             "notes": meta.get("notes", ""),
-            "audio_url": seg["audio_url"] if seg else None,
-            "duration_ms": seg["duration_ms"] if seg else 5000,
-            "word_timestamps": seg.get("word_timestamps", []) if seg else [],
+            "audio_url": None,
+            "duration_ms": int(estimated_dur),
+            "word_timestamps": [],
         })
 
     total_dur = sum(s.get("duration_ms", 0) for s in slides)
@@ -416,7 +702,44 @@ async def _build_ppt_section(record, narration) -> dict:
         "title": record.topic,
         "slides": slides,
         "total_duration_ms": total_dur,
+        "is_audio_ready": False,
     }
+
+
+# ═══════════════════════════════════════════════
+#  音频补丁 — 把 narration 结果注入骨架
+# ═══════════════════════════════════════════════
+
+def _patch_intro_audio(ch: dict, narration: dict):
+    segments = (narration or {}).get("sections", [])
+    slides = ch.get("slides", [])
+    for i, slide in enumerate(slides):
+        seg = segments[i] if i < len(segments) else None
+        if seg:
+            slide["audio_url"] = seg.get("audio_url")
+            slide["duration_ms"] = seg.get("duration_ms", slide["duration_ms"])
+            slide["word_timestamps"] = seg.get("word_timestamps", [])
+    total = sum(s.get("duration_ms", 0) for s in slides)
+    ch["total_duration_ms"] = total
+
+
+def _patch_mindmap_audio(ch: dict, narration: dict):
+    segments = (narration or {}).get("sections", [])
+    ch["audio_segments"] = segments
+    ch["total_duration_ms"] = sum(s.get("duration_ms", 0) for s in segments)
+
+
+def _patch_ppt_audio(ch: dict, narration: dict):
+    segments = (narration or {}).get("sections", [])
+    slides = ch.get("slides", [])
+    for i, slide in enumerate(slides):
+        seg = segments[i] if i < len(segments) else None
+        if seg:
+            slide["audio_url"] = seg.get("audio_url")
+            slide["duration_ms"] = seg.get("duration_ms", slide["duration_ms"])
+            slide["word_timestamps"] = seg.get("word_timestamps", [])
+    total = sum(s.get("duration_ms", 0) for s in slides)
+    ch["total_duration_ms"] = total
 
 
 # ═══════════════════════════════════════════════

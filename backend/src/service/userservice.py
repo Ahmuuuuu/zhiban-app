@@ -34,23 +34,28 @@ async def _on_profile_changed(user_id: int, major: str, grade: str):
         if not courses:
             return
 
-        # 2. 为所有课程生成学习路径（generate_path 内部去重，cached=True 表示已存在）
+        # 2. 为所有课程并行生成学习路径（generate_path 内部去重，cached=True 表示已存在）
         from backend.src.service.path_service import PathService
         from backend.src.models.notification_model import Notification
+        import asyncio
+
+        results = await asyncio.gather(
+            *[PathService.generate_path(course, user_id, "medium", 0) for course in courses],
+            return_exceptions=True,
+        )
 
         new_paths = []
         cached_count = 0
-        for course in courses:
-            try:
-                result = await PathService.generate_path(course, user_id, "medium", 0)
-                if "error" in result:
-                    continue
-                if result.get("cached"):
-                    cached_count += 1
-                else:
-                    new_paths.append(result)
-            except Exception:
+        for course, result in zip(courses, results):
+            if isinstance(result, Exception):
                 logger.exception("自动生成路径失败 user=%s course=%s", user_id, course)
+                continue
+            if "error" in result:
+                continue
+            if result.get("cached"):
+                cached_count += 1
+            else:
+                new_paths.append(result)
 
         # 3. 发通知（仅当有新路径时）
         if new_paths:
