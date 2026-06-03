@@ -20,7 +20,7 @@ async def list_learning_paths(user_id: str):
 async def get_learning_path_detail(path_id: int, user_id: str):
     """查看某条学习路径的完整节点详情（含 topic、resource_types、quiz_config 等）。调用时机：用户想了解路径具体内容、查看节点安排时"""
     from backend.src.service.path_service import PathService
-    path = await PathService.get_path(path_id)
+    path = await PathService.get_path(path_id, int(user_id))
     if not path:
         return "路径不存在。"
     nodes = path["nodes"]
