@@ -1645,8 +1645,13 @@ const attachGenerationTaskToMessage = (task, messageId) => {
       }
 
       while (fileCursor < task.files.length) {
-        await appendFileMessage(task.files[fileCursor])
+        const file = task.files[fileCursor]
         fileCursor += 1
+        // 视频模式：中间资源文件（document/ppt/mindmap）不展示，最终课件文件才展示
+        if (task.tool?.generateMode === 'video' && file.file_type !== 'video' && file.resource_type !== 'video') {
+          continue
+        }
+        await appendFileMessage(file)
       }
 
       while (imageCursor < task.images.length) {
@@ -1664,7 +1669,17 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         if (doneEvent.chat_group_id && !task.chatGroupId) {
           task.chatGroupId = doneEvent.chat_group_id
         }
-        await handleGenerationDone(doneEvent)
+        // 视频模式不需要 handleGenerationDone 追加中间资源，
+        // 课件文件已由 while loop 追加到聊天消息中
+        if (task.tool?.generateMode === 'video') {
+          if (doneEvent.chat_group_id) {
+            activeConversationId.value = doneEvent.chat_group_id
+          }
+          await loadConversationList()
+          window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
+        } else {
+          await handleGenerationDone(doneEvent)
+        }
       }
 
       if (task.status !== 'running' && window.localStorage.getItem(ACTIVE_GENERATION_TASK_KEY) === task.id) {

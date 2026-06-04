@@ -72,7 +72,7 @@ async def create_generation_task(
     data: GenerateResourceRequest = Body(...),
 ):
     try:
-        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id)
+        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers)
         return {"code": 200, "msg": "success", "data": result}
     except Exception:
         raise HTTPException(500, "创建任务失败")

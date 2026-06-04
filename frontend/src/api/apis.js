@@ -441,7 +441,8 @@ export function createResourceGenerationTask(data) {
     data: {
       topic: data.topic,
       resource_types: data.resource_types,
-      chat_group_id: Number(data.chat_group_id || 0)
+      chat_group_id: Number(data.chat_group_id || 0),
+      answers: data.answers || undefined,
     }
   })
 }

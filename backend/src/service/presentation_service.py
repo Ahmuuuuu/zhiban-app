@@ -539,7 +539,7 @@ async def delete_presentation(presentation_id: int, user_id: int) -> bool:
 async def _generate_skeleton_then_audio(record_id: int, topic: str, user_id: int, voice: str,
                                          selected_chapters: list[str] | None = None,
                                          doc=None, mindmap_data=None, ppt_data=None):
-    """阶段1：秒出骨架 → 阶段2：后台逐章补音频"""
+    """阶段1：秒出骨架（不阻塞等音频）→ 阶段2：逐章补音频"""
     from backend.src.service.narration_service import narrate_resource, narrate_content
     from backend.src.utils.mindmap import parse_mindmap_text
 
@@ -574,34 +574,12 @@ async def _generate_skeleton_then_audio(record_id: int, topic: str, user_id: int
                 chapters.append(ch)
                 audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": ppt_data})
 
-        # 首章音频先生成，跟着骨架一起刷出去，确保用户打开就能播
-        if audio_tasks:
-            first = audio_tasks[0]
-            res = first["resource"]
-            try:
-                if isinstance(res, SimpleNamespace):
-                    narration = await narrate_content(res.content, res.resource_type, voice, res.id)
-                else:
-                    narration = await narrate_resource(res.id, voice)
-                ch = chapters[first["chapter_idx"]]
-                ch_type = ch.get("type")
-                if ch_type == "intro":
-                    _patch_intro_audio(ch, narration)
-                elif ch_type == "mindmap":
-                    _patch_mindmap_audio(ch, narration)
-                elif ch_type == "ppt":
-                    _patch_ppt_audio(ch, narration)
-                ch["is_audio_ready"] = True
-                logger.info("[课件] 首章音频已就绪 chapter=%d type=%s", first["chapter_idx"], ch_type)
-            except Exception:
-                logger.exception("[课件] 首章旁白生成失败")
-
-        # 骨架立即可看（首章已有音频）
+        # 骨架立即可看，不阻塞等任何音频（阶段2预生成会提前缓存旁白）
         await _flush(record, topic, chapters, "generating")
         logger.info("[课件] 骨架已出 record=%d chapters=%d", record_id, len(chapters))
 
-        # ── 阶段2：其余章节后台补音频 ──
-        for task in audio_tasks[1:]:
+        # ── 阶段2：逐章补音频（预生成缓存命中则秒返）──
+        for task in audio_tasks:
             res = task["resource"]
             try:
                 if isinstance(res, SimpleNamespace):
