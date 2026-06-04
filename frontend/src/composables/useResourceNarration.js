@@ -59,9 +59,9 @@ export const canNarrateResource = resource => {
   if (!resourceId) return false
 
   const text = String(`${resource?.type || ''} ${resource?.fileType || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
-  if (/image|png|jpg|jpeg|webp|gif|video|mp4|mov|quiz|exercise|question|exam/.test(text)) return false
+  if (/image|png|jpg|jpeg|webp|gif|video|mp4|mov|quiz|exercise|question|exam|html/.test(text)) return false
 
-  return /ppt|document|doc|md|case|reading|mindmap|mind_map|mind-map|resource|reference|note|text/.test(text) || Boolean(resource?.content || resource?.fullContent)
+  return /ppt|document|doc|md|case|reading|mindmap|mind_map|mind-map|audio|resource|reference|note|text/.test(text) || Boolean(resource?.content || resource?.fullContent)
 }
 
 export function useResourceNarration() {

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 
@@ -20,25 +21,34 @@ from backend.src.service.notification_service import check_and_create_ai_tip
 def _normalize_db_answer(raw: str) -> str:
     """归一化 DB 中存储的答案，消除 LLM 格式漂移。
 
-    DB 里单选答案可能是: "A" / '"A"' / '["A"]' / "A. xxx"
-    统一转为大写字母或逗号分隔的字母串，用于与用户提交的答案比较。
+    DB 里答案可能是: "A" / '"A"' / '["A"]' / "A. xxx" / "(A)" / "（A）" / true / "True"
+    统一转为大写字母，用于与用户提交的答案比较。
+    判断题 true/false → A/B（A=正确 B=错误）
     """
     if not raw:
         return ""
     text = raw.strip()
-    # 尝试 JSON 解析（处理 ["A"] / "A" 等 JSON 编码）
+    # 尝试 JSON 解析（处理 ["A"] / "A" / true / false 等 JSON 编码）
     try:
         parsed = json.loads(text)
         if isinstance(parsed, list):
             return ",".join(sorted(str(x).strip().upper() for x in parsed if str(x).strip()))
+        # JSON 布尔值 → 映射为选项 A/B（判断题 A=正确 B=错误）
+        if isinstance(parsed, bool):
+            return "A" if parsed else "B"
         text = str(parsed)
     except (json.JSONDecodeError, TypeError):
         pass
-    # 去掉选项文本只留字母（A. xxx → A）
-    cleaned = text.strip().upper().replace(" ", "")
-    if cleaned and cleaned[0] in "ABCDEFGH":
-        return cleaned[0]
-    return cleaned
+    # 字符串 true/false → A/B
+    upper = text.strip().upper()
+    if upper in ("TRUE", "FALSE"):
+        return "A" if upper == "TRUE" else "B"
+    # 去掉选项文本和括号只留字母
+    # 例: "A. xxx" → "A", "(A)" → "A", "（B）" → "B", "A " → "A"
+    m = re.search(r'[（(]?\s*([A-D])\s*[）).、]?', text, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    return upper
 
 
 def _parse_multi_ans(ans: str) -> set:
@@ -55,7 +65,7 @@ def _parse_multi_ans(ans: str) -> set:
 def _weight(difficulty: str, question_type: str) -> float:
     """题目权重：easy=1, medium=2, hard=3，多选 +0.5"""
     base = {"easy": 1.0, "medium": 2.0, "hard": 3.0}.get(difficulty, 2.0)
-    if question_type == "multi_choice":
+    if (question_type or "").lower() == "multi_choice":
         base += 0.5
     return base
 
@@ -85,7 +95,7 @@ def _question_to_dict(q: ExamQuestion) -> dict:
         "analysis": q.analysis,
         "difficulty": q.difficulty,
         "knowledge_tags": _safe_parse(q.knowledge_tags) or [],
-        "weight": q.point_value or _weight(q.difficulty, q.question_type),
+        "weight": 1.0,
         "created_at": str(q.created_at),
     }
 
@@ -98,16 +108,17 @@ class ExamService:
         if not questions:
             return str(uuid.uuid4())[:12], []
         session_id = str(uuid.uuid4())[:12]
+        logger.info("_save_questions session_id=%r node_id=%r count=%d", session_id, node_id, len(questions))
         saved = []
         for q in questions:
-            qt = q.get("question_type", "single_choice")
+            qt = (q.get("question_type", "single_choice") or "").lower()
             diff = q.get("difficulty", difficulty)
-            pv = q.get("point_value") or _weight(diff, qt)
+            pv = 1.0
             record = await ExamQuestion.create(
                 question_type=qt,
                 content=q.get("content", ""),
                 options=json.dumps(q.get("options"), ensure_ascii=False) if q.get("options") else None,
-                answer=json.dumps(q.get("answer"), ensure_ascii=False) if isinstance(q.get("answer"), list) else str(q.get("answer") or ""),
+                answer=json.dumps(q.get("answer"), ensure_ascii=False) if isinstance(q.get("answer"), list) else str(q.get("answer") if q.get("answer") is not None else ""),
                 analysis=q.get("analysis", ""),
                 difficulty=diff,
                 knowledge_tags=json.dumps(q.get("knowledge_tags", []), ensure_ascii=False),
@@ -172,7 +183,8 @@ class ExamService:
 
                 # 仅按题型和数量过滤，难度分布由 learning_guidance 控制
                 allowed_types = question_types or ["single_choice", "multi_choice", "true_false"]
-                filtered = [q for q in questions if q.get("question_type") in allowed_types]
+                allowed_lower = {t.lower() for t in allowed_types}
+                filtered = [q for q in questions if (q.get("question_type") or "").lower() in allowed_lower]
                 filtered = filtered[:count]
 
                 session_id, saved = await ExamService._save_questions(filtered, user, difficulty, node_id=node_id)
@@ -240,7 +252,8 @@ class ExamService:
                     questions = []
                 if questions:
                     # 仅按题型和数量过滤，难度分布由 learning_guidance 控制
-                    filtered = [q for q in questions if q.get("question_type") in types]
+                    types_lower = {t.lower() for t in types}
+                    filtered = [q for q in questions if (q.get("question_type") or "").lower() in types_lower]
                     filtered = filtered[:count]
                     if filtered:
                         session_id, saved_questions = await ExamService._save_questions(
@@ -301,39 +314,25 @@ class ExamService:
 
         # 归一化 DB 中的答案（LLM 输出格式不稳定：A / "A" / ["A"] / a）
         correct_answer = _normalize_db_answer(question.answer)
-        w = float(question.point_value or _weight(question.difficulty, question.question_type))
 
-        # 判断对错 + 计算权重得分
-        if question.question_type == "true_false":
-            is_correct = user_answer.strip().upper() == correct_answer
-            score = w if is_correct else 0.0
+        logger.info(
+            "submit_answer qid=%s type=%s raw_db_answer=%r normalized_answer=%r user_answer=%r session_id=%r node_id=%r",
+            question_id, question.question_type, question.answer, correct_answer, user_answer, session_id, node_id,
+        )
 
-        elif question.question_type in ("single_choice", "fill_blank"):
-            is_correct = (user_answer.strip().upper() == correct_answer)
-            score = w if is_correct else 0.0
-
-        elif question.question_type == "multi_choice":
+        # 判断对错（每题等权重 1 分）
+        qt = (question.question_type or "").lower()
+        if qt == "multi_choice":
             try:
                 user_set = _parse_multi_ans(user_answer)
                 correct_set = _parse_multi_ans(correct_answer)
-                n_correct = len(correct_set)
-                selected_correct = len(user_set & correct_set)
-                selected_wrong = len(user_set - correct_set)
-
-                if n_correct > 0:
-                    ratio = max(0.0, (selected_correct - selected_wrong) / n_correct)
-                else:
-                    ratio = 1.0 if selected_correct == 0 and selected_wrong == 0 else 0.0
-
-                is_correct = (ratio >= 1.0)
-                score = round(w * ratio, 2)
+                is_correct = (user_set == correct_set)
             except Exception:
                 is_correct = user_answer.strip().upper() == correct_answer
-                score = w if is_correct else 0.0
-
         else:
-            is_correct = None
-            score = None
+            is_correct = (user_answer.strip().upper() == correct_answer)
+
+        score = 1.0 if is_correct else 0.0
 
         sid = session_id or str(uuid.uuid4())[:12]
 

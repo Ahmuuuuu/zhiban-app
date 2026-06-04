@@ -66,8 +66,8 @@
         <div class="score-list">
           <div v-for="(question, index) in questions" :key="question.id">
             <span>第 {{ index + 1 }} 题</span>
-            <strong :class="{ wrong: !results[question.id]?.is_correct }">
-              {{ results[question.id]?.is_correct ? '正确' : '错误' }}
+            <strong :class="{ wrong: !getQuestionResult(question).is_correct }">
+              {{ getQuestionResult(question).is_correct ? '正确' : '错误' }}
             </strong>
           </div>
         </div>
@@ -102,9 +102,15 @@ const runSessionId = ref('')
 const fromPage = ref(route.query.from || '')
 const nodeId = ref(route.query.nodeId || '')
 const routeSessionId = ref(String(route.query.sessionId || ''))
+const routePathId = ref(route.query.pathId || '')
 
 const backLink = computed(() => {
-  return fromPage.value === 'path' ? '/learning-path' : { path: '/learning-resources', query: { category: 'quiz' } }
+  if (fromPage.value === 'path') {
+    const query = {}
+    if (routePathId.value) query.pathId = routePathId.value
+    return { path: '/learning-path', query }
+  }
+  return { path: '/learning-resources', query: { category: 'quiz' } }
 })
 
 onMounted(() => {
@@ -141,10 +147,17 @@ const toggleOption = (questionId, key) => {
 }
 
 const normalizeAnswer = value => {
-  if (Array.isArray(value)) return value.map(k => k.toUpperCase().trim()).filter(Boolean).sort().join(',')
-  return String(value || '')
-    .trim()
-    .replace(/^[（(]?([A-D])[\)）.、]?\s*$/i, '$1')
+  if (typeof value === 'boolean') return value ? 'A' : 'B'
+  if (Array.isArray(value)) return value.map(k => String(k || '').trim().toUpperCase()).filter(Boolean).sort().join(',')
+  const text = String(value ?? '').trim()
+  if (/^(?:true|false)$/i.test(text)) return text.toUpperCase() === 'TRUE' ? 'A' : 'B'
+  try {
+    const parsed = JSON.parse(text)
+    if (typeof parsed === 'boolean') return parsed ? 'A' : 'B'
+    if (Array.isArray(parsed)) return parsed.map(k => String(k || '').trim().toUpperCase()).filter(Boolean).sort().join(',')
+  } catch {}
+  return text
+    .replace(/^[（(]?\s*([A-D])\s*[）).、]?\s*$/i, '$1')
     .toUpperCase()
 }
 
@@ -159,7 +172,9 @@ const toCorrectBoolean = value => value === true || value === 1 || value === '1'
 
 const isLocallyCorrect = (question, userAnswer) => {
   const correctAnswer = normalizeAnswer(question?.answer)
-  return correctAnswer ? userAnswer === correctAnswer : false
+  const result = correctAnswer ? userAnswer === correctAnswer : false
+  console.log('[QuizRunner] 本地判分 qid=', question?.id, 'raw_answer=', question?.answer, 'norm_answer=', correctAnswer, 'user=', userAnswer, 'match=', result)
+  return result
 }
 
 const checkCurrent = async () => {
@@ -172,18 +187,19 @@ const checkCurrent = async () => {
 
   if (backendQuestionId && userAnswer) {
     try {
+      console.log('[QuizRunner] 提交答案 qid=', backendQuestionId, 'answer=', userAnswer, 'session=', runSessionId.value, 'node=', nodeId.value)
       const result = await submitExamAnswer({
         question_id: backendQuestionId,
         answer: userAnswer,
         time_spent: null,
-        session_id: runSessionId.value
+        session_id: runSessionId.value,
+        node_id: Number(nodeId.value) || null
       })
       const data = unwrapData(result)
-      const backendCorrect = toCorrectBoolean(data?.is_correct)
-      const localCorrect = isLocallyCorrect(question, userAnswer)
+      const backendJudged = data?.is_correct !== null && data?.is_correct !== undefined
       checked.value[question.id] = true
       results.value[question.id] = {
-        is_correct: backendCorrect || localCorrect,
+        is_correct: backendJudged ? toCorrectBoolean(data.is_correct) : isLocallyCorrect(question, userAnswer),
         correct_answer: data?.correct_answer || question.answer,
         analysis: data?.analysis || question.explanation || '',
         session_id: data?.session_id || runSessionId.value,
@@ -198,7 +214,8 @@ const checkCurrent = async () => {
       }
       return
     } catch (error) {
-      console.error('提交答题记录失败，使用本地判分：', error)
+      const detail = error?.response?.data?.detail || error?.message || error
+      console.error('提交答题记录失败：', detail, '| question_id:', backendQuestionId, '| session_id:', runSessionId.value)
     }
   }
 
@@ -215,28 +232,41 @@ const isCurrentCorrect = computed(() => {
   return result !== undefined ? result.is_correct : false
 })
 
-const score = computed(() => questions.value.reduce((total, question) => {
-  return total + (results.value[question.id]?.is_correct ? 1 : 0)
+// 本地直接比对答案计算分数，不依赖异步 API 结果
+const score = computed(() => questions.value.reduce((total, q) => {
+  const userAns = normalizeAnswer(answers.value[q.id])
+  const correctAns = normalizeAnswer(q?.answer)
+  return total + (correctAns && userAns === correctAns ? 1 : 0)
 }, 0))
 
 const percentScore = computed(() => {
-  const summaryTotal = Number(sessionSummary.value?.total_questions)
-  const summaryMatchesCurrentQuiz = !Number.isFinite(summaryTotal) || summaryTotal <= questions.value.length
-  const backendScore = Number(
-    sessionSummary.value?.percentage ??
-    sessionSummary.value?.earned_points
-  )
-  if (summaryMatchesCurrentQuiz && Number.isFinite(backendScore)) return backendScore.toFixed(1)
-
   if (!questions.value.length) return '0.0'
-  return ((score.value / questions.value.length) * 100).toFixed(1)
+  const localPercent = (score.value / questions.value.length) * 100
+  // 有后端加权分数时优先使用，否则用本地简单百分比
+  const backendScore = Number(sessionSummary.value?.percentage ?? sessionSummary.value?.earned_points)
+  if (Number.isFinite(backendScore) && backendScore > 0) return backendScore.toFixed(1)
+  return localPercent.toFixed(1)
 })
+
+// 获取每题判分结果：优先用后端结果，兜底用本地比对
+const getQuestionResult = (question) => {
+  const userAns = normalizeAnswer(answers.value[question.id])
+  const correctAns = normalizeAnswer(question?.answer)
+  return {
+    is_correct: Boolean(correctAns && userAns === correctAns),
+    correct_answer: question?.answer || ''
+  }
+}
 
 const goNext = async () => {
   await checkCurrent()
 
   if (currentIndex.value >= questions.value.length - 1) {
     finished.value = true
+    // 诊断：打印当前 results 和 score 状态
+    console.log('[QuizRunner] 交卷前 results:', JSON.parse(JSON.stringify(results.value)))
+    console.log('[QuizRunner] 交卷前 score:', score.value, 'percentScore:', percentScore.value)
+    console.log('[QuizRunner] 交卷前 questions:', questions.value.map(q => ({id: q.id, question_id: q.question_id, answer: q.answer, type: q.type})))
     recordQuizAttempt({
       quizId: quiz.value?.id,
       title: quiz.value?.title,
@@ -251,8 +281,46 @@ const goNext = async () => {
       return
     }
     if (fromPage.value === 'path' && nodeId.value && runSessionId.value) {
+      // 收集所有答题记录（question_id → 归一化答案）一次性传给后端判分
+      const allAnswers = {}
+      const correctAnswers = {}
+      for (const q of questions.value) {
+        const backendQid = getBackendQuestionId(q)
+        if (backendQid) {
+          const ans = normalizeAnswer(answers.value[q.id])
+          if (ans) {
+            allAnswers[backendQid] = ans
+            correctAnswers[backendQid] = normalizeAnswer(q.answer)
+          }
+        }
+      }
+      const hasAnswers = Object.keys(allAnswers).length > 0
+      console.log('[QuizRunner] 准备完成节点 nodeId=', nodeId.value, 'sessionId=', runSessionId.value, 'answers=', allAnswers, 'correctAnswers=', correctAnswers)
       try {
-        const completeResult = await completeLearningPathNode(Number(nodeId.value), runSessionId.value)
+        const completeResult = await completeLearningPathNode(Number(nodeId.value), runSessionId.value, hasAnswers ? allAnswers : null, hasAnswers ? correctAnswers : null)
+        const completeData = unwrapData(completeResult)
+        // 用后端判分结果覆盖本地 results，确保前端显示与后端一致
+        const quizResult = completeData?.quiz_result || completeData
+        if (quizResult?.judged_questions) {
+          for (const jq of quizResult.judged_questions) {
+            // 找到对应的本地 question（通过 question_id 匹配）
+            const localQ = questions.value.find(q => getBackendQuestionId(q) === jq.question_id)
+            if (localQ) {
+              results.value[localQ.id] = {
+                is_correct: jq.is_correct,
+                correct_answer: jq.correct_answer,
+                analysis: results.value[localQ.id]?.analysis || ''
+              }
+            }
+          }
+          sessionSummary.value = {
+            total_questions: quizResult.total_questions,
+            correct_count: quizResult.correct_count,
+            percentage: quizResult.score,
+            earned_points: quizResult.score
+          }
+          console.log('[QuizRunner] 后端判分结果已同步:', quizResult.score, '分,', quizResult.correct_count, '/', quizResult.total_questions)
+        }
         window.sessionStorage.setItem('zhiban_path_needs_refresh', '1')
         window.dispatchEvent(new CustomEvent('zhiban-path-node-completed', {
           detail: {
@@ -263,7 +331,8 @@ const goNext = async () => {
         }))
         console.log('[QuizRunner] 节点自动完成成功')
       } catch (e) {
-        console.error('[QuizRunner] 自动完成节点失败:', e)
+        const detail = e?.response?.data?.detail || e?.response?.status || e?.message || e
+        console.error('[QuizRunner] 自动完成节点失败:', detail, '| nodeId:', nodeId.value, '| sessionId:', runSessionId.value)
       }
     }
     return

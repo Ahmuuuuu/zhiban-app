@@ -3,8 +3,8 @@ system: |
 
   ## 主题与要求
   - 主题：{topic}
-  - 数量：{count} 道
-  - 题型：{question_types}
+  - 数量：5 道（固定）
+  - 题型分布：2 道 single_choice（单选题）、2 道 true_false（判断题）、1 道 multi_choice（多选题）
   - 默认难度：{difficulty}
 
   ## 用户画像
@@ -13,7 +13,7 @@ system: |
   ## 学习指导（必须遵守）
   {learning_guidance}
 
-  请严格按照「出题指导」中的难度配比分配 {count} 道题。例如若建议 easy 20%/medium 40%/hard 40%，10道题中应有 2 道 easy、4 道 medium、4 道 hard。弱项知识点优先出题。
+  请严格按照「出题指导」中的难度配比分配 5 道题。例如若建议 easy 20%/medium 40%/hard 40%，5道题中应有 1 道 easy、2 道 medium、2 道 hard。弱项知识点优先出题。
   若学习指导为空，则统一使用默认难度 {difficulty}。
 
   ## 知识库参考资料
@@ -21,7 +21,7 @@ system: |
 
   ## 出题策略（重要）
   1. **先定考点再出题**：根据主题 {topic}，先确定该领域最核心、最常考的知识点，然后围绕每个考点出题。
-  2. **覆盖面要广**：{count} 道题应覆盖该主题的主要知识点，不要重复考查同一考点。
+  2. **覆盖面要广**：5 道题应覆盖该主题的主要知识点，不要重复考查同一考点。
   3. **知识库是参考不是限制**：知识库内容反映用户已有的学习范围，你可以在此基础上适当延伸，但延伸内容必须是该领域公认的核心知识。
   4. **题目要有区分度**：每道题至少有一个干扰选项看起来合理但实际错误。
   5. **解析要到位**：每道题的 analysis 必须写清楚"为什么对"和"为什么错"。
@@ -38,10 +38,10 @@ system: |
 
   [{"question_type": "single_choice", "content": "题目正文", "options": ["A. 选项一", "B. 选项二", "C. 选项三", "D. 选项四"], "answer": "A", "analysis": "解析说明", "difficulty": "medium", "knowledge_tags": ["标签1", "标签2"]}]
 
-  ## 各题型 answer/options 格式
-  - single_choice: options 为 4 个选项数组如 ["A. xxx", "B. xxx", "C. xxx", "D. xxx"]，answer 为选项字母如 "A"
-  - multi_choice: options 为 4-6 个选项数组如 ["A. xxx", "B. xxx", ...]，answer 为字母数组如 ["A","C"]
-  - true_false: options 为 ["A. 正确", "B. 错误"]，answer 为 "A" 或 "B"
+  ## 各题型 answer/options 格式（必须严格遵守，格式错误会导致判分失败）
+  - single_choice: options 为 4 个选项数组如 ["A. xxx", "B. xxx", "C. xxx", "D. xxx"]，answer 必须是纯大写字母字符串如 "A"（禁止写成 "(A)"、"A. xxx" 等）
+  - multi_choice: options 为 4-6 个选项数组如 ["A. xxx", "B. xxx", ...]，answer 必须是大写字母数组如 ["A","C"]（禁止写成 ["A. xxx","C. xxx"]、"A,C" 等）
+  - true_false: options 必须为 ["A. 正确", "B. 错误"]，answer 必须是纯大写字母字符串 "A"（正确）或 "B"（错误）。绝对禁止用 true/false 布尔值，必须用字符串 "A" 或 "B"
   - fill_blank: options 为 null，answer 为关键答案
   - short_answer: options 为 null，answer 为参考答案要点
 

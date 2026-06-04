@@ -51,6 +51,7 @@ class ResourceState(TypedDict):
     reviewer_questions: list[dict]
     file_urls: NotRequired[dict[str, str]]
     answers: NotRequired[dict]
+    skip_review: NotRequired[bool]
 
 
 # ═══════════════════════════════════════
@@ -134,7 +135,7 @@ async def executor_node(state: ResourceState) -> dict:
                 if rt == "ppt":
                     return _generate_ppt_sync(topic, portrait, guidance, user_id)
                 if rt == "image":
-                    return _generate_image_sync(prompts[rt], user_id)
+                    return _generate_image_sync(prompts[rt], user_id, loop)
                 response = llm.invoke(prompts[rt])
                 return rt, response.content
             except Exception as e:
@@ -170,7 +171,7 @@ async def executor_node(state: ResourceState) -> dict:
     }
 
 
-def _generate_image_sync(prompt_text: str, user_id: str) -> tuple[str, dict]:
+def _generate_image_sync(prompt_text: str, user_id: str, loop) -> tuple[str, dict]:
     """两阶段图片生成：LLM 产出 prompt → ImageService 生图（线程内同步调用）"""
     try:
         response = llm.invoke(prompt_text)
@@ -182,7 +183,11 @@ def _generate_image_sync(prompt_text: str, user_id: str) -> tuple[str, dict]:
     try:
         from backend.src.service.image_service import ImageService
         image_prompt = image_prompt[:900]
-        images = asyncio.run(ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=1))
+        future = asyncio.run_coroutine_threadsafe(
+            ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=2),
+            loop
+        )
+        images = future.result(timeout=120)
         if images and len(images) > 0:
             return ("image:image", {"prompt": image_prompt, "url": images[0].get("url", "")})
     except Exception as e:
@@ -351,6 +356,13 @@ def should_continue(state: ResourceState) -> str:
     return "executor"
 
 
+def should_review(state: ResourceState) -> str:
+    """跳过审核可省掉一轮 LLM 调用，适用于学习路径等对质量要求不极端的场景"""
+    if state.get("skip_review"):
+        return "end"
+    return "reviewer"
+
+
 # ═══════════════════════════════════════
 #  Graph
 # ═══════════════════════════════════════
@@ -364,7 +376,11 @@ def build_graph():
 
     workflow.add_edge(START, "leader")
     workflow.add_edge("leader", "executor")
-    workflow.add_edge("executor", "reviewer")
+    workflow.add_conditional_edges(
+        "executor",
+        should_review,
+        {"reviewer": "reviewer", "end": END},
+    )
     workflow.add_conditional_edges(
         "reviewer",
         should_continue,

@@ -22,12 +22,22 @@ const stripFence = value =>
     .replace(/```$/i, '')
     .trim()
 
-const normalizeAnswer = value =>
-  String(value || '')
-    .trim()
+const normalizeAnswer = value => {
+  if (typeof value === 'boolean') return value ? 'A' : 'B'
+  if (Array.isArray(value)) return value.map(k => String(k || '').trim().toUpperCase()).filter(Boolean).sort().join(',')
+  const text = String(value ?? '').trim()
+  // 处理 JSON 序列化后的布尔和字母
+  if (/^(?:true|false)$/i.test(text)) return text.toUpperCase() === 'TRUE' ? 'A' : 'B'
+  try {
+    const parsed = JSON.parse(text)
+    if (typeof parsed === 'boolean') return parsed ? 'A' : 'B'
+    if (Array.isArray(parsed)) return parsed.map(k => String(k || '').trim().toUpperCase()).filter(Boolean).sort().join(',')
+  } catch {}
+  return text
     .replace(/^(答案|正确答案|参考答案)[:：]?\s*/i, '')
-    .replace(/^[（(]?([A-D])[\)）.、]?\s*$/i, '$1')
+    .replace(/^[（(]?\s*([A-D])\s*[）).、]?\s*$/i, '$1')
     .toUpperCase()
+}
 
 const normalizeQuestion = (item, index) => {
   const rawOptions = item.options || item.choices || item.option || []

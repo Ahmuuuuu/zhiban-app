@@ -20,7 +20,7 @@ from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.service.portrait_service import format_portrait, PortraitRadarService, build_learning_guidance
-from backend.src.service.exam_service import ExamService, _weight
+from backend.src.service.exam_service import ExamService, _normalize_db_answer, _parse_multi_ans
 from backend.src.service.resource_service import ResourceService
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.json_parser import parse_llm_json
@@ -160,8 +160,8 @@ class PathService:
                 knowledge_tags=json.dumps(nd.get("knowledge_tags", []), ensure_ascii=False),
                 order_index=nd.get("order_index", len(nodes) + 1),
                 prerequisites=json.dumps(nd.get("prerequisites", []), ensure_ascii=False),
-                resource_types=json.dumps(nd.get("resource_types", ["document", "image"]), ensure_ascii=False),
-                quiz_config=json.dumps(nd.get("quiz_config", {"count": 3, "threshold": 0.7}), ensure_ascii=False),
+                resource_types=json.dumps(nd.get("resource_types", ["document", "ppt", "mindmap"]), ensure_ascii=False),
+                quiz_config=json.dumps(nd.get("quiz_config", {"count": 5, "threshold": 0.7}), ensure_ascii=False),
             )
             created_nodes.append(node)
             nodes.append({
@@ -402,6 +402,83 @@ class PathService:
         }
 
     @staticmethod
+    async def generate_node_resources_stream(path_id: int, node_id: int, user_id: int):
+        """流式为节点生成学习资源（SSE）—— 生成好一个推送一个"""
+        node = await PathNode.filter(id=node_id, path_id=path_id).first()
+        if not node:
+            yield f"data: {json.dumps({'type': 'error', 'detail': '节点不存在'}, ensure_ascii=False)}\n\n"
+            return
+
+        progress = await UserPathProgress.filter(user_id=user_id, path_id=path_id, node_id=node_id).first()
+        if not progress:
+            yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径'}, ensure_ascii=False)}\n\n"
+            return
+
+        resource_types = ["document", "ppt", "mindmap"]
+        topic = node.topic
+
+        # 检查已有资源 → 秒推
+        existing_records = []
+        missing_types = []
+        for rt in resource_types:
+            r = await GeneratedResource.filter(user_id=user_id, topic=topic, resource_type=rt).first()
+            if r:
+                existing_records.append(r)
+            else:
+                missing_types.append(rt)
+
+        for r in existing_records:
+            yield _resource_sse(r)
+
+        if not missing_types:
+            all_ids = [r.id for r in existing_records]
+            update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
+            if progress.node_status == "unlocked":
+                update_fields["node_status"] = "in_progress"
+                update_fields["started_at"] = datetime.now()
+            await UserPathProgress.filter(id=progress.id).update(**update_fields)
+            yield _sse_done(all_ids)
+            return
+
+        yield f"data: {json.dumps({'type': 'status', 'msg': f'开始生成 {len(missing_types)} 种资源...'}, ensure_ascii=False)}\n\n"
+
+        # 调用 ResourceService.generate_stream 生成缺失类型（跳过审核加速）
+        generated_ids = []
+        ppt_id = None
+        from backend.src.service.resource_service import ResourceService
+        async for event_str in ResourceService.generate_stream(
+            topic=topic, user_id=user_id, resource_types=missing_types, skip_review=True,
+        ):
+            yield event_str
+            if event_str.startswith("data:") and "[DONE]" not in event_str:
+                try:
+                    data = json.loads(event_str[5:].strip())
+                    if data.get("done"):
+                        for r in data.get("resources", []):
+                            rid = r.get("resource_id")
+                            if rid:
+                                generated_ids.append(rid)
+                                if r.get("file_type") == "ppt":
+                                    ppt_id = rid
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+        all_ids = [r.id for r in existing_records] + generated_ids
+        update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
+        if progress.node_status == "unlocked":
+            update_fields["node_status"] = "in_progress"
+            update_fields["started_at"] = datetime.now()
+        await UserPathProgress.filter(id=progress.id).update(**update_fields)
+
+        # 主资源（document/ppt/mindmap）已完成，立即推送 done
+        yield _sse_done(all_ids)
+
+        # PPT 已生成 → 后台触发旁白，不阻塞主流程
+        if ppt_id:
+            import asyncio
+            asyncio.create_task(_background_narrate(ppt_id, user_id, topic, progress.id, all_ids))
+
+    @staticmethod
     async def generate_node_resources(path_id: int, node_id: int, user_id: int) -> dict:
         """为节点获取学习资源 — 已有则复用，没有则生成"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
@@ -412,7 +489,8 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        resource_types = json.loads(node.resource_types) if node.resource_types else ["document"]
+        # 固定生成 3 种资源类型
+        resource_types = ["document", "ppt", "mindmap"]
 
         # 并行查已有资源
 
@@ -445,6 +523,20 @@ class PathService:
             update_fields["node_status"] = "in_progress"
             update_fields["started_at"] = datetime.now()
         await UserPathProgress.filter(id=progress.id).update(**update_fields)
+
+        # 找 PPT 资源，触发视频旁白生成（后台异步，不阻塞响应）
+        if all_ids:
+            ppt_records = await GeneratedResource.filter(
+                id__in=all_ids, user_id=user_id, resource_type="ppt"
+            ).all()
+            if ppt_records:
+                from backend.src.service.narration_service import narrate_resource
+                for ppt in ppt_records:
+                    try:
+                        asyncio.ensure_future(narrate_resource(ppt.id))
+                        logger.info("已触发视频旁白生成 resource_id=%s topic=%s", ppt.id, node.topic)
+                    except Exception:
+                        logger.exception("触发旁白生成失败 resource_id=%s", ppt.id)
 
         resources = []
         if all_ids:
@@ -501,7 +593,7 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 3, "threshold": 0.7}
+        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
 
         # 已有预生成的 session → 直接复用
         if progress.quiz_session_id:
@@ -519,7 +611,7 @@ class PathService:
                 }
 
         # 没有则生成
-        count = quiz_config.get("count", 3)
+        count = quiz_config.get("count", 5)
 
         if not pre_generate:
             # 检查资源是否已查看，根据查看次数决定难度
@@ -539,7 +631,7 @@ class PathService:
         result = await ExamService.generate_and_save(
             topic=node.topic,
             user_id=user_id,
-            question_types=["single_choice", "multi_choice", "true_false"],
+            question_types=["single_choice", "single_choice", "true_false", "true_false", "multi_choice"],
             count=count,
             difficulty=difficulty,
             node_id=node_id,
@@ -571,7 +663,7 @@ class PathService:
             yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径'}, ensure_ascii=False)}\n\n"
             return
 
-        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 3, "threshold": 0.7}
+        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
 
         # 已有预生成的 session → 秒返
         if progress.quiz_session_id:
@@ -582,7 +674,7 @@ class PathService:
                 yield "data: [DONE]\n\n"
                 return
 
-        count = quiz_config.get("count", 3)
+        count = quiz_config.get("count", 5)
         difficulty = "medium"
 
         # 检查资源是否已查看，根据查看次数决定难度
@@ -603,7 +695,7 @@ class PathService:
         async for event in ExamService.generate_and_save_stream(
             topic=node.topic,
             user_id=user_id,
-            question_types=["single_choice", "multi_choice", "true_false"],
+            question_types=["single_choice", "single_choice", "true_false", "true_false", "multi_choice"],
             count=count,
             difficulty=difficulty,
             node_id=node_id,
@@ -630,8 +722,12 @@ class PathService:
                 yield event
 
     @staticmethod
-    async def submit_node_quiz(path_id: int, node_id: int, user_id: int, session_id: str) -> dict:
-        """提交节点测验结果 → 评分 → 门禁 → 解锁下一节点 → 更新画像"""
+    async def submit_node_quiz(path_id: int, node_id: int, user_id: int, session_id: str, answers: dict[str, str] | None = None, correct_answers: dict[str, str] | None = None) -> dict:
+        """提交节点测验结果 → 评分 → 门禁 → 解锁下一节点 → 更新画像
+
+        answers: 可选，{question_id_str: user_answer}。传入则直接判分并写入 ExamRecord，
+        绕过逐题 submitExamAnswer 调用不可靠的问题。
+        """
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
         if not node:
             raise ValueError("节点不存在")
@@ -640,28 +736,121 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        # 从 session 汇总成绩（session_id 已按节点隔离，无需 node_id 过滤）
+        # 如果传入了 answers，直接在此判分写入
+        direct_results = []  # 内存判分结果，兜底用
+        if answers:
+            logger.info("submit_node_quiz 收到 %d 个答案，直接判分 node_id=%s session_id=%r", len(answers), node_id, session_id)
+            # 加载该 session 下已有的占位记录
+            existing_records = await ExamRecord.filter(
+                session_id=session_id, user_id=user_id
+            ).prefetch_related("question").all()
+            if not existing_records:
+                existing_records = await ExamRecord.filter(
+                    session_id=session_id, user_id=user_id, node_id=node_id
+                ).prefetch_related("question").all()
+
+            record_by_qid = {}
+            for r in existing_records:
+                record_by_qid[r.question_id] = r
+
+            for question_id_str, user_answer in answers.items():
+                try:
+                    qid = int(question_id_str)
+                except (ValueError, TypeError):
+                    continue
+                if not user_answer:
+                    continue
+
+                question = None
+                existing = record_by_qid.get(qid)
+                if existing and existing.question:
+                    question = existing.question
+                if not question:
+                    question = await ExamQuestion.filter(id=qid).first()
+
+                correct_answer = ""
+                qt = ""
+                if question:
+                    correct_answer = _normalize_db_answer(question.answer)
+                    qt = (question.question_type or "").lower()
+                elif correct_answers:
+                    # 兜底：题目不在 DB，用前端传来的正确答案直接比对
+                    correct_answer = _normalize_db_answer(correct_answers.get(question_id_str, ""))
+                if not correct_answer:
+                    continue
+
+                if qt == "multi_choice":
+                    try:
+                        user_set = _parse_multi_ans(user_answer)
+                        correct_set = _parse_multi_ans(correct_answer)
+                        is_correct = (user_set == correct_set)
+                    except Exception:
+                        is_correct = user_answer.strip().upper() == correct_answer
+                else:
+                    is_correct = user_answer.strip().upper() == correct_answer
+
+                score = 1.0 if is_correct else 0.0
+
+                logger.info("submit_node_quiz 判分 qid=%s type=%s correct_answer=%r user_answer=%r is_correct=%s",
+                            qid, qt, correct_answer, user_answer, is_correct)
+
+                # 记录内存判分结果（兜底用）
+                direct_results.append({
+                    "question_id": qid,
+                    "is_correct": is_correct,
+                    "correct_answer": correct_answer,
+                    "user_answer": user_answer,
+                    "score": score,
+                })
+
+                if existing:
+                    existing.user_answer = user_answer
+                    existing.is_correct = is_correct
+                    existing.score = score
+                    await existing.save()
+                else:
+                    await ExamRecord.create(
+                        question=question,
+                        user_id=user_id,
+                        user_answer=user_answer,
+                        is_correct=is_correct,
+                        score=score,
+                        session_id=session_id,
+                        node_id=node_id,
+                    )
+
+        # 从 session 汇总成绩
         records = await ExamRecord.filter(session_id=session_id, user_id=user_id).order_by("id").prefetch_related("question").all()
-        # 若查不到再按 node_id 试一次（兼容旧数据）
         if not records:
             records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).order_by("id").prefetch_related("question").all()
+        logger.info("submit_node_quiz node_id=%s user_id=%s session_id=%r found %d records", node_id, user_id, session_id, len(records))
         latest_by_question = {}
         for r in records:
             latest_by_question[r.question_id] = r
         records = list(latest_by_question.values())
         judged = [r for r in records if r.is_correct is not None]
         if not judged:
-            return {"error": "该会话无已判分的答题记录"}
-
-        correct = sum(1 for r in judged if r.is_correct)
-        # 加权评分：每题满分 = 其难度权重，实际得分 = 权重×正确率
-        earned = sum(float(r.score or 0) for r in judged)
-        max_possible = sum(
-            float((r.question.point_value if r.question else None) or _weight(r.question.difficulty if r.question else "medium", r.question.question_type if r.question else "single_choice"))
-            for r in judged
-        )
-        score = round(earned / max_possible * 100, 1) if max_possible > 0 else 0.0
-        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 3, "threshold": 0.7}
+            # 兜底：如果传了 answers，直接用内存判分结果，不依赖 DB 记录
+            if answers and direct_results:
+                correct = sum(1 for r in direct_results if r["is_correct"])
+                score = round(correct / len(direct_results) * 100, 1) if direct_results else 0.0
+                judged_questions = direct_results
+            else:
+                return {"error": "该会话无已判分的答题记录"}
+        else:
+            correct = sum(1 for r in judged if r.is_correct)
+            score = round(correct / len(judged) * 100, 1) if judged else 0.0
+            judged_questions = [
+                {
+                    "question_id": r.question_id,
+                    "is_correct": r.is_correct,
+                    "correct_answer": _normalize_db_answer(r.question.answer) if r.question else "",
+                    "user_answer": r.user_answer,
+                    "score": float(r.score or 0),
+                }
+                for r in judged
+            ]
+        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
         threshold = quiz_config.get("threshold", 0.7)
         passed = score >= threshold * 100
 
@@ -684,12 +873,13 @@ class PathService:
 
         return {
             "node_id": node_id,
-            "total_questions": len(judged),
+            "total_questions": len(judged_questions),
             "correct_count": correct,
             "score": score,
             "threshold": threshold,
             "passed": passed,
             "node_status": progress.node_status,
+            "judged_questions": judged_questions,
         }
 
     @staticmethod
@@ -788,8 +978,8 @@ class PathService:
             knowledge_tags=json.dumps(fields.get("knowledge_tags", []), ensure_ascii=False),
             order_index=fields.get("order_index", next_order),
             prerequisites=json.dumps(fields.get("prerequisites", []), ensure_ascii=False),
-            resource_types=json.dumps(fields.get("resource_types", ["document", "image"]), ensure_ascii=False),
-            quiz_config=json.dumps(fields.get("quiz_config", {"count": 3, "threshold": 0.7}), ensure_ascii=False),
+            resource_types=json.dumps(fields.get("resource_types", ["document", "ppt", "mindmap"]), ensure_ascii=False),
+            quiz_config=json.dumps(fields.get("quiz_config", {"count": 5, "threshold": 0.7}), ensure_ascii=False),
         )
 
         await LearningPath.filter(id=path_id).update(node_count=await PathNode.filter(path_id=path_id).count())
@@ -946,7 +1136,7 @@ class PathService:
             for rid in resource_ids_map.get(node.id, []):
                 r = resources_map.get(rid)
                 if r:
-                    ext = {"document": "md", "ppt": "pptx", "mindmap": "txt", "exercise": "md"}.get(r.resource_type, "md")
+                    ext = {"document": "md", "ppt": "pptx", "mindmap": "txt", "exercise": "md", "audio": "mp3", "html": "html"}.get(r.resource_type, "md")
                     node_resources.append({
                         "id": r.id,
                         "title": r.topic,
@@ -963,7 +1153,7 @@ class PathService:
                 if resources_map.get(rid)
             )
 
-            resource_types = json.loads(node.resource_types) if node.resource_types else ["document"]
+            resource_types = json.loads(node.resource_types) if node.resource_types else ["document", "ppt", "mindmap"]
             nodes.append({
                 "id": node.id,
                 "title": node.topic,
@@ -1025,8 +1215,12 @@ class PathService:
         }
 
     @staticmethod
-    async def complete_node(node_id: int, user_id: int, session_id: str) -> dict:
-        """完成节点（提交测验）→ 返回更新后节点 + 新解锁节点"""
+    async def complete_node(node_id: int, user_id: int, session_id: str, answers: dict[str, str] | None = None, correct_answers: dict[str, str] | None = None) -> dict:
+        """完成节点（提交测验）→ 返回更新后节点 + 新解锁节点
+
+        answers: 前端传来的所有答案 {question_id_str: user_answer}，直接判分
+        correct_answers: 前端传来的正确答案 {question_id_str: correct_answer}，DB 找不到题目时的兜底
+        """
         node = await PathNode.filter(id=node_id).first()
         if not node:
             raise ValueError("节点不存在")
@@ -1038,8 +1232,8 @@ class PathService:
 
         path_id = progress.path_id
 
-        # 复用原有测验提交逻辑
-        quiz_result = await PathService.submit_node_quiz(path_id, node_id, user_id, session_id)
+        # 复用原有测验提交逻辑（传入 answers 直接判分）
+        quiz_result = await PathService.submit_node_quiz(path_id, node_id, user_id, session_id, answers=answers, correct_answers=correct_answers)
         if "error" in quiz_result:
             raise ValueError(quiz_result["error"])
 
@@ -1088,3 +1282,103 @@ class PathService:
             "passed": quiz_result.get("passed", False),
             "score": quiz_result.get("score", 0),
         }
+
+
+# ═══════════════════════════════════════
+#  SSE 流式辅助函数
+# ═══════════════════════════════════════
+
+def _resource_sse(record) -> str:
+    """单个资源的 SSE 事件"""
+    data = {
+        "type": "resource",
+        "resource_id": record.id,
+        "resource_type": record.resource_type,
+        "title": record.topic or "",
+        "download_url": f"/resource/{record.id}/download",
+    }
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _sse_done(all_ids: list[int]) -> str:
+    """生成完成的 SSE 事件"""
+    data = {"type": "done", "resource_ids": all_ids}
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _ppt_to_slides(content: str) -> list[dict]:
+    """把 PPT markdown 解析为幻灯片列表"""
+    import re
+    raw_slides = re.split(r"\n---\n", (content or "").strip())
+    slides = []
+    for block in raw_slides:
+        block = block.strip()
+        if not block:
+            continue
+        title = ""
+        bullets = []
+        notes = []
+        body_lines = []
+        for line in block.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("# ") or stripped.startswith("## "):
+                title = stripped.lstrip("#").strip()
+            elif stripped.startswith("> "):
+                notes.append(stripped[2:].strip())
+            elif stripped.startswith("- ") or stripped.startswith("* "):
+                bullets.append(stripped[2:].strip())
+            else:
+                body_lines.append(stripped)
+        if body_lines and not title:
+            title = body_lines[0]
+            body_lines = body_lines[1:]
+        slides.append({
+            "title": title,
+            "bullets": bullets,
+            "notes": "，".join(notes),
+            "body": body_lines,
+        })
+    return slides
+
+
+async def _background_narrate(ppt_id: int, user_id: int, topic: str, progress_id: int, current_ids: list[int]):
+    """后台生成旁白 + audio/html 资源，完成后更新 progress.resource_ids"""
+    import json as _json
+    from backend.src.service.narration_service import narrate_resource as _narrate_resource
+    from backend.src.models.resource_model import GeneratedResource
+    from backend.src.models.path_model import UserPathProgress
+
+    try:
+        narration = await _narrate_resource(ppt_id)
+        if not narration or narration.get("error") or not narration.get("sections"):
+            return
+
+        all_ids = list(current_ids)
+
+        audio = await GeneratedResource.create(
+            user_id=user_id, topic=topic, resource_type="audio",
+            title=f"{topic} - 音频旁白",
+            content=_json.dumps(narration["sections"], ensure_ascii=False),
+        )
+        all_ids.append(audio.id)
+
+        ppt_record = await GeneratedResource.filter(id=ppt_id).first()
+        if ppt_record:
+            html_data = {
+                "slides": _ppt_to_slides(ppt_record.content or ""),
+                "narration": narration["sections"],
+            }
+            html = await GeneratedResource.create(
+                user_id=user_id, topic=topic, resource_type="html",
+                title=f"{topic} - 动态课件",
+                content=_json.dumps(html_data, ensure_ascii=False),
+            )
+            all_ids.append(html.id)
+
+        await UserPathProgress.filter(id=progress_id).update(
+            resource_ids=_json.dumps(all_ids, ensure_ascii=False))
+        logger.info("后台旁白完成 ppt_id=%s audio=%s html=%s", ppt_id, audio.id, all_ids[-1] if len(all_ids) > len(current_ids) + 1 else "?")
+    except Exception:
+        logger.exception("后台旁白失败 ppt_id=%s", ppt_id)

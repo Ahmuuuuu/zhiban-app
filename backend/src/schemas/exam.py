@@ -16,3 +16,4 @@ class SubmitAnswerRequest(BaseModel):
     answer: Union[str, List[str]] = Field(description="用户答案（单选/判断为字符串，多选为数组）")
     time_spent: Optional[int] = Field(default=None, description="作答耗时（秒）")
     session_id: Optional[str] = Field(default=None, description="练习会话 ID，不传则自动生成")
+    node_id: Optional[int] = Field(default=None, description="学习路径节点 ID（非路径题目不传）")
