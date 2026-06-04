@@ -188,6 +188,26 @@
       background: rgba(79, 140, 255, 0.4);
     }
 
+    .dot.dot-disabled {
+      background: rgba(255, 255, 255, 0.08);
+      cursor: not-allowed;
+    }
+
+    /* ─── 章节未就绪遮罩 ─── */
+    .chapter-loading-mask {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 10, 26, 0.75);
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 18px;
+      font-weight: 900;
+      z-index: 5;
+      pointer-events: none;
+    }
+
     /* ─── 章节 1: 学科介绍（多页幻灯片） ─── */
     .chapter-intro {
       padding: 0;
@@ -684,7 +704,7 @@
       <!-- chapters rendered by JS -->
     </div>
 
-    <div id="progress-bar" onclick="handleProgressClick(event)" onmousedown="startDragProgress(event)">
+    <div id="progress-bar">
       <div id="progress-track">
         <div id="progress-fill">
           <div id="progress-thumb"></div>
@@ -710,35 +730,27 @@
     // ══════════════════════════════════════════════
     var SECTIONS = {{SECTIONS}};
     var TITLE = {{TITLE_JSON}};
+    var MERGED_AUDIO_URL = "{{MERGED_AUDIO_URL}}";
+    var TIMELINE = {{TIMELINE}};
 
     // ══════════════════════════════════════════════
     //  State
     // ══════════════════════════════════════════════
     var currentChapter = 0;
-    var currentSlide = 0;       // for ppt type sub-navigation
+    var currentSlide = 0;
     var isPlaying = false;
-    var audioQueue = [];
-    var currentAudio = null;
-    var audioIndex = 0;
     var totalChapters = SECTIONS.length;
-    var chapterTimers = [];
+    var audio = null;  // 单一合并音频元素
 
-    // 全片音频总时长（毫秒），用于进度条
-    var totalDurationMs = 0;
-    SECTIONS.forEach(function (s) { totalDurationMs += s.total_duration_ms || 0; });
+    function isChapterReady(idx) {
+      return !!(MERGED_AUDIO_URL && TIMELINE.length > 0);
+    }
 
-    function getCompletedMs() {
-      var ms = 0;
-      for (var i = 0; i < currentChapter; i++) ms += SECTIONS[i].total_duration_ms || 0;
-      // 当前章节：有 slides 的累积已翻页时长
-      var sec = SECTIONS[currentChapter];
-      if (sec && sec.slides) {
-        for (var i = 0; i < currentSlide; i++)
-          ms += (sec.slides[i].duration_ms) || 0;
-      }
-      for (var i = 0; i < audioIndex; i++) ms += (audioQueue[i] && audioQueue[i].duration_ms) || 0;
-      if (currentAudio) ms += currentAudio.currentTime * 1000;
-      return ms;
+    // 合并后总时长优先用时间线末值，否则等 audio.duration
+    function getTotalDurationMs() {
+      if (TIMELINE.length) return TIMELINE[TIMELINE.length - 1].end_ms;
+      if (audio && audio.duration && isFinite(audio.duration)) return audio.duration * 1000;
+      return 0;
     }
 
     function formatTime(sec) {
@@ -748,112 +760,116 @@
     }
 
     function updateProgress() {
-      var completedMs = getCompletedMs();
-      var pct = totalDurationMs > 0 ? (completedMs / totalDurationMs) * 100 : 0;
+      var totalMs = getTotalDurationMs();
+      var posMs = audio ? audio.currentTime * 1000 : 0;
+      var pct = totalMs > 0 ? (posMs / totalMs) * 100 : 0;
       document.getElementById('progress-fill').style.width = Math.min(pct, 100) + '%';
-      var totalSec = Math.floor(totalDurationMs / 1000);
-      document.getElementById('time-display').textContent = formatTime(completedMs / 1000) + ' / ' + formatTime(totalSec);
+      document.getElementById('time-display').textContent = formatTime(posMs / 1000) + ' / ' + formatTime(totalMs / 1000);
+    }
+
+    // 从时间线找当前应显示的章节/幻灯片
+    function _syncChapterFromTime(timeMs) {
+      if (!TIMELINE.length) return;
+      for (var i = TIMELINE.length - 1; i >= 0; i--) {
+        var cue = TIMELINE[i];
+        if (timeMs >= cue.start_ms) {
+          var ch = cue.chapter;
+          var sl = cue.slide;
+          if (ch !== currentChapter) {
+            currentChapter = ch;
+            currentSlide = sl;
+            document.querySelectorAll('.chapter').forEach(function (el, j) { el.classList.toggle('active', j === ch); });
+            document.querySelectorAll('.dot').forEach(function (el, j) { el.classList.toggle('active', j === ch); });
+            updateUI();
+            resetKaraoke();
+            prepareTimedWords(getActiveWordRoot());
+            resetWordReveal(getActiveWordRoot());
+          } else if (sl !== currentSlide && SECTIONS[ch] && SECTIONS[ch].slides) {
+            currentSlide = sl;
+            var containers = document.querySelectorAll('.chapter.active .slide-container');
+            containers.forEach(function (el, j) { el.style.display = j === sl ? 'flex' : 'none'; });
+            updateUI();
+            resetKaraoke();
+            prepareTimedWords(getActiveWordRoot());
+            resetWordReveal(getActiveWordRoot());
+          }
+          return;
+        }
+      }
     }
 
     // ══════════════════════════════════════════════
     //  Seek — 拖动 / 点击进度条
     // ══════════════════════════════════════════════
-    function handleProgressClick(event) {
-      var rect = document.getElementById('progress-bar').getBoundingClientRect();
-      var x = event.clientX - rect.left;
-      var fraction = x / rect.width;
-      seekTo(fraction);
-    }
-
     var _dragActive = false;
 
-    function startDragProgress(event) {
-      _dragActive = true;
-      handleProgressClick(event);
-      document.addEventListener('mousemove', _onDrag);
-      document.addEventListener('mouseup', _stopDrag);
+    function _getClientX(e) {
+      if (e.touches && e.touches.length) return e.touches[0].clientX;
+      if (e.changedTouches && e.changedTouches.length) return e.changedTouches[0].clientX;
+      return e.clientX;
     }
 
-    function _onDrag(event) {
-      if (!_dragActive) return;
-      event.preventDefault();
+    function _progressFraction(e) {
       var rect = document.getElementById('progress-bar').getBoundingClientRect();
-      var x = Math.max(0, Math.min(event.clientX - rect.left, rect.width));
-      document.getElementById('progress-fill').style.width = (x / rect.width * 100) + '%';
+      return Math.max(0, Math.min(1, (_getClientX(e) - rect.left) / rect.width));
     }
 
-    function _stopDrag(event) {
-      _dragActive = false;
-      document.removeEventListener('mousemove', _onDrag);
-      document.removeEventListener('mouseup', _stopDrag);
-      handleProgressClick(event);
+    function _updateProgressBarVisual(fraction) {
+      var fill = document.getElementById('progress-fill');
+      fill.style.transition = 'none';
+      fill.style.width = (fraction * 100) + '%';
     }
+
+    function _restoreProgressBarTransition() {
+      document.getElementById('progress-fill').style.transition = '';
+    }
+
+    function onProgressStart(e) {
+      e.preventDefault();
+      _dragActive = true;
+      _updateProgressBarVisual(_progressFraction(e));
+      document.addEventListener('mousemove', onProgressMove);
+      document.addEventListener('mouseup', onProgressEnd);
+      document.addEventListener('touchmove', onProgressMove, { passive: false });
+      document.addEventListener('touchend', onProgressEnd);
+    }
+
+    function onProgressMove(e) {
+      if (!_dragActive) return;
+      e.preventDefault();
+      _updateProgressBarVisual(_progressFraction(e));
+    }
+
+    function onProgressEnd(e) {
+      if (!_dragActive) return;
+      _dragActive = false;
+      document.removeEventListener('mousemove', onProgressMove);
+      document.removeEventListener('mouseup', onProgressEnd);
+      document.removeEventListener('touchmove', onProgressMove);
+      document.removeEventListener('touchend', onProgressEnd);
+
+      var fraction = _progressFraction(e);
+      _updateProgressBarVisual(fraction);
+      seekTo(fraction);
+      requestAnimationFrame(function () { _restoreProgressBarTransition(); });
+    }
+
+    // Attach progress bar listeners
+    (function () {
+      var bar = document.getElementById('progress-bar');
+      bar.addEventListener('mousedown', onProgressStart);
+      bar.addEventListener('touchstart', onProgressStart, { passive: false });
+    })();
 
     function seekTo(fraction) {
+      if (!audio) return;
+      var totalMs = getTotalDurationMs();
+      if (totalMs <= 0) return;
       fraction = Math.max(0, Math.min(1, fraction));
-      var targetMs = fraction * totalDurationMs;
-      if (targetMs < 50) targetMs = 0;
-      if (targetMs > totalDurationMs - 500) targetMs = totalDurationMs;
-
-      // 找目标章节
-      var acc = 0;
-      for (var c = 0; c < SECTIONS.length; c++) {
-        var dur = SECTIONS[c].total_duration_ms || 0;
-        if (acc + dur > targetMs || c === SECTIONS.length - 1) {
-          var offsetInChapter = targetMs - acc;
-          var wasPlaying = isPlaying;
-
-          stopAudio();
-          goToChapter(c);
-
-          // 有 slides 的章节：找目标页
-          var sec = SECTIONS[c];
-          if (sec.slides && sec.slides.length > 0) {
-            var slideAcc = 0;
-            for (var s = 0; s < sec.slides.length; s++) {
-              var slideDur = sec.slides[s].duration_ms || 0;
-              if (slideAcc + slideDur > offsetInChapter || s === sec.slides.length - 1) {
-                if (s !== currentSlide) showSlide(s);
-                offsetInChapter -= slideAcc;
-                break;
-              }
-              slideAcc += slideDur;
-            }
-          }
-
-          // 在当前音频队列中找到对应段
-          var segAcc = 0;
-          for (var a = 0; a < audioQueue.length; a++) {
-            var segDur = (audioQueue[a] && audioQueue[a].duration_ms) || 0;
-            if (segAcc + segDur > offsetInChapter || a === audioQueue.length - 1) {
-              audioIndex = a;
-              if (wasPlaying) {
-                playAudioQueue();
-                var seekInSec = Math.max(0, (offsetInChapter - segAcc) / 1000);
-                if (currentAudio && seekInSec > 0.5) {
-                  var doSeek = function () {
-                    if (currentAudio.readyState >= 2) {
-                      currentAudio.currentTime = Math.min(seekInSec, (currentAudio.duration || 9999) - 0.1);
-                    } else {
-                      currentAudio.addEventListener('canplay', function () {
-                        currentAudio.currentTime = Math.min(seekInSec, (currentAudio.duration || 9999) - 0.1);
-                      }, { once: true });
-                    }
-                  };
-                  doSeek();
-                }
-              }
-              break;
-            }
-            segAcc += segDur;
-          }
-
-          updateProgress();
-          updateWordReveal();
-          return;
-        }
-        acc += dur;
-      }
+      var targetSec = fraction * (totalMs / 1000);
+      audio.currentTime = Math.max(0, Math.min(targetSec, (audio.duration || 9999) - 0.1));
+      _syncChapterFromTime(audio.currentTime * 1000);
+      updateProgress();
     }
 
     // ══════════════════════════════════════════════
@@ -867,6 +883,14 @@
         var div = document.createElement('div');
         div.className = 'chapter chapter-' + sec.type + (idx === 0 ? ' active' : '');
         div.dataset.index = idx;
+
+        // 未就绪章节加生成中遮罩
+        if (!sec.is_audio_ready) {
+          var mask = document.createElement('div');
+          mask.className = 'chapter-loading-mask';
+          mask.textContent = '音频生成中…';
+          div.appendChild(mask);
+        }
 
         if (sec.type === 'intro') {
           var slidesHtml = '';
@@ -916,16 +940,20 @@
       // Dots
       var dotsContainer = document.getElementById('chapter-dots');
       dotsContainer.innerHTML = '';
-      SECTIONS.forEach(function (_, idx) {
+      SECTIONS.forEach(function (sec, idx) {
         var dot = document.createElement('span');
-        dot.className = 'dot' + (idx === 0 ? ' active' : '');
-        dot.onclick = function () { goToChapter(idx); };
+        var ready = sec.is_audio_ready;
+        dot.className = 'dot' + (idx === 0 ? ' active' : '') + (ready ? '' : ' dot-disabled');
+        dot.title = ready ? (sec.title || '章节 ' + (idx + 1)) : '音频生成中…';
+        if (ready) {
+          dot.onclick = function () { goToChapter(idx); };
+        }
         dotsContainer.appendChild(dot);
       });
 
       updateUI();
       updateProgress();
-      loadAudioForChapter(0);
+      audio = _createAudio();
       prepareTimedWords(getActiveWordRoot());
       resetWordReveal(getActiveWordRoot());
     }
@@ -965,31 +993,29 @@
     }
 
     // ══════════════════════════════════════════════
-    //  Chapter Navigation
+    //  Chapter Navigation (seeks merged audio to cue position)
     // ══════════════════════════════════════════════
     function goToChapter(idx) {
       if (idx < 0 || idx >= totalChapters) return;
-      stopAudio();
-      document.querySelectorAll('.chapter').forEach(function (el, i) {
-        el.classList.toggle('active', i === idx);
-      });
-      document.querySelectorAll('.dot').forEach(function (el, i) {
-        el.classList.toggle('active', i === idx);
-      });
-      currentChapter = idx;
-      currentSlide = 0;
-      audioIndex = 0;
-      updateUI();
+      if (!isChapterReady(idx)) return;
+      // 找该章节第一个时间点
+      var targetMs = 0;
+      for (var i = 0; i < TIMELINE.length; i++) {
+        if (TIMELINE[i].chapter === idx) { targetMs = TIMELINE[i].start_ms; break; }
+      }
+      if (audio) {
+        audio.currentTime = targetMs / 1000;
+        _syncChapterFromTime(targetMs);
+      }
       updateProgress();
-      resetKaraoke();
-      loadAudioForChapter(idx);
-      prepareTimedWords(getActiveWordRoot());
-      resetWordReveal(getActiveWordRoot());
-      if (isPlaying) playAudioQueue();
     }
 
-    function nextChapter() { goToChapter(Math.min(currentChapter + 1, totalChapters - 1)); }
-    function prevChapter() { goToChapter(Math.max(currentChapter - 1, 0)); }
+    function nextChapter() {
+      goToChapter(currentChapter + 1);
+    }
+    function prevChapter() {
+      goToChapter(currentChapter - 1);
+    }
 
     // ─── PPT slide sub-navigation ───
     function nextSlide() {
@@ -1015,110 +1041,108 @@
       });
       currentSlide = idx;
       updateUI();
-      updateProgress();
       resetKaraoke();
-      // 同步音频索引到当前页，不重新加载音频队列，保持连续播放
-      audioIndex = idx;
-      if (isPlaying) {
-        if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-        playAudioQueue();
+      prepareTimedWords(getActiveWordRoot());
+      resetWordReveal(getActiveWordRoot());
+      // 找到此幻灯片在时间线中的位置并 seek
+      for (var i = 0; i < TIMELINE.length; i++) {
+        if (TIMELINE[i].chapter === currentChapter && TIMELINE[i].slide === idx) {
+          if (audio) audio.currentTime = TIMELINE[i].start_ms / 1000;
+          break;
+        }
       }
+      updateProgress();
     }
 
     // ══════════════════════════════════════════════
-    //  Audio
+    //  Audio (单一合并元素)
     // ══════════════════════════════════════════════
-    function loadAudioForChapter(chapterIdx) {
-      var sec = SECTIONS[chapterIdx];
-      if (!sec) { audioQueue = []; return; }
+    function _createAudio() {
+      if (!MERGED_AUDIO_URL) return null;
+      var a = new Audio(MERGED_AUDIO_URL);
+      a.preload = 'auto';
 
-      // 优先从 slides 的 audio_url 构建队列（新结构）
-      audioQueue = [];
-      if (sec.slides && sec.slides.length > 0) {
-        var found = false;
-        for (var si = 0; si < sec.slides.length; si++) {
-          var sl = sec.slides[si];
-          if (sl.audio_url) {
-            audioQueue.push({ audio_url: sl.audio_url, duration_ms: sl.duration_ms, word_timings: sl.word_timings || [] });
-            found = true;
-          }
-        }
-        // slides 存在但没有 audio_url（旧结构），降级到 audio_segments
-        if (!found && sec.audio_segments && sec.audio_segments.length > 0) {
-          audioQueue = sec.audio_segments.slice();
-        }
-      } else if (sec.audio_segments && sec.audio_segments.length > 0) {
-        audioQueue = sec.audio_segments.slice();
-      }
-      audioIndex = 0;
-    }
-
-    function playAudioQueue() {
-      if (audioQueue.length === 0 || audioIndex >= audioQueue.length) {
-        // Chapter finished
-        isPlaying = false;
-        document.getElementById('btn-play').textContent = '▶';
-        // Auto advance to next chapter
-        if (currentChapter < totalChapters - 1) {
-          setTimeout(function () { nextChapter(); }, 400);
-        }
-        return;
-      }
-
-      var seg = audioQueue[audioIndex];
-      if (!seg || !seg.audio_url) {
-        audioIndex++;
-        playAudioQueue();
-        return;
-      }
-
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio = null;
-      }
-
-      currentAudio = new Audio(seg.audio_url);
-      currentAudio.play().catch(function (e) { console.warn('Audio play error:', e); });
-      updateWordReveal();
-      currentAudio.onended = function () {
-        audioIndex++;
-        // 自动翻页：一段音频播完自动进入下一张幻灯片
-        var sec = SECTIONS[currentChapter];
-        if (sec && sec.slides && sec.slides.length > 1 && currentSlide < sec.slides.length - 1) {
-          var containers = document.querySelectorAll('.chapter.active .slide-container');
-          containers.forEach(function (el, i) {
-            el.style.display = i === currentSlide + 1 ? 'flex' : 'none';
-          });
-          currentSlide++;
-          updateUI();
-          prepareTimedWords(getActiveWordRoot());
-          resetWordReveal(getActiveWordRoot());
-        }
-        updateProgress();
-        playAudioQueue();
-      };
-      currentAudio.ontimeupdate = function () {
+      a.ontimeupdate = function () {
+        var timeMs = a.currentTime * 1000;
+        _syncChapterFromTime(timeMs);
         updateProgress();
         updateKaraoke();
+        savePlayState();
       };
+
+      a.onended = function () {
+        isPlaying = false;
+        document.getElementById('btn-play').textContent = '▶';
+        clearPlayState();
+        updateProgress();
+      };
+
+      a.onplay = function () {
+        isPlaying = true;
+        document.getElementById('btn-play').textContent = '⏸';
+      };
+
+      a.onpause = function () {
+        isPlaying = false;
+        document.getElementById('btn-play').textContent = '▶';
+      };
+
+      return a;
     }
 
-    function stopAudio() {
-      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    // ══════════════════════════════════════════════
+    //  Play state persistence
+    // ══════════════════════════════════════════════
+    var STORAGE_KEY = 'zhiban_ppt_' + TITLE;
+
+    function savePlayState() {
+      try {
+        if (!audio) return;
+        var state = {
+          chapter: currentChapter,
+          slide: currentSlide,
+          time: audio.currentTime,
+          playing: isPlaying,
+          ts: Date.now()
+        };
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch(e) {}
+    }
+
+    function restorePlayState() {
+      try {
+        var raw = sessionStorage.getItem(STORAGE_KEY);
+        if (!raw) return false;
+        var state = JSON.parse(raw);
+        if (Date.now() - state.ts > 300000) { sessionStorage.removeItem(STORAGE_KEY); return false; }
+        if (!audio) return false;
+
+        if (state.time > 0.5) {
+          audio.currentTime = Math.min(state.time, (audio.duration || 9999) - 0.1);
+          _syncChapterFromTime(state.time * 1000);
+        }
+        if (state.playing) {
+          audio.play().catch(function () {});
+        }
+        updateUI();
+        updateProgress();
+        sessionStorage.removeItem(STORAGE_KEY);
+        return true;
+      } catch(e) {
+        return false;
+      }
+    }
+
+    function clearPlayState() {
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch(e) {}
     }
 
     function togglePlay() {
+      if (!audio || !isChapterReady(currentChapter)) return;
       if (isPlaying) {
-        if (currentAudio) currentAudio.pause();
-        isPlaying = false;
-        document.getElementById('btn-play').textContent = '▶';
+        audio.pause();
       } else {
-        isPlaying = true;
-        document.getElementById('btn-play').textContent = '⏸';
-        if (audioQueue.length === 0 || audioIndex >= audioQueue.length) {
-          audioIndex = 0;
-        }
-        playAudioQueue();
+        audio.play().catch(function (e) { console.warn('Audio play error:', e); });
       }
     }
 
@@ -1135,6 +1159,20 @@
         label += '  (' + (currentChapter + 1) + '/' + totalChapters + ')';
       }
       document.getElementById('chapter-indicator').textContent = label;
+
+      var btn = document.getElementById('btn-play');
+      var ready = isChapterReady(currentChapter);
+      if (!ready) {
+        btn.disabled = true;
+        btn.style.opacity = '0.35';
+        btn.style.cursor = 'not-allowed';
+        btn.title = '音频生成中…';
+      } else {
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.style.cursor = '';
+        btn.title = isPlaying ? '暂停' : '播放';
+      }
     }
 
     // ══════════════════════════════════════════════
@@ -1183,12 +1221,21 @@
       var chars = container.querySelectorAll('.kw');
       if (!chars.length) return;
 
-      if (!currentAudio || currentAudio.paused) {
+      if (!audio || audio.paused) {
         for (var i = 0; i < chars.length; i++) chars[i].className = 'kw';
         return;
       }
 
-      var currentTimeMs = currentAudio.currentTime * 1000;
+      var currentTimeMs = audio.currentTime * 1000;
+      // 换算为相对当前幻灯片的时间偏移
+      var slideStartMs = 0;
+      for (var t = 0; t < TIMELINE.length; t++) {
+        if (TIMELINE[t].chapter === currentChapter && TIMELINE[t].slide === currentSlide) {
+          slideStartMs = TIMELINE[t].start_ms;
+          break;
+        }
+      }
+      var relativeMs = currentTimeMs - slideStartMs;
       var timings = _getCharTimings(slide, chars.length);
       if (!timings) return;
 
@@ -1196,7 +1243,7 @@
       var lo = 0, hi = timings.length;
       while (lo < hi) {
         var mid = (lo + hi) >>> 1;
-        if (timings[mid] <= currentTimeMs) lo = mid + 1;
+        if (timings[mid] <= relativeMs) lo = mid + 1;
         else hi = mid;
       }
 
@@ -1231,6 +1278,7 @@
     //  Init
     // ══════════════════════════════════════════════
     render();
+    restorePlayState();
   </script>
 </body>
 

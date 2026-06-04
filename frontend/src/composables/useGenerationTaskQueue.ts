@@ -141,10 +141,23 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
     ? (taskData?.error || '资源生成失败，请稍后再试。')
     : formatTaskProgress(taskData)
   task.error = taskData?.error || ''
+  // 保留已生成的课件文件和 doneEvent.presentation，
+  // 避免 hydrate 时后端数据覆盖前端已完成的课件状态导致重复生成
+  const existingPresentation = (task.doneEvent as any)?.presentation
+  const existingVideoFiles = task.files.filter(
+    f => (f as any).file_type === 'video' || (f as any).resource_type === 'video' || (f as any).resourceKind === 'presentation'
+  )
   task.files.splice(0, task.files.length, ...normalizeTaskFiles(taskData))
+  // 把课件文件追加回去（放在资源文件后面）
+  if (existingVideoFiles.length) {
+    task.files.push(...existingVideoFiles)
+  }
   task.doneEvent = {
     chat_group_id: task.chatGroupId,
     resources: task.files,
+  }
+  if (existingPresentation) {
+    (task.doneEvent as any).presentation = existingPresentation
   }
   task.updatedAt = Date.now()
   persistTasks()
@@ -271,60 +284,67 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
 const maybeGeneratePresentation = async (task: GenerationTask) => {
   if (task.tool.generateMode !== 'video' || task.status !== 'done') return
   if ((task.doneEvent as any)?.presentation || !task.files.length) return
+  // 防止重复进入（watcher 可能在 files.push 时再次触发）
+  if ((task as any)._presentationGenerating) return
+  ;(task as any)._presentationGenerating = true
 
-  // 新流程：追问前置已回答 → 直接生成课件，资源已按答案精准生成
-  if ((task as any).questionsShown && (task as any)._answers) {
-    task.status = 'running'
-    task.progress = '正在生成动态课件...'
-    task.updatedAt = Date.now()
-    persistTasks()
+  try {
+    // 新流程：追问前置已回答 → 直接生成课件，资源已按答案精准生成
+    if ((task as any).questionsShown && (task as any)._answers) {
+      task.status = 'running'
+      task.progress = '正在生成动态课件...'
+      task.updatedAt = Date.now()
+      persistTasks()
+      try {
+        await _doGeneratePresentation(task)
+      } catch (e: any) {
+        task.status = 'failed'
+        task.error = e?.response?.data?.detail || e?.message || '动态课件生成失败'
+        task.progress = task.error
+      } finally {
+        task.updatedAt = Date.now()
+        persistTasks()
+      }
+      return
+    }
+
+    // 旧流程兼容：等待用户作答或无追问
+    if ((task as any).pendingQuestions || (task as any).questionsShown) return
+
     try {
-      await _doGeneratePresentation(task)
-    } catch (e: any) {
-      task.status = 'failed'
-      task.error = e?.response?.data?.detail || e?.message || '动态课件生成失败'
-      task.progress = task.error
+      task.status = 'running'
+      task.progress = '资源已生成，正在分析内容...'
+      task.updatedAt = Date.now()
+      persistTasks()
+
+      const chatGroupId = task.chatGroupId || (task.doneEvent as any)?.chat_group_id || 0
+      const questionsResult: any = await getPresentationQuestions({ topic: task.text, chat_group_id: chatGroupId })
+      const questions = unwrapResponseData(questionsResult)?.questions || unwrapResponseData(questionsResult)
+
+      if (questions && Array.isArray(questions) && questions.length > 0) {
+        ;(task as any).pendingQuestions = questions
+        task.status = 'done'
+        task.progress = '请选择课件方向以继续...'
+      } else {
+        // 无问题则直接生成
+        await _doGeneratePresentation(task)
+      }
+    } catch (error: any) {
+      // 问题生成失败 → 降级直接生成课件
+      console.warn('[GenerationTask] 追问生成失败，直接生成课件:', error)
+      try {
+        await _doGeneratePresentation(task)
+      } catch (e: any) {
+        task.status = 'failed'
+        task.error = e?.response?.data?.detail || e?.message || '动态课件生成失败'
+        task.progress = task.error
+      }
     } finally {
       task.updatedAt = Date.now()
       persistTasks()
     }
-    return
-  }
-
-  // 旧流程兼容：等待用户作答或无追问
-  if ((task as any).pendingQuestions || (task as any).questionsShown) return
-
-  try {
-    task.status = 'running'
-    task.progress = '资源已生成，正在分析内容...'
-    task.updatedAt = Date.now()
-    persistTasks()
-
-    const chatGroupId = task.chatGroupId || (task.doneEvent as any)?.chat_group_id || 0
-    const questionsResult: any = await getPresentationQuestions({ topic: task.text, chat_group_id: chatGroupId })
-    const questions = unwrapResponseData(questionsResult)?.questions || unwrapResponseData(questionsResult)
-
-    if (questions && Array.isArray(questions) && questions.length > 0) {
-      ;(task as any).pendingQuestions = questions
-      task.status = 'done'
-      task.progress = '请选择课件方向以继续...'
-    } else {
-      // 无问题则直接生成
-      await _doGeneratePresentation(task)
-    }
-  } catch (error: any) {
-    // 问题生成失败 → 降级直接生成课件
-    console.warn('[GenerationTask] 追问生成失败，直接生成课件:', error)
-    try {
-      await _doGeneratePresentation(task)
-    } catch (e: any) {
-      task.status = 'failed'
-      task.error = e?.response?.data?.detail || e?.message || '动态课件生成失败'
-      task.progress = task.error
-    }
   } finally {
-    task.updatedAt = Date.now()
-    persistTasks()
+    delete (task as any)._presentationGenerating
   }
 }
 
@@ -356,8 +376,10 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
     download_url: '',
     source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
   }
+  // doneEvent.presentation 必须先于 files.push 设置，
+  // 否则 watcher 触发 maybeGeneratePresentation 时会因 guard 缺失而重复生成课件
+  task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: [...task.files, presentationFile] }
   task.files.push(presentationFile)
-  task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: task.files }
   task.status = 'done'
   task.progress = '动态课件已生成，可以打开预览。'
   delete (task as any).pendingQuestions
@@ -379,6 +401,10 @@ export function useGenerationTaskQueue() {
     }).then(result => {
       const data = unwrapResponseData(result)
       task.backendTaskId = data?.task_id || data?.taskId || ''
+      // 后端创建任务时会分配 chat_group_id，前端及时同步避免后续步骤创建新对话
+      if (data?.chat_group_id || data?.chatGroupId) {
+        task.chatGroupId = data?.chat_group_id || data?.chatGroupId
+      }
       task.progress = formatTaskProgress(data)
       task.updatedAt = Date.now()
       pollBackendTask(task)
@@ -421,7 +447,12 @@ export function useGenerationTaskQueue() {
       persistTasks()
       void getPresentationQuestions({ topic: text, chat_group_id: chatGroupId || 0 })
         .then(result => {
-          const questions = unwrapResponseData(result)?.questions || unwrapResponseData(result)
+          const data = unwrapResponseData(result)
+          const questions = data?.questions || data
+          // 后端可能为追问创建 chat_group，及时同步
+          if (data?.chat_group_id || data?.chatGroupId) {
+            task.chatGroupId = data?.chat_group_id || data?.chatGroupId
+          }
           if (questions && Array.isArray(questions) && questions.length > 0) {
             ;(task as any).pendingQuestions = questions
             task.status = 'done'
