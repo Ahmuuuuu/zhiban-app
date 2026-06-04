@@ -568,10 +568,6 @@ const isVideoHistoryRecord = record => {
 }
 
 const appendPresentationCardsFromHistory = async (records, targetMessages) => {
-  const videoRecords = records.filter(isVideoHistoryRecord)
-  console.log('[ChatView] 视频历史记录匹配:', { totalRecords: records.length, videoRecords: videoRecords.length, videoRecordReqs: videoRecords.map(r => String(r.req || r.content || '').slice(0, 60)) })
-  if (!videoRecords.length) return
-
   try {
     const presentations = normalizeList(await getPresentations())
     console.log('[ChatView] 已生成的课件列表:', presentations.map(p => ({ id: p.id, topic: p.topic, hasFileUrl: !!p.file_url })))
@@ -580,22 +576,36 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
     const existingUrls = new Set(targetMessages.map(message => message.previewUrl).filter(Boolean))
     const existingIds = new Set(targetMessages.map(message => String(message.presentation?.id || message.fileId || '')).filter(Boolean))
 
-    for (const record of videoRecords) {
-      const rawReq = record.req || record.content || ''
-      const reqTopic = normalizePresentationTopic(stripInternalInstructions(rawReq))
-      const presentation = presentations.find(item => {
-        const itemTopic = normalizePresentationTopic(item.topic)
-        if (!itemTopic || !reqTopic) return false
-        // 放宽匹配：包含关系即可，不再要求完全相等
-        return itemTopic === reqTopic || item.topic === rawReq ||
-          itemTopic.includes(reqTopic) || reqTopic.includes(itemTopic)
-      })
+    // 按 ID 或 file_url 精确匹配，避免跨对话话题混淆
+    const presById = new Map()
+    const presByUrl = new Map()
+    for (const p of presentations) {
+      if (p.id) presById.set(String(p.id), p)
+      if (p.file_url) presByUrl.set(p.file_url, p)
+    }
 
-      if (!presentation?.file_url) continue
+    for (const record of records) {
+      // 从 assistant 回复中提取课件 ID / file_url
+      const resRaw = record.res || record.content || record.answer || ''
+      const resParsed = typeof resRaw === 'string' ? tryParseJson(resRaw) : resRaw
+      const resId = resParsed?.id || resParsed?.presentation_id || resParsed?.presentationId || ''
+      const resFileUrl = resParsed?.file_url || resParsed?.fileUrl || resParsed?.download_url || ''
+
+      let presentation = null
+      if (resId && presById.has(String(resId))) {
+        presentation = presById.get(String(resId))
+      } else if (resFileUrl && presByUrl.has(resFileUrl)) {
+        presentation = presByUrl.get(resFileUrl)
+      }
+      if (!presentation) continue
+
+      if (!presentation.file_url) continue
       const previewUrl = resolveApiUrl(presentation.file_url)
       const presentationId = String(presentation.id || '')
       if (existingUrls.has(previewUrl) || (presentationId && existingIds.has(presentationId))) continue
 
+      const rawReq = record.req || record.content || ''
+      const reqTopic = normalizePresentationTopic(stripInternalInstructions(rawReq))
       targetMessages.push(normalizeFileMessage({
         file_id: presentation.id || presentation.file_url,
         presentation_id: presentation.id || '',
@@ -1257,8 +1267,12 @@ const appendFileMessage = async fileData => {
   }
 
   const fileMessage = normalizeFileMessage(fileData)
-  const existingIndex = messages.value.findIndex(item => {
-    return item.type === 'file' && item.fileId && item.fileId === fileMessage.fileId
+  // 按 fileId 精确去重；课件额外按 previewUrl 去重，避免同一视频卡片重复出现
+  let existingIndex = messages.value.findIndex(item => {
+    if (item.type !== 'file') return false
+    if (item.fileId && item.fileId === fileMessage.fileId) return true
+    if (fileMessage.previewUrl && item.previewUrl === fileMessage.previewUrl) return true
+    return false
   })
   const fallbackIndex = existingIndex === -1 && fileMessage.fileType
     ? messages.value.findIndex(item => item.type === 'file' && !item.fileId && item.fileType === fileMessage.fileType)
@@ -1556,6 +1570,7 @@ const hasAnyAnswer = (message) => {
 }
 
 const handleConfirmAnswers = async (message) => {
+  if (message.answered) return
   const task = generationTasks.find(t => t.id === message.taskId)
   if (!task) return
 
@@ -1582,7 +1597,7 @@ const handleConfirmAnswers = async (message) => {
 const handleGenerationDone = async eventData => {
   const chatGroupId = eventData?.chat_group_id || activeConversationId.value
 
-  if (chatGroupId) {
+  if (chatGroupId && !activeConversationId.value) {
     activeConversationId.value = chatGroupId
   }
 
@@ -1672,7 +1687,8 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         // 视频模式不需要 handleGenerationDone 追加中间资源，
         // 课件文件已由 while loop 追加到聊天消息中
         if (task.tool?.generateMode === 'video') {
-          if (doneEvent.chat_group_id) {
+          // 仅在新对话（尚未分配 ID）时同步 chatGroupId，避免后台任务覆盖用户当前所在对话
+          if (doneEvent.chat_group_id && !activeConversationId.value) {
             activeConversationId.value = doneEvent.chat_group_id
           }
           await loadConversationList()
@@ -1837,7 +1853,7 @@ const sendMessage = async () => {
       onDone: async data => {
         const chatGroupId = data?.chat_group_id || activeConversationId.value
 
-        if (chatGroupId) {
+        if (chatGroupId && !activeConversationId.value) {
           activeConversationId.value = chatGroupId
         }
 
@@ -1980,6 +1996,8 @@ const openConversationFromRoute = async () => {
 
 // 新建对话
 const createNewChat = () => {
+  // 清除活跃任务引用，避免旧对话的生成任务泄漏到新对话
+  window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
   activeConversationId.value = null
   inputValue.value = ''
   selectedResourceTool.value = null

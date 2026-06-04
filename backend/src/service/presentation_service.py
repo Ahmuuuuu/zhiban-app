@@ -417,10 +417,25 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
                   chapters: list[str] | None = None, answers: dict | None = None,
                   chat_group_id: int = 0) -> dict:
     """创建课件记录 + 立即出骨架 + 后台补音频（可选 answers 裁剪内容）"""
+    from datetime import datetime, timedelta
     from backend.src.models.usermodel import User
     user = await User.filter(id=user_id).first()
     if not user:
         return {"error": "用户不存在"}
+
+    # 去重：2 分钟内同话题已创建过课件 → 直接返回已有记录
+    cutoff = datetime.now() - timedelta(minutes=2)
+    existing = await Presentation.filter(
+        user_id=user_id, topic=topic, created_at__gte=cutoff,
+    ).order_by("-created_at").first()
+    if existing:
+        logger.info("课件去重命中 user=%s topic=%s existing_id=%s", user_id, topic, existing.id)
+        return {
+            "id": existing.id,
+            "file_url": existing.file_url,
+            "status": existing.status,
+            "cached": True,
+        }
 
     doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
     if not any([doc, mindmap_data, ppt_data]):
@@ -602,10 +617,13 @@ async def _generate_skeleton_then_audio(record_id: int, topic: str, user_id: int
                 _patch_ppt_audio(ch, narration)
 
             ch["is_audio_ready"] = True
-            await _flush(record, topic, chapters, "generating")
             logger.info("[课件] 音频已补 chapter=%d type=%s record=%d", idx, ch_type, record_id)
 
-        await _flush(record, topic, chapters, "ready")
+        # 合并所有音频段为单个 MP3 + 构建时间线
+        merged = await _build_merged_audio(chapters)
+        await _flush(record, topic, chapters, "ready",
+                     merged_audio_url=merged["merged_url"],
+                     timeline=merged["timeline"])
         logger.info("[课件] 全部完成 record=%d", record_id)
         await Notification.create(
             type="resource",
@@ -632,9 +650,69 @@ async def _generate_skeleton_then_audio(record_id: int, topic: str, user_id: int
         )
 
 
-async def _flush(record, topic: str, chapters: list, status: str):
+async def _build_merged_audio(chapters: list[dict]) -> dict:
+    """将所有章节的音频段拼接为单个 MP3 并构建时间线"""
+    segments: list[dict] = []
+    for ci, ch in enumerate(chapters):
+        ch_type = ch.get("type", "")
+        if ch.get("slides"):
+            for si, slide in enumerate(ch["slides"]):
+                if slide.get("audio_url"):
+                    segments.append({
+                        "url": slide["audio_url"],
+                        "duration_ms": slide.get("duration_ms", 0),
+                        "chapter": ci,
+                        "slide": si,
+                    })
+        if ch.get("audio_segments"):
+            for seg in ch["audio_segments"]:
+                if seg.get("audio_url"):
+                    segments.append({
+                        "url": seg["audio_url"],
+                        "duration_ms": seg.get("duration_ms", 0),
+                        "chapter": ci,
+                        "slide": 0,
+                    })
+
+    if not segments:
+        return {"merged_url": "", "timeline": [], "total_duration_ms": 0}
+
+    merged_data = bytearray()
+    timeline: list[dict] = []
+    cursor_ms = 0
+
+    for seg in segments:
+        url = seg["url"].lstrip("/")
+        file_path = PRESENTATION_DIR.parent.parent / url
+        if not file_path.exists():
+            logger.warning("[课件] 合并音频时文件缺失: %s", url)
+            continue
+        with open(file_path, "rb") as f:
+            merged_data.extend(f.read())
+        timeline.append({
+            "start_ms": cursor_ms,
+            "end_ms": cursor_ms + seg["duration_ms"],
+            "chapter": seg["chapter"],
+            "slide": seg["slide"],
+        })
+        cursor_ms += seg["duration_ms"]
+
+    merged_filename = f"merged_{uuid.uuid4().hex[:8]}.mp3"
+    merged_path = PRESENTATION_DIR / merged_filename
+    merged_path.write_bytes(merged_data)
+    logger.info("[课件] 音频合并完成 segments=%d size=%d bytes duration=%d ms",
+                len(segments), len(merged_data), cursor_ms)
+
+    return {
+        "merged_url": f"/static/presentations/{merged_filename}",
+        "timeline": timeline,
+        "total_duration_ms": cursor_ms,
+    }
+
+
+async def _flush(record, topic: str, chapters: list, status: str, merged_audio_url: str = "", timeline: list[dict] | None = None):
     """更新 HTML 文件 + DB + SSE 通知"""
-    html = _render_html(topic, chapters)
+    html = _render_html(topic, chapters, merged_audio_url, timeline)
     fname = record.file_url.rsplit("/", 1)[-1]
     file_path = PRESENTATION_DIR / fname
     file_path.write_text(html, encoding="utf-8")
@@ -773,15 +851,19 @@ def _build_ppt_skeleton(record) -> dict:
 
 def _patch_intro_audio(ch: dict, narration: dict):
     segments = (narration or {}).get("sections", [])
+    # 按 index 建立索引，避免 TTS 部分段失败导致位置错位
+    seg_by_idx = {seg["index"]: seg for seg in segments if seg and "index" in seg}
     slides = ch.get("slides", [])
     for i, slide in enumerate(slides):
-        seg = segments[i] if i < len(segments) else None
+        seg = seg_by_idx.get(i)
         if seg:
             slide["audio_url"] = seg.get("audio_url")
             slide["duration_ms"] = seg.get("duration_ms", slide["duration_ms"])
             slide["word_timestamps"] = seg.get("word_timestamps", [])
+    # total_duration_ms 只统计有音频的幻灯片（含无音频幻灯片的骨架估值）
     total = sum(s.get("duration_ms", 0) for s in slides)
     ch["total_duration_ms"] = total
+    ch["audio_slide_count"] = sum(1 for s in slides if s.get("audio_url"))
 
 
 def _patch_mindmap_audio(ch: dict, narration: dict):
@@ -792,15 +874,17 @@ def _patch_mindmap_audio(ch: dict, narration: dict):
 
 def _patch_ppt_audio(ch: dict, narration: dict):
     segments = (narration or {}).get("sections", [])
+    seg_by_idx = {seg["index"]: seg for seg in segments if seg and "index" in seg}
     slides = ch.get("slides", [])
     for i, slide in enumerate(slides):
-        seg = segments[i] if i < len(segments) else None
+        seg = seg_by_idx.get(i)
         if seg:
             slide["audio_url"] = seg.get("audio_url")
             slide["duration_ms"] = seg.get("duration_ms", slide["duration_ms"])
             slide["word_timestamps"] = seg.get("word_timestamps", [])
     total = sum(s.get("duration_ms", 0) for s in slides)
     ch["total_duration_ms"] = total
+    ch["audio_slide_count"] = sum(1 for s in slides if s.get("audio_url"))
 
 
 # ═══════════════════════════════════════════════
@@ -963,14 +1047,17 @@ def _max_depth(node) -> int:
 #  HTML 渲染
 # ═══════════════════════════════════════════════
 
-def _render_html(topic: str, sections: list[dict]) -> str:
+def _render_html(topic: str, sections: list[dict], merged_audio_url: str = "", timeline: list[dict] | None = None) -> str:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     sections_json = json.dumps(sections, ensure_ascii=False, indent=2)
     topic_json = json.dumps(topic, ensure_ascii=False)
+    timeline_json = json.dumps(timeline or [], ensure_ascii=False)
 
     html = template.replace("{{SECTIONS}}", sections_json)
     html = html.replace("{{TITLE}}", _escape(topic))
     html = html.replace("{{TITLE_JSON}}", topic_json)
+    html = html.replace("{{MERGED_AUDIO_URL}}", merged_audio_url or "")
+    html = html.replace("{{TIMELINE}}", timeline_json)
     return html
 
 

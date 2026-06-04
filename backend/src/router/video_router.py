@@ -22,24 +22,10 @@ class NarrateRequest(BaseModel):
 
 @router.post("/narrate")
 async def narrate_resource_endpoint(data: NarrateRequest, user_id: int = Depends(get_user_id_from_token)):
-    """对文字类资源逐段生成旁白语音，完成后自动触发课件 HTML 生成"""
+    """对文字类资源逐段生成旁白语音"""
     result = await narrate_resource(data.resource_id, data.voice, force_regenerate=data.force_regenerate)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
-
-    # 自动触发课件 HTML 生成
-    try:
-        from backend.src.models.resource_model import GeneratedResource
-        from backend.src.service.presentation_service import generate as generate_presentation
-        resource = await GeneratedResource.filter(id=data.resource_id).first()
-        if resource and resource.topic:
-            pres = await generate_presentation(resource.topic, user_id, data.voice)
-            if "error" not in pres:
-                result["presentation_id"] = pres.get("id", 0)
-                result["presentation_url"] = pres.get("file_url", "")
-                result["presentation_status"] = pres.get("status", "")
-    except Exception as e:
-        logger.warning("自动生成课件失败（不影响旁白）: %s", e)
 
     return {"code": 200, "msg": "success", "data": result}
 

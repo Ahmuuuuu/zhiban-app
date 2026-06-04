@@ -115,12 +115,13 @@ async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: P
             try:
                 with open(json_path, "r", encoding="utf-8") as f:
                     word_timestamps = json.load(f)
+                real_dur = _real_duration_from_timestamps(word_timestamps, section["duration_ms"])
                 return {
                     "index": i,
                     "title": section["title"],
                     "text": text,
                     "audio_url": audio_url,
-                    "duration_ms": section["duration_ms"],
+                    "duration_ms": real_dur,
                     "word_timestamps": word_timestamps,
                 }
             except (json.JSONDecodeError, IOError):
@@ -139,13 +140,14 @@ async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: P
         except IOError:
             pass
 
-        logger.info("narration resource=%d section=%d dur=%dms words=%d", resource_id, i, section["duration_ms"], len(word_timestamps))
+        real_dur = _real_duration_from_timestamps(word_timestamps, section["duration_ms"])
+        logger.info("narration resource=%d section=%d dur=%dms words=%d", resource_id, i, real_dur, len(word_timestamps))
         return {
             "index": i,
             "title": section["title"],
             "text": text,
             "audio_url": audio_url,
-            "duration_ms": section["duration_ms"],
+            "duration_ms": real_dur,
             "word_timestamps": word_timestamps,
         }
 
@@ -161,6 +163,16 @@ async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: P
 
     results.sort(key=lambda x: x["index"])
     return results
+
+
+def _real_duration_from_timestamps(word_timestamps: list[dict], fallback_ms: int) -> int:
+    """从词级时间戳计算真实音频时长（最后一个词的 offset + duration），无时间戳时回退到估算值"""
+    if word_timestamps:
+        last = word_timestamps[-1]
+        real = last.get("offset_ms", 0) + last.get("duration_ms", 0)
+        if real > 0:
+            return real
+    return fallback_ms
 
 
 async def list_narrations(user_id: int) -> list[dict]:
