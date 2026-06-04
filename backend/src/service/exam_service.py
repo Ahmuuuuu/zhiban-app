@@ -339,8 +339,8 @@ class ExamService:
 
         # 复用占位记录，避免 total_weight 重复计算
         existing = await ExamRecord.filter(
-            session_id=sid, question_id=question_id, user_answer__isnull=True
-        ).first()
+            user_id=user_id, session_id=sid, question_id=question_id
+        ).order_by("-id").first()
         if existing:
             existing.user_answer = user_answer
             existing.is_correct = is_correct
@@ -399,7 +399,11 @@ class ExamService:
             logger.exception("答题后画像同步失败 user_id=%s", user_id)
 
         # 汇总本轮会话成绩（总分恒为 100）
-        session_records = await ExamRecord.filter(session_id=sid).prefetch_related("question").all()
+        raw_session_records = await ExamRecord.filter(user_id=user_id, session_id=sid).order_by("id").prefetch_related("question").all()
+        latest_by_question = {}
+        for r in raw_session_records:
+            latest_by_question[r.question_id] = r
+        session_records = list(latest_by_question.values())
         judged = [r for r in session_records if r.is_correct is not None]
         total_questions = len(session_records)
         correct_count = sum(1 for r in judged if r.is_correct)
