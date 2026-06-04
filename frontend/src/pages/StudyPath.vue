@@ -136,7 +136,7 @@
                               <Presentation v-else-if="isPptResource(resource)" :size="16" />
                               <GitBranch v-else-if="isMindmapResource(resource)" :size="16" />
                               <Volume2 v-else-if="isAudioResource(resource)" :size="16" />
-                              <MonitorPlay v-else-if="isHtmlResource(resource)" :size="16" />
+                              <MonitorPlay v-else-if="isVideoResource(resource) || isHtmlResource(resource)" :size="16" />
                               <FileText v-else :size="16" />
                             </span>
                             <strong>{{ resource.title }}</strong>
@@ -329,7 +329,7 @@
                         <Presentation v-else-if="isPptResource(resource)" :size="18" />
                         <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
                         <Volume2 v-else-if="isAudioResource(resource)" :size="18" />
-                        <MonitorPlay v-else-if="isHtmlResource(resource)" :size="18" />
+                        <MonitorPlay v-else-if="isVideoResource(resource) || isHtmlResource(resource)" :size="18" />
                         <FileText v-else :size="18" />
                       </span>
                       <div class="file-title">
@@ -449,6 +449,13 @@
               :slides="previewResource.slides"
               :title="previewResource.title"
             />
+            <video
+              v-else-if="isVideoResource(previewResource) && previewResource.videoUrl"
+              class="resource-video-player"
+              :src="previewResource.videoUrl"
+              controls
+              playsinline
+            ></video>
             <div v-else-if="isAudioResource(previewResource)" class="resource-audio-player">
               <Volume2 :size="32" />
               <strong>{{ previewResource.title }}</strong>
@@ -1240,6 +1247,7 @@ const fileTypeLabel = type => {
   if (t.includes('ppt')) return 'PPT 文件'
   if (t.includes('image')) return '图片'
   if (t.includes('mind')) return '思维导图'
+  if (t.includes('video') || t.includes('mp4')) return '视频'
   if (t.includes('html')) return '动态课件'
   if (t.includes('audio')) return '音频旁白'
   if (t.includes('txt') || t.includes('document')) return '学习文档'
@@ -1254,6 +1262,8 @@ const isPptResource = r => /ppt|powerpoint|presentation|slide/.test(String(r?.ty
 const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('mind')
 
 const isAudioResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('audio')
+
+const isVideoResource = r => /video|mp4|webm|ogg/.test(String(r?.type || r?.fileType || r?.title || r?.filename || r?.previewUrl || r?.downloadUrl || '').toLowerCase())
 
 const isHtmlResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('html')
 
@@ -1525,7 +1535,8 @@ const normalizeNodeResources = (resources, node = null) =>
       content: r.content || r.preview || r.text || '',
       slides: Array.isArray(r.slides) ? r.slides : [],
       previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || ''),
-      downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || usage?.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+      videoUrl: resolveApiUrl(r.video_url || r.videoUrl || r.file_url || r.fileUrl || r.url || r.content || ''),
+      downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.file_url || r.fileUrl || r.url || usage?.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
       isRead,
       readAt: r.read_at || r.readAt || readStatus.read_at || readStatus.readAt || usage?.lastViewedAt || '',
       durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0,
@@ -2212,7 +2223,8 @@ const mergePreviewResource = (resource, detail) => {
     slides,
     narration,
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.url || resource.previewUrl || ''),
-    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+    videoUrl: resolveApiUrl(data.video_url || data.videoUrl || data.file_url || data.fileUrl || data.url || resource.videoUrl || (isVideoResource({ ...resource, type: fileType, fileType }) ? content : '')),
+    downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || data.file_url || data.fileUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
     isRead: Boolean(data.is_read ?? data.isRead ?? readStatus.is_read ?? readStatus.isRead ?? resource.isRead ?? false),
     readAt: data.read_at || data.readAt || readStatus.read_at || readStatus.readAt || resource.readAt || '',
     durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0
@@ -3443,6 +3455,14 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   object-fit: contain;
   border-radius: 18px;
+}
+
+.resource-video-player {
+  display: block;
+  width: 100%;
+  max-height: 68vh;
+  border-radius: 18px;
+  background: #000000;
 }
 
 .resource-audio-player {
