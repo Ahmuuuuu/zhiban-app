@@ -271,6 +271,27 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
 const maybeGeneratePresentation = async (task: GenerationTask) => {
   if (task.tool.generateMode !== 'video' || task.status !== 'done') return
   if ((task.doneEvent as any)?.presentation || !task.files.length) return
+
+  // 新流程：追问前置已回答 → 直接生成课件，资源已按答案精准生成
+  if ((task as any).questionsShown && (task as any)._answers) {
+    task.status = 'running'
+    task.progress = '正在生成动态课件...'
+    task.updatedAt = Date.now()
+    persistTasks()
+    try {
+      await _doGeneratePresentation(task)
+    } catch (e: any) {
+      task.status = 'failed'
+      task.error = e?.response?.data?.detail || e?.message || '动态课件生成失败'
+      task.progress = task.error
+    } finally {
+      task.updatedAt = Date.now()
+      persistTasks()
+    }
+    return
+  }
+
+  // 旧流程兼容：等待用户作答或无追问
   if ((task as any).pendingQuestions || (task as any).questionsShown) return
 
   try {
@@ -335,36 +356,40 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
     download_url: '',
     source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
   }
-  task.files.splice(0, task.files.length, presentationFile)
-  task.doneEvent = { ...(task.doneEvent as object || {}), presentation }
+  task.files.push(presentationFile)
+  task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: task.files }
   task.status = 'done'
   task.progress = '动态课件已生成，可以打开预览。'
   delete (task as any).pendingQuestions
   ;(task as any).questionsShown = true
 }
 
-const answerQuestionsAndGenerate = async (task: GenerationTask, answers: Record<string, any>) => {
-  ;(task as any)._answers = answers
-  ;(task as any).questionsShown = true
-  delete (task as any).pendingQuestions
-  task.status = 'running'
-  task.progress = '正在生成动态课件...'
-  task.updatedAt = Date.now()
-  persistTasks()
-
-  try {
-    await _doGeneratePresentation(task)
-  } catch (error: any) {
-    task.status = 'failed'
-    task.error = error?.response?.data?.detail || error?.message || '动态课件生成失败'
-    task.progress = task.error
-  } finally {
+export function useGenerationTaskQueue() {
+  const _submitBackendTask = (task: GenerationTask) => {
+    task.status = 'running'
+    task.progress = '正在提交生成任务...'
     task.updatedAt = Date.now()
     persistTasks()
-  }
-}
 
-export function useGenerationTaskQueue() {
+    void createResourceGenerationTask({
+      topic: task.text,
+      resource_types: task.tool.resourceTypes || ['document'],
+      chat_group_id: task.chatGroupId || 0,
+      answers: (task as any)._answers || undefined,
+    }).then(result => {
+      const data = unwrapResponseData(result)
+      task.backendTaskId = data?.task_id || data?.taskId || ''
+      task.progress = formatTaskProgress(data)
+      task.updatedAt = Date.now()
+      pollBackendTask(task)
+    }).catch(error => {
+      task.status = 'failed'
+      task.error = error?.response?.data?.detail || error?.message || '创建生成任务失败'
+      task.progress = task.error
+      task.updatedAt = Date.now()
+    })
+  }
+
   const startTask = (text: string, tool: ResourceToolConfig, chatGroupId: number | string | null) => {
     const task: GenerationTask = reactive({
       id: makeLocalTaskId(),
@@ -390,24 +415,59 @@ export function useGenerationTaskQueue() {
       return task
     }
 
-    void createResourceGenerationTask({
-      topic: text,
-      resource_types: tool.resourceTypes || ['document'],
-      chat_group_id: chatGroupId || 0,
-    }).then(result => {
-      const data = unwrapResponseData(result)
-      task.backendTaskId = data?.task_id || data?.taskId || ''
-      task.progress = formatTaskProgress(data)
-      task.updatedAt = Date.now()
-      pollBackendTask(task)
-    }).catch(error => {
-      task.status = 'failed'
-      task.error = error?.response?.data?.detail || error?.message || '创建生成任务失败'
-      task.progress = task.error
-      task.updatedAt = Date.now()
-    })
+    // 视频模式：追问前置，根据答案按需生成 → 减体量加速
+    if (tool.generateMode === 'video') {
+      task.progress = '正在分析话题...'
+      persistTasks()
+      void getPresentationQuestions({ topic: text, chat_group_id: chatGroupId || 0 })
+        .then(result => {
+          const questions = unwrapResponseData(result)?.questions || unwrapResponseData(result)
+          if (questions && Array.isArray(questions) && questions.length > 0) {
+            ;(task as any).pendingQuestions = questions
+            task.status = 'done'
+            task.progress = '请选择课件方向以继续...'
+          } else {
+            _submitBackendTask(task)
+          }
+          persistTasks()
+        })
+        .catch(() => {
+          _submitBackendTask(task)
+        })
+      return task
+    }
 
+    _submitBackendTask(task)
     return task
+  }
+
+  const answerQuestionsAndGenerate = async (task: GenerationTask, answers: Record<string, any>) => {
+    ;(task as any)._answers = answers
+    ;(task as any).questionsShown = true
+    delete (task as any).pendingQuestions
+
+    // 新流程（追问前置）：还没有后端任务 → 先提交生成任务，答案注入 prompt 精准生成
+    if (!task.backendTaskId) {
+      _submitBackendTask(task)
+      return
+    }
+
+    // 旧流程兼容：资源已生成 → 直接生成课件
+    task.status = 'running'
+    task.progress = '正在生成动态课件...'
+    task.updatedAt = Date.now()
+    persistTasks()
+
+    try {
+      await _doGeneratePresentation(task)
+    } catch (error: any) {
+      task.status = 'failed'
+      task.error = error?.response?.data?.detail || error?.message || '动态课件生成失败'
+      task.progress = task.error
+    } finally {
+      task.updatedAt = Date.now()
+      persistTasks()
+    }
   }
 
   const hydrateTasks = async () => {

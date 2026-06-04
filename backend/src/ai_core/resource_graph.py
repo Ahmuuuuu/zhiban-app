@@ -3,8 +3,10 @@ LangGraph 多智能体编排 — 学习资源生成
 LeaderAgent → [ExecutorAgent × N 多线程并行] → ReviewerAgent
 """
 import asyncio
+import concurrent.futures
 import json
 import logging
+import threading
 from typing import TypedDict, NotRequired
 
 from langgraph.graph import StateGraph, START, END
@@ -48,6 +50,7 @@ class ResourceState(TypedDict):
     exam_difficulty: str
     reviewer_questions: list[dict]
     file_urls: NotRequired[dict[str, str]]
+    answers: NotRequired[dict]
 
 
 # ═══════════════════════════════════════
@@ -82,7 +85,7 @@ async def leader_node(state: ResourceState) -> dict:
 
 
 async def executor_node(state: ResourceState) -> dict:
-    """多 Executor 并行生成，信号量限流。
+    """多线程并行生成（ThreadPoolExecutor），信号量限流。
     PPT 走 LLM 生成 markdown；image 走两阶段：LLM prompt → ImageService 生图。
     """
     topic = state["topic"]
@@ -93,6 +96,10 @@ async def executor_node(state: ResourceState) -> dict:
     custom_prompts = state.get("custom_prompts", {}) or {}
     feedback = state.get("review_feedback", "")
 
+    # 从追问答案提取聚焦方向和深度，注入 prompt 实现按需生成
+    answers = state.get("answers", {}) or {}
+    focus_guidance = _build_focus_guidance(answers)
+
     # 预先构建每个类型的 prompt（同步，快）
     prompts: dict[str, str] = {}
     for rt in resource_types:
@@ -102,7 +109,7 @@ async def executor_node(state: ResourceState) -> dict:
         else:
             prompt_path = PROMPT_MAP.get(rt, "resource/document")
             template = load_prompt(prompt_path)
-        prompts[rt] = fill_prompt(
+        base = fill_prompt(
             template,
             topic=topic,
             resource_type=rt,
@@ -114,28 +121,30 @@ async def executor_node(state: ResourceState) -> dict:
             question_types=state.get("exam_question_types", "single_choice, multi_choice, true_false"),
             difficulty=state.get("exam_difficulty", "medium"),
         )
+        prompts[rt] = base + focus_guidance if focus_guidance else base
 
-    # 信号量限制最大并发数，防止 DeepSeek 限流
-    semaphore = asyncio.Semaphore(5)
+    user_id = state.get("user_id", "0")
+    semaphore = threading.Semaphore(5)
+    max_workers = min(len(resource_types), 5)
 
-    async def gen_one(rt: str, user_id: str) -> tuple[str, str]:
-        async with semaphore:
+    def gen_one_sync(rt: str) -> tuple[str, str]:
+        """同步 LLM 调用，运行在线程池中实现真正多线程并行"""
+        with semaphore:
             try:
-                # ppt 类型：LLM 生成 markdown 内容
                 if rt == "ppt":
-                    return await _generate_ppt(topic, portrait, guidance, user_id)
-                # image 类型：两阶段生成
+                    return _generate_ppt_sync(topic, portrait, guidance, user_id)
                 if rt == "image":
-                    return await _generate_image(prompts[rt], user_id)
-                # 其他类型：单次 LLM 调用
-                response = await llm.ainvoke(prompts[rt])
+                    return _generate_image_sync(prompts[rt], user_id)
+                response = llm.invoke(prompts[rt])
                 return rt, response.content
             except Exception as e:
                 logger.exception(f"Executor [{rt}] 调用失败")
                 return rt, f"[生成失败: {e}]"
 
-    user_id = state.get("user_id", "0")
-    results = await asyncio.gather(*(gen_one(rt, user_id) for rt in resource_types))
+    loop = asyncio.get_running_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [loop.run_in_executor(pool, gen_one_sync, rt) for rt in resource_types]
+        results = await asyncio.gather(*futures)
 
     retry = state.get("retry_count", 0)
     if feedback:
@@ -161,22 +170,19 @@ async def executor_node(state: ResourceState) -> dict:
     }
 
 
-async def _generate_image(prompt_text: str, user_id: str) -> tuple[str, dict]:
-    """两阶段图片生成：LLM 产出 prompt → ImageService 生图"""
-    # Phase 1: LLM 生成图像描述
-    from backend.src.ai_core.llm_config import llm
+def _generate_image_sync(prompt_text: str, user_id: str) -> tuple[str, dict]:
+    """两阶段图片生成：LLM 产出 prompt → ImageService 生图（线程内同步调用）"""
     try:
-        response = await llm.ainvoke(prompt_text)
+        response = llm.invoke(prompt_text)
         image_prompt = response.content.strip()
     except Exception as e:
         logger.exception("图片 prompt 生成失败")
         return ("image:error", {"prompt": "", "url": ""})
 
-    # Phase 2: 调 ImageService 生图（prompt 截断保平安）
     try:
         from backend.src.service.image_service import ImageService
-        image_prompt = image_prompt[:900]  # 截断保平安
-        images = await ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=1)
+        image_prompt = image_prompt[:900]
+        images = asyncio.run(ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=1))
         if images and len(images) > 0:
             return ("image:image", {"prompt": image_prompt, "url": images[0].get("url", "")})
     except Exception as e:
@@ -185,8 +191,8 @@ async def _generate_image(prompt_text: str, user_id: str) -> tuple[str, dict]:
     return ("image:image", {"prompt": image_prompt, "url": ""})
 
 
-async def _generate_ppt(topic: str, portrait: str, guidance: str, user_id: str) -> tuple[str, str]:
-    """PPT 生成：LLM 生成 markdown 内容"""
+def _generate_ppt_sync(topic: str, portrait: str, guidance: str, user_id: str) -> tuple[str, str]:
+    """PPT 生成：LLM 生成 markdown 内容（线程内同步调用）"""
     try:
         prompt_path = PROMPT_MAP.get("ppt", "resource/ppt")
         template = load_prompt(prompt_path)
@@ -195,7 +201,7 @@ async def _generate_ppt(topic: str, portrait: str, guidance: str, user_id: str) 
             portrait_context=portrait, kb_context="",
             learning_guidance=guidance, feedback="",
         )
-        response = await llm.ainvoke(fallback_prompt)
+        response = llm.invoke(fallback_prompt)
         return ("ppt", response.content)
     except Exception as e:
         logger.exception(f"PPT 生成失败")
@@ -294,6 +300,43 @@ async def reviewer_node(state: ResourceState) -> dict:
         "review_feedback": "\n".join(feedback_parts),
         "reviewer_questions": question_results,
     }
+
+
+def _build_focus_guidance(answers: dict) -> str:
+    """从追问答案提取聚焦方向和深度，构建 prompt 约束指令。
+    无 answers 时返回空字符串，不影响常规生成。
+    """
+    if not answers:
+        return ""
+
+    # 提取所有 focus 值
+    focus_vals: list[str] = []
+    for key, val in answers.items():
+        if key.startswith("focus") or key == "focus":
+            if isinstance(val, list):
+                focus_vals.extend(str(v) for v in val)
+            elif val:
+                focus_vals.append(str(val))
+
+    depth = answers.get("depth", "")
+    if not focus_vals and not depth:
+        return ""
+
+    parts: list[str] = ["\n\n【学习方向与深度约束 — 必须严格遵守】"]
+    if focus_vals:
+        kw = "、".join(focus_vals)
+        parts.append(f"- 聚焦主题：{kw}")
+        parts.append("- 仅生成上述方向的内容，不要展开无关话题")
+    if depth:
+        depth_map = {
+            "overview": "- 深度：5分钟快速概览，只讲核心概念和关键结论，省略推导和案例",
+            "standard": "- 深度：标准讲解，涵盖原理和应用，适量举例",
+            "deep": "- 深度：逐页详解，包含完整推导、案例分析和深入讨论",
+        }
+        parts.append(depth_map.get(depth, f"- 深度：{depth}"))
+
+    parts.append("- 请根据以上约束减少内容体量，精简字数，不要为凑篇幅而添加无关信息")
+    return "\n".join(parts)
 
 
 # ═══════════════════════════════════════
