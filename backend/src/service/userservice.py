@@ -154,6 +154,10 @@ class UserService():
                 user.profile = data.profile
             await user.save()
 
+            # 清除画像上下文缓存，让下次对话立即看到最新信息
+            from backend.src.service.chat_service import invalidate_portrait_cache
+            invalidate_portrait_cache(user_id)
+
             # 专业或年级变更时，后台异步：同步课程体系 + 生成学习路径 + 通知
             if major_changed or grade_changed:
                 import asyncio

@@ -8,3 +8,4 @@ class GenerateResourceRequest(BaseModel):
         description="资源类型列表，为空则由 LeaderAgent 自动决定"
     )
     chat_group_id: int = Field(default=0, description="对话分组ID，传此值可自动提取主题")
+    answers: dict | None = Field(default=None, description="视频模式：用户追问作答 {focus, depth}，注入 prompt 按需生成")

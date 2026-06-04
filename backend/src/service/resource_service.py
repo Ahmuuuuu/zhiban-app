@@ -167,7 +167,7 @@ async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str
     )
 
 
-async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium") -> dict:
+async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None) -> dict:
     await init_db()
 
     # 没传 topic 但有 chat_group_id → 从聊天记录自动提取
@@ -234,6 +234,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         "exam_question_types": exam_question_types,
         "exam_count": str(exam_count),
         "exam_difficulty": exam_difficulty,
+        "answers": answers or {},
     }
 
 
@@ -613,7 +614,7 @@ class ResourceService:
     # ═══════════════════════════════════════════
 
     @staticmethod
-    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0) -> dict:
+    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None) -> dict:
         """创建生成任务，启动后台运行，立即返回 task_id"""
         from backend.src.models.task_model import GenerationTask
 
@@ -626,7 +627,7 @@ class ResourceService:
             chat_group_id=chat_group_id or None,
             status="pending",
         )
-        asyncio.ensure_future(_run_generation_task(task.id, tid))
+        asyncio.ensure_future(_run_generation_task(task.id, tid, answers))
         return {"task_id": tid, "status": "pending"}
 
     @staticmethod
@@ -687,7 +688,7 @@ class ResourceService:
 #  后台任务执行
 # ═══════════════════════════════════════════════
 
-async def _run_generation_task(db_id: int, task_id: str):
+async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = None):
     """后台运行资源生成任务，更新 DB 进度并推送 SSE"""
     from backend.src.models.task_model import GenerationTask
 
@@ -696,12 +697,12 @@ async def _run_generation_task(db_id: int, task_id: str):
         if not task:
             return
 
+        user_id = task.user_id
         resource_types = json.loads(task.resource_types) if task.resource_types else ["document"]
         chat_group_id = await _ensure_chat_group_id(user_id, task.chat_group_id or 0)
         if chat_group_id != (task.chat_group_id or 0):
             task.chat_group_id = chat_group_id
             await task.save()
-        user_id = task.user_id
         topic = task.topic
 
         task.status = "running"
@@ -711,7 +712,7 @@ async def _run_generation_task(db_id: int, task_id: str):
         await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 5, "progress_msg": "正在初始化…"})
 
         # 构建 graph 初始状态
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, answers=answers)
         topic = initial_state["topic"]
 
         # 更新 topic（可能从聊天记录提取）
@@ -814,6 +815,11 @@ async def _run_generation_task(db_id: int, task_id: str):
             target_user_id=user_id,
         )
 
+        # 阶段2优化：后台预生成旁白音频，用户作答追问期间音频已缓存好
+        for r in saved:
+            if r["resource_type"] in ("document", "ppt"):
+                asyncio.ensure_future(_pre_generate_narration(r["resource_id"]))
+
     except Exception as e:
         logger.exception("生成任务失败 task_id=%s", task_id)
         try:
@@ -837,3 +843,12 @@ async def _run_generation_task(db_id: int, task_id: str):
                 )
         except Exception:
             logger.exception("更新失败任务状态出错 task_id=%s", task_id)
+
+
+async def _pre_generate_narration(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"):
+    """后台预生成旁白音频，后续课件构建时可复用缓存"""
+    try:
+        from backend.src.service.narration_service import narrate_resource
+        await narrate_resource(resource_id, voice)
+    except Exception:
+        logger.exception("预生成旁白音频失败 resource_id=%s", resource_id)
