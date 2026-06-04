@@ -224,6 +224,11 @@
                 </div>
               </div>
 
+              <div class="current-node-summary">
+                <span>当前节点</span>
+                <strong>{{ currentPathNodeTitle }}</strong>
+              </div>
+
               <div class="situation-grid">
                 <div v-for="item in pathSituationCards" :key="item.label">
                   <span>{{ item.label }}</span>
@@ -231,53 +236,8 @@
                 </div>
               </div>
 
-              <div v-if="selectedPathStats.resourceUsage.total > 0" class="resource-usage-panel">
-                <div class="resource-usage-head">
-                  <span>推荐资源使用</span>
-                  <strong>{{ selectedPathStats.resourceUsage.readCount }}/{{ selectedPathStats.resourceUsage.total }}</strong>
-                </div>
-                <div class="resource-usage-bar">
-                  <span :style="{ width: `${selectedPathStats.resourceUsage.readPercent}%` }"></span>
-                </div>
-                <div class="resource-usage-grid">
-                  <div v-for="item in resourceUsageCards" :key="item.label">
-                    <span>{{ item.label }}</span>
-                    <strong>{{ item.value }}</strong>
-                  </div>
-                </div>
-                <div v-if="recentResourceUsage.length" class="recent-resource-list">
-                  <span>最近使用</span>
-                  <button
-                    v-for="resource in recentResourceUsage"
-                    :key="resource.resourceId"
-                    type="button"
-                    @click="openUsageResource(resource)"
-                  >
-                    <strong>{{ resource.title || '学习资料' }}</strong>
-                    <small>{{ resourceUsageLine(resource) }}</small>
-                  </button>
-                </div>
-              </div>
-
-              <div v-if="selectedPathStats.weakPoints.length" class="path-weak-list">
-                <span>薄弱知识点</span>
-                <strong>{{ selectedPathStats.weakPoints.map(item => item.tag).join(' / ') }}</strong>
-              </div>
             </template>
             <div v-else class="situation-state">暂无该路径的学习记录</div>
-          </section>
-
-          <section class="diagnosis-panel">
-            <h2>轻量诊断</h2>
-            <div class="diagnosis-block">
-              <span>薄弱点</span>
-              <strong>{{ pathState.diagnosis.weakPoints.join(' / ') }}</strong>
-            </div>
-            <div class="diagnosis-block">
-              <span>最近成绩</span>
-              <strong>{{ pathState.diagnosis.latestScore }} 分</strong>
-            </div>
-            <p>{{ pathState.diagnosis.recommendation }}</p>
           </section>
         </aside>
       </section>
@@ -1195,13 +1155,16 @@ const pathSituationCards = computed(() => {
   if (!stats) return []
 
   return [
-    { label: '当前节点', value: stats.progress.currentNode || currentNode.value?.title || '暂无' },
     { label: '今日学习', value: `${stats.studyTime.todayMinutes} min` },
-    { label: '本周学习', value: `${stats.studyTime.weekMinutes} min` },
     { label: '累计学习', value: `${stats.studyTime.totalMinutes} min` },
     { label: '进行中节点', value: `${stats.progress.inProgressNodes}` },
     { label: '已解锁节点', value: `${stats.progress.unlockedNodes}` }
   ]
+})
+
+const currentPathNodeTitle = computed(() => {
+  const stats = selectedPathStats.value
+  return stats?.progress?.currentNode || currentNode.value?.title || '暂无当前节点'
 })
 
 const resourceUsageCards = computed(() => {
@@ -2505,8 +2468,10 @@ onBeforeUnmount(() => {
 .side-panels {
   min-height: 0;
   display: grid;
-  gap: 14px;
+  gap: 0;
   align-self: start;
+  align-content: start;
+  overflow: visible;
 }
 
 .path-track {
@@ -2619,10 +2584,10 @@ onBeforeUnmount(() => {
 
 .diagnosis-panel {
   min-height: 0;
-  padding: 18px;
+  padding: 16px;
   border-radius: 24px;
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .diagnosis-panel h2,
@@ -2632,20 +2597,25 @@ onBeforeUnmount(() => {
 }
 
 .path-situation-panel {
-  padding: 18px;
+  height: 430px;
+  max-height: calc(100vh - 250px);
+  padding: 16px;
   border-radius: 24px;
   display: grid;
-  gap: 14px;
+  gap: 12px;
+  align-content: start;
+  overflow: hidden;
 }
 
 .path-situation-panel header {
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .path-situation-panel header span,
 .situation-state,
 .path-weak-list span,
+.current-node-summary span,
 .situation-grid span,
 .situation-meter span {
   color: #5f8fc3;
@@ -2661,7 +2631,7 @@ onBeforeUnmount(() => {
 
 .situation-meter {
   display: grid;
-  gap: 9px;
+  gap: 8px;
 }
 
 .situation-meter > div:first-child {
@@ -2673,12 +2643,12 @@ onBeforeUnmount(() => {
 
 .situation-meter strong {
   color: #163f8f;
-  font-size: 30px;
+  font-size: 28px;
   line-height: 1;
 }
 
 .situation-bar {
-  height: 8px;
+  height: 7px;
   border-radius: 999px;
   background: rgba(201, 220, 233, 0.7);
   overflow: hidden;
@@ -2691,27 +2661,59 @@ onBeforeUnmount(() => {
   background: #163f8f;
 }
 
-.situation-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.situation-grid div {
-  min-width: 0;
-  padding: 10px;
-  border-radius: 14px;
-  background: rgba(237, 249, 252, 0.72);
+.current-node-summary {
+  padding: 8px 10px;
+  border-radius: 13px;
+  background: rgba(237, 249, 252, 0.54);
   display: grid;
   gap: 4px;
 }
 
-.situation-grid strong,
+.current-node-summary strong {
+  color: #163f8f;
+  font-size: 14px;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.situation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.situation-grid div {
+  min-width: 0;
+  min-height: 50px;
+  padding: 7px 8px;
+  border-radius: 12px;
+  background: rgba(237, 249, 252, 0.54);
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.situation-grid strong {
+  min-width: 0;
+  color: #163f8f;
+  font-size: 14px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .path-weak-list strong {
   min-width: 0;
   color: #163f8f;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .resource-usage-panel {
@@ -2813,18 +2815,25 @@ onBeforeUnmount(() => {
 }
 
 .path-weak-list {
-  padding-top: 2px;
+  padding: 9px 11px;
+  border-radius: 14px;
+  background: rgba(237, 249, 252, 0.42);
   display: grid;
   gap: 6px;
 }
 
 .diagnosis-block {
   display: grid;
-  gap: 5px;
+  gap: 4px;
 }
 
 .diagnosis-block strong {
-  line-height: 1.4;
+  line-height: 1.35;
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .node-overlay {
