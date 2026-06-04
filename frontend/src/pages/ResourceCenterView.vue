@@ -240,7 +240,10 @@
             </button>
           </div>
 
-          <div class="resource-fullscreen__content">
+          <div
+            class="resource-fullscreen__content"
+            :class="{ 'resource-fullscreen__content--media': isPresentationResource(selectedResource) || isVideoResource(selectedResource) }"
+          >
             <template v-if="selectedResource.type === 'image' && selectedResource.previewUrl">
               <img
                 class="preview-image"
@@ -1291,6 +1294,15 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
+.resource-fullscreen__content--media {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #081733;
+}
+
 .resource-fullscreen__audio {
   display: flex;
   justify-content: flex-end;
@@ -1344,12 +1356,28 @@ onBeforeUnmount(() => {
 .preview-iframe,
 .preview-video {
   width: 100%;
-  max-height: 100%;
+  height: 100%;
+  max-height: none;
   min-height: 360px;
   border-radius: 12px;
   display: block;
   border: none;
   background: #000;
+  object-fit: contain;
+}
+
+.resource-fullscreen__content--media .preview-iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: 24px;
+}
+
+.resource-fullscreen__content--media .preview-video {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: 24px;
 }
 
 .file-preview-wrap {
