@@ -1135,7 +1135,7 @@ const generateNewPath = async () => {
 
 const visibleNodes = computed(() => {
   const nodes = pathState.value?.nodes
-  return nodes ? nodes.slice(-5) : []
+  return nodes || []
 })
 
 const currentNode = computed(() => {
@@ -1643,6 +1643,16 @@ const hydratePathForRender = state => {
   }
 }
 
+const scrollToCurrentNode = async () => {
+  await nextTick()
+  window.setTimeout(() => {
+    const currentEl = document.querySelector('.path-node.is-current')
+    if (currentEl) {
+      currentEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, 300)
+}
+
 const setPathState = state => {
   const hydrated = hydratePathForRender(state)
   const previousPathId = String(pathState.value?.pathId || '')
@@ -1659,6 +1669,7 @@ const setPathState = state => {
   if (nextPathId !== previousPathId || !selectedPathStats.value) {
     loadSelectedPathStats(nextPathId)
   }
+  scrollToCurrentNode()
 }
 
 const delay = ms => new Promise(resolve => window.setTimeout(resolve, ms))

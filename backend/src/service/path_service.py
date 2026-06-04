@@ -20,7 +20,7 @@ from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.service.portrait_service import format_portrait, PortraitRadarService, build_learning_guidance
-from backend.src.service.exam_service import ExamService
+from backend.src.service.exam_service import ExamService, _weight
 from backend.src.service.resource_service import ResourceService
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.json_parser import parse_llm_json
@@ -180,7 +180,7 @@ class PathService:
         first_node = None
         for i, node in enumerate(sorted_nodes):
             has_prereqs = node.prerequisites and json.loads(node.prerequisites)
-            status = "unlocked" if (i == 0 and not has_prereqs) else "locked"
+            status = "unlocked" if (i == 0 or not has_prereqs) else "locked"
             await UserPathProgress.create(
                 user_id=user_id,
                 path=path,
@@ -303,7 +303,7 @@ class PathService:
         first_node = None
         for i, node in enumerate(nodes_sorted):
             has_prereqs = node.prerequisites and json.loads(node.prerequisites)
-            status = "unlocked" if (i == 0 and not has_prereqs) else "locked"
+            status = "unlocked" if (i == 0 or not has_prereqs) else "locked"
             await UserPathProgress.create(
                 user_id=user_id,
                 path=path,
@@ -467,8 +467,11 @@ class PathService:
         return total_views > 0, total_views
 
     @staticmethod
-    async def generate_node_quiz(path_id: int, node_id: int, user_id: int) -> dict:
-        """为节点获取测验题目 — 已有则复用，没有则生成"""
+    async def generate_node_quiz(path_id: int, node_id: int, user_id: int, pre_generate: bool = False) -> dict:
+        """为节点获取测验题目 — 已有则复用，没有则生成
+
+        Args:
+            pre_generate: 预生成模式，跳过资源查看门禁，使用默认难度"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
         if not node:
             raise ValueError("节点不存在")
@@ -497,17 +500,20 @@ class PathService:
         # 没有则生成
         count = quiz_config.get("count", 3)
 
-        # 检查资源是否已查看，根据查看次数决定难度
-        has_viewed, total_views = await PathService._check_resource_viewed(node_id, user_id)
-        if not has_viewed:
-            return {"blocked": True, "reason": "请先学习当前节点的学习资料后再进行检测"}
+        if not pre_generate:
+            # 检查资源是否已查看，根据查看次数决定难度
+            has_viewed, total_views = await PathService._check_resource_viewed(node_id, user_id)
+            if not has_viewed:
+                return {"blocked": True, "reason": "请先学习当前节点的学习资料后再进行检测"}
 
-        if total_views <= 1:
-            difficulty = "easy"
-        elif total_views <= 3:
-            difficulty = "medium"
+            if total_views <= 1:
+                difficulty = "easy"
+            elif total_views <= 3:
+                difficulty = "medium"
+            else:
+                difficulty = "hard"
         else:
-            difficulty = "hard"
+            difficulty = "medium"
 
         result = await ExamService.generate_and_save(
             topic=node.topic,
@@ -614,19 +620,25 @@ class PathService:
             raise ValueError("未加入该路径")
 
         # 从 session 汇总成绩（session_id 已按节点隔离，无需 node_id 过滤）
-        records = await ExamRecord.filter(session_id=session_id, user_id=user_id).all()
+        records = await ExamRecord.filter(session_id=session_id, user_id=user_id).prefetch_related("question").all()
         # 若查不到再按 node_id 试一次（兼容旧数据）
         if not records:
-            records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).all()
+            records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).prefetch_related("question").all()
         judged = [r for r in records if r.is_correct is not None]
         if not judged:
             return {"error": "该会话无已判分的答题记录"}
 
         correct = sum(1 for r in judged if r.is_correct)
-        score = round(correct / len(judged) * 100, 1)
+        # 加权评分：每题满分 = 其难度权重，实际得分 = 权重×正确率
+        earned = sum(float(r.score or 0) for r in judged)
+        max_possible = sum(
+            float((r.question.point_value if r.question else None) or _weight(r.question.difficulty if r.question else "medium", r.question.question_type if r.question else "single_choice"))
+            for r in judged
+        )
+        score = round(earned / max_possible * 100, 1) if max_possible > 0 else 0.0
         quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 3, "threshold": 0.7}
         threshold = quiz_config.get("threshold", 0.7)
-        passed = (correct / len(judged)) >= threshold
+        passed = score >= threshold * 100
 
         progress.quiz_passed = passed
 
@@ -784,11 +796,15 @@ class PathService:
 
         await check_and_create_node_unlocked(user_id, next_node.topic, path_id, next_node.id)
 
-        # 自动为新节点生成学习资源
+        # 自动为新节点生成学习资源 + 检测题
         try:
             await PathService.generate_node_resources(path_id, next_node.id, user_id)
         except Exception:
             logger.exception("自动生成下一节点资源失败 path_id=%s node_id=%s", path_id, next_node.id)
+        try:
+            await PathService.generate_node_quiz(path_id, next_node.id, user_id, pre_generate=True)
+        except Exception:
+            logger.exception("自动生成下一节点检测题失败 path_id=%s node_id=%s", path_id, next_node.id)
 
     @staticmethod
     async def _update_portrait_from_mastery(user_id: int):
