@@ -17,6 +17,41 @@ from backend.src.utils.json_parser import parse_llm_json
 from backend.src.service.notification_service import check_and_create_ai_tip
 
 
+def _normalize_db_answer(raw: str) -> str:
+    """归一化 DB 中存储的答案，消除 LLM 格式漂移。
+
+    DB 里单选答案可能是: "A" / '"A"' / '["A"]' / "A. xxx"
+    统一转为大写字母或逗号分隔的字母串，用于与用户提交的答案比较。
+    """
+    if not raw:
+        return ""
+    text = raw.strip()
+    # 尝试 JSON 解析（处理 ["A"] / "A" 等 JSON 编码）
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return ",".join(sorted(str(x).strip().upper() for x in parsed if str(x).strip()))
+        text = str(parsed)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # 去掉选项文本只留字母（A. xxx → A）
+    cleaned = text.strip().upper().replace(" ", "")
+    if cleaned and cleaned[0] in "ABCDEFGH":
+        return cleaned[0]
+    return cleaned
+
+
+def _parse_multi_ans(ans: str) -> set:
+    """解析多选题答案字符串为字母集合"""
+    text = ans.strip()
+    if text.startswith("["):
+        try:
+            return set(str(x).strip().upper() for x in json.loads(text))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return set(text.upper().replace(" ", "").split(","))
+
+
 def _weight(difficulty: str, question_type: str) -> float:
     """题目权重：easy=1, medium=2, hard=3，多选 +0.5"""
     base = {"easy": 1.0, "medium": 2.0, "hard": 3.0}.get(difficulty, 2.0)
@@ -264,27 +299,23 @@ class ExamService:
         if not question:
             raise ValueError("题目不存在")
 
-        correct_answer = question.answer
+        # 归一化 DB 中的答案（LLM 输出格式不稳定：A / "A" / ["A"] / a）
+        correct_answer = _normalize_db_answer(question.answer)
         w = float(question.point_value or _weight(question.difficulty, question.question_type))
 
         # 判断对错 + 计算权重得分
         if question.question_type == "true_false":
-            is_correct = user_answer.strip().upper() == correct_answer.strip().upper()
+            is_correct = user_answer.strip().upper() == correct_answer
             score = w if is_correct else 0.0
 
         elif question.question_type in ("single_choice", "fill_blank"):
-            is_correct = (user_answer.strip() == correct_answer.strip())
+            is_correct = (user_answer.strip().upper() == correct_answer)
             score = w if is_correct else 0.0
 
         elif question.question_type == "multi_choice":
             try:
-                def _parse_ans(ans: str) -> set:
-                    if ans.startswith("["):
-                        return set(json.loads(ans))
-                    return set(ans.strip().upper().replace(" ", "").split(","))
-
-                user_set = _parse_ans(user_answer)
-                correct_set = _parse_ans(correct_answer)
+                user_set = _parse_multi_ans(user_answer)
+                correct_set = _parse_multi_ans(correct_answer)
                 n_correct = len(correct_set)
                 selected_correct = len(user_set & correct_set)
                 selected_wrong = len(user_set - correct_set)
@@ -297,7 +328,7 @@ class ExamService:
                 is_correct = (ratio >= 1.0)
                 score = round(w * ratio, 2)
             except Exception:
-                is_correct = user_answer.strip().upper() == correct_answer.strip().upper()
+                is_correct = user_answer.strip().upper() == correct_answer
                 score = w if is_correct else 0.0
 
         else:
