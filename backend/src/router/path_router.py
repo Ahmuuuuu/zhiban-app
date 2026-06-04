@@ -81,7 +81,7 @@ async def generate_node_resources(path_id: int, node_id: int, user_id: int = Dep
 async def generate_node_quiz(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
     """为节点生成测验题目"""
     try:
-        result = await PathService.generate_node_quiz(path_id, node_id, user_id)
+        result = await PathService.generate_node_quiz(path_id, node_id, user_id, pre_generate=True)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"code": 200, "msg": "success", "data": result}

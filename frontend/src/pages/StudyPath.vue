@@ -116,6 +116,7 @@
                   </div>
 
                   <div v-if="node._resLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
+                  <div v-else-if="node._resError" class="branch-message error">{{ node._resError }}</div>
 
                   <template v-else-if="node._resources?.length">
                     <div class="branch-resource-flow">
@@ -166,7 +167,7 @@
                     class="branch-action"
                     type="button"
                     :disabled="node.status === 'locked'"
-                    @click="ensureNodeResources(node, 'resources')"
+                    @click.stop="ensureNodeResources(node, 'resources')"
                   >
                     生成资料
                   </button>
@@ -179,6 +180,7 @@
                   </div>
 
                   <div v-if="node._quizLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
+                  <div v-else-if="node._quizError" class="branch-message error">{{ node._quizError }}</div>
 
                   <template v-else-if="node._quiz">
                     <div class="branch-quiz">
@@ -194,7 +196,7 @@
                     class="branch-action"
                     type="button"
                     :disabled="node.status === 'locked'"
-                    @click="ensureNodeResources(node, 'quiz')"
+                    @click.stop="ensureNodeResources(node, 'quiz')"
                   >
                     生成检测
                   </button>
@@ -377,6 +379,10 @@
                     </router-link>
                   </div>
                 </template>
+
+                <div v-else-if="selectedNode._quizError || selectedNode._resError" class="resources-empty error">
+                  {{ selectedNode._quizError || selectedNode._resError }}
+                </div>
 
                 <div v-else class="resources-empty">
                   暂无学习资料
@@ -1779,45 +1785,67 @@ const ensureNodeResources = async (node, target = 'all') => {
   const shouldLoadQuiz = target === 'all' || target === 'quiz'
 
   if (shouldLoadResources && !node._resources?.length && pathId) {
-    patchNodeState(node, { _resLoading: true })
+    patchNodeState(node, { _resLoading: true, _resError: '' })
     try {
       const res = await generatePathNodeResources(pathId, node.id)
       const resources = normalizeNodeResources(extractResourceItems(res, node), node)
+      if (!resources.length) {
+        patchNodeState(node, {
+          _resLoading: false,
+          _resError: getResponseData(res)?.message || '没有生成可用的学习资料，请稍后重试'
+        })
+        return
+      }
       patchNodeState(node, {
         resources,
         _resources: resources,
         _resLoading: false,
+        _resError: '',
         status: node.status === 'available' ? 'current' : node.status
       })
     } catch (err) {
-      patchNodeState(node, { _resLoading: false })
+      patchNodeState(node, { _resLoading: false, _resError: err?.response?.data?.detail || err?.message || '生成学习资料失败' })
       console.error('[StudyPath] generate node resources failed:', err)
-      error.value = err?.response?.data?.detail || err?.message || '生成学习资料失败'
     }
   }
 
   if (shouldLoadQuiz && !node._quiz && pathId) {
+    patchNodeState(node, { _quizError: '' })
     const localQuiz = buildNodeQuiz(node)
     if (localQuiz) {
       patchNodeState(node, { _quiz: localQuiz })
       return
     }
 
-    patchNodeState(node, { _quizLoading: true })
+    patchNodeState(node, { _quizLoading: true, _quizError: '' })
     try {
       const quizRes = await generatePathNodeQuiz(pathId, node.id)
       const quizData = getResponseData(quizRes)
+      if (quizData.blocked) {
+        patchNodeState(node, {
+          _quizLoading: false,
+          _quizError: quizData.reason || '请先学习当前节点的学习资料'
+        })
+        return
+      }
       const quiz = buildNodeQuiz(node, quizData)
+      if (!quiz) {
+        patchNodeState(node, {
+          _quizLoading: false,
+          _quizError: '没有生成可用的检测题，请稍后重试'
+        })
+        return
+      }
       patchNodeState(node, {
         quiz: quizData,
         sessionId: quizData.session_id || quizData.sessionId || node.sessionId || '',
         _quiz: quiz,
-        _quizLoading: false
+        _quizLoading: false,
+        _quizError: ''
       })
     } catch (err) {
-      patchNodeState(node, { _quizLoading: false })
+      patchNodeState(node, { _quizLoading: false, _quizError: err?.response?.data?.detail || err?.message || '生成学习检测失败' })
       console.error('[StudyPath] generate node quiz failed:', err)
-      error.value = err?.response?.data?.detail || err?.message || '生成学习检测失败'
     }
   }
 }
@@ -1922,6 +1950,11 @@ const loadNodeResources = async () => {
       const quizRes = await generatePathNodeQuiz(pathId, selectedNode.value.id)
       console.log('[StudyPath] generatePathNodeQuiz response:', quizRes)
       const quizData = getResponseData(quizRes)
+      if (quizData.blocked) {
+        patchNodeState(selectedNode.value, { _quizError: quizData.reason || '请先学习当前节点的学习资料' })
+        showResources.value = true
+        return
+      }
       nodeSessionId.value = quizData.session_id || quizData.sessionId || ''
       const rawQuestions =
         quizData.questions ||
@@ -1949,6 +1982,7 @@ const loadNodeResources = async () => {
           })
         }
       } else {
+        patchNodeState(selectedNode.value, { _quizError: '没有生成可用的检测题，请稍后重试' })
         console.warn('[StudyPath] 后端未返回题目数据，quizData:', quizData)
       }
     }
@@ -3225,6 +3259,19 @@ onBeforeUnmount(() => {
   font-weight: 900;
 }
 
+.branch-message {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.branch-message.error {
+  color: #b24141;
+}
+
 .branch-quiz {
   display: flex;
   align-items: center;
@@ -3783,6 +3830,10 @@ onBeforeUnmount(() => {
   color: rgba(22, 63, 143, 0.48);
   font-size: 13px;
   font-weight: 800;
+}
+
+.resources-empty.error {
+  color: #b24141;
 }
 
 .quiz-item {

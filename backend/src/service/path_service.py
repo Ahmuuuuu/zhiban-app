@@ -446,9 +446,30 @@ class PathService:
             update_fields["started_at"] = datetime.now()
         await UserPathProgress.filter(id=progress.id).update(**update_fields)
 
+        resources = []
+        if all_ids:
+            records = await GeneratedResource.filter(id__in=all_ids, user_id=user_id).all()
+            record_map = {r.id: r for r in records}
+            for rid in all_ids:
+                r = record_map.get(rid)
+                if not r:
+                    continue
+                resources.append({
+                    "resource_id": r.id,
+                    "topic": r.topic,
+                    "resource_type": r.resource_type,
+                    "content": r.content,
+                    "review_passed": r.review_passed,
+                    "download_url": f"/resource/{r.id}/download",
+                    "cover_url": r.cover_url,
+                    "view_count": r.view_count,
+                    "download_count": r.download_count,
+                })
+
         return {
             "node_id": node_id,
             "resource_ids": all_ids,
+            "resources": resources,
             "generated_count": len(generated_ids),
             "reused_count": len(existing_ids),
         }
@@ -620,10 +641,14 @@ class PathService:
             raise ValueError("未加入该路径")
 
         # 从 session 汇总成绩（session_id 已按节点隔离，无需 node_id 过滤）
-        records = await ExamRecord.filter(session_id=session_id, user_id=user_id).prefetch_related("question").all()
+        records = await ExamRecord.filter(session_id=session_id, user_id=user_id).order_by("id").prefetch_related("question").all()
         # 若查不到再按 node_id 试一次（兼容旧数据）
         if not records:
-            records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).prefetch_related("question").all()
+            records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).order_by("id").prefetch_related("question").all()
+        latest_by_question = {}
+        for r in records:
+            latest_by_question[r.question_id] = r
+        records = list(latest_by_question.values())
         judged = [r for r in records if r.is_correct is not None]
         if not judged:
             return {"error": "该会话无已判分的答题记录"}

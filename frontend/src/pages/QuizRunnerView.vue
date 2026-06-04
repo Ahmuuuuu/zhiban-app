@@ -157,6 +157,11 @@ const getBackendQuestionId = question => {
 
 const toCorrectBoolean = value => value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true'
 
+const isLocallyCorrect = (question, userAnswer) => {
+  const correctAnswer = normalizeAnswer(question?.answer)
+  return correctAnswer ? userAnswer === correctAnswer : false
+}
+
 const checkCurrent = async () => {
   const question = currentQuestion.value
   if (!question?.id) return
@@ -174,9 +179,11 @@ const checkCurrent = async () => {
         session_id: runSessionId.value
       })
       const data = unwrapData(result)
+      const backendCorrect = toCorrectBoolean(data?.is_correct)
+      const localCorrect = isLocallyCorrect(question, userAnswer)
       checked.value[question.id] = true
       results.value[question.id] = {
-        is_correct: toCorrectBoolean(data?.is_correct),
+        is_correct: backendCorrect || localCorrect,
         correct_answer: data?.correct_answer || question.answer,
         analysis: data?.analysis || question.explanation || '',
         session_id: data?.session_id || runSessionId.value,
@@ -196,9 +203,8 @@ const checkCurrent = async () => {
   }
 
   checked.value[question.id] = true
-  const correctAnswer = normalizeAnswer(question.answer)
   results.value[question.id] = {
-    is_correct: correctAnswer ? userAnswer === correctAnswer : Boolean(userAnswer),
+    is_correct: isLocallyCorrect(question, userAnswer) || (!normalizeAnswer(question.answer) && Boolean(userAnswer)),
     correct_answer: question.answer,
     analysis: question.explanation || ''
   }
