@@ -67,8 +67,8 @@ const normalizeQuestion = (item, index) => {
   const multi = isMulti || hasMultiple
 
   return {
-    question_id: item.id || item.question_id || null,
-    id: item.id || item.question_id || uid(`question-${index + 1}`),
+    question_id: item.question_id || item.questionId || item.id || null,
+    id: item.question_id || item.questionId || item.id || uid(`question-${index + 1}`),
     type: multi ? 'multiple' : (options.length ? 'choice' : 'short'),
     stem: String(stem).trim(),
     options,

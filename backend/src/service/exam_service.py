@@ -459,12 +459,16 @@ class ExamService:
     @staticmethod
     async def get_session(session_id: str, user_id: int) -> dict | None:
         """查询一次练习会话的完整状态：所有答题记录 + 汇总"""
-        records = await (
+        raw_records = await (
             ExamRecord.filter(session_id=session_id, user_id=user_id)
-            .order_by("created_at")
+            .order_by("id")
             .prefetch_related("question")
             .all()
         )
+        latest_by_question = {}
+        for r in raw_records:
+            latest_by_question[r.question_id] = r
+        records = list(latest_by_question.values())
         if not records:
             return None
 
