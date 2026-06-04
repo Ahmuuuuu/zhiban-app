@@ -1422,12 +1422,19 @@ const downloadGeneratedFile = async message => {
 
 const openPresentationPlayer = message => {
   if (!message?.previewUrl) return
+  const chatGroupId =
+    message.chatGroupId ||
+    message.chat_group_id ||
+    message.conversationId ||
+    activeConversationId.value ||
+    ''
   router.push({
     name: 'presentationPlayer',
     query: {
       url: message.previewUrl,
       id: message.presentation?.id || message.presentationId || message.presentation_id || message.fileId || '',
-      title: message.filename || '动态课件'
+      title: message.filename || '动态课件',
+      chat_group_id: chatGroupId
     }
   })
 }
