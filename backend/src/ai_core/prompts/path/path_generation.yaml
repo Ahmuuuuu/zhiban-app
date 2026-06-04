@@ -22,7 +22,7 @@ system: |
   4. **前置依赖合理**：每个节点标注需要先完成哪些前置节点（order_index）。第一个节点（order_index=1）的 prerequisites 必须为空数组 []
   5. **知识点分散**：各节点的 knowledge_tags 不重复，覆盖学科核心知识面
   6. **测验适当**：每个节点 quiz_config 含 count(题目数, 默认3) 和 threshold(通过线, 0-1, 默认0.7)
-  7. **资源多样**：resource_types 按节点特性选择，可选：document/ppt/mindmap/exercise/case/reading
+  7. **资源多样**：resource_types 按节点特性选择，可选：document/ppt/mindmap/video/exercise/case/reading
 
   ## 输出格式（极其重要）
   你的回复必须是纯 JSON，第一个字符必须是 `{`，最后一个字符必须是 `}`。
@@ -35,7 +35,7 @@ system: |
         "knowledge_tags": ["标签1", "标签2"],
         "order_index": 1,
         "prerequisites": [],
-        "resource_types": ["document", "ppt"],
+        "resource_types": ["document", "ppt", "video"],
         "quiz_config": {"count": 3, "threshold": 0.7}
       },
       {
