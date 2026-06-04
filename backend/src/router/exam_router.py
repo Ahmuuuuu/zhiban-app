@@ -57,7 +57,7 @@ async def submit_answer(data: SubmitAnswerRequest, user_id: int = Depends(get_us
     """提交答案"""
     try:
         answer = json.dumps(data.answer, ensure_ascii=False) if isinstance(data.answer, list) else data.answer
-        result = await ExamService.submit_answer(data.question_id, user_id, answer, data.time_spent, data.session_id)
+        result = await ExamService.submit_answer(data.question_id, user_id, answer, data.time_spent, data.session_id, data.node_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"code": 200, "msg": "success", "data": result}

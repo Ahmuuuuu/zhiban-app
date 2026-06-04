@@ -87,6 +87,15 @@ async def generate_node_quiz(path_id: int, node_id: int, user_id: int = Depends(
     return {"code": 200, "msg": "success", "data": result}
 
 
+@router.post("/{path_id}/node/{node_id}/generate-resources/stream")
+async def generate_node_resources_stream(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """流式为节点生成学习资源（SSE），生成好一个推送一个"""
+    return StreamingResponse(
+        PathService.generate_node_resources_stream(path_id, node_id, user_id),
+        media_type="text/event-stream",
+    )
+
+
 @router.post("/{path_id}/node/{node_id}/generate-quiz/stream")
 async def generate_node_quiz_stream(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
     """流式为节点生成测验题目（SSE）"""

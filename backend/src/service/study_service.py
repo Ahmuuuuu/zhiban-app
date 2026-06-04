@@ -20,10 +20,15 @@ class StudyService:
     async def heartbeat(user_id: int, path_id: int | None = None) -> dict:
         """前端每 30 秒调用一次，累计今日学习时长。path_id 可选，用于分路径统计"""
         today = date.today()
-        session, _ = await StudySession.get_or_create(
-            user_id=user_id, date=today,
-            defaults={"total_seconds": 0, "last_heartbeat_at": datetime.now()},
-        )
+        try:
+            session, _ = await StudySession.get_or_create(
+                user_id=user_id, date=today,
+                defaults={"total_seconds": 0, "last_heartbeat_at": datetime.now()},
+            )
+        except Exception:
+            session = await StudySession.filter(user_id=user_id, date=today).first()
+            if not session:
+                raise
         session.total_seconds += 30
         session.last_heartbeat_at = datetime.now()
         if path_id is not None:
@@ -488,7 +493,7 @@ class StudyService:
         result = []
         for c in collections:
             r = c.resource
-            ext_map = {"document": "md", "ppt": "pptx", "mindmap": "txt", "exercise": "md", "case": "md", "reading": "md", "slide_animation": "json"}
+            ext_map = {"document": "md", "ppt": "pptx", "mindmap": "txt", "exercise": "md", "case": "md", "reading": "md", "slide_animation": "json", "audio": "mp3", "html": "html"}
             ext = ext_map.get(r.resource_type, "md")
             result.append({
                 "resource_id": r.id,

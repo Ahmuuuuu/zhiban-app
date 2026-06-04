@@ -121,7 +121,7 @@ class ImageService:
         })
         text_base64 = base64.b64encode(prompt_json.encode()).decode()
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=30.0)) as client:
             create_body = {
                 "header": {
                     "app_id": app_id, "status": 3,

@@ -135,6 +135,8 @@
                               <FileImage v-if="isImageResource(resource)" :size="16" />
                               <Presentation v-else-if="isPptResource(resource)" :size="16" />
                               <GitBranch v-else-if="isMindmapResource(resource)" :size="16" />
+                              <Volume2 v-else-if="isAudioResource(resource)" :size="16" />
+                              <MonitorPlay v-else-if="isHtmlResource(resource)" :size="16" />
                               <FileText v-else :size="16" />
                             </span>
                             <strong>{{ resource.title }}</strong>
@@ -163,13 +165,13 @@
                   </template>
 
                   <button
-                    v-else
+                    v-if="!node._resources?.length || node._resources.length < (node.resourceTypes?.length || 4)"
                     class="branch-action"
                     type="button"
-                    :disabled="node.status === 'locked'"
+                    :disabled="node.status === 'locked' || node._resLoading"
                     @click.stop="ensureNodeResources(node, 'resources')"
                   >
-                    生成资料
+                    {{ node._resources?.length ? '补充更多资料' : '生成资料' }}
                   </button>
 
                   <div class="branch-divider"></div>
@@ -326,6 +328,8 @@
                         <FileImage v-if="isImageResource(resource)" :size="18" />
                         <Presentation v-else-if="isPptResource(resource)" :size="18" />
                         <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
+                        <Volume2 v-else-if="isAudioResource(resource)" :size="18" />
+                        <MonitorPlay v-else-if="isHtmlResource(resource)" :size="18" />
                         <FileText v-else :size="18" />
                       </span>
                       <div class="file-title">
@@ -441,10 +445,15 @@
               :alt="previewResource.title"
             />
             <PptPreview
-              v-else-if="isPptResource(previewResource) && previewResource.slides?.length"
+              v-else-if="(isPptResource(previewResource) || isHtmlResource(previewResource)) && previewResource.slides?.length"
               :slides="previewResource.slides"
               :title="previewResource.title"
             />
+            <div v-else-if="isAudioResource(previewResource)" class="resource-audio-player">
+              <Volume2 :size="32" />
+              <strong>{{ previewResource.title }}</strong>
+              <span>音频旁白 — 点击播放按钮收听</span>
+            </div>
             <MindmapPreview
               v-else-if="isMindmapResource(previewResource) && previewResource.content"
               :content="previewResource.content"
@@ -470,11 +479,11 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2 } from 'lucide-vue-next'
+import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2, MonitorPlay } from 'lucide-vue-next'
 import {
   getCurrentLearningPath, generateLearningPath,
   getLearningPaths, getLearningPathDetail, getLearningPathProgress, getStudyPathStats, sendStudyHeartbeat, enrollLearningPath,
-  generatePathNodeResources, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl
+  generatePathNodeResources, generatePathNodeResourcesStream, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
@@ -1212,6 +1221,8 @@ const pathQuizLink = (quiz, node) => {
   })
   const sessionId = quiz?.sessionId || quiz?.session_id || node?.sessionId || node?.session_id || ''
   if (sessionId) query.set('sessionId', String(sessionId))
+  const pid = pathState.value?.pathId || pathState.value?.path_id || ''
+  if (pid) query.set('pathId', String(pid))
   return `/question-bank/${quiz?.id}?${query.toString()}`
 }
 
@@ -1229,6 +1240,8 @@ const fileTypeLabel = type => {
   if (t.includes('ppt')) return 'PPT 文件'
   if (t.includes('image')) return '图片'
   if (t.includes('mind')) return '思维导图'
+  if (t.includes('html')) return '动态课件'
+  if (t.includes('audio')) return '音频旁白'
   if (t.includes('txt') || t.includes('document')) return '学习文档'
   if (t.includes('pdf')) return 'PDF 文件'
   return '文件'
@@ -1239,6 +1252,10 @@ const isImageResource = r => String(r?.type || r?.fileType || '').toLowerCase().
 const isPptResource = r => /ppt|powerpoint|presentation|slide/.test(String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase())
 
 const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('mind')
+
+const isAudioResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('audio')
+
+const isHtmlResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('html')
 
 const canPreviewResource = resource => {
   return Boolean(resource?.previewUrl || resource?.content || resource?.id || resource?.downloadUrl)
@@ -1784,29 +1801,54 @@ const ensureNodeResources = async (node, target = 'all') => {
   const shouldLoadResources = target === 'all' || target === 'resources'
   const shouldLoadQuiz = target === 'all' || target === 'quiz'
 
-  if (shouldLoadResources && !node._resources?.length && pathId) {
+  const resIncomplete = node._resources?.length && node._resources.length < (node.resourceTypes?.length || 3)
+  if (shouldLoadResources && (!node._resources?.length || resIncomplete) && pathId) {
     patchNodeState(node, { _resLoading: true, _resError: '' })
-    try {
-      const res = await generatePathNodeResources(pathId, node.id)
-      const resources = normalizeNodeResources(extractResourceItems(res, node), node)
-      if (!resources.length) {
+
+    // 初始化空数组（SSE 增量追加）
+    const initialResources = node._resources?.length ? [...node._resources] : []
+    patchNodeState(node, { _resources: initialResources })
+
+    generatePathNodeResourcesStream(
+      pathId, node.id,
+      // onResource: 每生成好一个立即追加
+      (data) => {
+        const resource = normalizeNodeResources([{
+          resource_id: data.resource_id,
+          resource_type: data.resource_type,
+          title: data.title,
+          download_url: data.download_url
+        }], node)[0]
+        if (!resource) return
+        const current = node._resources || []
+        const exists = current.some(r => String(r.resourceId || r.id) === String(resource.resourceId || resource.id))
+        if (!exists) {
+          patchNodeState(node, {
+            _resources: [...current, resource],
+            _resLoading: true,  // 还有更多在生成中
+            _resError: '',
+            status: node.status === 'available' ? 'current' : node.status
+          })
+        }
+      },
+      // onStatus
+      (data) => {
+        patchNodeState(node, { _resLoading: true, _resError: '' })
+      },
+      // onDone
+      (data) => {
         patchNodeState(node, {
           _resLoading: false,
-          _resError: getResponseData(res)?.message || '没有生成可用的学习资料，请稍后重试'
+          _resError: '',
+          status: node.status === 'available' ? 'current' : node.status
         })
-        return
+      },
+      // onError
+      (err) => {
+        patchNodeState(node, { _resLoading: false, _resError: err?.message || '生成学习资料失败' })
+        console.error('[StudyPath] SSE resource generation failed:', err)
       }
-      patchNodeState(node, {
-        resources,
-        _resources: resources,
-        _resLoading: false,
-        _resError: '',
-        status: node.status === 'available' ? 'current' : node.status
-      })
-    } catch (err) {
-      patchNodeState(node, { _resLoading: false, _resError: err?.response?.data?.detail || err?.message || '生成学习资料失败' })
-      console.error('[StudyPath] generate node resources failed:', err)
-    }
+    )
   }
 
   if (shouldLoadQuiz && !node._quiz && pathId) {
@@ -2133,12 +2175,29 @@ const mergePreviewResource = (resource, detail) => {
     0
   )
 
-  const content = data.content || data.preview || data.text || resource.content || ''
-  const slides = Array.isArray(data.slides) && data.slides.length
-    ? data.slides
-    : (isPptResource({ ...resource, type: fileType, fileType, title, filename: data.filename || data.file_name || resource.filename || title })
+  let content = data.content || data.preview || data.text || resource.content || ''
+  let slides = resource.slides || []
+  let narration = data.narration || resource.narration || null
+
+  // html 资源：解析 JSON 提取 slides + narration
+  if (isHtmlResource({ ...resource, type: fileType, fileType, title })) {
+    try {
+      const parsed = typeof content === 'string' ? JSON.parse(content) : content
+      if (parsed.slides?.length) {
+        slides = parsed.slides.map((s, i) => ({
+          index: i,
+          title: s.title || '',
+          text: [...(s.bullets || []), ...(s.body || []), s.notes || ''].join('；'),
+          notes: s.notes || ''
+        }))
+      }
+      if (parsed.narration) narration = parsed.narration
+    } catch { /* keep raw content */ }
+  } else if (!slides.length) {
+    slides = isPptResource({ ...resource, type: fileType, fileType, title, filename: data.filename || data.file_name || resource.filename || title })
       ? parsePptSlidesFromContent(content)
-      : resource.slides || [])
+      : []
+  }
 
   return {
     ...resource,
@@ -2151,7 +2210,7 @@ const mergePreviewResource = (resource, detail) => {
     typeLabel: fileTypeLabel(fileType),
     content,
     slides,
-    narration: data.narration || resource.narration || null,
+    narration,
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.url || resource.previewUrl || ''),
     downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
     isRead: Boolean(data.is_read ?? data.isRead ?? readStatus.is_read ?? readStatus.isRead ?? resource.isRead ?? false),
@@ -3384,6 +3443,20 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   object-fit: contain;
   border-radius: 18px;
+}
+
+.resource-audio-player {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: #5f8fc3;
+  text-align: center;
+}
+
+.resource-audio-player strong {
+  color: #163f8f;
+  font-size: 18px;
 }
 
 .resource-preview-body pre {
