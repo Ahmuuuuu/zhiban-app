@@ -155,6 +155,8 @@ const getBackendQuestionId = question => {
   return Number.isFinite(id) && id > 0 ? id : null
 }
 
+const toCorrectBoolean = value => value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true'
+
 const checkCurrent = async () => {
   const question = currentQuestion.value
   if (!question?.id) return
@@ -174,7 +176,7 @@ const checkCurrent = async () => {
       const data = unwrapData(result)
       checked.value[question.id] = true
       results.value[question.id] = {
-        is_correct: data?.is_correct,
+        is_correct: toCorrectBoolean(data?.is_correct),
         correct_answer: data?.correct_answer || question.answer,
         analysis: data?.analysis || question.explanation || '',
         session_id: data?.session_id || runSessionId.value,
@@ -212,11 +214,13 @@ const score = computed(() => questions.value.reduce((total, question) => {
 }, 0))
 
 const percentScore = computed(() => {
+  const summaryTotal = Number(sessionSummary.value?.total_questions)
+  const summaryMatchesCurrentQuiz = !Number.isFinite(summaryTotal) || summaryTotal <= questions.value.length
   const backendScore = Number(
-    sessionSummary.value?.earned_points ??
-    sessionSummary.value?.percentage
+    sessionSummary.value?.percentage ??
+    sessionSummary.value?.earned_points
   )
-  if (Number.isFinite(backendScore)) return backendScore.toFixed(1)
+  if (summaryMatchesCurrentQuiz && Number.isFinite(backendScore)) return backendScore.toFixed(1)
 
   if (!questions.value.length) return '0.0'
   return ((score.value / questions.value.length) * 100).toFixed(1)
