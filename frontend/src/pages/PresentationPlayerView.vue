@@ -1,7 +1,7 @@
 <template>
   <main class="presentation-player">
     <header class="player-topbar">
-      <button type="button" @click="goBack">返回</button>
+      <button type="button" @pointerdown.prevent.stop="goBack" @click.prevent.stop="goBack">返回</button>
       <div>
         <span>Dynamic Lesson</span>
         <h1>{{ title }}</h1>
@@ -56,8 +56,13 @@ const presentationStatus = ref('loading')
 const lessonHtml = ref('')
 let audioPollTimer = 0
 let presentationPollTimer = 0
+let returning = false
 
 const presentationId = computed(() => String(route.query.id || '').trim())
+const chatGroupId = computed(() => {
+  const raw = route.query.chat_group_id || route.query.chatGroupId || route.query.conversationId
+  return String(Array.isArray(raw) ? raw[0] : raw || '').trim()
+})
 const presentationUrl = computed(() => activePresentationUrl.value)
 const frameUrl = computed(() => {
   if (!activePresentationUrl.value) return ''
@@ -72,12 +77,28 @@ const statusText = computed(() => {
   return presentationId.value ? '检查中' : '预览'
 })
 
-const goBack = () => {
-  if (window.history.length > 1) {
-    router.back()
-    return
+const stopLessonMedia = () => {
+  try {
+    const win = frameRef.value?.contentWindow
+    const doc = frameRef.value?.contentDocument || win?.document
+    if (win?.currentAudio) win.currentAudio.pause?.()
+    if (typeof win?.pauseAudio === 'function') win.pauseAudio()
+    Array.from(doc?.querySelectorAll('audio, video') || []).forEach(media => {
+      media.pause?.()
+    })
+  } catch {
+    // Cross-origin fallback: srcdoc lessons are controllable, remote iframes may not be.
   }
-  router.push('/chat')
+}
+
+const goBack = () => {
+  if (returning) return
+  returning = true
+  stopLessonMedia()
+  router.push({
+    name: 'chat',
+    query: chatGroupId.value ? { chat_group_id: chatGroupId.value } : {}
+  })
 }
 
 const getBackendBase = url => {
