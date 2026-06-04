@@ -624,7 +624,8 @@ const normalizeHistoryGroups = (res) => {
   if (Array.isArray(groups)) {
     return groups
       .slice()
-      .sort((a, b) => getTimeValue(getRecordTime(b)) - getTimeValue(getRecordTime(a)))
+      .map(item => ({ ...item, sortTime: getTimeValue(getRecordTime(item)) || 0 }))
+      .sort((a, b) => b.sortTime - a.sortTime)
   }
 
   if (!groups || typeof groups !== 'object') {
@@ -1862,10 +1863,11 @@ const loadConversationList = async () => {
     const res = await getConversationList()
 
     const chatGroups = normalizeHistoryGroups(res).map(item => {
-      const id = item.id || item.conversationId || item.chat_group_id
+      const id = item.id ?? item.conversationId ?? item.chat_group_id
 
       return {
         id,
+        sortTime: item.sortTime || getTimeValue(item.created_time) || 0,
         title: stripTypedResourceInstruction(item.title || item.req) || `对话 ${id}`,
         lastMessage: stripTypedResourceInstruction(item.lastMessage || item.last_message || item.req) || '',
         time: item.time || formatTime(item.updateTime || item.created_time)
@@ -1881,16 +1883,17 @@ const loadConversationList = async () => {
       existingIds.add(gid)
       chatGroups.push({
         id: gid,
+        sortTime: task.updatedAt || 0,
         title: task.text || '资源生成',
         lastMessage: task.progress || '正在生成资源...',
         time: formatTime(task.updatedAt)
       })
     }
 
-    // 按时间降序
+    // 按 sortTime 降序
     chatGroups.sort((a, b) => {
-      const ta = typeof a.time === 'number' ? a.time : 0
-      const tb = typeof b.time === 'number' ? b.time : 0
+      const ta = a.sortTime || getTimeValue(a.time) || 0
+      const tb = b.sortTime || getTimeValue(b.time) || 0
       return tb - ta
     })
 
