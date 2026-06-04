@@ -116,6 +116,11 @@ async def _build_portrait_context(user_id: int) -> str:
         return ""
 
 
+def invalidate_portrait_cache(user_id: int):
+    """用户信息变更后清除画像缓存，确保下次对话使用最新数据"""
+    _portrait_cache.pop(user_id, None)
+
+
 def _get_or_create_chat(user_id: int, chat_group_id: int) -> Brain:
     instance_key = f"brain_{user_id}_{chat_group_id}"
     if instance_key not in _chat_instances:
