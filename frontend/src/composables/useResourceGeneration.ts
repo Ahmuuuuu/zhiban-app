@@ -122,9 +122,6 @@ export async function executeGeneration(
         const immediateImages = normalizeImageRecords(submitRes)
         if (immediateImages.length) {
           immediateImages.forEach((image: unknown) => callbacks.onImage?.(image))
-          callbacks.onProgress?.(
-            immediateImages.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
-          )
           callbacks.onDone?.({ chat_group_id: submitData?.chat_group_id || submitData?.chatGroupId })
           return
         }
@@ -143,9 +140,6 @@ export async function executeGeneration(
           const images = normalizeImageRecords(taskInfo)
           if (images.length) {
             images.forEach((image: unknown) => callbacks.onImage?.(image))
-            callbacks.onProgress?.(
-              images.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
-            )
             callbacks.onDone?.({ chat_group_id: taskInfo.chat_group_id || taskInfo.chatGroupId || submitData?.chat_group_id })
           } else {
             callbacks.onError?.('图片没有下载成功，请稍后重试。')
