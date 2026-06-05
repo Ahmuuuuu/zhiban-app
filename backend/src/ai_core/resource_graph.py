@@ -7,6 +7,7 @@ import concurrent.futures
 import json
 import logging
 import threading
+import time
 from typing import TypedDict, NotRequired
 
 from langgraph.graph import StateGraph, START, END
@@ -132,22 +133,30 @@ async def executor_node(state: ResourceState) -> dict:
 
     def gen_one_sync(rt: str) -> tuple[str, str]:
         """同步 LLM 调用，运行在线程池中实现真正多线程并行"""
+        t_start = time.perf_counter()
         with semaphore:
             try:
                 if rt == "ppt":
-                    return _generate_ppt_sync(topic, portrait, guidance, user_id)
-                if rt == "image":
-                    return _generate_image_sync(prompts[rt], user_id, loop)
-                response = llm.invoke(prompts[rt])
-                return rt, response.content
+                    result = _generate_ppt_sync(topic, portrait, guidance, user_id)
+                elif rt == "image":
+                    result = _generate_image_sync(prompts[rt], user_id, loop)
+                else:
+                    response = llm.invoke(prompts[rt])
+                    result = rt, response.content
+                elapsed = time.perf_counter() - t_start
+                logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
+                return result
             except Exception as e:
-                logger.exception(f"Executor [{rt}] 调用失败")
+                elapsed = time.perf_counter() - t_start
+                logger.exception(f"[Executor] {rt} 调用失败 耗时={elapsed:.2f}s")
                 return rt, f"[生成失败: {e}]"
 
+    t_gen_start = time.perf_counter()
     loop = asyncio.get_running_loop()
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [loop.run_in_executor(pool, gen_one_sync, rt) for rt in resource_types]
         results = await asyncio.gather(*futures)
+    logger.info("[Executor] 全部生成完成 并行总耗时=%.2fs types=%s", time.perf_counter() - t_gen_start, resource_types)
 
     retry = state.get("retry_count", 0)
     if feedback:

@@ -138,7 +138,7 @@ class ExamService:
     @staticmethod
     async def generate_and_save(
         topic: str, user_id: int,
-        question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
+        question_types: list[str] | None = None, count: int = 10, difficulty: str = "medium",
         node_id: int | None = None, user_notes: str = "",
     ) -> dict:
         """走 graph 出题（Leader→Executor→Reviewer→retry）→ 存库 → 返回 session_id + questions"""
@@ -150,7 +150,7 @@ class ExamService:
 
         from backend.src.service.resource_service import ResourceService  # deferred: circular exam<->resource
 
-        types = question_types or ["single_choice", "multi_choice", "true_false"]
+        types = question_types or ["single_choice", "multi_choice", "true_false", "fill_blank"]
         types_str = ", ".join(types)
 
         saved_resources = await ResourceService.generate_and_save(
@@ -196,7 +196,7 @@ class ExamService:
     @staticmethod
     async def generate_and_save_stream(
         topic: str, user_id: int,
-        question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
+        question_types: list[str] | None = None, count: int = 10, difficulty: str = "medium",
         node_id: int | None = None, user_notes: str = "",
     ):
         """流式走 graph 出题 → SSE 推送进度 → 存库 → 返回 session"""
@@ -209,7 +209,7 @@ class ExamService:
 
         from backend.src.service.resource_service import ResourceService  # deferred: circular exam<->resource
 
-        types = question_types or ["single_choice", "multi_choice", "true_false"]
+        types = question_types or ["single_choice", "multi_choice", "true_false", "fill_blank"]
         types_str = ", ".join(types)
 
         yield f"data: {json.dumps({'type': 'status', 'msg': '正在分析知识点并生成题目...'}, ensure_ascii=False)}\n\n"

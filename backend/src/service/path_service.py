@@ -665,7 +665,7 @@ class PathService:
                 }
 
         # 没有则生成
-        count = quiz_config.get("count", 5)
+        count = quiz_config.get("count", 10)
 
         if not pre_generate:
             # 检查资源是否已查看，根据查看次数决定难度
@@ -695,7 +695,7 @@ class PathService:
         result = await ExamService.generate_and_save(
             topic=node.topic,
             user_id=user_id,
-            question_types=["single_choice", "single_choice", "true_false", "true_false", "multi_choice"],
+            question_types=["single_choice"] * 5 + ["multi_choice"] + ["true_false"] * 2 + ["fill_blank"] * 2,
             count=count,
             difficulty=difficulty,
             node_id=node_id,
@@ -739,7 +739,7 @@ class PathService:
                 yield "data: [DONE]\n\n"
                 return
 
-        count = quiz_config.get("count", 5)
+        count = quiz_config.get("count", 10)
         difficulty = "medium"
 
         # 检查资源是否已查看，根据查看次数决定难度
@@ -770,7 +770,7 @@ class PathService:
         async for event in ExamService.generate_and_save_stream(
             topic=node.topic,
             user_id=user_id,
-            question_types=["single_choice", "single_choice", "true_false", "true_false", "multi_choice"],
+            question_types=["single_choice"] * 5 + ["multi_choice"] + ["true_false"] * 2 + ["fill_blank"] * 2,
             count=count,
             difficulty=difficulty,
             node_id=node_id,
