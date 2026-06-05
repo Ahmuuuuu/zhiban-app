@@ -160,7 +160,7 @@ class PathService:
                 knowledge_tags=json.dumps(nd.get("knowledge_tags", []), ensure_ascii=False),
                 order_index=nd.get("order_index", len(nodes) + 1),
                 prerequisites=json.dumps(nd.get("prerequisites", []), ensure_ascii=False),
-                resource_types=json.dumps(nd.get("resource_types", ["document", "ppt", "mindmap"]), ensure_ascii=False),
+                resource_types=json.dumps(nd.get("resource_types", ["document", "ppt", "mindmap", "video"]), ensure_ascii=False),
                 quiz_config=json.dumps(nd.get("quiz_config", {"count": 5, "threshold": 0.7}), ensure_ascii=False),
             )
             created_nodes.append(node)
@@ -380,10 +380,20 @@ class PathService:
         resources = []
         if resource_ids:
             res_records = await GeneratedResource.filter(id__in=resource_ids).all()
-            resources = [
-                {"resource_id": r.id, "topic": r.topic, "resource_type": r.resource_type}
-                for r in res_records
-            ]
+            for r in res_records:
+                item = {"resource_id": r.id, "topic": r.topic, "resource_type": r.resource_type}
+                if r.file_url:
+                    item["file_url"] = r.file_url
+                    item["url"] = r.file_url
+                    item["preview_url"] = r.file_url
+                if r.resource_type == "html" and r.content:
+                    try:
+                        c = json.loads(r.content)
+                        if c.get("presentation_id"):
+                            item["presentation_id"] = c["presentation_id"]
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                resources.append(item)
 
         return {
             "node_id": node.id,
@@ -397,9 +407,40 @@ class PathService:
             "progress": {
                 "status": progress.node_status if progress else "not_enrolled",
                 "quiz_passed": progress.quiz_passed if progress else False,
+                "narration_status": progress.narration_status if progress else "",
                 "resources": resources,
             },
         }
+
+    # ── 内部工具方法（两条生成路径复用） ──
+
+    @staticmethod
+    async def _check_existing_resources(user_id: int, topic: str, resource_types: list[str] | None = None):
+        """查已有资源 → (已有记录列表, 缺失类型列表)
+        node 配置中的 "video" 映射到 DB 中的 "html" 资源类型。"""
+        if resource_types is None:
+            resource_types = ["document", "ppt", "mindmap", "video"]
+        existing_records = []
+        missing_types = []
+        for rt in resource_types:
+            db_type = "html" if rt == "video" else rt
+            r = await GeneratedResource.filter(user_id=user_id, topic=topic, resource_type=db_type).first()
+            if r:
+                existing_records.append(r)
+            else:
+                missing_types.append(rt)
+        return existing_records, missing_types
+
+    @staticmethod
+    async def _update_progress_resource_ids(progress, all_ids: list[int]):
+        """写入 resource_ids 并推进节点状态"""
+        update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
+        if progress.node_status == "unlocked":
+            update_fields["node_status"] = "in_progress"
+            update_fields["started_at"] = datetime.now()
+        await UserPathProgress.filter(id=progress.id).update(**update_fields)
+
+    # ── 资源生成 ──
 
     @staticmethod
     async def generate_node_resources_stream(path_id: int, node_id: int, user_id: int):
@@ -414,69 +455,85 @@ class PathService:
             yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径'}, ensure_ascii=False)}\n\n"
             return
 
-        resource_types = ["document", "ppt", "mindmap"]
         topic = node.topic
-
-        # 检查已有资源 → 秒推
-        existing_records = []
-        missing_types = []
-        for rt in resource_types:
-            r = await GeneratedResource.filter(user_id=user_id, topic=topic, resource_type=rt).first()
-            if r:
-                existing_records.append(r)
-            else:
-                missing_types.append(rt)
+        node_resource_types = json.loads(node.resource_types) if node.resource_types else ["document", "ppt", "mindmap"]
+        # 学习路径节点始终带 video（HTML 动态课件），LLM 生成时可能遗漏
+        if "video" not in node_resource_types:
+            node_resource_types = list(node_resource_types) + ["video"]
+        existing_records, missing_types = await PathService._check_existing_resources(user_id, topic, node_resource_types)
 
         for r in existing_records:
-            yield _resource_sse(r)
+            pres_id = 0
+            if r.resource_type == "html" and r.content:
+                try:
+                    c = json.loads(r.content)
+                    pres_id = c.get("presentation_id", 0)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            yield _resource_sse(r, presentation_id=pres_id)
 
         if not missing_types:
             all_ids = [r.id for r in existing_records]
-            update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
-            if progress.node_status == "unlocked":
-                update_fields["node_status"] = "in_progress"
-                update_fields["started_at"] = datetime.now()
-            await UserPathProgress.filter(id=progress.id).update(**update_fields)
+            await PathService._update_progress_resource_ids(progress, all_ids)
             yield _sse_done(all_ids)
             return
 
-        yield f"data: {json.dumps({'type': 'status', 'msg': f'开始生成 {len(missing_types)} 种资源...'}, ensure_ascii=False)}\n\n"
+        # video/html 不由 LLM 生成；PPT 是 HTML 课件的基础，缺失就自动补
+        gen_types = [t for t in missing_types if t != "video"]
+        if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
+            gen_types.insert(0, "ppt")
 
-        # 调用 ResourceService.generate_stream 生成缺失类型（跳过审核加速）
+        if gen_types:
+            yield f"data: {json.dumps({'type': 'status', 'msg': f'开始生成 {len(gen_types)} 种资源...'}, ensure_ascii=False)}\n\n"
+
         generated_ids = []
         ppt_id = None
-        from backend.src.service.resource_service import ResourceService
-        async for event_str in ResourceService.generate_stream(
-            topic=topic, user_id=user_id, resource_types=missing_types, skip_review=True,
-        ):
-            yield event_str
-            if event_str.startswith("data:") and "[DONE]" not in event_str:
-                try:
-                    data = json.loads(event_str[5:].strip())
-                    if data.get("done"):
-                        for r in data.get("resources", []):
-                            rid = r.get("resource_id")
-                            if rid:
-                                generated_ids.append(rid)
-                                if r.get("file_type") == "ppt":
-                                    ppt_id = rid
-                except (json.JSONDecodeError, KeyError):
-                    pass
+        if gen_types:
+            from backend.src.service.resource_service import ResourceService
+            async for event_str in ResourceService.generate_stream(
+                topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
+            ):
+                yield event_str
+                if event_str.startswith("data:") and "[DONE]" not in event_str:
+                    try:
+                        data = json.loads(event_str[5:].strip())
+                        if data.get("done"):
+                            for r in data.get("resources", []):
+                                rid = r.get("resource_id")
+                                if rid:
+                                    generated_ids.append(rid)
+                                    if r.get("file_type") == "ppt":
+                                        ppt_id = rid
+                    except (json.JSONDecodeError, KeyError):
+                        pass
 
         all_ids = [r.id for r in existing_records] + generated_ids
-        update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
-        if progress.node_status == "unlocked":
-            update_fields["node_status"] = "in_progress"
-            update_fields["started_at"] = datetime.now()
-        await UserPathProgress.filter(id=progress.id).update(**update_fields)
 
-        # 主资源（document/ppt/mindmap）已完成，立即推送 done
+        # PPT → 生成 HTML 动态课件（复用已有的 presentation_service.generate 逻辑：
+        #   Presentation 记录 + 骨架 HTML + 后台补音频 + 前端轮询状态）
+        # 优先用新生成的 ppt_id，否则从已有记录中找
+        html_result = None
+        target_ppt_id = ppt_id
+        if not target_ppt_id:
+            ppt_from_existing = next((r for r in existing_records if r.resource_type == "ppt"), None)
+            if ppt_from_existing:
+                target_ppt_id = ppt_from_existing.id
+
+        if target_ppt_id:
+            ppt_record = await GeneratedResource.filter(id=target_ppt_id).first()
+            if ppt_record:
+                try:
+                    html_result = await _create_video_html(topic, user_id, ppt_record)
+                except Exception:
+                    logger.exception("动态课件生成失败 topic=%s ppt_id=%s", topic, target_ppt_id)
+                if html_result:
+                    all_ids.append(html_result["html_id"])
+                    html_record = await GeneratedResource.filter(id=html_result["html_id"]).first()
+                    if html_record:
+                        yield _resource_sse(html_record, presentation_id=html_result["presentation_id"])
+
+        await PathService._update_progress_resource_ids(progress, all_ids)
         yield _sse_done(all_ids)
-
-        # PPT 已生成 → 后台触发旁白，不阻塞主流程
-        if ppt_id:
-            import asyncio
-            asyncio.create_task(_background_narrate(ppt_id, user_id, topic, progress.id, all_ids))
 
     @staticmethod
     async def generate_node_resources(path_id: int, node_id: int, user_id: int) -> dict:
@@ -489,54 +546,46 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        # 固定生成 3 种资源类型
-        resource_types = ["document", "ppt", "mindmap"]
+        topic = node.topic
+        node_resource_types = json.loads(node.resource_types) if node.resource_types else ["document", "ppt", "mindmap"]
+        # 学习路径节点始终带 video（HTML 动态课件）
+        if "video" not in node_resource_types:
+            node_resource_types = list(node_resource_types) + ["video"]
+        existing_records, missing_types = await PathService._check_existing_resources(user_id, topic, node_resource_types)
 
-        # 并行查已有资源
+        gen_types = [t for t in missing_types if t != "video"]
+        if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
+            gen_types.insert(0, "ppt")
 
-        async def check_existing(rt: str):
-            r = await GeneratedResource.filter(
-                user_id=user_id, topic=node.topic, resource_type=rt,
-            ).first()
-            return (rt, r.id) if r else (rt, None)
-
-        checks = await asyncio.gather(*[check_existing(rt) for rt in resource_types])
-        existing_ids = [rid for _, rid in checks if rid is not None]
-        missing_types = [rt for rt, rid in checks if rid is None]
-
-        # 只对缺失的类型生成新资源
         generated_ids = []
-        if missing_types:
+        if gen_types:
             try:
                 saved = await ResourceService.generate_and_save(
-                    topic=node.topic,
+                    topic=topic,
                     user_id=user_id,
-                    resource_types=missing_types,
+                    resource_types=gen_types,
                 )
                 generated_ids = [r.get("resource_id") or r.get("id") for r in saved if r]
             except Exception:
-                logger.exception("ResourceService.generate_and_save 失败 topic=%s types=%s", node.topic, missing_types)
+                logger.exception("ResourceService.generate_and_save 失败 topic=%s types=%s", topic, gen_types)
 
-        all_ids = existing_ids + generated_ids
-        update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
-        if progress.node_status == "unlocked":
-            update_fields["node_status"] = "in_progress"
-            update_fields["started_at"] = datetime.now()
-        await UserPathProgress.filter(id=progress.id).update(**update_fields)
+        all_ids = [r.id for r in existing_records] + generated_ids
 
-        # 找 PPT 资源，触发视频旁白生成（后台异步，不阻塞响应）
-        if all_ids:
-            ppt_records = await GeneratedResource.filter(
-                id__in=all_ids, user_id=user_id, resource_type="ppt"
-            ).all()
-            if ppt_records:
-                from backend.src.service.narration_service import narrate_resource
-                for ppt in ppt_records:
-                    try:
-                        asyncio.ensure_future(narrate_resource(ppt.id))
-                        logger.info("已触发视频旁白生成 resource_id=%s topic=%s", ppt.id, node.topic)
-                    except Exception:
-                        logger.exception("触发旁白生成失败 resource_id=%s", ppt.id)
+        # PPT → 生成 HTML 动态课件（复用已有的 presentation_service 逻辑）
+        ppt_record = None
+        html_result = None
+        ppt_record = await GeneratedResource.filter(
+            id__in=all_ids, user_id=user_id, resource_type="ppt"
+        ).first()
+        if ppt_record:
+            try:
+                html_result = await _create_video_html(topic, user_id, ppt_record)
+            except Exception:
+                logger.exception("动态课件生成失败 topic=%s ppt_id=%s", topic, ppt_record.id)
+            if html_result:
+                all_ids.append(html_result["html_id"])
+
+        await PathService._update_progress_resource_ids(progress, all_ids)
 
         resources = []
         if all_ids:
@@ -546,7 +595,7 @@ class PathService:
                 r = record_map.get(rid)
                 if not r:
                     continue
-                resources.append({
+                item = {
                     "resource_id": r.id,
                     "topic": r.topic,
                     "resource_type": r.resource_type,
@@ -556,14 +605,19 @@ class PathService:
                     "cover_url": r.cover_url,
                     "view_count": r.view_count,
                     "download_count": r.download_count,
-                })
+                }
+                if r.file_url:
+                    item["file_url"] = r.file_url
+                    item["url"] = r.file_url
+                    item["preview_url"] = r.file_url
+                resources.append(item)
 
         return {
             "node_id": node_id,
             "resource_ids": all_ids,
             "resources": resources,
             "generated_count": len(generated_ids),
-            "reused_count": len(existing_ids),
+            "reused_count": len(existing_records),
         }
 
     @staticmethod
@@ -1136,8 +1190,8 @@ class PathService:
             for rid in resource_ids_map.get(node.id, []):
                 r = resources_map.get(rid)
                 if r:
-                    ext = {"document": "md", "ppt": "pptx", "mindmap": "txt", "exercise": "md", "audio": "mp3", "html": "html"}.get(r.resource_type, "md")
-                    node_resources.append({
+                    ext = {"document": "md", "ppt": "pptx", "mindmap": "txt", "exercise": "md", "audio": "mp3", "html": "html", "video": "html"}.get(r.resource_type, "md")
+                    item = {
                         "id": r.id,
                         "title": r.topic,
                         "resource_type": r.resource_type,
@@ -1145,7 +1199,19 @@ class PathService:
                         "filename": f"{r.topic}_{r.resource_type}.{ext}",
                         "download_url": f"/resource/{r.id}/download",
                         "view_count": r.view_count or 0,
-                    })
+                    }
+                    if r.file_url:
+                        item["file_url"] = r.file_url
+                        item["url"] = r.file_url
+                        item["preview_url"] = r.file_url if r.resource_type == "html" else ""
+                    if r.resource_type == "html" and r.content:
+                        try:
+                            c = json.loads(r.content)
+                            if c.get("presentation_id"):
+                                item["presentation_id"] = c["presentation_id"]
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    node_resources.append(item)
 
             # 计算该节点资源总查看次数
             node_total_views = sum(
@@ -1164,6 +1230,7 @@ class PathService:
                 "resource_types": resource_types,
                 "resources": node_resources,
                 "session_id": p.quiz_session_id,
+                "narration_status": p.narration_status or "",
                 "resources_viewed": node_total_views > 0,
                 "total_views": node_total_views,
                 "action_label": "开始测验" if node.quiz_config and status in ("unlocked", "in_progress") else "开始学习",
@@ -1288,7 +1355,7 @@ class PathService:
 #  SSE 流式辅助函数
 # ═══════════════════════════════════════
 
-def _resource_sse(record) -> str:
+def _resource_sse(record, presentation_id: int = 0) -> str:
     """单个资源的 SSE 事件"""
     data = {
         "type": "resource",
@@ -1297,6 +1364,12 @@ def _resource_sse(record) -> str:
         "title": record.topic or "",
         "download_url": f"/resource/{record.id}/download",
     }
+    if record.file_url:
+        data["file_url"] = record.file_url
+        data["url"] = record.file_url
+        data["preview_url"] = record.file_url
+    if presentation_id:
+        data["presentation_id"] = presentation_id
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -1343,42 +1416,46 @@ def _ppt_to_slides(content: str) -> list[dict]:
     return slides
 
 
-async def _background_narrate(ppt_id: int, user_id: int, topic: str, progress_id: int, current_ids: list[int]):
-    """后台生成旁白 + audio/html 资源，完成后更新 progress.resource_ids"""
-    import json as _json
-    from backend.src.service.narration_service import narrate_resource as _narrate_resource
+async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | None:
+    """通过已有的 presentation_service 创建动态课件（含骨架→后台补音频→状态轮询）。
+    返回 {"html_id": int, "presentation_id": int, "file_url": str} 或 None。"""
+    from backend.src.service.presentation_service import generate as generate_presentation
     from backend.src.models.resource_model import GeneratedResource
-    from backend.src.models.path_model import UserPathProgress
 
-    try:
-        narration = await _narrate_resource(ppt_id)
-        if not narration or narration.get("error") or not narration.get("sections"):
-            return
+    # 已有 HTML GeneratedResource 则复用
+    existing_html = await GeneratedResource.filter(
+        user_id=user_id, topic=topic, resource_type="html"
+    ).first()
+    if existing_html:
+        try:
+            content = json.loads(existing_html.content or "{}")
+        except (json.JSONDecodeError, TypeError):
+            content = {}
+        pres_id = content.get("presentation_id", 0)
+        return {"html_id": existing_html.id, "presentation_id": pres_id, "file_url": existing_html.file_url or ""}
 
-        all_ids = list(current_ids)
+    user = await User.filter(id=user_id).first()
+    if not user:
+        return None
 
-        audio = await GeneratedResource.create(
-            user_id=user_id, topic=topic, resource_type="audio",
-            title=f"{topic} - 音频旁白",
-            content=_json.dumps(narration["sections"], ensure_ascii=False),
-        )
-        all_ids.append(audio.id)
+    # 调用已有的 presentation 生成逻辑（骨架 + 后台补音频 + Presentation 记录）
+    pres = await generate_presentation(topic, user_id)
+    if not pres or "error" in pres:
+        logger.error("课件生成失败 topic=%s error=%s", topic, pres.get("error") if pres else "unknown")
+        return None
 
-        ppt_record = await GeneratedResource.filter(id=ppt_id).first()
-        if ppt_record:
-            html_data = {
-                "slides": _ppt_to_slides(ppt_record.content or ""),
-                "narration": narration["sections"],
-            }
-            html = await GeneratedResource.create(
-                user_id=user_id, topic=topic, resource_type="html",
-                title=f"{topic} - 动态课件",
-                content=_json.dumps(html_data, ensure_ascii=False),
-            )
-            all_ids.append(html.id)
+    html = await GeneratedResource.create(
+        user=user, topic=topic, resource_type="html",
+        content=json.dumps({
+            "presentation_id": pres["id"],
+            "slides": _ppt_to_slides(ppt_record.content or ""),
+            "narration": [],
+        }, ensure_ascii=False),
+        file_url=pres["file_url"],
+    )
+    logger.info("动态课件已创建 html_id=%s presentation_id=%s", html.id, pres["id"])
+    return {"html_id": html.id, "presentation_id": pres["id"], "file_url": pres["file_url"]}
 
-        await UserPathProgress.filter(id=progress_id).update(
-            resource_ids=_json.dumps(all_ids, ensure_ascii=False))
-        logger.info("后台旁白完成 ppt_id=%s audio=%s html=%s", ppt_id, audio.id, all_ids[-1] if len(all_ids) > len(current_ids) + 1 else "?")
-    except Exception:
-        logger.exception("后台旁白失败 ppt_id=%s", ppt_id)
+
+def _safe_topic_filename(topic: str) -> str:
+    return "".join(c for c in topic if c.isalnum() or c in " _-")[:30]

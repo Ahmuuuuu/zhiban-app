@@ -43,6 +43,7 @@ _FILE_EXT_MAP = {
     "slide_animation": "json",
     "audio": "mp3",
     "html": "html",
+    "video": "html",
 }
 
 
@@ -508,6 +509,10 @@ class ResourceService:
             "favorite_count": record.favorite_count,
             "cover_url": record.cover_url,
         }
+        if record.file_url:
+            result["file_url"] = record.file_url
+            result["url"] = record.file_url
+            result["preview_url"] = record.file_url if record.resource_type in ("html", "video") else ""
 
         # 当前用户的交互状态
         from backend.src.models.study_model import ResourceLike, ResourceCollection
@@ -575,6 +580,10 @@ class ResourceService:
                 "favorite_count": r.favorite_count,
                 "cover_url": r.cover_url,
             }
+            if r.file_url:
+                item["file_url"] = r.file_url
+                item["url"] = r.file_url
+                item["preview_url"] = r.file_url if r.resource_type in ("html", "video") else ""
             # 附带当前用户的交互状态
             from backend.src.models.study_model import ResourceLike, ResourceCollection
             item["liked"] = await ResourceLike.filter(user_id=user_id, resource_id=r.id).exists()

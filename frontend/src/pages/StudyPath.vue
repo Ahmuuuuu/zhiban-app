@@ -121,7 +121,7 @@
                   <template v-else-if="node._resources?.length">
                     <div class="branch-resource-flow">
                       <article
-                        v-for="(resource, resourceIndex) in node._resources"
+                        v-for="(resource, resourceIndex) in node._resources.filter(r => !isExerciseResource(r))"
                         :key="resource.id"
                         class="branch-resource-card"
                         @click="previewNodeResource(resource)"
@@ -319,7 +319,7 @@
 
                 <template v-else-if="nodeResources.length > 0 || nodeQuizData">
                   <div
-                    v-for="resource in nodeResources"
+                    v-for="resource in nodeResources.filter(r => !isExerciseResource(r))"
                     :key="resource.id"
                     class="resource-item"
                   >
@@ -449,6 +449,12 @@
               :slides="previewResource.slides"
               :title="previewResource.title"
             />
+            <div v-else-if="isHtmlResource(previewResource) && previewResource.previewUrl" class="resource-html-placeholder">
+              <MonitorPlay :size="32" />
+              <strong>{{ previewResource.title }}</strong>
+              <span>动态课件 — 点击下方按钮在新窗口播放</span>
+              <a :href="resolveApiUrl(previewResource.previewUrl)" target="_blank" rel="noopener noreferrer" class="html-open-btn">打开课件</a>
+            </div>
             <div v-else-if="isAudioResource(previewResource)" class="resource-audio-player">
               <Volume2 :size="32" />
               <strong>{{ previewResource.title }}</strong>
@@ -478,7 +484,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2, MonitorPlay } from 'lucide-vue-next'
 import {
   getCurrentLearningPath, generateLearningPath,
@@ -493,6 +499,7 @@ import { getExplicitResourceCoverUrl, getResourceCoverUrl } from '../utils/resou
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 const route = useRoute()
+const router = useRouter()
 
 const savePathToCache = state => {
   try { localStorage.setItem(PATH_CACHE_KEY, JSON.stringify(state)) } catch { /* ignore */ }
@@ -1257,6 +1264,8 @@ const isAudioResource = r => String(r?.type || r?.fileType || '').toLowerCase().
 
 const isHtmlResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('html')
 
+const isExerciseResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('exercise')
+
 const canPreviewResource = resource => {
   return Boolean(resource?.previewUrl || resource?.content || resource?.id || resource?.downloadUrl)
 }
@@ -1499,7 +1508,7 @@ const normalizeNodeResources = (resources, node = null) =>
     const resourceId = r.id || r.resource_id || r.resourceId || r.file_id || r.fileId || ''
     const usage = getResourceUsageById(resourceId)
     const fallbackType = node?.resourceTypes?.[i] || node?.resourceTypes?.[0] || 'document'
-    const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || usage?.type || fallbackType
+    const fileType = r.resource_type || r.resourceType || r.file_type || r.fileType || r.type || usage?.type || fallbackType
     const title = r.title || r.topic || r.filename || r.file_name || r.name || usage?.title || node?.title || `学习资料 ${i + 1}`
     const readStatus = r.read_status || r.readStatus || {}
     const isRead = Boolean(r.is_read ?? r.isRead ?? readStatus.is_read ?? readStatus.isRead ?? usage?.isRead ?? false)
@@ -1524,8 +1533,9 @@ const normalizeNodeResources = (resources, node = null) =>
       typeLabel: fileTypeLabel(fileType),
       content: r.content || r.preview || r.text || '',
       slides: Array.isArray(r.slides) ? r.slides : [],
-      previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || ''),
+      previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || r.file_url || r.fileUrl || r.url || ''),
       downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || usage?.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+      presentationId: r.presentation_id || r.presentationId || '',
       isRead,
       readAt: r.read_at || r.readAt || readStatus.read_at || readStatus.readAt || usage?.lastViewedAt || '',
       durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0,
@@ -1817,7 +1827,11 @@ const ensureNodeResources = async (node, target = 'all') => {
           resource_id: data.resource_id,
           resource_type: data.resource_type,
           title: data.title,
-          download_url: data.download_url
+          download_url: data.download_url,
+          file_url: data.file_url,
+          url: data.url,
+          preview_url: data.preview_url,
+          presentation_id: data.presentation_id || ''
         }], node)[0]
         if (!resource) return
         const current = node._resources || []
@@ -2179,7 +2193,8 @@ const mergePreviewResource = (resource, detail) => {
   let slides = resource.slides || []
   let narration = data.narration || resource.narration || null
 
-  // html 资源：解析 JSON 提取 slides + narration
+  // html 资源：解析 JSON 提取 slides + narration + presentation_id
+  let presentationId = resource.presentationId || ''
   if (isHtmlResource({ ...resource, type: fileType, fileType, title })) {
     try {
       const parsed = typeof content === 'string' ? JSON.parse(content) : content
@@ -2192,6 +2207,7 @@ const mergePreviewResource = (resource, detail) => {
         }))
       }
       if (parsed.narration) narration = parsed.narration
+      if (parsed.presentation_id) presentationId = String(parsed.presentation_id)
     } catch { /* keep raw content */ }
   } else if (!slides.length) {
     slides = isPptResource({ ...resource, type: fileType, fileType, title, filename: data.filename || data.file_name || resource.filename || title })
@@ -2211,8 +2227,9 @@ const mergePreviewResource = (resource, detail) => {
     content,
     slides,
     narration,
-    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.url || resource.previewUrl || ''),
+    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.file_url || data.fileUrl || data.url || resource.previewUrl || ''),
     downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+    presentationId: presentationId || resource.presentationId || '',
     isRead: Boolean(data.is_read ?? data.isRead ?? readStatus.is_read ?? readStatus.isRead ?? resource.isRead ?? false),
     readAt: data.read_at || data.readAt || readStatus.read_at || readStatus.readAt || resource.readAt || '',
     durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0
@@ -2243,6 +2260,19 @@ const updateResourceInNodes = resource => {
 }
 
 const previewNodeResource = async resource => {
+  // HTML 动态课件 → 跳转 PresentationPlayerView（与 chat 课件技术栈一致）
+  if (isHtmlResource(resource) && resource.previewUrl) {
+    router.push({
+      name: 'presentationPlayer',
+      query: {
+        url: resource.previewUrl,
+        title: resource.title,
+        id: resource.presentationId || '',
+      }
+    })
+    return
+  }
+
   previewResource.value = resource
   previewLoading.value = false
   previewOpenedAt.value = Date.now()
@@ -3443,6 +3473,35 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   object-fit: contain;
   border-radius: 18px;
+}
+
+.resource-html-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: #5f8fc3;
+  text-align: center;
+}
+
+.resource-html-placeholder strong {
+  color: #163f8f;
+  font-size: 18px;
+}
+
+.html-open-btn {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 8px;
+  background: #163f8f;
+  color: #fff;
+  font: inherit;
+  font-weight: 900;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 .resource-audio-player {

@@ -419,7 +419,7 @@ class ExamService:
             "question_id": question_id,
             "is_correct": is_correct,
             "score": question_score,           # 百分制得分
-            "weight": w,                        # 题目权重
+            "weight": _weight(question.difficulty, question.question_type),
             "correct_answer": correct_answer if not is_correct else None,
             "analysis": question.analysis if not is_correct else None,
             "session_id": sid,
