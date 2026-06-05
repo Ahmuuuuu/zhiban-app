@@ -13,12 +13,14 @@ class AnnotationService:
         await init_db()
         annotation = await ResourceAnnotation.create(
             user_id=user_id,
-            resource_id=data["resource_id"],
+            source_type=data["source_type"],
+            source_id=data["source_id"],
             selected_text=data["selected_text"],
             note_text=data["note_text"],
             position=data.get("position"),
         )
-        logger.info("笔记已创建 id=%s user_id=%s resource_id=%s", annotation.id, user_id, data["resource_id"])
+        logger.info("笔记已创建 id=%s user_id=%s source_type=%s source_id=%s",
+                     annotation.id, user_id, data["source_type"], data["source_id"])
         return _annotation_to_dict(annotation)
 
     @staticmethod
@@ -42,21 +44,21 @@ class AnnotationService:
         return True
 
     @staticmethod
-    async def list_by_resource(resource_id: int, user_id: int) -> list[dict]:
+    async def list_by_resource(source_type: str, source_id: int, user_id: int) -> list[dict]:
         await init_db()
         annotations = await ResourceAnnotation.filter(
-            resource_id=resource_id, user_id=user_id
+            source_type=source_type, source_id=source_id, user_id=user_id,
         ).order_by("created_at").all()
         return [_annotation_to_dict(a) for a in annotations]
 
     @staticmethod
-    async def collect_notes_for_quiz(user_id: int, resource_ids: list[int]) -> str:
-        """收集指定资源上的用户笔记，格式化为 prompt 文本。无笔记时返回空字符串。"""
-        if not resource_ids:
+    async def collect_notes_for_quiz(user_id: int, generated_resource_ids: list[int]) -> str:
+        """收集 GeneratedResource 上的用户笔记，格式化为 prompt 文本。无笔记时返回空字符串。"""
+        if not generated_resource_ids:
             return ""
         await init_db()
         annotations = await ResourceAnnotation.filter(
-            user_id=user_id, resource_id__in=resource_ids
+            user_id=user_id, source_type="generated", source_id__in=generated_resource_ids,
         ).order_by("created_at").all()
         if not annotations:
             return ""
@@ -78,7 +80,8 @@ class AnnotationService:
 def _annotation_to_dict(a: ResourceAnnotation) -> dict:
     return {
         "id": a.id,
-        "resource_id": a.resource_id,
+        "source_type": a.source_type,
+        "source_id": a.source_id,
         "selected_text": a.selected_text,
         "note_text": a.note_text,
         "position": a.position,

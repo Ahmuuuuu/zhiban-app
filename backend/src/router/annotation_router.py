@@ -1,6 +1,6 @@
 """笔记路由"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.src.schemas.annotation import CreateAnnotationRequest, UpdateAnnotationRequest
 from backend.src.service.annotation_service import AnnotationService
@@ -9,12 +9,13 @@ from backend.src.utils.jwt import get_user_id_from_token
 router = APIRouter(prefix="/annotation", tags=["笔记"])
 
 
-@router.get("/resource/{resource_id}")
+@router.get("")
 async def list_annotations(
-    resource_id: int,
+    source_type: str = Query(description="资源来源: generated/knowledge"),
+    source_id: int = Query(description="来源记录的主键ID"),
     user_id: int = Depends(get_user_id_from_token),
 ):
-    result = await AnnotationService.list_by_resource(resource_id, user_id)
+    result = await AnnotationService.list_by_resource(source_type, source_id, user_id)
     return {"code": 200, "msg": "success", "data": result}
 
 
