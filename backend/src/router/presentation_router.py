@@ -112,12 +112,7 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
 
             while True:
                 try:
-                    msg = await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(None, lambda: q.pop(0) if q else None),
-                        timeout=30,
-                    )
-                    if msg is None:
-                        continue
+                    msg = await asyncio.wait_for(q.get(), timeout=30)
                     yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
                     if msg.get("status") in ("ready", "failed"):
                         return

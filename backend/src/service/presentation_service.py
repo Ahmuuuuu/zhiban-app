@@ -1,5 +1,6 @@
 """学习课件 HTML 生成服务 — 先出骨架，后台补音频"""
 
+import asyncio
 import json
 import logging
 import re
@@ -387,16 +388,16 @@ def _trim_content_depth(content: str, depth: str, is_ppt: bool = False) -> str:
                 kept_lines.append(line)
         trimmed.append("\n".join(kept_lines))
     return sep.join(trimmed)
-_sse_queues: dict[int, list] = {}
+_sse_queues: dict[int, list[asyncio.Queue]] = {}
 
 
-def _subscribe_sse(presentation_id: int):
-    q = []
+def _subscribe_sse(presentation_id: int) -> asyncio.Queue:
+    q = asyncio.Queue()
     _sse_queues.setdefault(presentation_id, []).append(q)
     return q
 
 
-def _unsubscribe_sse(presentation_id: int, q: list):
+def _unsubscribe_sse(presentation_id: int, q: asyncio.Queue):
     queues = _sse_queues.get(presentation_id, [])
     if q in queues:
         queues.remove(q)
@@ -406,7 +407,7 @@ def _unsubscribe_sse(presentation_id: int, q: list):
 
 async def _notify_sse(presentation_id: int, data: dict):
     for q in _sse_queues.get(presentation_id, []):
-        q.append(data)
+        q.put_nowait(data)
 
 
 # ═══════════════════════════════════════════════
