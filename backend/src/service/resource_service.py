@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 
 from tortoise.expressions import F
@@ -171,7 +172,9 @@ async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str
 
 
 async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False, user_notes: str = "") -> dict:
+    t0 = time.perf_counter()
     await init_db()
+    t_init = time.perf_counter()
 
     # 没传 topic 但有 chat_group_id → 从聊天记录自动提取
     if not topic and chat_group_id > 0:
@@ -191,6 +194,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
     user, learning_guidance, kb_result, skills = await asyncio.gather(
         user_task, guidance_task, kb_task, skills_task, return_exceptions=True
     )
+    t_gather = time.perf_counter()
 
     if isinstance(learning_guidance, Exception):
         logger.exception("学习指导生成失败 user_id=%s", user_id)
@@ -212,6 +216,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
             except Exception:
                 radar_data = None
             portrait_context = "\n".join(format_portrait(picture, show_missing=False, radar_data=radar_data))
+    t_portrait = time.perf_counter()
 
     kb_context = "暂无相关知识库资料"
     if kb_result and not isinstance(kb_result, Exception) and "暂无" not in str(kb_result):
@@ -221,6 +226,12 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
     for s in skills:
         if s.resource_type in resource_types and s.system_prompt:
             custom_prompts[s.resource_type] = s.system_prompt
+
+    t_total = time.perf_counter() - t0
+    logger.info(
+        "_make_state 耗时 total=%.2fs init_db=%.2fs gather=%.2fs portrait=%.2fs topic=%s types=%s",
+        t_total, t_init - t0, t_gather - t_init, t_portrait - t_gather, topic, resource_types,
+    )
 
     return {
         "user_id": str(user_id),
