@@ -14,29 +14,29 @@ system: |
   话题：{topic}
 
   输出格式（严格 JSON）：
-  {{
+  {
     "questions": [
-      {{
+      {
         "id": "focus",
         "question": "你想重点讲哪几个方向？",
         "multi": true,
         "options": [
-          {{"label": "方向A - 具体描述", "value": "focus_a"}},
-          {{"label": "方向B - 具体描述", "value": "focus_b"}}
+          {"label": "方向A - 具体描述", "value": "focus_a"},
+          {"label": "方向B - 具体描述", "value": "focus_b"}
         ]
-      }},
-      {{
+      },
+      {
         "id": "depth",
         "question": "需要多深的内容？",
         "multi": false,
         "options": [
-          {{"label": "5分钟概览，了解核心概念", "value": "overview"}},
-          {{"label": "标准讲解，理解原理和应用", "value": "standard"}},
-          {{"label": "逐页详解，包含推导和案例", "value": "deep"}}
+          {"label": "5分钟概览，了解核心概念", "value": "overview"},
+          {"label": "标准讲解，理解原理和应用", "value": "standard"},
+          {"label": "逐页详解，包含推导和案例", "value": "deep"}
         ]
-      }}
+      }
     ]
-  }}
+  }
 
   注意：
   - focus 题的选项务必与话题紧密相关，每个选项附简短描述（如"监督学习 — 线性回归、决策树等经典算法"）

@@ -1,5 +1,12 @@
 import logging
+import sys
 import traceback
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    stream=sys.stdout,
+)
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
