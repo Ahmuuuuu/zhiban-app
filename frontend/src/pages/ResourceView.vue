@@ -201,6 +201,7 @@
                 v-if="selectedResource.slides?.length"
                 v-model:slides="selectedResource.slides"
                 :title="selectedResource.title"
+                :editable="true"
                 :annotatable="true"
                 :annotations="selectedResource.annotations || []"
                 @create-note="createAnnotation(selectedResource, $event)"
@@ -502,9 +503,11 @@ const closeResourcePreview = () => {
 
 const fileTitleWithoutExtension = filename => String(filename || '生成资源').replace(/\.[^.\\/]+$/, '')
 
-const getAnnotationResourceId = resource => {
+const getAnnotationTarget = resource => {
   const id = resource?.sourceId || resource?.resourceId || resource?.resource_id || resource?.id || resource?.doc_id || ''
-  return String(id || '').replace(/^(generated|image)-/, '')
+  const sourceId = String(id || '').replace(/^(generated|image)-/, '')
+  const sourceType = resource?.source === 'generated' ? 'generated' : 'knowledge'
+  return { sourceType, sourceId }
 }
 
 const normalizeAnnotations = result => {
@@ -535,14 +538,14 @@ const patchSelectedResource = patch => {
 }
 
 const loadAnnotationsForResource = async resource => {
-  const resourceId = getAnnotationResourceId(resource)
-  if (!resourceId) {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId) {
     patchSelectedResource({ annotations: [] })
     return
   }
 
   try {
-    const result = await getResourceAnnotations(resourceId)
+    const result = await getResourceAnnotations(target.sourceId, target.sourceType)
     patchSelectedResource({ annotations: normalizeAnnotations(result) })
   } catch (error) {
     console.warn('加载资源笔记失败：', error)
@@ -551,11 +554,15 @@ const loadAnnotationsForResource = async resource => {
 }
 
 const createAnnotation = async (resource, payload) => {
-  const resourceId = getAnnotationResourceId(resource)
-  if (!resourceId) return
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId) return
 
   try {
-    await createResourceAnnotation(resourceId, payload)
+    await createResourceAnnotation(target.sourceId, {
+      ...payload,
+      source_type: target.sourceType,
+      source_id: target.sourceId
+    })
     await loadAnnotationsForResource(resource)
   } catch (error) {
     console.error('保存笔记失败：', error)
@@ -564,11 +571,11 @@ const createAnnotation = async (resource, payload) => {
 }
 
 const updateAnnotation = async (resource, annotationId, payload) => {
-  const resourceId = getAnnotationResourceId(resource)
-  if (!resourceId || !annotationId) return
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || !annotationId) return
 
   try {
-    await updateResourceAnnotation(resourceId, annotationId, payload)
+    await updateResourceAnnotation(target.sourceId, annotationId, payload)
     await loadAnnotationsForResource(resource)
   } catch (error) {
     console.error('更新笔记失败：', error)
@@ -577,11 +584,11 @@ const updateAnnotation = async (resource, annotationId, payload) => {
 }
 
 const deleteAnnotation = async (resource, annotationId) => {
-  const resourceId = getAnnotationResourceId(resource)
-  if (!resourceId || !annotationId) return
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || !annotationId) return
 
   try {
-    await deleteResourceAnnotation(resourceId, annotationId)
+    await deleteResourceAnnotation(target.sourceId, annotationId)
     await loadAnnotationsForResource(resource)
   } catch (error) {
     console.error('删除笔记失败：', error)

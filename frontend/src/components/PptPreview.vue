@@ -7,10 +7,19 @@
       </div>
 
       <div class="ppt-toolbar__actions">
-        <button class="edit-toggle" type="button" @click="editing = !editing">
+        <button
+          v-if="annotatable"
+          class="highlight-toggle"
+          type="button"
+          :class="{ active: annotationMode }"
+          @click="annotationMode = !annotationMode"
+        >
+          &#x8367;&#x5149;&#x7B14;
+        </button>
+        <button v-if="editable" class="edit-toggle" type="button" @click="editing = !editing">
           {{ editing ? '&#x5B8C;&#x6210;&#x7F16;&#x8F91;' : '&#x7F16;&#x8F91;&#x5185;&#x5BB9;' }}
         </button>
-        <button class="export-btn" type="button" :disabled="exporting" @click="emitExport">
+        <button v-if="editable" class="export-btn" type="button" :disabled="exporting" @click="emitExport">
           {{ exporting ? '&#x5BFC;&#x51FA;&#x4E2D;...' : '&#x5BFC;&#x51FA; PPTX' }}
         </button>
       </div>
@@ -86,7 +95,7 @@
     >
       <strong>{{ annotationEditor.mode === 'edit' ? '&#x7F16;&#x8F91;&#x7B14;&#x8BB0;' : '&#x6DFB;&#x52A0;&#x7B14;&#x8BB0;' }}</strong>
       <p>{{ annotationEditor.selectedText }}</p>
-      <textarea v-model.trim="annotationEditor.note" rows="3" placeholder="写下注释"></textarea>
+      <textarea v-model.trim="annotationEditor.note" rows="3" placeholder="&#x5199;&#x4E0B;&#x6CE8;&#x91CA;"></textarea>
       <div class="ppt-annotation-popover__actions">
         <button type="button" @click="closeAnnotationEditor">&#x53D6;&#x6D88;</button>
         <button
@@ -126,6 +135,10 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  editable: {
+    type: Boolean,
+    default: true
+  },
   exporting: {
     type: Boolean,
     default: false
@@ -144,6 +157,7 @@ const emit = defineEmits(['update:slides', 'change', 'export-pptx', 'create-note
 
 const activeIndex = ref(0)
 const editing = ref(false)
+const annotationMode = ref(false)
 const localSlides = ref([])
 const slideContentRef = ref(null)
 const annotationEditor = reactive({
@@ -276,7 +290,7 @@ const closeAnnotationEditor = () => {
 }
 
 const handleTextSelection = () => {
-  if (!props.annotatable || editing.value || !slideContentRef.value) return
+  if (!props.annotatable || !annotationMode.value || editing.value || !slideContentRef.value) return
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
 
@@ -350,6 +364,22 @@ watch(
   },
   { immediate: true, deep: true }
 )
+
+watch(
+  () => props.annotatable,
+  value => {
+    annotationMode.value = Boolean(value)
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.editable,
+  value => {
+    if (!value) editing.value = false
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
@@ -392,6 +422,7 @@ watch(
 }
 
 .edit-toggle,
+.highlight-toggle,
 .export-btn,
 .ppt-controls > button {
   min-height: 36px;
@@ -407,6 +438,18 @@ watch(
 
 .edit-toggle {
   border-color: rgba(22, 63, 143, 0.9);
+}
+
+.highlight-toggle {
+  border-color: rgba(214, 176, 38, 0.62);
+  background: rgba(255, 225, 89, 0.22);
+  color: #8a6a00;
+}
+
+.highlight-toggle.active {
+  border-color: rgba(214, 176, 38, 0.86);
+  background: #ffe159;
+  color: #4f3b00;
 }
 
 .export-btn {

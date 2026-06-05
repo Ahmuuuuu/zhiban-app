@@ -434,13 +434,19 @@ export function getGeneratedResource(resourceId) {
   return request.get(`/resource/${resourceId}`)
 }
 
-export function getResourceAnnotations(resourceId) {
-  return request.get(`/annotation/resource/${resourceId}`)
+export function getResourceAnnotations(sourceId, sourceType = 'generated') {
+  return request.get('/annotation', {
+    params: {
+      source_type: sourceType,
+      source_id: sourceId
+    }
+  })
 }
 
 export function createResourceAnnotation(resourceId, data) {
   return request.post('/annotation', {
-    resource_id: Number(resourceId),
+    source_type: data.source_type || data.sourceType || 'generated',
+    source_id: data.source_id || data.sourceId || resourceId,
     selected_text: data.selected_text || data.selectedText || '',
     note_text: data.note_text || data.note || '',
     position: data.position || null

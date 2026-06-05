@@ -448,12 +448,12 @@
               v-else-if="(isPptResource(previewResource) || isHtmlResource(previewResource)) && previewResource.slides?.length"
               v-model:slides="previewResource.slides"
               :title="previewResource.title"
+              :editable="false"
               :annotatable="true"
               :annotations="previewResource.annotations || []"
               @create-note="createAnnotation(previewResource, $event)"
               @update-note="(id, payload) => updateAnnotation(previewResource, id, payload)"
               @delete-note="deleteAnnotation(previewResource, $event)"
-              @export-pptx="exportPreviewPptx(previewResource, $event)"
             />
             <div v-else-if="isHtmlResource(previewResource) && previewResource.previewUrl" class="resource-html-placeholder">
               <MonitorPlay :size="32" />
@@ -2107,6 +2107,11 @@ const exportPreviewPptx = async (resource, slides) => {
 
 const getResourceIdentity = resource => String(resource?.resourceId || resource?.resource_id || resource?.id || getResourceIdFromUrl(resource?.downloadUrl) || '')
 
+const getAnnotationTarget = resource => ({
+  sourceType: resource?.sourceType || resource?.source_type || 'generated',
+  sourceId: getResourceIdentity(resource)
+})
+
 const normalizeAnnotations = result => {
   const data = result?.data?.data || result?.data || result || []
   const list = Array.isArray(data) ? data : data.records || data.list || data.annotations || []
@@ -2135,14 +2140,14 @@ const patchPreviewResource = patch => {
 }
 
 const loadAnnotationsForResource = async resource => {
-  const resourceId = getResourceIdentity(resource)
-  if (!resourceId || String(resourceId).startsWith('res-')) {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || String(target.sourceId).startsWith('res-')) {
     patchPreviewResource({ annotations: [] })
     return
   }
 
   try {
-    const result = await getResourceAnnotations(resourceId)
+    const result = await getResourceAnnotations(target.sourceId, target.sourceType)
     patchPreviewResource({ annotations: normalizeAnnotations(result) })
   } catch (error) {
     console.warn('[StudyPath] load annotations failed:', error)
@@ -2151,11 +2156,15 @@ const loadAnnotationsForResource = async resource => {
 }
 
 const createAnnotation = async (resource, payload) => {
-  const resourceId = getResourceIdentity(resource)
-  if (!resourceId || String(resourceId).startsWith('res-')) return
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || String(target.sourceId).startsWith('res-')) return
 
   try {
-    await createResourceAnnotation(resourceId, payload)
+    await createResourceAnnotation(target.sourceId, {
+      ...payload,
+      source_type: target.sourceType,
+      source_id: target.sourceId
+    })
     await loadAnnotationsForResource(resource)
   } catch (error) {
     console.error('[StudyPath] save annotation failed:', error)
@@ -2164,11 +2173,11 @@ const createAnnotation = async (resource, payload) => {
 }
 
 const updateAnnotation = async (resource, annotationId, payload) => {
-  const resourceId = getResourceIdentity(resource)
-  if (!resourceId || !annotationId) return
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || !annotationId) return
 
   try {
-    await updateResourceAnnotation(resourceId, annotationId, payload)
+    await updateResourceAnnotation(target.sourceId, annotationId, payload)
     await loadAnnotationsForResource(resource)
   } catch (error) {
     console.error('[StudyPath] update annotation failed:', error)
@@ -2177,11 +2186,11 @@ const updateAnnotation = async (resource, annotationId, payload) => {
 }
 
 const deleteAnnotation = async (resource, annotationId) => {
-  const resourceId = getResourceIdentity(resource)
-  if (!resourceId || !annotationId) return
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || !annotationId) return
 
   try {
-    await deleteResourceAnnotation(resourceId, annotationId)
+    await deleteResourceAnnotation(target.sourceId, annotationId)
     await loadAnnotationsForResource(resource)
   } catch (error) {
     console.error('[StudyPath] delete annotation failed:', error)

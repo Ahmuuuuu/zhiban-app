@@ -296,6 +296,7 @@
                 v-if="selectedResource.slides?.length"
                 v-model:slides="selectedResource.slides"
                 :title="selectedResource.title"
+                :editable="canEditResource(selectedResource)"
                 @export-pptx="exportResourcePptx(selectedResource, $event)"
               />
               <div v-else-if="selectedResource.previewUrl" class="file-preview-wrap">
@@ -827,6 +828,12 @@ const getReactionId = resource => {
 }
 
 const canReactResource = resource => Boolean(getReactionId(resource))
+
+const canEditResource = resource => {
+  if (!resource) return false
+  if (resource.source === 'generated' || resource.source === 'presentation') return true
+  return resource.visibility !== 'public'
+}
 
 const reactionKey = (resource, type) => `${type}-${getReactionId(resource) || resource?.doc_id || ''}`
 
