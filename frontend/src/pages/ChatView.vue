@@ -314,8 +314,9 @@
             <div v-if="pptPreview.loading" class="ppt-dialog__loading">正在加载 PPT 预览...</div>
             <PptPreview
               v-else-if="pptPreview.slides.length"
-              :slides="pptPreview.slides"
+              v-model:slides="pptPreview.slides"
               :title="pptPreview.title"
+              @export-pptx="exportChatPptx"
             />
             <div v-else class="ppt-dialog__loading">暂无可预览的幻灯片内容。</div>
           </div>
@@ -355,6 +356,7 @@ import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   downloadWithToken,
+  exportEditedPptx,
   streamChatMessage,
   getConversationList,
   getConversationMessages,
@@ -880,6 +882,7 @@ const pptPreview = ref({
   visible: false,
   loading: false,
   messageId: '',
+  resourceId: '',
   title: '',
   slides: []
 })
@@ -1166,6 +1169,7 @@ const openPptPreview = async message => {
     visible: true,
     loading: true,
     messageId: message.id,
+    resourceId: getFileResourceId(message) || '',
     title: message.filename || 'PPT 预览',
     slides: message.slides || []
   }
@@ -1192,6 +1196,7 @@ const closePptPreview = () => {
     visible: false,
     loading: false,
     messageId: '',
+    resourceId: '',
     title: '',
     slides: []
   }
@@ -1421,6 +1426,32 @@ const normalizeFileName = (filename, type) => {
 
 const getDownloadName = message => {
   return normalizeFileName(message.filename, message.fileType)
+}
+
+const getPptxExportName = title => {
+  return normalizeFileName(fileTitleWithoutExtension(title || 'edited-presentation'), 'ppt')
+}
+
+const exportChatPptx = async slides => {
+  const resourceId = pptPreview.value.resourceId
+  if (!resourceId) {
+    window.alert('当前 PPT 没有资源 ID，暂时无法导出 PPTX。')
+    return
+  }
+
+  try {
+    const target = messages.value.find(item => item.id === pptPreview.value.messageId)
+    if (target) target.slides = slides
+
+    await exportEditedPptx(resourceId, {
+      title: pptPreview.value.title || '',
+      filename: getPptxExportName(pptPreview.value.title),
+      slides
+    })
+  } catch (error) {
+    console.error('[ChatView] export pptx failed:', error)
+    window.alert('导出 PPTX 失败，请确认后端已接入 /resource/{id}/export-pptx 接口。')
+  }
 }
 
 const downloadGeneratedFile = async message => {
@@ -3088,15 +3119,16 @@ textarea::placeholder {
   z-index: 4300;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: clamp(12px, 2vw, 24px);
   background: rgba(12, 28, 58, 0.34);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
 
 .ppt-dialog__panel {
-  width: min(1120px, 96vw);
-  max-height: 92vh;
+  width: min(1380px, 98vw);
+  height: min(940px, 96vh);
+  max-height: 96vh;
   border: 1px solid rgba(201, 220, 233, 0.85);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.98);
@@ -3144,7 +3176,8 @@ textarea::placeholder {
 
 .ppt-dialog__body {
   min-height: 0;
-  padding: 18px;
+  flex: 1;
+  padding: clamp(14px, 1.8vw, 24px);
   overflow: auto;
 }
 

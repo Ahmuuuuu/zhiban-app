@@ -6,12 +6,24 @@
         <strong>{{ title || 'PPT Preview' }}</strong>
       </div>
 
-      <button class="edit-toggle" type="button" @click="editing = !editing">
-        {{ editing ? '&#x5B8C;&#x6210;&#x7F16;&#x8F91;' : '&#x7F16;&#x8F91;&#x5185;&#x5BB9;' }}
-      </button>
+      <div class="ppt-toolbar__actions">
+        <button class="edit-toggle" type="button" @click="editing = !editing">
+          {{ editing ? '&#x5B8C;&#x6210;&#x7F16;&#x8F91;' : '&#x7F16;&#x8F91;&#x5185;&#x5BB9;' }}
+        </button>
+        <button class="export-btn" type="button" :disabled="exporting" @click="emitExport">
+          {{ exporting ? '&#x5BFC;&#x51FA;&#x4E2D;...' : '&#x5BFC;&#x51FA; PPTX' }}
+        </button>
+      </div>
     </div>
 
-    <article class="ppt-slide" :class="{ editing }">
+    <article
+      class="ppt-slide"
+      :class="{
+        editing,
+        'is-dense': currentSlideTextLength > 420,
+        'is-very-dense': currentSlideTextLength > 800
+      }"
+    >
       <div class="ppt-slide__stage">
         <input
           v-if="editing"
@@ -28,8 +40,16 @@
           @input="updateSlideField('text', $event.target.value)"
         ></textarea>
 
-        <div v-else class="ppt-slide__content">
-          <p v-for="(line, index) in slideLines" :key="index">{{ line }}</p>
+        <div v-else ref="slideContentRef" class="ppt-slide__content" @mouseup="handleTextSelection">
+          <template v-for="(segment, index) in slideSegments" :key="index">
+            <mark
+              v-if="segment.annotation"
+              class="ppt-annotation-mark"
+              :data-annotation-id="segment.annotation.id"
+              @click.stop="openAnnotation(segment.annotation)"
+            >{{ segment.text }}</mark>
+            <span v-else>{{ segment.text }}</span>
+          </template>
         </div>
       </div>
 
@@ -58,11 +78,44 @@
       </div>
       <button type="button" :disabled="activeIndex >= localSlides.length - 1" @click="activeIndex += 1">&#x4E0B;&#x4E00;&#x9875;</button>
     </div>
+
+    <div
+      v-if="annotationEditor.visible"
+      class="ppt-annotation-popover"
+      :style="{ left: `${annotationEditor.x}px`, top: `${annotationEditor.y}px` }"
+    >
+      <strong>{{ annotationEditor.mode === 'edit' ? '&#x7F16;&#x8F91;&#x7B14;&#x8BB0;' : '&#x6DFB;&#x52A0;&#x7B14;&#x8BB0;' }}</strong>
+      <p>{{ annotationEditor.selectedText }}</p>
+      <textarea v-model.trim="annotationEditor.note" rows="3" placeholder="写下注释"></textarea>
+      <div class="ppt-annotation-popover__actions">
+        <button type="button" @click="closeAnnotationEditor">&#x53D6;&#x6D88;</button>
+        <button
+          v-if="annotationEditor.mode === 'edit'"
+          type="button"
+          class="danger"
+          @click="removeAnnotation"
+        >&#x5220;&#x9664;</button>
+        <button type="button" class="primary" @click="saveAnnotation">&#x4FDD;&#x5B58;</button>
+      </div>
+    </div>
+
+    <aside v-if="currentSlideAnnotations.length" class="ppt-annotation-panel">
+      <h4>&#x672C;&#x9875;&#x7B14;&#x8BB0;</h4>
+      <button
+        v-for="annotation in currentSlideAnnotations"
+        :key="annotation.id"
+        type="button"
+        @click="openAnnotation(annotation)"
+      >
+        <mark>{{ annotation.selected_text || annotation.selectedText }}</mark>
+        <span>{{ annotation.note || '&#x6682;&#x65E0;&#x6CE8;&#x91CA;' }}</span>
+      </button>
+    </aside>
   </section>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 const props = defineProps({
   slides: {
@@ -72,14 +125,37 @@ const props = defineProps({
   title: {
     type: String,
     default: ''
+  },
+  exporting: {
+    type: Boolean,
+    default: false
+  },
+  annotatable: {
+    type: Boolean,
+    default: false
+  },
+  annotations: {
+    type: Array,
+    default: () => []
   }
 })
 
-const emit = defineEmits(['update:slides', 'change'])
+const emit = defineEmits(['update:slides', 'change', 'export-pptx', 'create-note', 'update-note', 'delete-note'])
 
 const activeIndex = ref(0)
 const editing = ref(false)
 const localSlides = ref([])
+const slideContentRef = ref(null)
+const annotationEditor = reactive({
+  visible: false,
+  mode: 'create',
+  id: '',
+  x: 0,
+  y: 0,
+  selectedText: '',
+  note: '',
+  position: null
+})
 
 const normalizeSlide = (slide, index) => ({
   ...slide,
@@ -100,11 +176,52 @@ const syncLocalSlides = slides => {
 
 const currentSlide = computed(() => localSlides.value[activeIndex.value] || localSlides.value[0] || {})
 
-const slideLines = computed(() => {
-  return String(currentSlide.value.text || '')
-    .split(/\r?\n|[;；]/)
-    .map(line => line.replace(/^[-*•\s]+/, '').trim())
-    .filter(Boolean)
+const currentSlideTextLength = computed(() => {
+  const slide = currentSlide.value || {}
+  return String(`${slide.title || ''}\n${slide.text || ''}\n${slide.notes || ''}`).length
+})
+
+const normalizePosition = annotation => {
+  const raw = annotation?.position
+  if (raw && typeof raw === 'object') return raw
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return {}
+    }
+  }
+  return {}
+}
+
+const normalizedAnnotations = computed(() => props.annotations.map(annotation => ({
+  ...annotation,
+  id: annotation.id || annotation.annotation_id || annotation.annotationId || `${annotation.selected_text || annotation.selectedText}-${annotation.note}`,
+  position: normalizePosition(annotation)
+})))
+
+const currentSlideAnnotations = computed(() => normalizedAnnotations.value
+  .filter(annotation => annotation.position?.kind === 'ppt')
+  .filter(annotation => Number(annotation.position.slideIndex) === activeIndex.value)
+  .filter(annotation => Number.isFinite(Number(annotation.position.start)) && Number.isFinite(Number(annotation.position.end)))
+  .sort((a, b) => Number(a.position.start) - Number(b.position.start)))
+
+const slideSegments = computed(() => {
+  const text = String(currentSlide.value.text || '')
+  const result = []
+  let cursor = 0
+
+  for (const annotation of currentSlideAnnotations.value) {
+    const start = Math.max(0, Math.min(text.length, Number(annotation.position.start)))
+    const end = Math.max(start, Math.min(text.length, Number(annotation.position.end)))
+    if (start < cursor || end <= start) continue
+    if (start > cursor) result.push({ text: text.slice(cursor, start) })
+    result.push({ text: text.slice(start, end), annotation })
+    cursor = end
+  }
+
+  if (cursor < text.length) result.push({ text: text.slice(cursor) })
+  return result.length ? result : [{ text }]
 })
 
 const publishSlides = () => {
@@ -115,6 +232,18 @@ const publishSlides = () => {
   }))
   emit('update:slides', slides)
   emit('change', slides)
+}
+
+const currentExportSlides = () => localSlides.value.map(slide => ({
+  ...slide,
+  content: slide.text,
+  speaker_notes: slide.notes
+}))
+
+const emitExport = () => {
+  const slides = currentExportSlides()
+  emit('update:slides', slides)
+  emit('export-pptx', slides)
 }
 
 const updateSlideField = (field, value) => {
@@ -128,6 +257,89 @@ const updateSlideField = (field, value) => {
     ...(field === 'notes' ? { speaker_notes: value } : {})
   }
   publishSlides()
+}
+
+const getOffset = (root, targetNode, targetOffset) => {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let offset = 0
+  let node = walker.nextNode()
+  while (node) {
+    if (node === targetNode) return offset + targetOffset
+    offset += node.textContent?.length || 0
+    node = walker.nextNode()
+  }
+  return offset
+}
+
+const closeAnnotationEditor = () => {
+  annotationEditor.visible = false
+}
+
+const handleTextSelection = () => {
+  if (!props.annotatable || editing.value || !slideContentRef.value) return
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
+
+  const range = selection.getRangeAt(0)
+  if (!slideContentRef.value.contains(range.commonAncestorContainer)) return
+
+  const selectedText = selection.toString().trim()
+  if (!selectedText) return
+
+  const start = getOffset(slideContentRef.value, range.startContainer, range.startOffset)
+  const end = getOffset(slideContentRef.value, range.endContainer, range.endOffset)
+  const rect = range.getBoundingClientRect()
+
+  Object.assign(annotationEditor, {
+    visible: true,
+    mode: 'create',
+    id: '',
+    x: Math.min(rect.left + window.scrollX, window.innerWidth - 340),
+    y: rect.bottom + window.scrollY + 8,
+    selectedText,
+    note: '',
+    position: {
+      kind: 'ppt',
+      slideIndex: activeIndex.value,
+      start: Math.min(start, end),
+      end: Math.max(start, end)
+    }
+  })
+}
+
+const openAnnotation = annotation => {
+  const el = slideContentRef.value?.querySelector(`[data-annotation-id="${CSS.escape(String(annotation.id))}"]`)
+  const rect = el?.getBoundingClientRect()
+  Object.assign(annotationEditor, {
+    visible: true,
+    mode: 'edit',
+    id: annotation.id,
+    x: rect ? Math.min(rect.left + window.scrollX, window.innerWidth - 340) : window.innerWidth / 2 - 160,
+    y: rect ? rect.bottom + window.scrollY + 8 : window.scrollY + 120,
+    selectedText: annotation.selected_text || annotation.selectedText || '',
+    note: annotation.note || '',
+    position: annotation.position
+  })
+}
+
+const saveAnnotation = () => {
+  const payload = {
+    selected_text: annotationEditor.selectedText,
+    note: annotationEditor.note,
+    position: annotationEditor.position
+  }
+
+  if (annotationEditor.mode === 'edit') {
+    emit('update-note', annotationEditor.id, payload)
+  } else {
+    emit('create-note', payload)
+  }
+  closeAnnotationEditor()
+}
+
+const removeAnnotation = () => {
+  if (annotationEditor.id) emit('delete-note', annotationEditor.id)
+  closeAnnotationEditor()
 }
 
 watch(
@@ -171,7 +383,16 @@ watch(
   white-space: nowrap;
 }
 
+.ppt-toolbar__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .edit-toggle,
+.export-btn,
 .ppt-controls > button {
   min-height: 36px;
   padding: 0 14px;
@@ -188,18 +409,28 @@ watch(
   border-color: rgba(22, 63, 143, 0.9);
 }
 
+.export-btn {
+  border-color: rgba(22, 63, 143, 0.9);
+  background: #163f8f;
+  color: #ffffff;
+}
+
+.export-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .ppt-slide {
-  aspect-ratio: 16 / 9;
-  min-height: 0;
-  padding: clamp(20px, 3vw, 42px);
+  min-height: clamp(520px, 64vh, 760px);
+  padding: clamp(22px, 2.6vw, 38px);
   border: 1px solid rgba(22, 63, 143, 0.14);
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 20px 50px rgba(22, 63, 143, 0.16);
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  overflow: hidden;
+  gap: clamp(14px, 2vw, 20px);
+  overflow: visible;
 }
 
 .ppt-slide.editing {
@@ -211,41 +442,164 @@ watch(
   min-height: 0;
   flex: 1;
   display: grid;
-  align-content: center;
-  gap: clamp(18px, 3vw, 34px);
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  gap: clamp(14px, 2vw, 24px);
 }
 
 .ppt-slide h3 {
   margin: 0;
   color: #163f8f;
-  font-size: clamp(28px, 5vw, 56px);
-  line-height: 1.12;
+  font-size: clamp(26px, 3.8vw, 48px);
+  line-height: 1.16;
   text-align: center;
 }
 
 .ppt-slide__content {
-  width: min(78%, 760px);
+  width: min(88%, 940px);
+  max-height: 100%;
   margin: 0 auto;
+  padding: 2px 8px 2px 0;
+  overflow: auto;
   color: rgba(22, 63, 143, 0.82);
-  font-size: clamp(16px, 2.1vw, 25px);
-  line-height: 1.55;
+  font-size: clamp(17px, 1.65vw, 23px);
+  line-height: 1.62;
+  white-space: pre-line;
+  word-break: break-word;
 }
 
-.ppt-slide__content p {
-  position: relative;
-  margin: 0 0 12px;
-  padding-left: 1.1em;
+.ppt-slide.is-dense h3 {
+  font-size: clamp(23px, 3vw, 38px);
 }
 
-.ppt-slide__content p::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.72em;
-  width: 0.38em;
-  height: 0.38em;
-  border-radius: 50%;
-  background: #5f8fc3;
+.ppt-slide.is-dense .ppt-slide__content {
+  width: min(94%, 1040px);
+  font-size: clamp(15px, 1.35vw, 19px);
+  line-height: 1.58;
+}
+
+.ppt-slide.is-very-dense h3 {
+  font-size: clamp(20px, 2.5vw, 32px);
+}
+
+.ppt-slide.is-very-dense .ppt-slide__content {
+  width: min(96%, 1100px);
+  font-size: clamp(14px, 1.15vw, 17px);
+  line-height: 1.52;
+}
+
+.ppt-slide__content span,
+.ppt-slide__content mark {
+  display: inline;
+}
+
+.ppt-annotation-mark {
+  border-radius: 4px;
+  background: linear-gradient(transparent 38%, rgba(255, 225, 89, 0.72) 38%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.ppt-annotation-popover {
+  position: fixed;
+  z-index: 10000;
+  width: min(320px, calc(100vw - 28px));
+  padding: 14px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(22, 63, 143, 0.2);
+}
+
+.ppt-annotation-popover strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #163f8f;
+}
+
+.ppt-annotation-popover p {
+  max-height: 76px;
+  margin: 0 0 10px;
+  overflow: auto;
+  color: #5d6f86;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ppt-annotation-popover textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid rgba(22, 63, 143, 0.18);
+  border-radius: 8px;
+  padding: 10px;
+  color: #1f3356;
+  font: inherit;
+}
+
+.ppt-annotation-popover__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ppt-annotation-popover button,
+.ppt-annotation-panel button {
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #163f8f;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ppt-annotation-popover button {
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.ppt-annotation-popover .primary {
+  border-color: #163f8f;
+  background: #163f8f;
+  color: #ffffff;
+}
+
+.ppt-annotation-popover .danger {
+  color: #b64040;
+}
+
+.ppt-annotation-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(22, 63, 143, 0.12);
+  border-radius: 8px;
+  background: rgba(244, 251, 253, 0.92);
+}
+
+.ppt-annotation-panel h4 {
+  margin: 0;
+  color: #163f8f;
+  font-size: 14px;
+}
+
+.ppt-annotation-panel button {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  text-align: left;
+}
+
+.ppt-annotation-panel mark {
+  background: rgba(255, 225, 89, 0.68);
+  color: #1f3356;
+}
+
+.ppt-annotation-panel span {
+  color: #5d6f86;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .slide-title-input,
@@ -269,7 +623,7 @@ watch(
 }
 
 .slide-content-input {
-  min-height: 150px;
+  min-height: 260px;
   padding: 14px 16px;
   resize: vertical;
   font-size: 18px;
@@ -277,7 +631,8 @@ watch(
 }
 
 .ppt-slide__notes {
-  max-height: 26%;
+  flex: 0 0 auto;
+  max-height: min(150px, 24vh);
   padding: 10px 12px;
   border-radius: 8px;
   background: rgba(201, 220, 233, 0.24);
