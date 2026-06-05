@@ -11,13 +11,39 @@
           v-if="annotatable"
           class="highlight-toggle"
           type="button"
-          :class="{ active: annotationMode }"
-          @click="annotationMode = !annotationMode"
+          :class="{ active: annotationTool === 'highlight' }"
+          @click="toggleAnnotationTool('highlight')"
         >
           &#x8367;&#x5149;&#x7B14;
         </button>
+        <button
+          v-if="annotatable"
+          class="note-toggle"
+          type="button"
+          :class="{ active: annotationTool === 'note' }"
+          @click="toggleAnnotationTool('note')"
+        >
+          &#x6CE8;&#x91CA;
+        </button>
+        <div v-if="annotatable && annotationTool === 'highlight'" class="highlight-palette" aria-label="highlight colors">
+          <button
+            v-for="color in highlightColors"
+            :key="color.value"
+            type="button"
+            :class="{ active: activeHighlightColor === color.value }"
+            :title="color.label"
+            :style="{ backgroundColor: color.value }"
+            @click="activeHighlightColor = color.value"
+          ></button>
+        </div>
         <button v-if="editable" class="edit-toggle" type="button" @click="editing = !editing">
           {{ editing ? '&#x5B8C;&#x6210;&#x7F16;&#x8F91;' : '&#x7F16;&#x8F91;&#x5185;&#x5BB9;' }}
+        </button>
+        <button v-if="editable && editing" class="history-btn" type="button" :disabled="!canUndo" @click="undoEdit">
+          &#x4E0A;&#x4E00;&#x6B65;
+        </button>
+        <button v-if="editable && editing" class="history-btn" type="button" :disabled="!canRedo" @click="redoEdit">
+          &#x4E0B;&#x4E00;&#x6B65;
         </button>
         <button v-if="editable" class="export-btn" type="button" :disabled="exporting" @click="emitExport">
           {{ exporting ? '&#x5BFC;&#x51FA;&#x4E2D;...' : '&#x5BFC;&#x51FA; PPTX' }}
@@ -54,7 +80,9 @@
             <mark
               v-if="segment.annotation"
               class="ppt-annotation-mark"
+              :class="{ 'has-note': isNoteAnnotation(segment.annotation) }"
               :data-annotation-id="segment.annotation.id"
+              :style="{ background: annotationBackground(segment.annotation) }"
               @click.stop="openAnnotation(segment.annotation)"
             >{{ segment.text }}</mark>
             <span v-else>{{ segment.text }}</span>
@@ -93,7 +121,7 @@
       class="ppt-annotation-popover"
       :style="{ left: `${annotationEditor.x}px`, top: `${annotationEditor.y}px` }"
     >
-      <strong>{{ annotationEditor.mode === 'edit' ? '&#x7F16;&#x8F91;&#x7B14;&#x8BB0;' : '&#x6DFB;&#x52A0;&#x7B14;&#x8BB0;' }}</strong>
+      <strong>{{ annotationEditor.mode === 'edit' ? '&#x7F16;&#x8F91;&#x7B14;&#x8BB0;' : '&#x6DFB;&#x52A0;&#x6CE8;&#x91CA;' }}</strong>
       <p>{{ annotationEditor.selectedText }}</p>
       <textarea v-model.trim="annotationEditor.note" rows="3" placeholder="&#x5199;&#x4E0B;&#x6CE8;&#x91CA;"></textarea>
       <div class="ppt-annotation-popover__actions">
@@ -117,7 +145,7 @@
         @click="openAnnotation(annotation)"
       >
         <mark>{{ annotation.selected_text || annotation.selectedText }}</mark>
-        <span>{{ annotation.note || '&#x6682;&#x65E0;&#x6CE8;&#x91CA;' }}</span>
+        <span>{{ annotation.note || annotation.note_text || '&#x8367;&#x5149;&#x6807;&#x8BB0;' }}</span>
       </button>
     </aside>
   </section>
@@ -157,8 +185,12 @@ const emit = defineEmits(['update:slides', 'change', 'export-pptx', 'create-note
 
 const activeIndex = ref(0)
 const editing = ref(false)
-const annotationMode = ref(false)
+const annotationTool = ref('')
+const activeHighlightColor = ref('#ffe159')
 const localSlides = ref([])
+const undoStack = ref([])
+const redoStack = ref([])
+const skipNextSlideSync = ref(false)
 const slideContentRef = ref(null)
 const annotationEditor = reactive({
   visible: false,
@@ -170,6 +202,14 @@ const annotationEditor = reactive({
   note: '',
   position: null
 })
+
+const highlightColors = [
+  { value: '#ffe159', label: 'yellow' },
+  { value: '#8ee6a8', label: 'green' },
+  { value: '#86d9ff', label: 'blue' },
+  { value: '#ffb3d1', label: 'pink' },
+  { value: '#c8b6ff', label: 'purple' }
+]
 
 const normalizeSlide = (slide, index) => ({
   ...slide,
@@ -189,6 +229,8 @@ const syncLocalSlides = slides => {
 }
 
 const currentSlide = computed(() => localSlides.value[activeIndex.value] || localSlides.value[0] || {})
+const canUndo = computed(() => undoStack.value.length > 0)
+const canRedo = computed(() => redoStack.value.length > 0)
 
 const currentSlideTextLength = computed(() => {
   const slide = currentSlide.value || {}
@@ -214,6 +256,20 @@ const normalizedAnnotations = computed(() => props.annotations.map(annotation =>
   position: normalizePosition(annotation)
 })))
 
+const getAnnotationColor = annotation => annotation?.position?.color || '#ffe159'
+
+const isNoteAnnotation = annotation => annotation?.position?.tool === 'note' || Boolean(annotation?.note || annotation?.note_text)
+
+const annotationBackground = annotation => {
+  if (isNoteAnnotation(annotation)) return 'rgba(237, 249, 252, 0.66)'
+  const color = getAnnotationColor(annotation)
+  return `linear-gradient(transparent 18%, ${color} 18%, ${color} 88%, transparent 88%)`
+}
+
+const toggleAnnotationTool = tool => {
+  annotationTool.value = annotationTool.value === tool ? '' : tool
+}
+
 const currentSlideAnnotations = computed(() => normalizedAnnotations.value
   .filter(annotation => annotation.position?.kind === 'ppt')
   .filter(annotation => Number(annotation.position.slideIndex) === activeIndex.value)
@@ -238,12 +294,15 @@ const slideSegments = computed(() => {
   return result.length ? result : [{ text }]
 })
 
+const cloneSlides = slides => JSON.parse(JSON.stringify(slides || []))
+
 const publishSlides = () => {
   const slides = localSlides.value.map(slide => ({
     ...slide,
     content: slide.text,
     speaker_notes: slide.notes
   }))
+  skipNextSlideSync.value = true
   emit('update:slides', slides)
   emit('change', slides)
 }
@@ -263,6 +322,14 @@ const emitExport = () => {
 const updateSlideField = (field, value) => {
   const slide = localSlides.value[activeIndex.value]
   if (!slide) return
+  if (slide[field] === value) return
+
+  undoStack.value.push({
+    slides: cloneSlides(localSlides.value),
+    activeIndex: activeIndex.value
+  })
+  if (undoStack.value.length > 60) undoStack.value.shift()
+  redoStack.value = []
 
   localSlides.value[activeIndex.value] = {
     ...slide,
@@ -271,6 +338,31 @@ const updateSlideField = (field, value) => {
     ...(field === 'notes' ? { speaker_notes: value } : {})
   }
   publishSlides()
+}
+
+const restoreHistoryState = state => {
+  if (!state) return
+  localSlides.value = cloneSlides(state.slides).map(normalizeSlide)
+  activeIndex.value = Math.min(Math.max(Number(state.activeIndex || 0), 0), Math.max(localSlides.value.length - 1, 0))
+  publishSlides()
+}
+
+const undoEdit = () => {
+  if (!canUndo.value) return
+  redoStack.value.push({
+    slides: cloneSlides(localSlides.value),
+    activeIndex: activeIndex.value
+  })
+  restoreHistoryState(undoStack.value.pop())
+}
+
+const redoEdit = () => {
+  if (!canRedo.value) return
+  undoStack.value.push({
+    slides: cloneSlides(localSlides.value),
+    activeIndex: activeIndex.value
+  })
+  restoreHistoryState(redoStack.value.pop())
 }
 
 const getOffset = (root, targetNode, targetOffset) => {
@@ -290,7 +382,7 @@ const closeAnnotationEditor = () => {
 }
 
 const handleTextSelection = () => {
-  if (!props.annotatable || !annotationMode.value || editing.value || !slideContentRef.value) return
+  if (!props.annotatable || !annotationTool.value || editing.value || !slideContentRef.value) return
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
 
@@ -304,6 +396,26 @@ const handleTextSelection = () => {
   const end = getOffset(slideContentRef.value, range.endContainer, range.endOffset)
   const rect = range.getBoundingClientRect()
 
+  const position = {
+      kind: 'ppt',
+      slideIndex: activeIndex.value,
+      start: Math.min(start, end),
+      end: Math.max(start, end),
+      tool: annotationTool.value,
+      color: activeHighlightColor.value
+  }
+
+  if (annotationTool.value === 'highlight') {
+    emit('create-note', {
+      selected_text: selectedText,
+      note: '',
+      note_text: '',
+      position
+    })
+    selection.removeAllRanges()
+    return
+  }
+
   Object.assign(annotationEditor, {
     visible: true,
     mode: 'create',
@@ -312,12 +424,7 @@ const handleTextSelection = () => {
     y: rect.bottom + window.scrollY + 8,
     selectedText,
     note: '',
-    position: {
-      kind: 'ppt',
-      slideIndex: activeIndex.value,
-      start: Math.min(start, end),
-      end: Math.max(start, end)
-    }
+    position
   })
 }
 
@@ -331,7 +438,7 @@ const openAnnotation = annotation => {
     x: rect ? Math.min(rect.left + window.scrollX, window.innerWidth - 340) : window.innerWidth / 2 - 160,
     y: rect ? rect.bottom + window.scrollY + 8 : window.scrollY + 120,
     selectedText: annotation.selected_text || annotation.selectedText || '',
-    note: annotation.note || '',
+    note: annotation.note || annotation.note_text || '',
     position: annotation.position
   })
 }
@@ -340,7 +447,11 @@ const saveAnnotation = () => {
   const payload = {
     selected_text: annotationEditor.selectedText,
     note: annotationEditor.note,
-    position: annotationEditor.position
+    note_text: annotationEditor.note,
+    position: {
+      ...(annotationEditor.position || {}),
+      tool: 'note'
+    }
   }
 
   if (annotationEditor.mode === 'edit') {
@@ -359,8 +470,17 @@ const removeAnnotation = () => {
 watch(
   () => props.slides,
   slides => {
+    if (skipNextSlideSync.value) {
+      skipNextSlideSync.value = false
+      return
+    }
+    const previousLength = localSlides.value.length
     syncLocalSlides(slides)
-    activeIndex.value = 0
+    if (previousLength !== localSlides.value.length) {
+      activeIndex.value = Math.min(activeIndex.value, Math.max(localSlides.value.length - 1, 0))
+    }
+    undoStack.value = []
+    redoStack.value = []
   },
   { immediate: true, deep: true }
 )
@@ -368,7 +488,7 @@ watch(
 watch(
   () => props.annotatable,
   value => {
-    annotationMode.value = Boolean(value)
+    annotationTool.value = value ? 'highlight' : ''
   },
   { immediate: true }
 )
@@ -423,6 +543,8 @@ watch(
 
 .edit-toggle,
 .highlight-toggle,
+.note-toggle,
+.history-btn,
 .export-btn,
 .ppt-controls > button {
   min-height: 36px;
@@ -446,10 +568,42 @@ watch(
   color: #8a6a00;
 }
 
+.note-toggle {
+  border-color: rgba(95, 143, 195, 0.62);
+  background: rgba(237, 249, 252, 0.82);
+  color: #163f8f;
+}
+
 .highlight-toggle.active {
   border-color: rgba(214, 176, 38, 0.86);
   background: #ffe159;
   color: #4f3b00;
+}
+
+.note-toggle.active {
+  border-color: rgba(22, 63, 143, 0.9);
+  background: #163f8f;
+  color: #ffffff;
+}
+
+.highlight-palette {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.highlight-palette button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2px solid rgba(22, 63, 143, 0.12);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.highlight-palette button.active {
+  border-color: #163f8f;
+  box-shadow: 0 0 0 2px rgba(22, 63, 143, 0.12);
 }
 
 .export-btn {
@@ -460,6 +614,15 @@ watch(
 
 .export-btn:disabled {
   opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.history-btn {
+  background: rgba(237, 249, 252, 0.72);
+}
+
+.history-btn:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
@@ -537,10 +700,34 @@ watch(
 }
 
 .ppt-annotation-mark {
+  position: relative;
   border-radius: 4px;
-  background: linear-gradient(transparent 38%, rgba(255, 225, 89, 0.72) 38%);
+  padding: 0 0.05em;
   color: inherit;
   cursor: pointer;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.ppt-annotation-mark.has-note {
+  border-bottom: 2px solid rgba(22, 63, 143, 0.42);
+}
+
+.ppt-annotation-mark.has-note::after {
+  content: "✎";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05em;
+  height: 1.05em;
+  margin-left: 0.16em;
+  border-radius: 50%;
+  background: #163f8f;
+  color: #ffffff;
+  font-size: 0.62em;
+  font-weight: 900;
+  line-height: 1;
+  vertical-align: super;
 }
 
 .ppt-annotation-popover {

@@ -42,6 +42,7 @@ export const saveGeneratedResourceRef = payload => {
     coverUrl: payload.coverUrl || '',
     previewUrl: payload.previewUrl || '',
     downloadUrl: payload.downloadUrl || '',
+    annotations: Array.isArray(payload.annotations) ? payload.annotations : [],
     visibility: payload.visibility || 'private',
     createdAt: new Date().toISOString()
   }
@@ -96,6 +97,7 @@ const normalizeDetail = (detail, ref) => {
     quizId: ref.quizId || '',
     created_at: item.created_at || item.createdAt || ref.createdAt || '',
     filename: ref.filename || title,
+    annotations: Array.isArray(item.annotations) ? item.annotations : (Array.isArray(ref.annotations) ? ref.annotations : []),
     coverUrl: resolveApiUrl(item.cover_url || item.coverUrl || item.thumbnail_url || item.thumbnailUrl || ref.coverUrl || ''),
     previewUrl: resolveApiUrl(previewUrl),
     downloadUrl: resolveApiUrl(downloadUrl)

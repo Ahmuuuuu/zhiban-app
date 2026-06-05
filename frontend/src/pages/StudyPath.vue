@@ -2168,7 +2168,8 @@ const createAnnotation = async (resource, payload) => {
     await loadAnnotationsForResource(resource)
   } catch (error) {
     console.error('[StudyPath] save annotation failed:', error)
-    window.alert('保存笔记失败，请确认后端已接入资源笔记接口。')
+    const detail = error?.response?.data?.detail || error?.response?.data?.msg || error?.message || ''
+    window.alert(`保存标注失败${detail ? `：${detail}` : '，请稍后再试。'}`)
   }
 }
 

@@ -1,9 +1,11 @@
 import asyncio
 import json
+import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Depends, Body, Query, Header, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from backend.src.service.resource_service import ResourceService, _subscribe_task_sse, _unsubscribe_task_sse
 from backend.src.service.skill_service import SkillService
@@ -13,6 +15,39 @@ from backend.src.utils.jwt import get_user_id_from_token, JWT_KEY, ALGORITHM
 from jose import jwt, JWTError
 
 router = APIRouter(prefix = "/resource", tags = ["学习资源生成"])
+
+
+class ExportPptxRequest(BaseModel):
+    title: str = Field(default="")
+    slides: list[dict] = Field(default_factory=list)
+
+
+def _clean_bullet_text(value: str) -> str:
+    return re.sub(r"^[-*•\s]+", "", str(value or "").strip())
+
+
+def _slides_to_markdown(title: str, slides: list[dict]) -> str:
+    blocks: list[str] = []
+    for index, slide in enumerate(slides or []):
+        slide_title = str(slide.get("title") or title or f"第 {index + 1} 页").strip()
+        text = str(slide.get("text") or slide.get("content") or "").strip()
+        notes = str(slide.get("notes") or slide.get("speaker_notes") or "").strip()
+        lines = [f"# {slide_title}"]
+
+        for raw_line in re.split(r"\r?\n|[;；]", text):
+            line = _clean_bullet_text(raw_line)
+            if line:
+                lines.append(f"- {line}")
+
+        if notes:
+            for note_line in notes.splitlines():
+                note_line = note_line.strip()
+                if note_line:
+                    lines.append(f"> {note_line}")
+
+        blocks.append("\n".join(lines))
+
+    return "\n---\n".join(blocks)
 
 
 async def get_user_id_from_download(
@@ -255,6 +290,47 @@ async def download_resource(
         raise
     except Exception :
         raise HTTPException(500, "服务器错误")
+
+
+@router.post("/{resource_id}/export-pptx")
+async def export_edited_pptx(
+    resource_id: int,
+    data: ExportPptxRequest = Body(...),
+    user_id: int = Depends(get_user_id_from_token),
+):
+    try:
+        resource = await ResourceService.get_resource(resource_id, user_id)
+        if resource is None:
+            return {"code": 404, "msg": "资源不存在"}
+
+        markdown = _slides_to_markdown(data.title or resource.get("topic") or resource.get("title") or "", data.slides)
+        if not markdown.strip():
+            raise HTTPException(400, "没有可导出的幻灯片内容")
+
+        try:
+            from backend.src.utils.pptx_generator import markdown_to_pptx
+        except ImportError:
+            raise HTTPException(500, "PPT 导出需要安装 python-pptx 依赖")
+
+        content = markdown_to_pptx(markdown)
+        if not content:
+            raise HTTPException(400, "PPT 内容为空，无法导出")
+
+        filename_base = data.title or resource.get("topic") or resource.get("title") or "edited-presentation"
+        filename = re.sub(r'[\\/:*?"<>|]+', "_", str(filename_base)).strip() or "edited-presentation"
+        if not filename.lower().endswith(".pptx"):
+            filename = f"{filename}.pptx"
+        ascii_name = quote(filename, safe="")
+
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{ascii_name}"},
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "PPT 导出失败")
 
 
 @router.post("/{resource_id}/like")
