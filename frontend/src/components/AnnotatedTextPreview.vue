@@ -4,11 +4,30 @@
       <button
         class="highlight-toggle"
         type="button"
-        :class="{ active: annotationMode }"
-        @click="annotationMode = !annotationMode"
+        :class="{ active: annotationTool === 'highlight' }"
+        @click="toggleAnnotationTool('highlight')"
       >
-        荧光笔
+        &#x8367;&#x5149;&#x7B14;
       </button>
+      <button
+        class="note-toggle"
+        type="button"
+        :class="{ active: annotationTool === 'note' }"
+        @click="toggleAnnotationTool('note')"
+      >
+        &#x6CE8;&#x91CA;
+      </button>
+      <div v-if="annotationTool === 'highlight'" class="highlight-palette" aria-label="highlight colors">
+        <button
+          v-for="color in highlightColors"
+          :key="color.value"
+          type="button"
+          :class="{ active: activeHighlightColor === color.value }"
+          :title="color.label"
+          :style="{ backgroundColor: color.value }"
+          @click="activeHighlightColor = color.value"
+        ></button>
+      </div>
     </div>
 
     <article ref="contentRef" class="annotated-text-body" @mouseup="handleSelection">
@@ -16,7 +35,9 @@
         <mark
           v-if="segment.annotation"
           class="annotation-mark"
+          :class="{ 'has-note': isNoteAnnotation(segment.annotation) }"
           :data-annotation-id="segment.annotation.id"
+          :style="{ background: annotationBackground(segment.annotation) }"
           @click.stop="openAnnotation(segment.annotation)"
         >{{ segment.text }}</mark>
         <span v-else>{{ segment.text }}</span>
@@ -28,23 +49,23 @@
       class="annotation-popover"
       :style="{ left: `${editor.x}px`, top: `${editor.y}px` }"
     >
-      <strong>{{ editor.mode === 'edit' ? '编辑笔记' : '添加笔记' }}</strong>
+      <strong>{{ editor.mode === 'edit' ? '&#x7F16;&#x8F91;&#x7B14;&#x8BB0;' : '&#x6DFB;&#x52A0;&#x6CE8;&#x91CA;' }}</strong>
       <p>{{ editor.selectedText }}</p>
-      <textarea v-model.trim="editor.note" rows="3" placeholder="写下注释"></textarea>
+      <textarea v-model.trim="editor.note" rows="3" placeholder="&#x5199;&#x4E0B;&#x6CE8;&#x91CA;"></textarea>
       <div class="annotation-popover__actions">
-        <button type="button" @click="closeEditor">取消</button>
+        <button type="button" @click="closeEditor">&#x53D6;&#x6D88;</button>
         <button
           v-if="editor.mode === 'edit'"
           type="button"
           class="danger"
           @click="removeAnnotation"
-        >删除</button>
-        <button type="button" class="primary" @click="saveAnnotation">保存</button>
+        >&#x5220;&#x9664;</button>
+        <button type="button" class="primary" @click="saveAnnotation">&#x4FDD;&#x5B58;</button>
       </div>
     </div>
 
     <aside v-if="normalizedAnnotations.length" class="annotation-panel">
-      <h3>笔记</h3>
+      <h3>&#x6807;&#x6CE8;</h3>
       <button
         v-for="annotation in normalizedAnnotations"
         :key="annotation.id"
@@ -52,7 +73,7 @@
         @click="jumpToAnnotation(annotation)"
       >
         <mark>{{ annotation.selected_text || annotation.selectedText }}</mark>
-        <span>{{ annotation.note || '暂无注释' }}</span>
+        <span>{{ annotation.note || annotation.note_text || '&#x8367;&#x5149;&#x6807;&#x8BB0;' }}</span>
       </button>
     </aside>
   </section>
@@ -79,7 +100,8 @@ const props = defineProps({
 const emit = defineEmits(['create-note', 'update-note', 'delete-note'])
 
 const contentRef = ref(null)
-const annotationMode = ref(Boolean(props.annotatable))
+const annotationTool = ref(props.annotatable ? 'highlight' : '')
+const activeHighlightColor = ref('#ffe159')
 const editor = reactive({
   visible: false,
   mode: 'create',
@@ -90,6 +112,14 @@ const editor = reactive({
   note: '',
   position: null
 })
+
+const highlightColors = [
+  { value: '#ffe159', label: 'yellow' },
+  { value: '#8ee6a8', label: 'green' },
+  { value: '#86d9ff', label: 'blue' },
+  { value: '#ffb3d1', label: 'pink' },
+  { value: '#c8b6ff', label: 'purple' }
+]
 
 const normalizePosition = annotation => {
   const raw = annotation?.position
@@ -117,6 +147,20 @@ const normalizedAnnotations = computed(() => props.annotations
   .filter(annotation => annotation.position?.kind === 'text')
   .filter(annotation => Number.isFinite(Number(annotation.position.start)) && Number.isFinite(Number(annotation.position.end)))
   .sort((a, b) => Number(a.position.start) - Number(b.position.start)))
+
+const getAnnotationColor = annotation => annotation?.position?.color || '#ffe159'
+
+const isNoteAnnotation = annotation => annotation?.position?.tool === 'note' || Boolean(annotation?.note || annotation?.note_text)
+
+const annotationBackground = annotation => {
+  if (isNoteAnnotation(annotation)) return 'rgba(237, 249, 252, 0.66)'
+  const color = getAnnotationColor(annotation)
+  return `linear-gradient(transparent 18%, ${color} 18%, ${color} 88%, transparent 88%)`
+}
+
+const toggleAnnotationTool = tool => {
+  annotationTool.value = annotationTool.value === tool ? '' : tool
+}
 
 const segments = computed(() => {
   const text = props.content || ''
@@ -153,7 +197,7 @@ const closeEditor = () => {
 }
 
 const handleSelection = () => {
-  if (!props.annotatable || !annotationMode.value || !contentRef.value) return
+  if (!props.annotatable || !annotationTool.value || !contentRef.value) return
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
 
@@ -167,6 +211,25 @@ const handleSelection = () => {
   const end = getOffset(contentRef.value, range.endContainer, range.endOffset)
   const rect = range.getBoundingClientRect()
 
+  const position = {
+    kind: 'text',
+    start: Math.min(start, end),
+    end: Math.max(start, end),
+    tool: annotationTool.value,
+    color: activeHighlightColor.value
+  }
+
+  if (annotationTool.value === 'highlight') {
+    emit('create-note', {
+      selected_text: selectedText,
+      note: '',
+      note_text: '',
+      position
+    })
+    selection.removeAllRanges()
+    return
+  }
+
   Object.assign(editor, {
     visible: true,
     mode: 'create',
@@ -175,7 +238,7 @@ const handleSelection = () => {
     y: rect.bottom + window.scrollY + 8,
     selectedText,
     note: '',
-    position: { kind: 'text', start: Math.min(start, end), end: Math.max(start, end) }
+    position
   })
 }
 
@@ -198,7 +261,11 @@ const saveAnnotation = () => {
   const payload = {
     selected_text: editor.selectedText,
     note: editor.note,
-    position: editor.position
+    note_text: editor.note,
+    position: {
+      ...(editor.position || {}),
+      tool: 'note'
+    }
   }
 
   if (editor.mode === 'edit') {
@@ -233,25 +300,63 @@ const jumpToAnnotation = annotation => {
 .annotated-text-toolbar {
   grid-column: 1 / -1;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
 }
 
-.highlight-toggle {
+.highlight-toggle,
+.note-toggle {
   min-height: 36px;
   padding: 0 14px;
-  border: 1px solid rgba(214, 176, 38, 0.62);
   border-radius: 8px;
-  background: rgba(255, 225, 89, 0.22);
-  color: #8a6a00;
   font: inherit;
   font-weight: 900;
   cursor: pointer;
+}
+
+.highlight-toggle {
+  border: 1px solid rgba(214, 176, 38, 0.62);
+  background: rgba(255, 225, 89, 0.22);
+  color: #8a6a00;
+}
+
+.note-toggle {
+  border: 1px solid rgba(95, 143, 195, 0.62);
+  background: rgba(237, 249, 252, 0.82);
+  color: #163f8f;
 }
 
 .highlight-toggle.active {
   border-color: rgba(214, 176, 38, 0.86);
   background: #ffe159;
   color: #4f3b00;
+}
+
+.note-toggle.active {
+  border-color: rgba(22, 63, 143, 0.9);
+  background: #163f8f;
+  color: #ffffff;
+}
+
+.highlight-palette {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.highlight-palette button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2px solid rgba(22, 63, 143, 0.12);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.highlight-palette button.active {
+  border-color: #163f8f;
+  box-shadow: 0 0 0 2px rgba(22, 63, 143, 0.12);
 }
 
 .annotated-text-body {
@@ -267,10 +372,34 @@ const jumpToAnnotation = annotation => {
 }
 
 .annotation-mark {
+  position: relative;
   border-radius: 4px;
-  background: linear-gradient(transparent 38%, rgba(255, 225, 89, 0.72) 38%);
+  padding: 0 0.05em;
   color: inherit;
   cursor: pointer;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.annotation-mark.has-note {
+  border-bottom: 2px solid rgba(22, 63, 143, 0.42);
+}
+
+.annotation-mark.has-note::after {
+  content: "✎";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05em;
+  height: 1.05em;
+  margin-left: 0.16em;
+  border-radius: 50%;
+  background: #163f8f;
+  color: #ffffff;
+  font-size: 0.62em;
+  font-weight: 900;
+  line-height: 1;
+  vertical-align: super;
 }
 
 .annotation-popover {
