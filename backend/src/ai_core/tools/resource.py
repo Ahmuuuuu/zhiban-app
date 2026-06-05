@@ -13,14 +13,15 @@ _TYPE_LABELS = {
 
 
 @tool
-async def generate_learning_resource(topic: str, user_id: str, resource_types: str = "document"):
+async def generate_learning_resource(topic: str, user_id: str, resource_types: str = "document", chat_group_id: str = "0"):
     """生成学习资源。当用户说"帮我生成学习资料""做个PPT""出几道练习题""帮我整理成文档"时调用此工具。
-    参数：topic学习主题，user_id用户数字ID，resource_types资源类型(逗号分隔，可选: document/ppt/mindmap/exercise/case/reading，默认document)"""
+    参数：topic学习主题，user_id用户数字ID，resource_types资源类型(逗号分隔，可选: document/ppt/mindmap/exercise/case/reading，默认document)，chat_group_id聊天组ID"""
     uid = int(user_id.strip())
+    gid = int(chat_group_id) if str(chat_group_id).isdigit() else 0
     types = [t.strip() for t in resource_types.split(",") if t.strip()]
     if not types:
         types = ["document"]
-    results = await ResourceService.generate_and_save(topic, uid, types)
+    results = await ResourceService.generate_and_save(topic, uid, types, chat_group_id=gid)
     if not results:
         return "[资源生成] 生成失败，请稍后重试。"
 

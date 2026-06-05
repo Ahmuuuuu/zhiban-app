@@ -1,12 +1,11 @@
 """
 LangGraph 多智能体编排 — 学习资源生成
-LeaderAgent → [ExecutorAgent × N 多线程并行] → ReviewerAgent
+LeaderAgent → [ExecutorAgent × N 线程并行] → ReviewerAgent
 """
 import asyncio
 import concurrent.futures
 import json
 import logging
-import threading
 import time
 from typing import TypedDict, NotRequired
 
@@ -87,10 +86,41 @@ async def leader_node(state: ResourceState) -> dict:
     return {"resource_types": resource_types}
 
 
+def build_resource_prompt(
+    rt: str, topic: str, portrait: str = "", kb: str = "",
+    guidance: str = "", feedback: str = "", user_notes: str = "",
+    exam_count: str = "5", question_types: str = "single_choice, multi_choice, true_false",
+    difficulty: str = "medium", custom_prompts: dict | None = None,
+    focus_guidance: str = "",
+) -> str:
+    """构建单个资源类型的生成 prompt，可从 executor_node 或 generate_stream 直接调用"""
+    custom_prompts = custom_prompts or {}
+    custom = custom_prompts.get(rt, "")
+    if custom.strip():
+        template = custom
+    else:
+        prompt_path = PROMPT_MAP.get(rt, "resource/document")
+        template = load_prompt(prompt_path)
+    # PPT 不注入 kb_context（模板已含大量结构，知识库内容会让 prompt 膨胀拖慢生成）
+    rt_kb = "" if rt == "ppt" else kb
+    base = fill_prompt(
+        template,
+        topic=topic,
+        resource_type=rt,
+        portrait_context=portrait,
+        kb_context=rt_kb,
+        learning_guidance=guidance,
+        user_notes=user_notes,
+        feedback=feedback,
+        count=exam_count,
+        question_types=question_types,
+        difficulty=difficulty,
+    )
+    return base + focus_guidance if focus_guidance else base
+
+
 async def executor_node(state: ResourceState) -> dict:
-    """多线程并行生成（ThreadPoolExecutor），信号量限流。
-    PPT 走 LLM 生成 markdown；image 走两阶段：LLM prompt → ImageService 生图。
-    """
+    """线程池并行生成：每种资源类型在独立线程中调用 llm.invoke"""
     topic = state["topic"]
     resource_types = state.get("resource_types", ["document"])
     portrait = state.get("portrait_context", "")
@@ -98,58 +128,38 @@ async def executor_node(state: ResourceState) -> dict:
     guidance = state.get("learning_guidance", "")
     custom_prompts = state.get("custom_prompts", {}) or {}
     feedback = state.get("review_feedback", "")
+    focus_guidance = _build_focus_guidance(state.get("answers", {}) or {})
 
-    # 从追问答案提取聚焦方向和深度，注入 prompt 实现按需生成
-    answers = state.get("answers", {}) or {}
-    focus_guidance = _build_focus_guidance(answers)
-
-    # 预先构建每个类型的 prompt（同步，快）
-    prompts: dict[str, str] = {}
-    for rt in resource_types:
-        custom = custom_prompts.get(rt, "")
-        if custom.strip():
-            template = custom
-        else:
-            prompt_path = PROMPT_MAP.get(rt, "resource/document")
-            template = load_prompt(prompt_path)
-        base = fill_prompt(
-            template,
-            topic=topic,
-            resource_type=rt,
-            portrait_context=portrait,
-            kb_context=kb,
-            learning_guidance=guidance,
-            user_notes=state.get("user_notes", ""),
-            feedback=feedback,
-            count=state.get("exam_count", "5"),
+    prompts = {
+        rt: build_resource_prompt(
+            rt, topic, portrait=portrait, kb=kb, guidance=guidance,
+            feedback=feedback, user_notes=state.get("user_notes", ""),
+            exam_count=state.get("exam_count", "5"),
             question_types=state.get("exam_question_types", "single_choice, multi_choice, true_false"),
             difficulty=state.get("exam_difficulty", "medium"),
+            custom_prompts=custom_prompts, focus_guidance=focus_guidance,
         )
-        prompts[rt] = base + focus_guidance if focus_guidance else base
+        for rt in resource_types
+    }
 
     user_id = state.get("user_id", "0")
-    semaphore = threading.Semaphore(5)
     max_workers = min(len(resource_types), 5)
 
     def gen_one_sync(rt: str) -> tuple[str, str]:
-        """同步 LLM 调用，运行在线程池中实现真正多线程并行"""
         t_start = time.perf_counter()
-        with semaphore:
-            try:
-                if rt == "ppt":
-                    result = _generate_ppt_sync(topic, portrait, guidance, user_id)
-                elif rt == "image":
-                    result = _generate_image_sync(prompts[rt], user_id, loop)
-                else:
-                    response = llm.invoke(prompts[rt])
-                    result = rt, response.content
-                elapsed = time.perf_counter() - t_start
-                logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
-                return result
-            except Exception as e:
-                elapsed = time.perf_counter() - t_start
-                logger.exception(f"[Executor] {rt} 调用失败 耗时={elapsed:.2f}s")
-                return rt, f"[生成失败: {e}]"
+        try:
+            if rt == "image":
+                result = _generate_image_sync(prompts[rt], user_id)
+            else:
+                response = llm.invoke(prompts[rt])
+                result = rt, response.content
+            elapsed = time.perf_counter() - t_start
+            logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
+            return result
+        except Exception as e:
+            elapsed = time.perf_counter() - t_start
+            logger.exception(f"[Executor] {rt} 调用失败 耗时={elapsed:.2f}s")
+            return rt, f"[生成失败: {e}]"
 
     t_gen_start = time.perf_counter()
     loop = asyncio.get_running_loop()
@@ -162,7 +172,6 @@ async def executor_node(state: ResourceState) -> dict:
     if feedback:
         retry += 1
 
-    # 分离普通资源和 file_urls（image 类型返回特殊 key）
     generated = {}
     file_urls = {}
     for rt, content in results:
@@ -182,8 +191,8 @@ async def executor_node(state: ResourceState) -> dict:
     }
 
 
-def _generate_image_sync(prompt_text: str, user_id: str, loop) -> tuple[str, dict]:
-    """两阶段图片生成：LLM 产出 prompt → ImageService 生图（线程内同步调用）"""
+def _generate_image_sync(prompt_text: str, user_id: str) -> tuple[str, dict]:
+    """两阶段图片生成：LLM 产出 prompt → ImageService 生图（线程内）"""
     try:
         response = llm.invoke(prompt_text)
         image_prompt = response.content.strip()
@@ -194,34 +203,13 @@ def _generate_image_sync(prompt_text: str, user_id: str, loop) -> tuple[str, dic
     try:
         from backend.src.service.image_service import ImageService
         image_prompt = image_prompt[:900]
-        future = asyncio.run_coroutine_threadsafe(
-            ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=2),
-            loop
-        )
-        images = future.result(timeout=120)
+        images = asyncio.run(ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=2))
         if images and len(images) > 0:
             return ("image:image", {"prompt": image_prompt, "url": images[0].get("url", "")})
     except Exception as e:
         logger.exception(f"图片生成失败: {e}")
 
     return ("image:image", {"prompt": image_prompt, "url": ""})
-
-
-def _generate_ppt_sync(topic: str, portrait: str, guidance: str, user_id: str) -> tuple[str, str]:
-    """PPT 生成：LLM 生成 markdown 内容（线程内同步调用）"""
-    try:
-        prompt_path = PROMPT_MAP.get("ppt", "resource/ppt")
-        template = load_prompt(prompt_path)
-        fallback_prompt = fill_prompt(
-            template, topic=topic, resource_type="ppt",
-            portrait_context=portrait, kb_context="",
-            learning_guidance=guidance, feedback="",
-        )
-        response = llm.invoke(fallback_prompt)
-        return ("ppt", response.content)
-    except Exception as e:
-        logger.exception(f"PPT 生成失败")
-        return ("ppt", f"[生成失败: {e}]")
 
 
 def _parse_review_response(raw: str) -> dict:
