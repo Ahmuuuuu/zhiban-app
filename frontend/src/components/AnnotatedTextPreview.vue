@@ -1,5 +1,16 @@
 <template>
   <section class="annotated-text-preview">
+    <div v-if="annotatable" class="annotated-text-toolbar">
+      <button
+        class="highlight-toggle"
+        type="button"
+        :class="{ active: annotationMode }"
+        @click="annotationMode = !annotationMode"
+      >
+        荧光笔
+      </button>
+    </div>
+
     <article ref="contentRef" class="annotated-text-body" @mouseup="handleSelection">
       <template v-for="(segment, index) in segments" :key="index">
         <mark
@@ -68,6 +79,7 @@ const props = defineProps({
 const emit = defineEmits(['create-note', 'update-note', 'delete-note'])
 
 const contentRef = ref(null)
+const annotationMode = ref(Boolean(props.annotatable))
 const editor = reactive({
   visible: false,
   mode: 'create',
@@ -141,7 +153,7 @@ const closeEditor = () => {
 }
 
 const handleSelection = () => {
-  if (!props.annotatable || !contentRef.value) return
+  if (!props.annotatable || !annotationMode.value || !contentRef.value) return
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
 
@@ -216,6 +228,30 @@ const jumpToAnnotation = annotation => {
   grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
   gap: 18px;
   align-items: start;
+}
+
+.annotated-text-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.highlight-toggle {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(214, 176, 38, 0.62);
+  border-radius: 8px;
+  background: rgba(255, 225, 89, 0.22);
+  color: #8a6a00;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.highlight-toggle.active {
+  border-color: rgba(214, 176, 38, 0.86);
+  background: #ffe159;
+  color: #4f3b00;
 }
 
 .annotated-text-body {
