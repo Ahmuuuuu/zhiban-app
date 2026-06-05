@@ -16,8 +16,12 @@ export const normalizeAvatarUrl = avatar => {
 }
 
 export async function downloadWithToken(url, filename = 'download') {
-  const href = resolveApiUrl(url)
   const token = localStorage.getItem('token')
+  const targetUrl = new URL(resolveApiUrl(url))
+  if (token && !targetUrl.searchParams.has('token')) {
+    targetUrl.searchParams.set('token', token)
+  }
+  const href = targetUrl.toString()
   const response = await fetch(href, {
     headers: {
       ...(token ? { token } : {})
@@ -25,7 +29,8 @@ export async function downloadWithToken(url, filename = 'download') {
   })
 
   if (!response.ok) {
-    throw new Error(`下载失败：${response.status}`)
+    const message = await response.text().catch(() => '')
+    throw new Error(message || `下载失败：${response.status}`)
   }
 
   const blob = await response.blob()
@@ -464,8 +469,12 @@ export function deleteResourceAnnotation(resourceId, annotationId) {
 }
 
 export async function exportEditedPptx(resourceId, data = {}) {
-  const href = resolveApiUrl(`/resource/${resourceId}/export-pptx`)
   const token = localStorage.getItem('token')
+  const targetUrl = new URL(resolveApiUrl(`/resource/${resourceId}/export-pptx`))
+  if (token && !targetUrl.searchParams.has('token')) {
+    targetUrl.searchParams.set('token', token)
+  }
+  const href = targetUrl.toString()
   const response = await fetch(href, {
     method: 'POST',
     headers: {
@@ -479,7 +488,8 @@ export async function exportEditedPptx(resourceId, data = {}) {
   })
 
   if (!response.ok) {
-    throw new Error(`导出 PPTX 失败：${response.status}`)
+    const message = await response.text().catch(() => '')
+    throw new Error(message || `导出 PPTX 失败：${response.status}`)
   }
 
   const blob = await response.blob()
