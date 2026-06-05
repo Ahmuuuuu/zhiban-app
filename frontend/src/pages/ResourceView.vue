@@ -636,15 +636,10 @@ const matchesCategory = resource => {
 
 const downloadResource = async resource => {
   try {
-    if (isPptResource(resource) && Array.isArray(resource.slides) && resource.slides.length) {
-      downloadEditedPpt(resource)
-      return
-    }
-
     await downloadWithToken(resource.downloadUrl, resource.filename || `${resource.title || 'resource'}.md`)
   } catch (error) {
     console.error('下载资源失败：', error)
-    window.alert('下载失败，请确认登录状态和后端服务是否正常。')
+    window.alert(error?.message || '下载失败，请确认登录状态和后端服务是否正常。')
   }
 }
 
@@ -727,8 +722,13 @@ const pptxExportName = resource => {
   return `${raw || 'edited-presentation'}.pptx`
 }
 
+const getResourceIdFromUrl = url => {
+  const match = String(url || '').match(/\/resource\/([^/?#]+)(?:\/download)?/i)
+  return match?.[1] || ''
+}
+
 const exportResourcePptx = async (resource, slides) => {
-  const resourceId = resource?.sourceId || resource?.resourceId || resource?.resource_id || resource?.id || ''
+  const resourceId = resource?.sourceId || resource?.resourceId || resource?.resource_id || resource?.id || getResourceIdFromUrl(resource?.downloadUrl) || ''
   if (!resourceId) {
     window.alert('当前 PPT 没有资源 ID，暂时无法导出 PPTX。')
     return
@@ -742,7 +742,7 @@ const exportResourcePptx = async (resource, slides) => {
     })
   } catch (error) {
     console.error('导出 PPTX 失败', error)
-    window.alert('导出 PPTX 失败，请确认后端已接入 /resource/{id}/export-pptx 接口。')
+    window.alert(error?.message || '导出 PPTX 失败，请稍后再试。')
   }
 }
 

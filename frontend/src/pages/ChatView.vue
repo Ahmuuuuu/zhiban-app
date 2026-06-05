@@ -1622,7 +1622,7 @@ const exportChatPptx = async slides => {
     })
   } catch (error) {
     console.error('[ChatView] export pptx failed:', error)
-    window.alert('导出 PPTX 失败，请确认后端已接入 /resource/{id}/export-pptx 接口。')
+    window.alert(error?.message || '导出 PPTX 失败，请稍后再试。')
   }
 }
 
@@ -1633,7 +1633,7 @@ const downloadGeneratedFile = async message => {
     await downloadWithToken(message.downloadUrl, getDownloadName(message))
   } catch (error) {
     console.error('下载生成文件失败：', error)
-    window.alert('下载失败，请确认登录状态和后端服务是否正常。')
+    window.alert(error?.message || '下载失败，请确认登录状态和后端服务是否正常。')
   }
 }
 

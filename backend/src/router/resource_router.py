@@ -296,7 +296,7 @@ async def download_resource(
 async def export_edited_pptx(
     resource_id: int,
     data: ExportPptxRequest = Body(...),
-    user_id: int = Depends(get_user_id_from_token),
+    user_id: int = Depends(get_user_id_from_download),
 ):
     try:
         resource = await ResourceService.get_resource(resource_id, user_id)
