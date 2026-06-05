@@ -434,6 +434,60 @@ export function getGeneratedResource(resourceId) {
   return request.get(`/resource/${resourceId}`)
 }
 
+export function getResourceAnnotations(resourceId) {
+  return request.get(`/annotation/resource/${resourceId}`)
+}
+
+export function createResourceAnnotation(resourceId, data) {
+  return request.post('/annotation', {
+    resource_id: Number(resourceId),
+    selected_text: data.selected_text || data.selectedText || '',
+    note_text: data.note_text || data.note || '',
+    position: data.position || null
+  })
+}
+
+export function updateResourceAnnotation(resourceId, annotationId, data) {
+  return request.put(`/annotation/${annotationId}`, {
+    note_text: data.note_text || data.note || ''
+  })
+}
+
+export function deleteResourceAnnotation(resourceId, annotationId) {
+  return request.delete(`/annotation/${annotationId}`)
+}
+
+export async function exportEditedPptx(resourceId, data = {}) {
+  const href = resolveApiUrl(`/resource/${resourceId}/export-pptx`)
+  const token = localStorage.getItem('token')
+  const response = await fetch(href, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { token } : {})
+    },
+    body: JSON.stringify({
+      title: data.title || '',
+      slides: Array.isArray(data.slides) ? data.slides : []
+    })
+  })
+
+  if (!response.ok) {
+    throw new Error(`导出 PPTX 失败：${response.status}`)
+  }
+
+  const blob = await response.blob()
+  const filename = data.filename || `${data.title || 'edited-presentation'}.pptx`
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
 export function createResourceGenerationTask(data) {
   return request({
     url: '/resource/generate/task',
