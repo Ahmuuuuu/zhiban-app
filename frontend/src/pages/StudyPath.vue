@@ -136,7 +136,7 @@
                               <Presentation v-else-if="isPptResource(resource)" :size="16" />
                               <GitBranch v-else-if="isMindmapResource(resource)" :size="16" />
                               <Volume2 v-else-if="isAudioResource(resource)" :size="16" />
-                              <MonitorPlay v-else-if="isHtmlResource(resource)" :size="16" />
+                              <MonitorPlay v-else-if="isVideoResource(resource) || isHtmlResource(resource)" :size="16" />
                               <FileText v-else :size="16" />
                             </span>
                             <strong>{{ resource.title }}</strong>
@@ -329,7 +329,7 @@
                         <Presentation v-else-if="isPptResource(resource)" :size="18" />
                         <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
                         <Volume2 v-else-if="isAudioResource(resource)" :size="18" />
-                        <MonitorPlay v-else-if="isHtmlResource(resource)" :size="18" />
+                        <MonitorPlay v-else-if="isVideoResource(resource) || isHtmlResource(resource)" :size="18" />
                         <FileText v-else :size="18" />
                       </span>
                       <div class="file-title">
@@ -1247,6 +1247,7 @@ const fileTypeLabel = type => {
   if (t.includes('ppt')) return 'PPT 文件'
   if (t.includes('image')) return '图片'
   if (t.includes('mind')) return '思维导图'
+  if (t.includes('video') || t.includes('mp4')) return '视频'
   if (t.includes('html')) return '动态课件'
   if (t.includes('audio')) return '音频旁白'
   if (t.includes('txt') || t.includes('document')) return '学习文档'
@@ -1261,6 +1262,8 @@ const isPptResource = r => /ppt|powerpoint|presentation|slide/.test(String(r?.ty
 const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('mind')
 
 const isAudioResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('audio')
+
+const isVideoResource = r => /video|mp4|webm|ogg/.test(String(r?.type || r?.fileType || r?.title || r?.filename || r?.previewUrl || r?.downloadUrl || '').toLowerCase())
 
 const isHtmlResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('html')
 
@@ -2846,6 +2849,7 @@ onBeforeUnmount(() => {
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -2966,6 +2970,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
