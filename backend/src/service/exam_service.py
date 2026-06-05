@@ -139,7 +139,7 @@ class ExamService:
     async def generate_and_save(
         topic: str, user_id: int,
         question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
-        node_id: int | None = None,
+        node_id: int | None = None, user_notes: str = "",
     ) -> dict:
         """走 graph 出题（Leader→Executor→Reviewer→retry）→ 存库 → 返回 session_id + questions"""
         await init_db()
@@ -156,6 +156,7 @@ class ExamService:
         saved_resources = await ResourceService.generate_and_save(
             topic=topic, user_id=user_id, resource_types=["exercise"],
             exam_question_types=types_str, exam_count=count, exam_difficulty=difficulty,
+            user_notes=user_notes,
         )
 
         for r in saved_resources:
@@ -196,7 +197,7 @@ class ExamService:
     async def generate_and_save_stream(
         topic: str, user_id: int,
         question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
-        node_id: int | None = None,
+        node_id: int | None = None, user_notes: str = "",
     ):
         """流式走 graph 出题 → SSE 推送进度 → 存库 → 返回 session"""
         await init_db()
@@ -217,6 +218,7 @@ class ExamService:
             topic=topic, user_id=user_id, resource_types=["exercise"],
             chat_group_id=0,
             exam_question_types=types_str, exam_count=count, exam_difficulty=difficulty,
+            user_notes=user_notes,
         ):
             if isinstance(event, str) and event.startswith("data:"):
                 data_str = event[5:].strip()

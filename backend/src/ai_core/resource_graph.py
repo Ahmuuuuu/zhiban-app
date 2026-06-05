@@ -40,6 +40,7 @@ class ResourceState(TypedDict):
     portrait_context: str
     kb_context: str
     learning_guidance: str
+    user_notes: str
     custom_prompts: dict
     generated_resources: dict
     review_feedback: str
@@ -117,6 +118,7 @@ async def executor_node(state: ResourceState) -> dict:
             portrait_context=portrait,
             kb_context=kb,
             learning_guidance=guidance,
+            user_notes=state.get("user_notes", ""),
             feedback=feedback,
             count=state.get("exam_count", "5"),
             question_types=state.get("exam_question_types", "single_choice, multi_choice, true_false"),

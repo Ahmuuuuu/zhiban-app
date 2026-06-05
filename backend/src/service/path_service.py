@@ -682,6 +682,16 @@ class PathService:
         else:
             difficulty = "medium"
 
+        # 收集节点关联资源上的用户笔记，注入出题上下文
+        user_notes = ""
+        try:
+            resource_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
+            if resource_ids:
+                from backend.src.service.annotation_service import AnnotationService
+                user_notes = await AnnotationService.collect_notes_for_quiz(user_id, resource_ids)
+        except Exception:
+            logger.exception("收集笔记失败 path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
+
         result = await ExamService.generate_and_save(
             topic=node.topic,
             user_id=user_id,
@@ -689,6 +699,7 @@ class PathService:
             count=count,
             difficulty=difficulty,
             node_id=node_id,
+            user_notes=user_notes,
         )
 
         sid = result.get("session_id")
@@ -745,6 +756,16 @@ class PathService:
         else:
             difficulty = "hard"
 
+        # 收集节点关联资源上的用户笔记，注入出题上下文
+        user_notes = ""
+        try:
+            resource_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
+            if resource_ids:
+                from backend.src.service.annotation_service import AnnotationService
+                user_notes = await AnnotationService.collect_notes_for_quiz(user_id, resource_ids)
+        except Exception:
+            logger.exception("收集笔记失败 path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
+
         # 流式生成并透传事件，截获 done 写 quiz_session_id
         async for event in ExamService.generate_and_save_stream(
             topic=node.topic,
@@ -753,6 +774,7 @@ class PathService:
             count=count,
             difficulty=difficulty,
             node_id=node_id,
+            user_notes=user_notes,
         ):
             if isinstance(event, str) and event.startswith("data:"):
                 data_str = event[5:].strip()
