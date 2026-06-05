@@ -261,9 +261,9 @@ class ImageService:
             return _task_status[task_id]
 
     @staticmethod
-    async def generate(prompt: str, user_id: str, aspect_ratio: str = "1:1", img_count: int = 1) -> list[dict]:
+    async def generate(prompt: str, user_id: str, aspect_ratio: str = "1:1", img_count: int = 1, chat_group_id: int = 0) -> list[dict]:
         """同步生成（供 tool 使用，阻塞等待结果）"""
-        result = await ImageService.submit(prompt, int(user_id), aspect_ratio, img_count)
+        result = await ImageService.submit(prompt, int(user_id), aspect_ratio, img_count, chat_group_id=chat_group_id)
         task_id = result["task_id"]
 
         for _ in range(30):

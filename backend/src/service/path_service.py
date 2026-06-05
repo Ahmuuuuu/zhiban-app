@@ -488,52 +488,62 @@ class PathService:
 
         generated_ids = []
         ppt_id = None
-        if gen_types:
-            from backend.src.service.resource_service import ResourceService
-            async for event_str in ResourceService.generate_stream(
-                topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
-            ):
-                yield event_str
-                if event_str.startswith("data:") and "[DONE]" not in event_str:
+        try:
+            if gen_types:
+                from backend.src.service.resource_service import ResourceService
+                async for event_str in ResourceService.generate_stream(
+                    topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
+                ):
+                    yield event_str
+                    if event_str.startswith("data:") and "[DONE]" not in event_str:
+                        try:
+                            data = json.loads(event_str[5:].strip())
+                            # 从 file 事件中提前收集类型信息（done 事件到达前也能拿到 ppt_id）
+                            if data.get("type") == "file":
+                                ft = data.get("file_type", "")
+                                if ft == "ppt":
+                                    ppt_id = data.get("resource_id", 0) or ppt_id
+                            if data.get("done"):
+                                for r in data.get("resources", []):
+                                    rid = r.get("resource_id")
+                                    if rid:
+                                        generated_ids.append(rid)
+                                        if r.get("file_type") == "ppt":
+                                            ppt_id = rid
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+
+            # 循环结束后立即更新进度，后续 PPT→HTML 阶段断开也不丢资源
+            all_ids = [r.id for r in existing_records] + generated_ids
+            await PathService._update_progress_resource_ids(progress, all_ids)
+
+            # PPT → 生成 HTML 动态课件
+            html_result = None
+            target_ppt_id = ppt_id
+            if not target_ppt_id:
+                ppt_from_existing = next((r for r in existing_records if r.resource_type == "ppt"), None)
+                if ppt_from_existing:
+                    target_ppt_id = ppt_from_existing.id
+
+            if target_ppt_id:
+                ppt_record = await GeneratedResource.filter(id=target_ppt_id).first()
+                if ppt_record:
                     try:
-                        data = json.loads(event_str[5:].strip())
-                        if data.get("done"):
-                            for r in data.get("resources", []):
-                                rid = r.get("resource_id")
-                                if rid:
-                                    generated_ids.append(rid)
-                                    if r.get("file_type") == "ppt":
-                                        ppt_id = rid
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+                        html_result = await _create_video_html(topic, user_id, ppt_record)
+                    except Exception:
+                        logger.exception("动态课件生成失败 topic=%s ppt_id=%s", topic, target_ppt_id)
+                    if html_result:
+                        all_ids.append(html_result["html_id"])
+                        html_record = await GeneratedResource.filter(id=html_result["html_id"]).first()
+                        if html_record:
+                            yield _resource_sse(html_record, presentation_id=html_result["presentation_id"])
 
-        all_ids = [r.id for r in existing_records] + generated_ids
-
-        # PPT → 生成 HTML 动态课件（复用已有的 presentation_service.generate 逻辑：
-        #   Presentation 记录 + 骨架 HTML + 后台补音频 + 前端轮询状态）
-        # 优先用新生成的 ppt_id，否则从已有记录中找
-        html_result = None
-        target_ppt_id = ppt_id
-        if not target_ppt_id:
-            ppt_from_existing = next((r for r in existing_records if r.resource_type == "ppt"), None)
-            if ppt_from_existing:
-                target_ppt_id = ppt_from_existing.id
-
-        if target_ppt_id:
-            ppt_record = await GeneratedResource.filter(id=target_ppt_id).first()
-            if ppt_record:
-                try:
-                    html_result = await _create_video_html(topic, user_id, ppt_record)
-                except Exception:
-                    logger.exception("动态课件生成失败 topic=%s ppt_id=%s", topic, target_ppt_id)
-                if html_result:
-                    all_ids.append(html_result["html_id"])
-                    html_record = await GeneratedResource.filter(id=html_result["html_id"]).first()
-                    if html_record:
-                        yield _resource_sse(html_record, presentation_id=html_result["presentation_id"])
-
-        await PathService._update_progress_resource_ids(progress, all_ids)
-        yield _sse_done(all_ids)
+            await PathService._update_progress_resource_ids(progress, all_ids)
+            yield _sse_done(all_ids)
+        except Exception:
+            # 客户端断开或异常时，至少把已收集到的资源 ID 写回进度
+            all_ids = [r.id for r in existing_records] + generated_ids
+            await PathService._update_progress_resource_ids(progress, all_ids)
 
     @staticmethod
     async def generate_node_resources(path_id: int, node_id: int, user_id: int) -> dict:
