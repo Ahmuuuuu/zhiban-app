@@ -101,6 +101,33 @@ export function getGeneratedResources(): Promise<unknown>;
 
 export function getGeneratedResource(resourceId: number | string): Promise<unknown>;
 
+export function getResourceAnnotations(resourceId: number | string): Promise<unknown>;
+
+export function createResourceAnnotation(
+  resourceId: number | string,
+  data: Record<string, unknown>,
+): Promise<unknown>;
+
+export function updateResourceAnnotation(
+  resourceId: number | string,
+  annotationId: number | string,
+  data: Record<string, unknown>,
+): Promise<unknown>;
+
+export function deleteResourceAnnotation(
+  resourceId: number | string,
+  annotationId: number | string,
+): Promise<unknown>;
+
+export function exportEditedPptx(
+  resourceId: number | string,
+  data?: {
+    title?: string;
+    filename?: string;
+    slides?: Array<Record<string, unknown>>;
+  },
+): Promise<void>;
+
 export function createResourceGenerationTask(data: {
   topic: string;
   resource_types: string[];

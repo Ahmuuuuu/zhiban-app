@@ -446,8 +446,14 @@
             />
             <PptPreview
               v-else-if="(isPptResource(previewResource) || isHtmlResource(previewResource)) && previewResource.slides?.length"
-              :slides="previewResource.slides"
+              v-model:slides="previewResource.slides"
               :title="previewResource.title"
+              :annotatable="true"
+              :annotations="previewResource.annotations || []"
+              @create-note="createAnnotation(previewResource, $event)"
+              @update-note="(id, payload) => updateAnnotation(previewResource, id, payload)"
+              @delete-note="deleteAnnotation(previewResource, $event)"
+              @export-pptx="exportPreviewPptx(previewResource, $event)"
             />
             <div v-else-if="isHtmlResource(previewResource) && previewResource.previewUrl" class="resource-html-placeholder">
               <MonitorPlay :size="32" />
@@ -465,11 +471,15 @@
               :content="previewResource.content"
               :title="previewResource.title"
             />
-            <article
+            <AnnotatedTextPreview
               v-else-if="previewResource.content"
-              class="resource-markdown markdown-body"
-              v-html="renderMarkdown(previewResource.content)"
-            ></article>
+              :content="previewResource.content"
+              :annotations="previewResource.annotations || []"
+              :annotatable="true"
+              @create-note="createAnnotation(previewResource, $event)"
+              @update-note="(id, payload) => updateAnnotation(previewResource, id, payload)"
+              @delete-note="deleteAnnotation(previewResource, $event)"
+            />
             <pre v-else>{{ previewResource.content || '暂无可预览内容，可以下载原文件查看。' }}</pre>
           </div>
 
@@ -487,11 +497,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2, MonitorPlay } from 'lucide-vue-next'
 import {
+  createResourceAnnotation,
+  deleteResourceAnnotation,
   getCurrentLearningPath, generateLearningPath,
   getLearningPaths, getLearningPathDetail, getLearningPathProgress, getStudyPathStats, sendStudyHeartbeat, enrollLearningPath,
-  generatePathNodeResources, generatePathNodeResourcesStream, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl
+  generatePathNodeResources, generatePathNodeResourcesStream, generatePathNodeQuiz, downloadWithToken, exportEditedPptx, getGeneratedResource, getResourceAnnotations, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl,
+  updateResourceAnnotation
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
+import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
@@ -2065,7 +2079,115 @@ const downloadNodeResource = async resource => {
   }
 }
 
+const pptxExportName = resource => {
+  const raw = String(resource?.filename || resource?.title || 'edited-presentation')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\.[^.]+$/, '')
+  return `${raw || 'edited-presentation'}.pptx`
+}
+
+const exportPreviewPptx = async (resource, slides) => {
+  const resourceId = resource?.resourceId || resource?.resource_id || resource?.id || ''
+  if (!resourceId || String(resourceId).startsWith('res-')) {
+    window.alert('当前 PPT 没有资源 ID，暂时无法导出 PPTX。')
+    return
+  }
+
+  try {
+    await exportEditedPptx(resourceId, {
+      title: resource?.title || '',
+      filename: pptxExportName(resource),
+      slides
+    })
+  } catch (err) {
+    console.error('[StudyPath] export pptx failed:', err)
+    window.alert('导出 PPTX 失败，请确认后端已接入 /resource/{id}/export-pptx 接口。')
+  }
+}
+
 const getResourceIdentity = resource => String(resource?.resourceId || resource?.resource_id || resource?.id || getResourceIdFromUrl(resource?.downloadUrl) || '')
+
+const normalizeAnnotations = result => {
+  const data = result?.data?.data || result?.data || result || []
+  const list = Array.isArray(data) ? data : data.records || data.list || data.annotations || []
+  return (Array.isArray(list) ? list : []).map(item => ({
+    ...item,
+    id: item.id || item.annotation_id || item.annotationId,
+    selected_text: item.selected_text || item.selectedText || '',
+    note: item.note || item.note_text || item.noteText || '',
+    note_text: item.note_text || item.note || item.noteText || '',
+    position: typeof item.position === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(item.position)
+          } catch {
+            return {}
+          }
+        })()
+      : item.position || {}
+  }))
+}
+
+const patchPreviewResource = patch => {
+  if (!previewResource.value) return
+  previewResource.value = { ...previewResource.value, ...patch }
+  updateResourceInNodes(previewResource.value)
+}
+
+const loadAnnotationsForResource = async resource => {
+  const resourceId = getResourceIdentity(resource)
+  if (!resourceId || String(resourceId).startsWith('res-')) {
+    patchPreviewResource({ annotations: [] })
+    return
+  }
+
+  try {
+    const result = await getResourceAnnotations(resourceId)
+    patchPreviewResource({ annotations: normalizeAnnotations(result) })
+  } catch (error) {
+    console.warn('[StudyPath] load annotations failed:', error)
+    patchPreviewResource({ annotations: [] })
+  }
+}
+
+const createAnnotation = async (resource, payload) => {
+  const resourceId = getResourceIdentity(resource)
+  if (!resourceId || String(resourceId).startsWith('res-')) return
+
+  try {
+    await createResourceAnnotation(resourceId, payload)
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('[StudyPath] save annotation failed:', error)
+    window.alert('保存笔记失败，请确认后端已接入资源笔记接口。')
+  }
+}
+
+const updateAnnotation = async (resource, annotationId, payload) => {
+  const resourceId = getResourceIdentity(resource)
+  if (!resourceId || !annotationId) return
+
+  try {
+    await updateResourceAnnotation(resourceId, annotationId, payload)
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('[StudyPath] update annotation failed:', error)
+    window.alert('更新笔记失败，请稍后再试。')
+  }
+}
+
+const deleteAnnotation = async (resource, annotationId) => {
+  const resourceId = getResourceIdentity(resource)
+  if (!resourceId || !annotationId) return
+
+  try {
+    await deleteResourceAnnotation(resourceId, annotationId)
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('[StudyPath] delete annotation failed:', error)
+    window.alert('删除笔记失败，请稍后再试。')
+  }
+}
 
 const formatReadDuration = seconds => {
   const total = Math.max(0, Math.round(Number(seconds || 0)))
@@ -2284,7 +2406,10 @@ const previewNodeResource = async resource => {
   })
 
   const resourceId = getResourceIdentity(resource)
-  if (!resourceId || resource.slides?.length || (!isPptResource(resource) && (resource.content || resource.previewUrl))) return
+  if (!resourceId || resource.slides?.length || (!isPptResource(resource) && (resource.content || resource.previewUrl))) {
+    loadAnnotationsForResource(previewResource.value)
+    return
+  }
 
   previewLoading.value = true
   try {
@@ -2292,12 +2417,14 @@ const previewNodeResource = async resource => {
     const merged = mergePreviewResource(resource, detail)
     previewResource.value = merged
     updateResourceInNodes(merged)
+    loadAnnotationsForResource(merged)
   } catch (err) {
     console.error('[StudyPath] load resource preview failed:', err)
     previewResource.value = {
       ...resource,
       content: '预览加载失败，可以先下载原文件查看。'
     }
+    loadAnnotationsForResource(previewResource.value)
   } finally {
     previewLoading.value = false
   }
@@ -3390,15 +3517,16 @@ onBeforeUnmount(() => {
   z-index: 4300;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: clamp(12px, 2vw, 24px);
   background: rgba(12, 28, 58, 0.32);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
 
 .resource-preview-panel {
-  width: min(880px, 100%);
-  max-height: min(760px, 90vh);
+  width: min(1380px, 98vw);
+  height: min(940px, 96vh);
+  max-height: 96vh;
   border: 1px solid rgba(22, 63, 143, 0.16);
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.97);
@@ -3467,7 +3595,8 @@ onBeforeUnmount(() => {
 
 .resource-preview-body {
   min-height: 0;
-  padding: 18px;
+  flex: 1;
+  padding: clamp(14px, 1.8vw, 24px);
   overflow: auto;
 }
 
