@@ -170,7 +170,7 @@ async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str
     )
 
 
-async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False) -> dict:
+async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False, user_notes: str = "") -> dict:
     await init_db()
 
     # 没传 topic 但有 chat_group_id → 从聊天记录自动提取
@@ -239,6 +239,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         "exam_difficulty": exam_difficulty,
         "answers": answers or {},
         "skip_review": skip_review,
+        "user_notes": user_notes,
     }
 
 
@@ -287,7 +288,7 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
 class ResourceService:
 
     @staticmethod
-    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium") -> list[dict]:
+    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "") -> list[dict]:
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
 
         # ── 去重：近期已生成过同主题同类型资源 → 直接返回缓存 ──
@@ -297,7 +298,7 @@ class ResourceService:
                 await _save_generation_to_history(user_id, chat_group_id, topic, cached)
                 return cached
 
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, user_notes=user_notes)
         topic = initial_state["topic"]
 
         result = await resource_graph.ainvoke(initial_state)
@@ -344,7 +345,7 @@ class ResourceService:
         return saved
 
     @staticmethod
-    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False):
+    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = ""):
         """节点级流式 — astream 逐节点产出状态，只跑一次 graph，同时推送文件事件"""
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
 
@@ -387,7 +388,7 @@ class ResourceService:
                     yield item
                 return
 
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, skip_review=skip_review)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, skip_review=skip_review, user_notes=user_notes)
         topic = initial_state["topic"]
         final_resources = {}
         final_passed = False
