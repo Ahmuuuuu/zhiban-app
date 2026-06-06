@@ -101,33 +101,49 @@ async def _extract_topic_from_chat(user_id: int, chat_group_id: int) -> str:
     return response.content.strip()
 
 
-async def _next_chat_group_id(user_id: int) -> int:
+async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
+    if chat_group_id and chat_group_id > 0:
+        return chat_group_id
     latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
     if not latest or not latest.chat_group_id:
-        return 1
-    return latest.chat_group_id + 1
-
-
-async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
-    return chat_group_id if chat_group_id and chat_group_id > 0 else await _next_chat_group_id(user_id)
+        new_id = 1
+        logger.info("分配首个聊天组 user_id=%s chat_group_id=%d", user_id, new_id)
+        return new_id
+    new_id = latest.chat_group_id + 1
+    logger.info("分配新聊天组 user_id=%s chat_group_id=%d (prev=%d)", user_id, new_id, latest.chat_group_id)
+    return new_id
 
 
 def _resource_history_response(resources: list[dict]) -> str:
     if not resources:
-        return "资源生成完成，但没有生成可保存的文件。"
+        return json.dumps({
+            "type": "resource_list",
+            "resources": [],
+            "message": "资源生成完成，但没有生成可保存的文件。",
+        }, ensure_ascii=False)
 
-    lines = ["已生成学习资源："]
+    items = []
     for resource in resources:
         file_type = resource.get("resource_type") or resource.get("file_type") or "resource"
         topic = resource.get("topic") or "学习资源"
         resource_id = resource.get("resource_id")
         ext = _FILE_EXT_MAP.get(file_type, "md")
         filename = f"{topic}_{file_type}.{ext}"
-        if resource_id:
-            lines.append(f"- [{filename}](/resource/{resource_id}/download)")
-        else:
-            lines.append(f"- {filename}")
-    return "\n".join(lines)
+        item = {
+            "type": "resource",
+            "file_type": file_type,
+            "filename": filename,
+            "file_id": resource_id,
+            "resource_id": resource_id,
+            "download_url": f"/resource/{resource_id}/download" if resource_id else None,
+            "topic": topic,
+        }
+        items.append(item)
+
+    return json.dumps({
+        "type": "resource_list",
+        "resources": items,
+    }, ensure_ascii=False)
 
 
 async def _find_cached_resources(topic: str, user_id: int, resource_types: list[str]) -> list[dict] | None:
@@ -160,20 +176,26 @@ async def _find_cached_resources(topic: str, user_id: int, resource_types: list[
 
 
 async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str, resources: list[dict]) -> None:
-    user = await User.filter(id=user_id).first()
-    if not user:
+    if not chat_group_id or chat_group_id <= 0:
+        logger.warning("跳过历史保存：chat_group_id=%s user_id=%s", chat_group_id, user_id)
         return
-    await ChatHistory.create(
-        user=user,
-        chat_group_id=chat_group_id,
-        req=req,
-        res=_resource_history_response(resources),
-    )
+    try:
+        res_json = _resource_history_response(resources)
+        await ChatHistory.create(
+            user_id=user_id,
+            chat_group_id=chat_group_id,
+            req=req,
+            res=res_json,
+        )
+        logger.info("资源生成历史已保存 user_id=%s chat_group_id=%s resources=%d", user_id, chat_group_id, len(resources) if resources else 0)
+    except Exception:
+        logger.exception("保存资源生成历史失败 user_id=%s chat_group_id=%s", user_id, chat_group_id)
 
 
 async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False, user_notes: str = "") -> dict:
     t0 = time.perf_counter()
     await init_db()
+    chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
     t_init = time.perf_counter()
 
     # 没传 topic 但有 chat_group_id → 从聊天记录自动提取
@@ -208,6 +230,14 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         logger.exception("Skills 查询失败 user_id=%s", user_id)
         skills = []
 
+    # 基础画像：专业/年级（无需画像测评）
+    base_portrait_parts = []
+    if user and not isinstance(user, Exception):
+        if user.major:
+            base_portrait_parts.append(f"专业：{user.major}")
+        if user.grade:
+            base_portrait_parts.append(f"年级：{user.grade}")
+
     if user and not isinstance(user, Exception):
         picture = await user.picture
         if picture:
@@ -216,6 +246,10 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
             except Exception:
                 radar_data = None
             portrait_context = "\n".join(format_portrait(picture, show_missing=False, radar_data=radar_data))
+        elif base_portrait_parts:
+            portrait_context = "【用户画像】\n" + "；".join(base_portrait_parts)
+    elif base_portrait_parts:
+        portrait_context = "【用户画像】\n" + "；".join(base_portrait_parts)
     t_portrait = time.perf_counter()
 
     kb_context = "暂无相关知识库资料"
@@ -300,6 +334,7 @@ class ResourceService:
 
     @staticmethod
     async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "") -> list[dict]:
+        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
         # ── 去重：近期已生成过同主题同类型资源 → 直接返回缓存 ──
         if topic:
             cached = await _find_cached_resources(topic, user_id, resource_types)
@@ -358,6 +393,7 @@ class ResourceService:
     @staticmethod
     async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = ""):
         """astream(stream_mode=["values", "custom"]) — PPT 通过 custom 事件逐页推送，其他类型通过 values 事件推送"""
+        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
 
         def _make_file_event(for_topic: str, rt: str, content: str) -> str:
             ext = _FILE_EXT_MAP.get(rt, "md")
@@ -665,20 +701,21 @@ class ResourceService:
 
     @staticmethod
     async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None) -> dict:
-        """创建生成任务，启动后台运行，立即返回 task_id"""
+        """创建生成任务，启动后台运行，立即返回 task_id 和 chat_group_id"""
         from backend.src.models.task_model import GenerationTask
 
+        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
         tid = uuid.uuid4().hex
         task = await GenerationTask.create(
             task_id=tid,
             user_id=user_id,
             topic=topic or "",
             resource_types=json.dumps(resource_types, ensure_ascii=False),
-            chat_group_id=chat_group_id or None,
+            chat_group_id=chat_group_id,
             status="pending",
         )
         asyncio.ensure_future(_run_generation_task(task.id, tid, answers))
-        return {"task_id": tid, "status": "pending"}
+        return {"task_id": tid, "status": "pending", "chat_group_id": chat_group_id}
 
     @staticmethod
     async def get_task(task_id: str, user_id: int) -> dict | None:
@@ -869,10 +906,10 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
             target_user_id=user_id,
         )
 
-        # 阶段2优化：后台预生成旁白音频，用户作答追问期间音频已缓存好
+        # 后台预生成旁白音频，任务 done 不阻塞
         for r in saved:
             if r["resource_type"] in ("document", "ppt"):
-                asyncio.ensure_future(_pre_generate_narration(r["resource_id"]))
+                asyncio.create_task(_pre_generate_narration(r["resource_id"]))
 
     except Exception as e:
         logger.exception("生成任务失败 task_id=%s", task_id)

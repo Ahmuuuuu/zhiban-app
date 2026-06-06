@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import time as _time
 from pathlib import Path
 import shutil
 
@@ -12,8 +13,16 @@ from backend.src.utils.tts_utils import parse_by_type, generate_audio_with_times
 
 logger = logging.getLogger(__name__)
 
-# EdgeTTS 并发限制，避免触发云端限流
-_TTS_SEMAPHORE = asyncio.Semaphore(5)
+# EdgeTTS 并发上限（微软免费服务，12 路激进并发）
+_TTS_SEMAPHORE = asyncio.Semaphore(12)
+_TTS_GLOBAL_CACHE = Path(__file__).parent.parent.parent / "static" / "audio" / "_cache"
+
+_tts_cache_key = lambda text, voice: hashlib.md5(f"{text}_{voice}".encode()).hexdigest()[:12]
+
+# 全局 TTS 计数器（跨所有调用点共享）
+_tts_done_count = 0
+_tts_cache_hits = 0
+_tts_lock = asyncio.Lock()
 
 
 async def narrate_content(content: str, resource_type: str, voice: str, resource_id: int) -> dict:
@@ -98,24 +107,190 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     }
 
 
+async def _generate_tts(text: str, voice: str, output_path: str) -> list[dict] | None:
+    """核心 TTS 生成：限流 + 重试 + 超时处理 + 保存 JSON 时间戳。
+    所有 TTS 调用点（预热 / 旁白 / 课件）统一走此函数，避免重复实现。
+    长文本自动按句子切分，分片生成后拼接 MP3（MP3 帧级拼接，直接可用）。"""
+    json_path = output_path.rsplit(".", 1)[0] + ".json"
+
+    chunks = _split_long_text(text)
+    if len(chunks) == 1:
+        return await _generate_tts_one(text, voice, output_path, json_path)
+
+    # 长文本：逐段生成 → 拼接 MP3 → 合并时间戳
+    import tempfile
+    all_timestamps: list[dict] = []
+    part_paths: list[str] = []
+    offset_ms = 0
+
+    for i, chunk in enumerate(chunks):
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            part_path = tmp.name
+        part_paths.append(part_path)
+        part_json = part_path.rsplit(".", 1)[0] + ".json"
+
+        timestamps = await _generate_tts_one(chunk, voice, part_path, part_json)
+        if timestamps is None:
+            # 清理已生成的临时文件
+            for p in part_paths:
+                for f in (p, p.rsplit(".", 1)[0] + ".json"):
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
+            return None
+
+        for ts in timestamps:
+            ts["offset_ms"] = ts.get("offset_ms", 0) + offset_ms
+        all_timestamps.extend(timestamps)
+        offset_ms = all_timestamps[-1]["offset_ms"] + all_timestamps[-1].get("duration_ms", 0) if all_timestamps else offset_ms
+
+    # 拼接 MP3（MP3 帧级拼接，直接写字节流即可）
+    try:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as out:
+            for part_path in part_paths:
+                with open(part_path, "rb") as inp:
+                    out.write(inp.read())
+    except IOError:
+        logger.exception("MP3 拼接失败 output=%s", output_path)
+        return None
+    finally:
+        for p in part_paths:
+            for f in (p, p.rsplit(".", 1)[0] + ".json"):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+
+    try:
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(all_timestamps, f, ensure_ascii=False)
+    except IOError:
+        pass
+
+    return all_timestamps
+
+
+async def _generate_tts_one(text: str, voice: str, output_path: str, json_path: str) -> list[dict] | None:
+    """单段 TTS 生成（不切分），限流 + 重试 + 超时处理"""
+    t0 = _time.perf_counter()
+    async with _TTS_SEMAPHORE:
+        last_err = None
+        for attempt in range(3):
+            try:
+                _, word_timestamps = await generate_audio_with_timestamps(text, output_path, voice)
+                break
+            except asyncio.TimeoutError:
+                logger.error("[TTS] 超时 text_len=%d", len(text))
+                return None
+            except (ConnectionResetError, ConnectionError, OSError) as e:
+                last_err = e
+                if attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            except Exception:
+                logger.exception("[TTS] 生成失败 text_len=%d", len(text))
+                return None
+        else:
+            logger.error("[TTS] 重试耗尽 text_len=%d err=%s", len(text), last_err)
+            return None
+
+    cost = _time.perf_counter() - t0
+    try:
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(word_timestamps, f, ensure_ascii=False)
+    except IOError:
+        pass
+
+    async with _tts_lock:
+        global _tts_done_count
+        _tts_done_count += 1
+        done = _tts_done_count
+
+    logger.info("[TTS] #%d len=%d cost=%.1fs", done, len(text), cost)
+    return word_timestamps
+
+
+_MAX_TTS_CHARS = 1200  # 单次 TTS 文本上限，90s 超时下绝大多数幻灯片不会触发切分
+
+def _split_long_text(text: str, max_chars: int = _MAX_TTS_CHARS) -> list[str]:
+    """将长文本按句子边界拆分为适合 TTS 的短片段"""
+    if len(text) <= max_chars:
+        return [text]
+    chunks = []
+    remaining = text
+    while len(remaining) > max_chars:
+        split_at = max_chars
+        for sep in ("。", "！", "？", "；", "\n", "，", "、", " "):
+            pos = remaining.rfind(sep, 0, max_chars)
+            if pos > max_chars // 2:
+                split_at = pos + 1
+                break
+        chunks.append(remaining[:split_at].strip())
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+async def pre_warm_tts(text: str, voice: str = "zh-CN-XiaoxiaoNeural"):
+    """将单段文本的 TTS 生成到全局缓存，课件构建时自动命中"""
+    if not text or len(text) < 5:
+        return
+    _TTS_GLOBAL_CACHE.mkdir(parents=True, exist_ok=True)
+    cache_key = _tts_cache_key(text, voice)
+    output_path = str(_TTS_GLOBAL_CACHE / f"{cache_key}.mp3")
+    if os.path.exists(output_path):
+        async with _tts_lock:
+            global _tts_cache_hits
+            _tts_cache_hits += 1
+        return
+    t0 = _time.perf_counter()
+    result = await _generate_tts(text, voice, output_path)
+    cost = _time.perf_counter() - t0
+    status = "ok" if result else "FAIL"
+    logger.info("[TTS-warm] %s len=%d cost=%.1fs", status, len(text), cost)
+
+
+
 async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: Path, resource_id: int) -> list[dict]:
     """并行生成所有段落的 TTS 音频，复用内容哈希缓存"""
+    total = len(sections)
+    cache_hits = 0
+    _hits_lock = asyncio.Lock()
 
     async def _tts_one(i: int, section: dict) -> dict | None:
+        nonlocal cache_hits
         text = section.get("text", "")
         if not text:
             return None
 
-        cache_key = hashlib.md5(f"{text}_{voice}".encode()).hexdigest()[:12]
+        cache_key = _tts_cache_key(text, voice)
         output_path = str(base_dir / f"{cache_key}.mp3")
         json_path = str(base_dir / f"{cache_key}.json")
         audio_url = f"/static/audio/{resource_id}/{cache_key}.mp3"
+
+        global_cache_mp3 = str(_TTS_GLOBAL_CACHE / f"{cache_key}.mp3")
+        global_cache_json = str(_TTS_GLOBAL_CACHE / f"{cache_key}.json")
+
+        # 优先用全局缓存（PPT 生成阶段预热的），拷到资源目录
+        if not (os.path.exists(output_path) and os.path.exists(json_path)):
+            if os.path.exists(global_cache_mp3) and os.path.exists(global_cache_json):
+                import shutil as _shutil
+                base_dir.mkdir(parents=True, exist_ok=True)
+                _shutil.copy2(global_cache_mp3, output_path)
+                _shutil.copy2(global_cache_json, json_path)
 
         if os.path.exists(output_path) and os.path.exists(json_path):
             try:
                 with open(json_path, "r", encoding="utf-8") as f:
                     word_timestamps = json.load(f)
                 real_dur = _real_duration_from_timestamps(word_timestamps, section["duration_ms"])
+                async with _hits_lock:
+                    cache_hits += 1
                 return {
                     "index": i,
                     "title": section["title"],
@@ -127,21 +302,11 @@ async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: P
             except (json.JSONDecodeError, IOError):
                 pass
 
-        async with _TTS_SEMAPHORE:
-            try:
-                _, word_timestamps = await generate_audio_with_timestamps(text, output_path, voice)
-            except Exception:
-                logger.exception("EdgeTTS 生成失败 section=%d", i)
-                return None
-
-        try:
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(word_timestamps, f, ensure_ascii=False)
-        except IOError:
-            pass
+        word_timestamps = await _generate_tts(text, voice, output_path)
+        if word_timestamps is None:
+            return None
 
         real_dur = _real_duration_from_timestamps(word_timestamps, section["duration_ms"])
-        logger.info("narration resource=%d section=%d dur=%dms words=%d", resource_id, i, real_dur, len(word_timestamps))
         return {
             "index": i,
             "title": section["title"],
@@ -151,17 +316,27 @@ async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: P
             "word_timestamps": word_timestamps,
         }
 
+    logger.info("[Narration] resource=%d sections=%d 开始", resource_id, total)
+    t0 = _time.perf_counter()
     tasks = [_tts_one(i, s) for i, s in enumerate(sections)]
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     results = []
+    failures = 0
     for r in raw_results:
         if isinstance(r, dict) and r is not None:
             results.append(r)
         elif isinstance(r, Exception):
-            logger.exception("TTS 任务异常: %s", r)
+            failures += 1
+            logger.exception("[Narration] 任务异常: %s", r)
+        else:
+            failures += 1
 
     results.sort(key=lambda x: x["index"])
+    cost = _time.perf_counter() - t0
+    generated = total - cache_hits - failures
+    logger.info("[Narration] resource=%d 完成 total=%d 命中=%d 新生成=%d 失败=%d cost=%.1fs",
+                resource_id, total, cache_hits, generated, failures, cost)
     return results
 
 

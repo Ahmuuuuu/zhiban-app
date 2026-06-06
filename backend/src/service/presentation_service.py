@@ -448,16 +448,33 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     if answers:
         doc, mindmap_data, ppt_data = _crop_content_by_answers(doc, mindmap_data, ppt_data, answers)
 
-    record = await Presentation.create(user=user, topic=topic, status="generating")
+    # 构建个性化画像引入（最前章节）
+    portrait_intro = await _build_portrait_intro(topic, user)
 
-    # 保存初始骨架 HTML
+    # 构建骨架章节（立即可看），后台只补音频
+    chapters, audio_tasks = _build_chapter_skeletons(doc, mindmap_data, ppt_data)
+
+    # 画像引入置顶
+    if portrait_intro:
+        chapters.insert(0, portrait_intro)
+        from types import SimpleNamespace as _SN
+        intro_text = portrait_intro["slides"][0].get("intro_text", "")
+        intro_resource = _SN(id=0, content=intro_text, resource_type="document")
+        audio_tasks.insert(0, {"chapter_idx": 0, "resource": intro_resource})
+        for t in audio_tasks[1:]:
+            t["chapter_idx"] += 1
+
+    record = await Presentation.create(user=user, topic=topic, status="ready")  # 骨架立即可看，音频后台补充
+
     PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
-    html = _render_html(topic, [])
+    html = _render_html(topic, chapters)
     filename = f"{_safe_filename(topic)}_{uuid.uuid4().hex[:8]}.html"
     file_path = PRESENTATION_DIR / filename
     file_path.write_text(html, encoding="utf-8")
 
     record.file_url = f"/static/presentations/{filename}"
+    record.chapters_json = json.dumps(chapters, ensure_ascii=False)
+    record.total_duration_ms = sum(c.get("total_duration_ms", 0) for c in chapters)
     await record.save()
 
     # 保存到聊天历史
@@ -472,8 +489,8 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
                 "id": record.id,
                 "topic": topic,
                 "file_url": _versioned_presentation_url(record.file_url),
-                "status": "generating",
-                "_video_hint": "动态课件已生成",
+                "status": "ready",
+                "_video_hint": "动态课件已生成，可立即查看",
             }, ensure_ascii=False)
             await ChatHistory.create(
                 user=user,
@@ -484,15 +501,27 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
         except Exception:
             logger.exception("保存课件到聊天历史失败")
 
-    # 后台两阶段：先出骨架（秒级），再补音频
-    asyncio_create_task(_generate_skeleton_then_audio(record.id, topic, user_id, voice, chapters, doc, mindmap_data, ppt_data))
+    # 立即推送通知，用户不用等音频
+    try:
+        await Notification.create(
+            type="resource",
+            title="课件已生成",
+            content=f"「{topic}」课件已生成，共 {len(chapters)} 章，可立即查看（音频后台补充中）",
+            target_url=f"/presentation?id={record.id}",
+            target_user_id=user_id,
+        )
+    except Exception:
+        logger.exception("课件通知推送失败")
+
+    # 骨架已出，后台补音频
+    asyncio_create_task(_add_audio_to_presentation(record.id, topic, user_id, voice, chapters, audio_tasks))
 
     return {
         "id": record.id,
         "file_url": _versioned_presentation_url(record.file_url),
-        "status": "generating",
+        "status": "ready",  # 骨架已可看，音频后台补充
         "template_version": PRESENTATION_TEMPLATE_VERSION,
-        "message": "课件骨架已生成，音频正在后台补充",
+        "message": "课件已生成，音频在后台补充中",
     }
 
 
@@ -557,82 +586,164 @@ async def delete_presentation(presentation_id: int, user_id: int) -> bool:
 #  两阶段生成：骨架 → 音频
 # ═══════════════════════════════════════════════
 
-async def _generate_skeleton_then_audio(record_id: int, topic: str, user_id: int, voice: str,
-                                         selected_chapters: list[str] | None = None,
-                                         doc=None, mindmap_data=None, ppt_data=None):
-    """阶段1：秒出骨架（不阻塞等音频）→ 阶段2：逐章补音频"""
-    from backend.src.service.narration_service import narrate_resource, narrate_content
+def _build_chapter_skeletons(doc=None, mindmap_data=None, ppt_data=None) -> tuple[list[dict], list[dict]]:
+    """从资源构建无音频的章节骨架，返回 (chapters, audio_tasks)"""
     from backend.src.utils.mindmap import parse_mindmap_text
+
+    chapters: list[dict] = []
+    audio_tasks: list[dict] = []
+
+    if doc:
+        ch = _build_intro_skeleton(doc)
+        chapters.append(ch)
+        audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": doc})
+    if mindmap_data:
+        parsed = parse_mindmap_text(mindmap_data.content or "")
+        svg = _mindmap_to_svg(parsed)
+        ch = _build_mindmap_skeleton(mindmap_data, svg)
+        chapters.append(ch)
+        audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": mindmap_data})
+    if ppt_data:
+        ch = _build_ppt_skeleton(ppt_data)
+        chapters.append(ch)
+        audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": ppt_data})
+
+    return chapters, audio_tasks
+
+
+async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, voice: str,
+                                      chapters: list[dict], audio_tasks: list[dict]):
+    """骨架已出，优先复用旁白 DB 缓存，无缓存时才逐 slide 生成音频"""
+    import hashlib
+    import os as _os
+    import time as _time
+    from backend.src.models.narration_model import Narration
+    from backend.src.service.narration_service import _generate_tts
+    from backend.src.utils.tts_utils import parse_by_type as _parse_by_type, generate_audio_with_timestamps
+
+    _t_start = _time.perf_counter()
 
     record = await Presentation.filter(id=record_id).first()
     if not record:
         return
 
-    # 未传入则自行拉取
-    if doc is None and mindmap_data is None and ppt_data is None:
-        doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
-    chapters = []
-    # 每章：resource 对象 + 是否裁剪过（决定音频来源）
-    audio_tasks: list[dict] = []
+    _flush_lock = asyncio.Lock()
+
+    _TTS_CACHE = Path(__file__).parent.parent.parent / "static" / "audio" / "_cache"
+    _TTS_CACHE.mkdir(parents=True, exist_ok=True)
+    _tts_cache_key = lambda text, v: hashlib.md5(f"{text}_{v}".encode()).hexdigest()[:12]
+
+    async def _tts_one_slide(text: str, resource_id: int, slide_idx: int) -> dict | None:
+        """生成单张 slide 的 TTS 音频，返回 {audio_url, duration_ms, word_timestamps} 或 None"""
+        if not text:
+            return None
+        cache_key = _tts_cache_key(text, voice)
+        base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+        base_dir.mkdir(parents=True, exist_ok=True)
+        output_path = str(base_dir / f"{cache_key}.mp3")
+        json_path = str(base_dir / f"{cache_key}.json")
+        audio_url = f"/static/audio/{resource_id}/{cache_key}.mp3"
+
+        global_mp3 = str(_TTS_CACHE / f"{cache_key}.mp3")
+        global_json = str(_TTS_CACHE / f"{cache_key}.json")
+
+        if not (_os.path.exists(output_path) and _os.path.exists(json_path)):
+            if _os.path.exists(global_mp3) and _os.path.exists(global_json):
+                import shutil as _shutil
+                _shutil.copy2(global_mp3, output_path)
+                _shutil.copy2(global_json, json_path)
+
+        if _os.path.exists(output_path) and _os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    word_timestamps = json.load(f)
+                dur = _real_duration_from_timestamps(word_timestamps, int(len(text) / 4 * 1000))
+                logger.info("[课件] TTS 缓存命中 resource=%d slide=%d text_len=%d", resource_id, slide_idx, len(text))
+                return {"audio_url": audio_url, "duration_ms": dur, "word_timestamps": word_timestamps}
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        t0 = _time.perf_counter()
+        word_timestamps = await _generate_tts(text, voice, output_path)
+        if word_timestamps is None:
+            return None
+
+        t_cost = _time.perf_counter() - t0
+        logger.info("[课件] TTS 生成耗时 resource=%d slide=%d text_len=%d cost=%.1fs", resource_id, slide_idx, len(text), t_cost)
+
+        dur = _real_duration_from_timestamps(word_timestamps, int(len(text) / 4 * 1000))
+        return {"audio_url": audio_url, "duration_ms": dur, "word_timestamps": word_timestamps}
+
+    async def _process_chapter(task: dict):
+        t_ch_start = _time.perf_counter()
+        res = task["resource"]
+        ch_idx = task["chapter_idx"]
+        ch = chapters[ch_idx]
+        resource_id = res.id if hasattr(res, 'id') else 0
+        content = res.content if hasattr(res, 'content') else (res.get('content') if isinstance(res, dict) else '')
+        resource_type = res.resource_type if hasattr(res, 'resource_type') else (res.get('resource_type', 'document') if isinstance(res, dict) else 'document')
+
+        # 优先复用旁白 DB 缓存（_pre_generate_narration 在资源生成时已写入）
+        narration = await Narration.filter(resource_id=resource_id, voice=voice).first()
+        if narration and narration.slides_json:
+            if resource_type == "document":
+                _patch_intro_audio(ch, {"sections": narration.slides_json})
+            elif resource_type == "ppt":
+                _patch_ppt_audio(ch, {"sections": narration.slides_json})
+            elif resource_type == "mindmap":
+                _patch_mindmap_audio(ch, {"sections": narration.slides_json})
+            ch["is_audio_ready"] = True
+            t_flush = _time.perf_counter()
+            partial_segments = _build_audio_segments(chapters)
+            async with _flush_lock:
+                await _flush(record, topic, chapters, "ready", segments=partial_segments)
+            logger.info("[课件] 复用旁白缓存 chapter=%d resource=%d cost=%.1fs flush=%.1fs",
+                        ch_idx, resource_id, _time.perf_counter() - t_ch_start, _time.perf_counter() - t_flush)
+            return
+
+        # 无旁白缓存 → 逐 slide 生成 TTS
+        sections = _parse_by_type(content, resource_type)
+        if not sections:
+            ch["is_audio_ready"] = True
+            async with _flush_lock:
+                await _flush(record, topic, chapters, "ready")
+            return
+
+        slides = ch.get("slides", [])
+        total_slides = len(sections)
+
+        async def _one_slide(i: int, section: dict):
+            text = section.get("text", "")
+            result = await _tts_one_slide(text, resource_id, i)
+            if result and i < len(slides):
+                slides[i]["audio_url"] = result["audio_url"]
+                slides[i]["duration_ms"] = result["duration_ms"]
+                slides[i]["word_timestamps"] = result.get("word_timestamps", [])
+            done_count = sum(1 for s in slides if s.get("audio_url"))
+            ch["total_duration_ms"] = sum(s.get("duration_ms", 0) for s in slides)
+            ch["audio_slide_count"] = done_count
+            logger.info("[课件] slide 音频进度 chapter=%d %d/%d record=%d", ch_idx, done_count, total_slides, record_id)
+
+        await asyncio.gather(*(_one_slide(i, s) for i, s in enumerate(sections)), return_exceptions=True)
+        ch["is_audio_ready"] = True
+        t_flush = _time.perf_counter()
+        partial_segments = _build_audio_segments(chapters)
+        async with _flush_lock:
+            await _flush(record, topic, chapters, "ready", segments=partial_segments)
+        logger.info("[课件] 音频已补 chapter=%d type=%s cost=%.1fs flush=%.1fs record=%d",
+                    ch_idx, ch.get("type"), _time.perf_counter() - t_ch_start, _time.perf_counter() - t_flush, record_id)
 
     try:
-        # ── 阶段1：构建无音频骨架 ──
-        if selected_chapters is None or "intro" in selected_chapters:
-            if doc:
-                ch = _build_intro_skeleton(doc)
-                chapters.append(ch)
-                audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": doc})
-        if selected_chapters is None or "mindmap" in selected_chapters:
-            if mindmap_data:
-                parsed = parse_mindmap_text(mindmap_data.content or "")
-                svg = _mindmap_to_svg(parsed)
-                ch = _build_mindmap_skeleton(mindmap_data, svg)
-                chapters.append(ch)
-                audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": mindmap_data})
-        if selected_chapters is None or "ppt" in selected_chapters:
-            if ppt_data:
-                ch = _build_ppt_skeleton(ppt_data)
-                chapters.append(ch)
-                audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": ppt_data})
+        await asyncio.gather(*(_process_chapter(t) for t in audio_tasks))
 
-        # 骨架立即可看，不阻塞等任何音频（阶段2预生成会提前缓存旁白）
-        await _flush(record, topic, chapters, "generating")
-        logger.info("[课件] 骨架已出 record=%d chapters=%d", record_id, len(chapters))
-
-        # ── 阶段2：并行补音频（和 PPT 生成一样激进）──
-        async def _narrate_one(task: dict):
-            res = task["resource"]
-            try:
-                if isinstance(res, SimpleNamespace):
-                    return task["chapter_idx"], await narrate_content(res.content, res.resource_type, voice, res.id)
-                else:
-                    return task["chapter_idx"], await narrate_resource(res.id, voice)
-            except Exception:
-                logger.exception("[课件] 旁白生成失败 resource=%d", res.id)
-                return None
-
-        results = await asyncio.gather(*(_narrate_one(t) for t in audio_tasks))
-        for result in results:
-            if result is None:
-                continue
-            idx, narration = result
-            ch = chapters[idx]
-            ch_type = ch.get("type")
-            if ch_type == "intro":
-                _patch_intro_audio(ch, narration)
-            elif ch_type == "mindmap":
-                _patch_mindmap_audio(ch, narration)
-            elif ch_type == "ppt":
-                _patch_ppt_audio(ch, narration)
-            ch["is_audio_ready"] = True
-            logger.info("[课件] 音频已补 chapter=%d type=%s record=%d", idx, ch_type, record_id)
-
-        # 合并所有音频段为单个 MP3 + 构建时间线
-        merged = await _build_merged_audio(chapters)
-        await _flush(record, topic, chapters, "ready",
-                     merged_audio_url=merged["merged_url"],
-                     timeline=merged["timeline"])
-        logger.info("[课件] 全部完成 record=%d", record_id)
+        segments = _build_audio_segments(chapters)
+        await _flush(record, topic, chapters, "ready", segments=segments)
+        total_cost = _time.perf_counter() - _t_start
+        audio_ready = sum(1 for c in chapters if c.get("is_audio_ready"))
+        total_segments = len(segments)
+        total_dur = sum(s.get("duration_ms", 0) for s in segments)
+        logger.info("[课件] 完成 record=%d chapters=%d/%d segments=%d duration=%dms cost=%.1fs",
+                    record_id, audio_ready, len(chapters), total_segments, total_dur, total_cost)
         await Notification.create(
             type="resource",
             title="课件制作完成",
@@ -658,11 +769,10 @@ async def _generate_skeleton_then_audio(record_id: int, topic: str, user_id: int
         )
 
 
-async def _build_merged_audio(chapters: list[dict]) -> dict:
-    """将所有章节的音频段拼接为单个 MP3 并构建时间线"""
+def _build_audio_segments(chapters: list[dict]) -> list[dict]:
+    """从章节中提取播放列表（每 slide 独立音频，不合并）"""
     segments: list[dict] = []
     for ci, ch in enumerate(chapters):
-        ch_type = ch.get("type", "")
         if ch.get("slides"):
             for si, slide in enumerate(ch["slides"]):
                 if slide.get("audio_url"):
@@ -681,46 +791,22 @@ async def _build_merged_audio(chapters: list[dict]) -> dict:
                         "chapter": ci,
                         "slide": 0,
                     })
-
-    if not segments:
-        return {"merged_url": "", "timeline": [], "total_duration_ms": 0}
-
-    merged_data = bytearray()
-    timeline: list[dict] = []
-    cursor_ms = 0
-
-    for seg in segments:
-        url = seg["url"].lstrip("/")
-        file_path = PRESENTATION_DIR.parent.parent / url
-        if not file_path.exists():
-            logger.warning("[课件] 合并音频时文件缺失: %s", url)
-            continue
-        with open(file_path, "rb") as f:
-            merged_data.extend(f.read())
-        timeline.append({
-            "start_ms": cursor_ms,
-            "end_ms": cursor_ms + seg["duration_ms"],
-            "chapter": seg["chapter"],
-            "slide": seg["slide"],
-        })
-        cursor_ms += seg["duration_ms"]
-
-    merged_filename = f"merged_{uuid.uuid4().hex[:8]}.mp3"
-    merged_path = PRESENTATION_DIR / merged_filename
-    merged_path.write_bytes(merged_data)
-    logger.info("[课件] 音频合并完成 segments=%d size=%d bytes duration=%d ms",
-                len(segments), len(merged_data), cursor_ms)
-
-    return {
-        "merged_url": f"/static/presentations/{merged_filename}",
-        "timeline": timeline,
-        "total_duration_ms": cursor_ms,
-    }
+    return segments
 
 
-async def _flush(record, topic: str, chapters: list, status: str, merged_audio_url: str = "", timeline: list[dict] | None = None):
+def _real_duration_from_timestamps(word_timestamps: list[dict], fallback_ms: int) -> int:
+    """从词级时间戳计算真实音频时长（最后一个词的 offset + duration），无时间戳时回退到估算值"""
+    if word_timestamps:
+        last = word_timestamps[-1]
+        real = last.get("offset_ms", 0) + last.get("duration_ms", 0)
+        if real > 0:
+            return real
+    return fallback_ms
+
+
+async def _flush(record, topic: str, chapters: list, status: str, segments: list[dict] | None = None):
     """更新 HTML 文件 + DB + SSE 通知"""
-    html = _render_html(topic, chapters, merged_audio_url, timeline)
+    html = _render_html(topic, chapters, segments or [])
     file_path = _presentation_file_path(record.file_url)
     if file_path is None:
         return
@@ -780,6 +866,76 @@ async def _fetch_resources(topic: str, user_id: int) -> tuple:
 # ═══════════════════════════════════════════════
 #  骨架构建 — 只解析内容，不生成音频
 # ═══════════════════════════════════════════════
+
+async def _build_portrait_intro(topic: str, user) -> dict | None:
+    """根据用户画像生成个性化学习引入（第一章节）"""
+    from backend.src.models.portraitmodel import User_picture
+
+    picture = None
+    try:
+        picture = await user.picture
+    except Exception:
+        pass
+    if not picture:
+        picture = await User_picture.filter(id=getattr(user, 'picture_id', None) or 0).first()
+
+    portrait_parts = []
+    if user.major:
+        portrait_parts.append(f"专业：{user.major}")
+    if user.grade:
+        portrait_parts.append(f"年级：{user.grade}")
+    if picture:
+        if picture.learning_goal:
+            portrait_parts.append(f"学习目标：{picture.learning_goal}")
+        if picture.cognition:
+            portrait_parts.append(f"认知风格：{picture.cognition}")
+        if picture.personality_tags:
+            try:
+                tags = json.loads(picture.personality_tags)
+                portrait_parts.append(f"性格：{'、'.join(tags)}")
+            except Exception:
+                pass
+        if picture.profile_summary:
+            portrait_parts.append(f"学习画像：{picture.profile_summary}")
+    portrait_text = "；".join(portrait_parts) if portrait_parts else "暂无画像数据"
+
+    prompt = fill_prompt(
+        load_prompt("presentation/portrait_intro"),
+        topic=topic,
+        portrait_text=portrait_text,
+    )
+
+    try:
+        resp = await llm.ainvoke(prompt)
+        intro_text = resp.content.strip()
+        if intro_text.startswith("```"):
+            intro_text = re.sub(r"^```\w*\n?", "", intro_text)
+            intro_text = re.sub(r"\n?```$", "", intro_text)
+    except Exception:
+        logger.exception("生成画像引入失败")
+        return None
+
+    if not intro_text or len(intro_text) < 10:
+        return None
+
+    content_html = _md_to_html(intro_text)
+    estimated_dur = int(len(intro_text) / 4 * 1000)
+
+    return {
+        "type": "intro",
+        "title": f"学习引入",
+        "slides": [{
+            "title": topic,
+            "intro_text": intro_text,
+            "content_html": content_html,
+            "audio_url": None,
+            "duration_ms": estimated_dur,
+            "word_timestamps": [],
+        }],
+        "total_duration_ms": estimated_dur,
+        "is_audio_ready": False,
+    }
+
 
 def _build_intro_skeleton(record) -> dict:
     content = record.content or ""
@@ -1089,17 +1245,16 @@ def _presentation_file_matches_template(url: str | None) -> bool:
         return False
 
 
-def _render_html(topic: str, sections: list[dict], merged_audio_url: str = "", timeline: list[dict] | None = None) -> str:
+def _render_html(topic: str, sections: list[dict], segments: list[dict] | None = None) -> str:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     sections_json = json.dumps(sections, ensure_ascii=False, indent=2)
     topic_json = json.dumps(topic, ensure_ascii=False)
-    timeline_json = json.dumps(timeline or [], ensure_ascii=False)
+    segments_json = json.dumps(segments or [], ensure_ascii=False)
 
     html = template.replace("{{SECTIONS}}", sections_json)
+    html = html.replace("{{TITLE_JSON}}", topic_json)  # 必须在 {{TITLE}} 之前替换，否则 {{TITLE}} 会匹配到 {{TITLE_JSON}} 的前缀
     html = html.replace("{{TITLE}}", _escape(topic))
-    html = html.replace("{{TITLE_JSON}}", topic_json)
-    html = html.replace("{{MERGED_AUDIO_URL}}", merged_audio_url or "")
-    html = html.replace("{{TIMELINE}}", timeline_json)
+    html = html.replace("{{AUDIO_SEGMENTS}}", segments_json)
     return f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->\n{html}"
 
 
