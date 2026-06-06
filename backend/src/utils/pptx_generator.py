@@ -4,11 +4,12 @@ import math
 import re
 import struct
 import zlib
+from html import unescape
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 from backend.src.utils.slide_schema import parse_markdown_slides
 
@@ -45,6 +46,65 @@ def _hex_to_rgb(value: str) -> tuple[int, int, int]:
 def _rgb(value: str) -> RGBColor:
     r, g, b = _hex_to_rgb(value)
     return RGBColor(r, g, b)
+
+
+def _clean_ppt_text(value, limit: int | None = None) -> str:
+    text = unescape(str(value or ""))
+    text = re.sub(r"<!--[\s\S]*?-->", " ", text)
+    text = re.sub(r"</?[^>\n]+>", " ", text)
+    text = re.sub(r"<[^>\n]*$", " ", text)
+    text = re.sub(r"^\s*(layout|theme|visual)\s*:\s*.*$", " ", text, flags=re.IGNORECASE | re.MULTILINE)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
+    if limit and len(text) > limit:
+        return text[: max(0, limit - 1)].rstrip() + "..."
+    return text
+
+
+def _fit_font_size(text: str, base: int, dense: int, very_dense: int) -> Pt:
+    length = len(_clean_ppt_text(text))
+    if length > 120:
+        return Pt(very_dense)
+    if length > 70:
+        return Pt(dense)
+    return Pt(base)
+
+
+def _prepare_slide_data(slide_data: dict) -> dict:
+    bullets = [
+        _clean_ppt_text(item.get("text") if isinstance(item, dict) else item, 150)
+        for item in (slide_data.get("bullets") or [])
+    ]
+    bullets = [item for item in bullets if item]
+    blocks = slide_data.get("blocks") if isinstance(slide_data.get("blocks"), list) else []
+    if blocks:
+        clean_blocks = []
+        for block in blocks:
+            if isinstance(block, dict):
+                text = _clean_ppt_text(block.get("text") or block.get("content"), 150)
+                if text:
+                    clean_blocks.append({**block, "text": text})
+        blocks = clean_blocks
+        if not bullets:
+            bullets = [block["text"] for block in blocks]
+
+    visual = slide_data.get("visual") if isinstance(slide_data.get("visual"), dict) else {}
+    return {
+        **slide_data,
+        "title": _clean_ppt_text(slide_data.get("title"), 90),
+        "text": _clean_ppt_text(slide_data.get("text") or slide_data.get("content"), 900),
+        "content": _clean_ppt_text(slide_data.get("content") or slide_data.get("text"), 900),
+        "bullets": bullets[:8],
+        "notes": _clean_ppt_text(slide_data.get("notes") or slide_data.get("speaker_notes"), 1000),
+        "speaker_notes": _clean_ppt_text(slide_data.get("speaker_notes") or slide_data.get("notes"), 1000),
+        "blocks": blocks[:8],
+        "visual": {
+            **visual,
+            "query": _clean_ppt_text(visual.get("query"), 90),
+            "caption": _clean_ppt_text(visual.get("caption"), 120),
+        },
+    }
 
 
 def _palette(slide_data: dict) -> list[str]:
@@ -95,7 +155,7 @@ def _parse_slides(markdown: str) -> list[dict]:
     """解析 markdown，返回幻灯片列表 [{title, bullets, notes}]"""
     enriched = parse_markdown_slides(markdown)
     if enriched:
-        return enriched
+        return [_prepare_slide_data(slide) for slide in enriched]
 
     raw_slides = re.split(r'\n---\n', markdown.strip())
 
@@ -133,11 +193,11 @@ def _parse_slides(markdown: str) -> list[dict]:
             title = bullets[0]
             bullets = bullets[1:]
 
-        slides.append({
+        slides.append(_prepare_slide_data({
             "title": title,
             "bullets": bullets,
             "notes": "\n".join(notes),
-        })
+        }))
         first = False
 
     return slides
@@ -212,9 +272,11 @@ def _add_title(slide, title_text, left=Inches(0.8), top=Inches(0.4),
     box = slide.shapes.add_textbox(left, top, width, height)
     tf = box.text_frame
     tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     p = tf.paragraphs[0]
-    p.text = title_text
-    p.font.size = font_size
+    clean_title = _clean_ppt_text(title_text, 90)
+    p.text = clean_title
+    p.font.size = _fit_font_size(clean_title, int(font_size.pt), max(20, int(font_size.pt) - 6), max(17, int(font_size.pt) - 10))
     p.font.bold = True
     p.font.color.rgb = DARK_BLUE
     return box
@@ -276,6 +338,47 @@ def _add_bullets(slide, bullets, left=Inches(0.8), top=Inches(1.8),
     return box
 
 
+def _add_bullets(slide, bullets, left=Inches(0.8), top=Inches(1.8),
+                 width=Inches(11.7), height=Inches(5.2), max_items=10):
+    box = slide.shapes.add_textbox(left, top, width, height)
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    clean_bullets = [_clean_ppt_text(bullet, 150) for bullet in (bullets or [])]
+    clean_bullets = [bullet for bullet in clean_bullets if bullet][:max_items]
+    base_size = 16 if len(clean_bullets) <= 5 else 14
+
+    for index, bullet in enumerate(clean_bullets):
+        p = tf.paragraphs[0] if index == 0 else tf.add_paragraph()
+        run_dot = p.add_run()
+        run_dot.text = "- "
+        run_dot.font.size = Pt(max(10, base_size - 2))
+        run_dot.font.color.rgb = ACCENT_BLUE
+
+        parts = bullet.split("：", 1) if "：" in bullet else bullet.split(":", 1)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+            run_key = p.add_run()
+            run_key.text = parts[0].strip() + ": "
+            run_key.font.size = _fit_font_size(bullet, base_size + 1, base_size, max(11, base_size - 2))
+            run_key.font.bold = True
+            run_key.font.color.rgb = DARK_BLUE
+
+            run_val = p.add_run()
+            run_val.text = parts[1].strip()
+            run_val.font.size = _fit_font_size(bullet, base_size, max(12, base_size - 1), max(10, base_size - 3))
+            run_val.font.color.rgb = DARK_GRAY
+        else:
+            run_val = p.add_run()
+            run_val.text = bullet
+            run_val.font.size = _fit_font_size(bullet, base_size, max(12, base_size - 1), max(10, base_size - 3))
+            run_val.font.color.rgb = DARK_GRAY
+
+        p.space_after = Pt(3 if len(clean_bullets) >= 6 else 5)
+        p.space_before = Pt(2)
+        p.level = 0
+    return box
+
+
 def _build_title_slide(prs, slide_data: dict):
     """标题页 — 深色背景 + 居中主标题 + 副标题"""
     layout = prs.slide_layouts[6]  # 空白布局
@@ -294,9 +397,11 @@ def _build_title_slide(prs, slide_data: dict):
     box = slide.shapes.add_textbox(Inches(1.5), Inches(2.0), Inches(10.3), Inches(2.5))
     tf = box.text_frame
     tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     p = tf.paragraphs[0]
     p.text = slide_data["title"] or "课件"
-    p.font.size = Pt(44)
+    p.text = _clean_ppt_text(p.text, 90)
+    p.font.size = _fit_font_size(p.text, 44, 36, 30)
     p.font.bold = True
     p.font.color.rgb = WHITE
     p.alignment = PP_ALIGN.CENTER
@@ -309,16 +414,19 @@ def _build_title_slide(prs, slide_data: dict):
         sub_box = slide.shapes.add_textbox(Inches(1.5), Inches(4.5), Inches(10.3), Inches(1.5))
         stf = sub_box.text_frame
         stf.word_wrap = True
+        stf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         sp = stf.paragraphs[0]
         sp.text = subtitle_text
-        sp.font.size = Pt(22)
+        sp.text = _clean_ppt_text(sp.text, 130)
+        sp.font.size = _fit_font_size(sp.text, 22, 18, 15)
         sp.font.color.rgb = RGBColor(0xCC, 0xCC, 0xCC)
         sp.alignment = PP_ALIGN.CENTER
 
         for extra in slide_data["bullets"][1:3]:
             sp2 = stf.add_paragraph()
             sp2.text = extra
-            sp2.font.size = Pt(18)
+            sp2.text = _clean_ppt_text(sp2.text, 120)
+            sp2.font.size = _fit_font_size(sp2.text, 18, 15, 12)
             sp2.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
             sp2.alignment = PP_ALIGN.CENTER
 
@@ -353,9 +461,10 @@ def _add_visual_panel(slide, x, y, w, h, caption: str = "", accent=ACCENT_BLUE, 
     box = slide.shapes.add_textbox(x + Inches(0.55), y + h - Inches(0.92), w - Inches(1.1), Inches(0.58))
     tf = box.text_frame
     tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     p = tf.paragraphs[0]
-    p.text = caption[:90]
-    p.font.size = Pt(13)
+    p.text = _clean_ppt_text(caption, 90)
+    p.font.size = _fit_font_size(p.text, 13, 11, 10)
     p.font.color.rgb = MEDIUM_GRAY
     p.alignment = PP_ALIGN.CENTER
 
@@ -415,9 +524,10 @@ def _build_process_slide(prs, slide_data: dict, index: int, total: int):
         box = slide.shapes.add_textbox(x + Inches(0.18), y + Inches(0.48), card_w - Inches(0.36), Inches(2.15))
         tf = box.text_frame
         tf.word_wrap = True
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         p = tf.paragraphs[0]
-        p.text = step
-        p.font.size = Pt(13)
+        p.text = _clean_ppt_text(step, 105)
+        p.font.size = _fit_font_size(p.text, 13, 11, 9)
         p.font.color.rgb = DARK_GRAY
     _add_page_number(slide, index, total)
     _add_notes(slide, slide_data)
@@ -465,9 +575,11 @@ def _build_formula_slide(prs, slide_data: dict, index: int, total: int):
     panel.fill.fore_color.rgb = DARK_BLUE
     panel.line.fill.background()
     box = slide.shapes.add_textbox(Inches(1.55), Inches(2.08), Inches(10.2), Inches(0.95))
+    box.text_frame.word_wrap = True
+    box.text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     p = box.text_frame.paragraphs[0]
-    p.text = formula.replace("$", "")
-    p.font.size = Pt(26)
+    p.text = _clean_ppt_text(formula.replace("$", ""), 140)
+    p.font.size = _fit_font_size(p.text, 26, 21, 17)
     p.font.bold = True
     p.font.color.rgb = WHITE
     p.alignment = PP_ALIGN.CENTER
@@ -500,9 +612,10 @@ def _build_cards_slide(prs, slide_data: dict, index: int, total: int):
         box = slide.shapes.add_textbox(x + Inches(0.3), y + Inches(0.22), Inches(3.15), Inches(1.26))
         tf = box.text_frame
         tf.word_wrap = True
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         p = tf.paragraphs[0]
-        p.text = item
-        p.font.size = Pt(12.5)
+        p.text = _clean_ppt_text(item, 100)
+        p.font.size = _fit_font_size(p.text, 12, 10, 9)
         p.font.color.rgb = DARK_GRAY
     _add_page_number(slide, index, total)
     _add_notes(slide, slide_data)
@@ -524,7 +637,7 @@ def _add_notes(slide, slide_data: dict):
     if slide_data["notes"]:
         try:
             notes_slide = slide.notes_slide
-            notes_slide.notes_text_frame.text = slide_data["notes"]
+            notes_slide.notes_text_frame.text = _clean_ppt_text(slide_data["notes"], 1000)
         except Exception:
             pass
 

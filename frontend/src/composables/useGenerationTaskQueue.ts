@@ -29,6 +29,8 @@ export interface GenerationTask {
 const tasks = reactive<GenerationTask[]>([])
 const pollingTaskIds = new Set<string>()
 const GENERATION_TASKS_STORAGE_KEY = 'zhiban_generation_tasks_v2'
+let hasHydratedTasks = false
+let hydratePromise: Promise<GenerationTask[]> | null = null
 
 const isViewingGenerationPage = () => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return false
@@ -513,22 +515,35 @@ export function useGenerationTaskQueue() {
   }
 
   const hydrateTasks = async () => {
-    const result = await getResourceGenerationTasks()
-    const list = unwrapResponseData(result)
-    const hydrated = (Array.isArray(list) ? list : [])
-      .map(item => upsertBackendTask(item))
-      .filter(Boolean) as GenerationTask[]
+    if (hydratePromise) return hydratePromise
+    if (hasHydratedTasks) {
+      tasks.filter(task => task.status === 'running').forEach(task => pollBackendTask(task))
+      return tasks
+    }
 
-    await Promise.all(hydrated.map(async task => {
-      try {
-        const detail = unwrapResponseData(await getResourceGenerationTask(task.backendTaskId))
-        applyBackendTaskData(task, detail)
-      } catch {
-        // Keep list-level task state if detail lookup is temporarily unavailable.
-      }
-      if (task.status === 'running') pollBackendTask(task)
-    }))
-    return hydrated
+    hydratePromise = (async () => {
+      const result = await getResourceGenerationTasks()
+      const list = unwrapResponseData(result)
+      const hydrated = (Array.isArray(list) ? list : [])
+        .map(item => upsertBackendTask(item))
+        .filter(Boolean) as GenerationTask[]
+
+      await Promise.all(hydrated.map(async task => {
+        try {
+          const detail = unwrapResponseData(await getResourceGenerationTask(task.backendTaskId))
+          applyBackendTaskData(task, detail)
+        } catch {
+          // Keep list-level task state if detail lookup is temporarily unavailable.
+        }
+        if (task.status === 'running') pollBackendTask(task)
+      }))
+      hasHydratedTasks = true
+      return hydrated
+    })().finally(() => {
+      hydratePromise = null
+    })
+
+    return hydratePromise
   }
 
   const getTask = (taskId: string) => tasks.find(task => task.id === taskId || task.backendTaskId === taskId)

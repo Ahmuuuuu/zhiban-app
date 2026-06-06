@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import unescape
 from typing import Any
 
 
@@ -45,7 +46,14 @@ THEME_PALETTES = {
 
 
 def _clean_text(value: Any) -> str:
-    return str(value or "").strip()
+    text = unescape(str(value or ""))
+    text = re.sub(r"<!--[\s\S]*?-->", " ", text)
+    text = re.sub(r"</?[^>\n]+>", " ", text)
+    text = re.sub(r"<[^>\n]*$", " ", text)
+    text = re.sub(r"^\s*(layout|theme|visual)\s*:\s*.*$", " ", text, flags=re.IGNORECASE | re.MULTILINE)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _line_value(line: str, key: str) -> str:
