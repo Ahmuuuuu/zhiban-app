@@ -7,6 +7,12 @@
       </div>
 
       <div class="ppt-toolbar__actions">
+        <button class="nav-btn" type="button" :disabled="activeIndex <= 0" title="上一页" @click="activeIndex -= 1">
+          &#x25C0;
+        </button>
+        <button class="nav-btn" type="button" :disabled="activeIndex >= localSlides.length - 1" title="下一页" @click="activeIndex += 1">
+          &#x25B6;
+        </button>
         <button
           v-if="annotatable"
           class="highlight-toggle"
@@ -174,7 +180,6 @@
     </article>
 
     <div class="ppt-controls">
-      <button type="button" :disabled="activeIndex <= 0" @click="activeIndex -= 1">&#x4E0A;&#x4E00;&#x9875;</button>
       <div class="ppt-dots">
         <button
           v-for="(slide, index) in localSlides"
@@ -185,7 +190,6 @@
           @click="activeIndex = index"
         ></button>
       </div>
-      <button type="button" :disabled="activeIndex >= localSlides.length - 1" @click="activeIndex += 1">&#x4E0B;&#x4E00;&#x9875;</button>
     </div>
 
     <div
@@ -337,6 +341,23 @@ const slidePalette = slide => {
 
 const svgUrl = svg => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
 
+const cleanDisplayText = value => String(value || '')
+  .replace(/<!--[\s\S]*?-->/g, ' ')
+  .replace(/<\/?[^>\n]+>/g, ' ')
+  .replace(/<[^>\n]*$/g, ' ')
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>')
+  .replace(/[ \t]+\n/g, '\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim()
+
+const compactDisplayText = (value, limit = 180) => {
+  const text = cleanDisplayText(value).replace(/\s+/g, ' ').trim()
+  return text.length > limit ? `${text.slice(0, limit - 1)}...` : text
+}
+
 const visualSvgData = slide => {
   const [primary, secondary, accent, paper] = slidePalette(slide)
   const type = slide?.visual?.type || 'diagram'
@@ -367,7 +388,7 @@ const slideVisualStyle = slide => {
   }
 }
 
-const splitTextBlocks = text => String(text || '')
+const splitTextBlocks = text => cleanDisplayText(text)
   .split(/\r?\n|[;；]/)
   .map(line => line.replace(/^[-*•\s]+/, '').trim())
   .filter(Boolean)
@@ -395,7 +416,7 @@ const normalizeBlocks = slide => {
     return blocks
       .map(block => ({
         type: block?.type || 'key_point',
-        text: String(block?.text || block?.content || '').trim()
+        text: cleanDisplayText(block?.text || block?.content)
       }))
       .filter(block => block.text)
   }
@@ -403,7 +424,7 @@ const normalizeBlocks = slide => {
 }
 
 const normalizeSlide = (slide, index) => {
-  const text = slide?.text || slide?.content || ''
+  const text = cleanDisplayText(slide?.text || slide?.content || '')
   const layout = slide?.layout || chooseLayout(slide, index)
   const visual = typeof slide?.visual === 'object' && slide.visual
     ? slide.visual
@@ -412,14 +433,18 @@ const normalizeSlide = (slide, index) => {
   return {
     ...slide,
     index: Number(slide?.index ?? index),
-    title: slide?.title || '',
+    title: compactDisplayText(slide?.title || '', 90),
     text,
-    content: slide?.content || text,
-    notes: slide?.notes || slide?.speaker_notes || '',
-    speaker_notes: slide?.speaker_notes || slide?.notes || '',
+    content: text,
+    notes: cleanDisplayText(slide?.notes || slide?.speaker_notes || ''),
+    speaker_notes: cleanDisplayText(slide?.speaker_notes || slide?.notes || ''),
     layout,
     theme: slide?.theme || chooseTheme(slide, index),
-    visual,
+    visual: {
+      ...visual,
+      query: compactDisplayText(visual?.query || slide?.title || '', 90),
+      caption: compactDisplayText(visual?.caption || '', 120)
+    },
     blocks: normalizeBlocks({ ...slide, text })
   }
 }
@@ -484,7 +509,7 @@ const currentSlideAnnotations = computed(() => normalizedAnnotations.value
   .sort((a, b) => Number(a.position.start) - Number(b.position.start)))
 
 const slideSegments = computed(() => {
-  const text = String(currentSlide.value.text || '')
+  const text = cleanDisplayText(currentSlide.value.text || '')
   const result = []
   let cursor = 0
 
@@ -712,14 +737,18 @@ watch(
 <style scoped>
 .ppt-preview {
   display: grid;
-  gap: 14px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  height: min(100%, calc(100vh - 112px));
+  min-height: 0;
 }
 
 .ppt-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+  min-height: 34px;
 }
 
 .ppt-toolbar__title {
@@ -743,7 +772,7 @@ watch(
 .ppt-toolbar__actions {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -751,18 +780,29 @@ watch(
 .edit-toggle,
 .highlight-toggle,
 .note-toggle,
+.nav-btn,
 .history-btn,
-.export-btn,
-.ppt-controls > button {
-  min-height: 36px;
-  padding: 0 14px;
+.export-btn {
+  min-height: 30px;
+  padding: 0 10px;
   border: 1px solid rgba(201, 220, 233, 0.82);
-  border-radius: 8px;
+  border-radius: 6px;
   background: #fff;
   color: #163f8f;
   font: inherit;
+  font-size: 12px;
   font-weight: 900;
   cursor: pointer;
+}
+
+.nav-btn {
+  width: 32px;
+  padding: 0;
+}
+
+.nav-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .edit-toggle {
@@ -835,16 +875,20 @@ watch(
 
 .ppt-slide {
   position: relative;
-  min-height: clamp(520px, 64vh, 760px);
-  padding: clamp(22px, 2.6vw, 38px);
-  border: 1px solid rgba(22, 63, 143, 0.14);
-  border-radius: 8px;
+  width: min(100%, calc((100vh - 168px) * 16 / 9));
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+  margin: 0 auto;
+  padding: clamp(16px, 2.1vw, 30px);
+  border: 1px solid rgba(22, 63, 143, 0.1);
+  border-radius: 6px;
   background: #ffffff center / cover no-repeat;
-  box-shadow: 0 20px 50px rgba(22, 63, 143, 0.16);
+  box-shadow: 0 10px 28px rgba(22, 63, 143, 0.12);
   display: flex;
   flex-direction: column;
-  gap: clamp(14px, 2vw, 20px);
-  overflow: visible;
+  gap: clamp(8px, 1.4vw, 14px);
+  overflow: hidden;
 }
 
 .ppt-slide > * {
@@ -867,9 +911,9 @@ watch(
 .ppt-slide__kicker {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   color: rgba(95, 143, 195, 0.82);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
   letter-spacing: 0;
 }
@@ -914,13 +958,13 @@ watch(
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   align-content: stretch;
-  gap: clamp(14px, 2vw, 24px);
+  gap: clamp(8px, 1.4vw, 18px);
 }
 
 .ppt-slide h3 {
   margin: 0;
   color: #163f8f;
-  font-size: clamp(26px, 3.8vw, 48px);
+  font-size: clamp(22px, 3.2vw, 40px);
   line-height: 1.16;
   text-align: center;
 }
@@ -930,10 +974,10 @@ watch(
   max-height: 100%;
   margin: 0 auto;
   padding: 2px 8px 2px 0;
-  overflow: auto;
+  overflow: hidden;
   color: rgba(22, 63, 143, 0.82);
-  font-size: clamp(17px, 1.65vw, 23px);
-  line-height: 1.62;
+  font-size: clamp(14px, 1.35vw, 19px);
+  line-height: 1.48;
   white-space: pre-line;
   word-break: break-word;
 }
@@ -956,8 +1000,8 @@ watch(
 }
 
 .visual-panel {
-  min-height: 320px;
-  padding: clamp(16px, 2.2vw, 24px);
+  min-height: 0;
+  padding: clamp(10px, 1.5vw, 16px);
   border: 1px solid rgba(95, 143, 195, 0.18);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
@@ -966,12 +1010,12 @@ watch(
   gap: 14px;
   color: #1f3356;
   text-align: center;
-  box-shadow: 0 20px 44px rgba(22, 63, 143, 0.14);
+  box-shadow: 0 10px 24px rgba(22, 63, 143, 0.1);
 }
 
 .visual-panel__image {
   width: 100%;
-  min-height: 250px;
+  min-height: 150px;
   margin: 0 auto;
   border-radius: 8px;
   background-position: center;
@@ -1001,8 +1045,8 @@ watch(
 
 .process-step {
   position: relative;
-  min-height: 260px;
-  padding: 46px 14px 18px;
+  min-height: 0;
+  padding: 36px 12px 14px;
   border: 1px solid rgba(95, 143, 195, 0.18);
   border-radius: 8px;
   background: #ffffff;
@@ -1038,8 +1082,8 @@ watch(
 }
 
 .comparison-card {
-  min-height: 330px;
-  padding: 22px;
+  min-height: 0;
+  padding: 16px;
   border: 1px solid rgba(95, 143, 195, 0.18);
   border-radius: 8px;
   background: #ffffff;
@@ -1116,8 +1160,8 @@ watch(
 }
 
 .content-card-grid article {
-  min-height: 145px;
-  padding: 16px;
+  min-height: 0;
+  padding: 12px;
   border: 1px solid rgba(95, 143, 195, 0.16);
   border-radius: 8px;
   background: #ffffff;
@@ -1146,13 +1190,13 @@ watch(
 }
 
 .ppt-slide.is-dense h3 {
-  font-size: clamp(23px, 3vw, 38px);
+  font-size: clamp(20px, 2.6vw, 34px);
 }
 
 .ppt-slide.is-dense .ppt-slide__content {
   width: min(94%, 1040px);
-  font-size: clamp(15px, 1.35vw, 19px);
-  line-height: 1.58;
+  font-size: clamp(13px, 1.15vw, 17px);
+  line-height: 1.45;
 }
 
 .ppt-slide.is-very-dense h3 {
@@ -1161,8 +1205,8 @@ watch(
 
 .ppt-slide.is-very-dense .ppt-slide__content {
   width: min(96%, 1100px);
-  font-size: clamp(14px, 1.15vw, 17px);
-  line-height: 1.52;
+  font-size: clamp(12px, 1vw, 15px);
+  line-height: 1.38;
 }
 
 .ppt-slide__content span,
@@ -1333,8 +1377,8 @@ watch(
 
 .ppt-slide__notes {
   flex: 0 0 auto;
-  max-height: min(150px, 24vh);
-  padding: 10px 12px;
+  max-height: 58px;
+  padding: 6px 8px;
   border-radius: 8px;
   background: rgba(201, 220, 233, 0.24);
   color: rgba(22, 63, 143, 0.72);
@@ -1348,8 +1392,13 @@ watch(
 }
 
 .ppt-slide__notes p {
-  margin: 5px 0 0;
-  line-height: 1.65;
+  margin: 2px 0 0;
+  line-height: 1.35;
+  font-size: 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .ppt-slide__notes textarea {
@@ -1361,15 +1410,11 @@ watch(
 }
 
 .ppt-controls {
-  display: flex;
+  display: grid;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.ppt-controls > button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+  justify-content: center;
+  gap: 6px;
+  min-height: 14px;
 }
 
 .ppt-dots {
@@ -1395,8 +1440,14 @@ watch(
 }
 
 @media (max-width: 860px) {
+  .ppt-preview {
+    height: auto;
+  }
+
   .ppt-slide {
-    min-height: 560px;
+    width: 100%;
+    aspect-ratio: auto;
+    min-height: 460px;
   }
 
   .layout-grid--visual,

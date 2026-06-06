@@ -240,10 +240,13 @@
             </button>
           </div>
 
-          <div
-            class="resource-fullscreen__content"
-            :class="{ 'resource-fullscreen__content--media': isPresentationResource(selectedResource) || isVideoResource(selectedResource) }"
-          >
+            <div
+              class="resource-fullscreen__content"
+              :class="{
+                'resource-fullscreen__content--media': isPresentationResource(selectedResource) || isVideoResource(selectedResource),
+                'resource-fullscreen__content--ppt': isPptResource(selectedResource)
+              }"
+            >
             <template v-if="selectedResource.type === 'image' && selectedResource.previewUrl">
               <img
                 class="preview-image"
@@ -307,7 +310,7 @@
                   @error="handleImageError"
                 />
               </div>
-              <div class="file-placeholder-block">
+              <div v-else class="file-placeholder-block">
                 <Presentation v-if="isPptResource(selectedResource)" :size="48" />
                 <GitBranch v-else :size="48" />
                 <p>{{ selectedResource.title || (isPptResource(selectedResource) ? 'PPT 文件' : '思维导图') }}</p>
@@ -1339,6 +1342,11 @@ onBeforeUnmount(() => {
   border-radius: 24px;
   background: rgba(237, 249, 252, 0.48);
   overflow: auto;
+}
+
+.resource-fullscreen__content--ppt {
+  overflow: hidden;
+  padding: 10px;
 }
 
 .resource-fullscreen__content--media {

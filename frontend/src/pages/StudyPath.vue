@@ -435,7 +435,7 @@
             </div>
           </header>
 
-          <div class="resource-preview-body">
+          <div class="resource-preview-body" :class="{ 'resource-preview-body--ppt': isPptResource(previewResource) || isHtmlResource(previewResource) }">
             <div v-if="previewLoading" class="resources-loading">
               正在加载预览...
             </div>
@@ -3625,6 +3625,11 @@ onBeforeUnmount(() => {
   flex: 1;
   padding: clamp(14px, 1.8vw, 24px);
   overflow: auto;
+}
+
+.resource-preview-body--ppt {
+  overflow: hidden;
+  padding: 10px;
 }
 
 .resource-preview-body img {
