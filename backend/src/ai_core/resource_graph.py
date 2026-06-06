@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 PROMPT_MAP = {
     "document": "resource/document",
     "ppt": "resource/ppt",
+    "ppt_apply": "resource/ppt_apply",
     "mindmap": "resource/mindmap",
     "exercise": "resource/exam",
     "case": "resource/document",
@@ -169,7 +170,7 @@ async def generate_ppt_parallel(
     sections: list[str] | None = None,
     stream_writer=None,
 ) -> str:
-    """按章节并行生成 PPT：大纲（固定10章节） → 10 条线并行（每条 2 页），固定 20 页"""
+    """按章节并行生成 PPT：大纲（固定10章节） → 10 条线并行（每条 2 页），共 20 页 + 2 页画像应用场景 = 22 页"""
     # 立即通知前端，避免长时间无反馈
     if stream_writer:
         try:
@@ -184,6 +185,11 @@ async def generate_ppt_parallel(
             except Exception:
                 stream_writer = None
         sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance)
+
+    # 追加画像应用场景章节（如果画像数据可用）
+    has_portrait = portrait and portrait != "暂无画像数据"
+    if has_portrait:
+        sections = list(sections) + ["应用场景与个性化实践"]
 
     # 构建课程全景描述，让每个章节知道自己在哪里
     outline_lines = [f"第{i+1}章「{s}」" for i, s in enumerate(sections)]
@@ -232,14 +238,38 @@ async def generate_ppt_parallel(
         )
         prev_section = sections[idx - 1] if idx > 0 else "（无，这是第一章）"
         next_section = sections[idx + 1] if idx < len(sections) - 1 else "（无，这是最后一章）"
-        context = (
-            f"\n\n【课程全景 — 共 {len(sections)} 章 20 页】\n{course_overview}"
-            f"\n\n【你的任务】只负责第 {idx + 1} 章「{section_title}」的恰好 2 页幻灯片。"
-            f"\n- 前一章：{prev_section}（你的内容需自然承接）"
-            f"\n- 后一章：{next_section}（你的内容需为后面做铺垫）"
-            f"\n- 严禁重复其他章节的内容，每章内容独立且有明确边界"
-        )
-        prompt_with_context = base_prompt + context
+        is_portrait_section = has_portrait and idx == len(sections) - 1
+
+        if is_portrait_section:
+            # 画像应用场景：结合学科与用户画像，展示实际应用
+            base_prompt = build_resource_prompt(
+                "ppt_apply", topic,
+                portrait=portrait, kb=kb, guidance=guidance,
+                feedback=feedback, user_notes=user_notes,
+                custom_prompts=custom_prompts,
+                section=section_title,
+            )
+            context = (
+                f"\n\n【你的任务】为「{topic}」撰写 2 页应用场景幻灯片，标题为「应用场景与个性化实践」。"
+                f"\n\n## 核心要求"
+                f"\n你必须将学科知识与用户画像深度融合，让用户感受到'这门课是为我定制的'："
+                f"\n1. 第1页：从画像中的学习目标/兴趣出发，举 3 个具体的生活或职业场景，展示本课程知识如何解决实际问题"
+                f"\n2. 第2页：画像中的薄弱知识点如何通过本课程内容得到加强，规划一个简短的学习路径或实操建议"
+                f"\n3. 场景举例必须用到画像中的具体信息（年级、目标、兴趣、性格等），不要泛泛而谈"
+                f"\n4. 语气亲切，让学生觉得'这个老师了解我'"
+                f"\n\n## 画像数据\n{portrait}"
+                f"\n\n## 课程已覆盖的知识点（前面各章）\n{course_overview}"
+            )
+            prompt_with_context = base_prompt + context
+        else:
+            context = (
+                f"\n\n【课程全景 — 共 {len(sections)} 章 20 页】\n{course_overview}"
+                f"\n\n【你的任务】只负责第 {idx + 1} 章「{section_title}」的恰好 2 页幻灯片。"
+                f"\n- 前一章：{prev_section}（你的内容需自然承接）"
+                f"\n- 后一章：{next_section}（你的内容需为后面做铺垫）"
+                f"\n- 严禁重复其他章节的内容，每章内容独立且有明确边界"
+            )
+            prompt_with_context = base_prompt + context
 
         t0 = time.perf_counter()
         for attempt in range(2):
