@@ -5,6 +5,32 @@ const request = axios.create({
   timeout: 300000
 })
 
+let authExpiredNotified = false
+
+const clearAuthStorage = () => {
+  localStorage.removeItem('token')
+  localStorage.removeItem('user_id')
+  localStorage.removeItem('username')
+  localStorage.removeItem('role')
+  localStorage.removeItem('identity')
+  localStorage.removeItem('avatar')
+}
+
+const notifyAuthExpired = () => {
+  if (authExpiredNotified) return
+  authExpiredNotified = true
+
+  clearAuthStorage()
+
+  const message = '登录已过期，请重新登录。'
+  window.dispatchEvent(new CustomEvent('zhiban-auth-expired', { detail: { message } }))
+  window.alert(message)
+
+  window.setTimeout(() => {
+    authExpiredNotified = false
+  }, 2000)
+}
+
 request.interceptors.request.use(
   config => {
     const token = localStorage.getItem('token')
@@ -27,7 +53,7 @@ request.interceptors.response.use(
   },
   error => {
     if (error.response && error.response.status === 401) {
-      localStorage.removeItem('token')
+      notifyAuthExpired()
       console.error('登录已过期，请重新登录')
     }
 
