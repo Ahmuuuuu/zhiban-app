@@ -436,6 +436,11 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
           continue
         }
 
+        if (eventData.type === 'stream_progress') {
+          onProgress?.(eventData)
+          continue
+        }
+
         if (isFileEvent && !eventData.done) {
           onFile?.(eventData)
           continue

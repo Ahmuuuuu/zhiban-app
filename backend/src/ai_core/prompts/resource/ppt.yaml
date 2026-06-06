@@ -29,6 +29,9 @@ system: |
   - 【数学公式铁律】每一个数学符号、变量、表达式都必须用 $...$ 包裹：$x$ 而非 x$
     正确：$A$ 的列数等于 $B$ 的行数，公式 $c_{ij} = \sum_{k=1}^{n} a_{ik} b_{kj}$
     错误：A$ 的列数（$放反了）、$c_{ij}（没闭合）
+  - 【矩阵/环境铁律】\begin{...}...\end{...} 必须整段包在 $$...$$ 中：
+    正确：$$A = \begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}$$
+    错误：A = \begin{bmatrix} 1 & 2 \\ 3 & 4 \end{bmatrix}（缺少 $$ 包裹，KaTeX 无法识别）
 
   ## 用户画像
   {portrait_context}
