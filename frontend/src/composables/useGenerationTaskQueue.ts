@@ -251,6 +251,17 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.updatedAt = Date.now()
       persistTasks()
     },
+    onStreamStart: (eventData: any) => {
+      ;(task as any)._pptStream = { slides: [] }
+      task.updatedAt = Date.now()
+    },
+    onStreamSlide: (eventData: any) => {
+      const stream = (task as any)._pptStream
+      if (stream && eventData?.content) {
+        stream.slides.push(eventData.content)
+        task.updatedAt = Date.now()
+      }
+    },
     onDone: eventData => {
       task.doneEvent = eventData || null
       task.chatGroupId = (eventData as any)?.chat_group_id || (eventData as any)?.chatGroupId || task.chatGroupId
@@ -436,7 +447,7 @@ export function useGenerationTaskQueue() {
     tasks.unshift(task)
     persistTasks()
 
-    if (tool.generateMode === 'image') {
+    if (tool.generateMode === 'image' || (tool.generateMode === 'resource' && tool.resourceTypes?.length === 1 && tool.resourceTypes[0] === 'ppt')) {
       runLegacyFrontendTask(task)
       return task
     }

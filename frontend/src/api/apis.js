@@ -157,7 +157,7 @@ const parseStreamEvent = (eventText) => {
     .filter(Boolean)
 }
 
-export async function streamChatMessage(data, { onChunk, onDone, onError, onFile } = {}) {
+export async function streamChatMessage(data, { onChunk, onDone, onError, onFile, onStreamStart, onStreamSlide } = {}) {
   const isExistingConversation = Boolean(data.chat_group_id)
   const url = `${API_BASE_URL}${isExistingConversation ? 'ai_chat/stream_msg_into_history' : 'ai_chat/stream_new_history'}`
   const token = localStorage.getItem('token')
@@ -189,9 +189,10 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
   while (true) {
     const { done, value } = await reader.read()
 
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
+    // 处理最后一块数据（done 为 true 时可能仍携带数据）
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done })
+    }
     const events = buffer.split(/\r?\n\r?\n/)
     buffer = events.pop() || ''
 
@@ -230,6 +231,16 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
           eventData.preview_url ||
           eventData.previewUrl
 
+        if (eventData.type === 'stream_start') {
+          await onStreamStart?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_slide') {
+          await onStreamSlide?.(eventData)
+          continue
+        }
+
         if (isFileEvent) {
           await onFile?.(eventData)
           continue
@@ -244,6 +255,7 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
         }
       }
     }
+    if (done) break
   }
 }
 
@@ -340,7 +352,7 @@ export function getStudyCollections() {
 
 // ── 学习资源生成（流式）──
 
-export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile } = {}) {
+export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
   const token = localStorage.getItem('token')
 
@@ -367,9 +379,11 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
 
   while (true) {
     const { done, value } = await reader.read()
-    if (done) break
 
-    buffer += decoder.decode(value, { stream: true })
+    // 处理最后一块数据（done 为 true 时可能仍携带数据）
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done })
+    }
     const events = buffer.split(/\r?\n\r?\n/)
     buffer = events.pop() || ''
 
@@ -407,6 +421,16 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
           eventData.preview_url ||
           eventData.previewUrl
 
+        if (eventData.type === 'stream_start') {
+          onStreamStart?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_slide') {
+          onStreamSlide?.(eventData)
+          continue
+        }
+
         if (isFileEvent && !eventData.done) {
           onFile?.(eventData)
           continue
@@ -422,6 +446,7 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
         }
       }
     }
+    if (done) break
   }
 }
 

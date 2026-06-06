@@ -84,8 +84,9 @@
               :data-annotation-id="segment.annotation.id"
               :style="{ background: annotationBackground(segment.annotation) }"
               @click.stop="openAnnotation(segment.annotation)"
-            >{{ segment.text }}</mark>
-            <span v-else>{{ segment.text }}</span>
+              v-html="renderMath(segment.text)"
+            ></mark>
+            <span v-else v-html="renderMath(segment.text)"></span>
           </template>
         </div>
       </div>
@@ -153,6 +154,8 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
+import { renderMath } from '../utils/renderMath'
+import 'katex/dist/katex.min.css'
 
 const props = defineProps({
   slides: {
@@ -482,7 +485,7 @@ watch(
     undoStack.value = []
     redoStack.value = []
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
 watch(

@@ -357,7 +357,7 @@ class ResourceService:
 
     @staticmethod
     async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = ""):
-        """节点级流式 — astream 逐节点产出状态，只跑一次 graph，同时推送文件事件"""
+        """astream(stream_mode=["values", "custom"]) — PPT 通过 custom 事件逐页推送，其他类型通过 values 事件推送"""
 
         def _make_file_event(for_topic: str, rt: str, content: str) -> str:
             ext = _FILE_EXT_MAP.get(rt, "md")
@@ -401,121 +401,45 @@ class ResourceService:
 
         user = await User.filter(id=user_id).first()
 
-        # PPT 单开流式通道：按幻灯片逐页推送，前端立刻弹出预览
-        stream_ppt = "ppt" in resource_types
-        graph_types = [t for t in resource_types if t != "ppt"] if stream_ppt else list(resource_types)
-
-        ppt_queue: asyncio.Queue = asyncio.Queue()
-        ppt_full = ""
-        ppt_saved: dict | None = None
-
-        async def _stream_ppt():
-            nonlocal ppt_full, ppt_saved
-            try:
-                from backend.src.ai_core.resource_graph import build_resource_prompt
-                from backend.src.ai_core.llm_config import llm
-                ppt_prompt = build_resource_prompt(
-                    "ppt", topic,
-                    portrait=initial_state.get("portrait_context", ""),
-                    kb=initial_state.get("kb_context", ""),
-                    guidance=initial_state.get("learning_guidance", ""),
-                    feedback=initial_state.get("review_feedback", ""),
-                )
-                await ppt_queue.put({"type": "stream_start"})
-                buffer = ""
-                async for chunk in llm.astream(ppt_prompt):
-                    ppt_full += chunk.content
-                    buffer += chunk.content
-                    while "\n---\n" in buffer:
-                        idx = buffer.index("\n---\n")
-                        slide = buffer[:idx].strip()
-                        buffer = buffer[idx + 5:]
-                        if slide:
-                            await ppt_queue.put({"type": "slide", "content": slide})
-                if buffer.strip():
-                    await ppt_queue.put({"type": "slide", "content": buffer.strip()})
-            except Exception as e:
-                logger.exception("PPT 流式生成失败")
-                await ppt_queue.put({"type": "error", "error": str(e)})
-            finally:
-                await ppt_queue.put({"type": "done"})
-
-        if stream_ppt:
-            initial_state = await _make_state(topic, user_id, graph_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, skip_review=skip_review, user_notes=user_notes)
-            topic = initial_state["topic"]
-            ppt_task = asyncio.create_task(_stream_ppt())
-        else:
-            initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, skip_review=skip_review, user_notes=user_notes)
-            topic = initial_state["topic"]
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, skip_review=skip_review, user_notes=user_notes)
+        topic = initial_state["topic"]
 
         final_passed = False
         final_retry = 0
         yielded_types: set[str] = set()
         saved_resources: list[dict] = []
 
-        async for chunk in resource_graph.astream(initial_state, stream_mode="values"):
-            # 排空 PPT 流式事件（逐页推送）
-            while stream_ppt and not ppt_queue.empty():
-                ev = ppt_queue.get_nowait()
-                if ev["type"] == "stream_start":
-                    yield f"data: {json.dumps({'type': 'stream_start', 'file_type': 'ppt'}, ensure_ascii=False)}\n\n"
-                elif ev["type"] == "slide":
-                    yield f"data: {json.dumps({'type': 'stream_slide', 'file_type': 'ppt', 'content': ev['content']}, ensure_ascii=False)}\n\n"
-                elif ev["type"] == "error":
-                    yield f"data: {json.dumps({'type': 'error', 'detail': ev['error']}, ensure_ascii=False)}\n\n"
+        async for mode, chunk in resource_graph.astream(initial_state, stream_mode=["values", "custom"]):
+            if mode == "custom":
+                # PPT 逐页流式事件（stream_start / stream_slide），直接转发
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
-            resources = chunk.get("generated_resources", {})
-            if resources:
-                for rt, content in resources.items():
-                    if rt not in yielded_types and user:
-                        record = await GeneratedResource.create(
-                            topic=topic, resource_type=rt, content=content,
-                            review_passed=False, retry_count=0,
-                            file_url=chunk.get("file_urls", {}).get(rt),
-                            user=user,
-                        )
-                        cover_url = build_cover_url(rt, record.file_url, record.id)
-                        if cover_url:
-                            await GeneratedResource.filter(id=record.id).update(cover_url=cover_url)
-                        saved_resources.append({
-                            "resource_id": record.id, "topic": topic,
-                            "resource_type": rt, "content": content,
-                            "review_passed": False, "retry_count": 0,
-                        })
-                        logger.info("[SSE] 即时存库 %s id=%s topic=%s", rt, record.id, topic)
-                        yielded_types.add(rt)
-                        yield _make_file_event(topic, rt, content)
-            final_passed = chunk.get("review_passed", False)
-            final_retry = chunk.get("retry_count", 0)
+            elif mode == "values":
+                resources = chunk.get("generated_resources", {})
+                if resources:
+                    for rt, content in resources.items():
+                        if rt not in yielded_types and user:
+                            record = await GeneratedResource.create(
+                                topic=topic, resource_type=rt, content=content,
+                                review_passed=False, retry_count=0,
+                                file_url=chunk.get("file_urls", {}).get(rt),
+                                user=user,
+                            )
+                            cover_url = build_cover_url(rt, record.file_url, record.id)
+                            if cover_url:
+                                await GeneratedResource.filter(id=record.id).update(cover_url=cover_url)
+                            saved_resources.append({
+                                "resource_id": record.id, "topic": topic,
+                                "resource_type": rt, "content": content,
+                                "review_passed": False, "retry_count": 0,
+                            })
+                            logger.info("[SSE] 即时存库 %s id=%s topic=%s", rt, record.id, topic)
+                            yielded_types.add(rt)
+                            yield _make_file_event(topic, rt, content)
+                final_passed = chunk.get("review_passed", False)
+                final_retry = chunk.get("retry_count", 0)
 
-            yield f"data: {json.dumps({'resources': list(resources.keys()), 'review_passed': final_passed}, ensure_ascii=False)}\n\n"
-
-        # 等待 PPT 流式完成并排空剩余事件
-        if stream_ppt:
-            await ppt_task
-            while not ppt_queue.empty():
-                ev = ppt_queue.get_nowait()
-                if ev["type"] == "stream_start":
-                    yield f"data: {json.dumps({'type': 'stream_start', 'file_type': 'ppt'}, ensure_ascii=False)}\n\n"
-                elif ev["type"] == "slide":
-                    yield f"data: {json.dumps({'type': 'stream_slide', 'file_type': 'ppt', 'content': ev['content']}, ensure_ascii=False)}\n\n"
-            # 存库 PPT
-            if ppt_full and user:
-                ppt_record = await GeneratedResource.create(
-                    topic=topic, resource_type="ppt", content=ppt_full,
-                    review_passed=final_passed, retry_count=final_retry,
-                    user=user,
-                )
-                cover_url = build_cover_url("ppt", None, ppt_record.id)
-                if cover_url:
-                    await GeneratedResource.filter(id=ppt_record.id).update(cover_url=cover_url)
-                ppt_saved = {
-                    "resource_id": ppt_record.id, "topic": topic,
-                    "resource_type": "ppt", "content": ppt_full,
-                    "review_passed": final_passed, "retry_count": final_retry,
-                }
-                saved_resources.append(ppt_saved)
-                yield _make_file_event(topic, "ppt", ppt_full)
+                yield f"data: {json.dumps({'resources': list(resources.keys()), 'review_passed': final_passed}, ensure_ascii=False)}\n\n"
 
         # 更新审核状态
         for r in saved_resources:
