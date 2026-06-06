@@ -13,13 +13,22 @@ const render = (formula, displayMode) => {
 }
 
 /**
- * 修复 LLM 常见的 $ 错位问题：单字母变量前面漏了 $
- * "A$ 的列数" → "$A$ 的列数"
- * "矩阵 C$ 的第" → "矩阵 $C$ 的第"
+ * 修复 LLM 常见公式问题：
+ * 1. 裸 \begin{...}...\end{...} 没包 $ → 补 $$...$$
+ * 2. $ 放反：A$ → $A$
  */
-function fixDollarSigns(text) {
-  // 修复：字母/数字后紧跟 $，但前面不是 $（即 $ 放反了）
-  return text.replace(/(^|[^$\\{}^_])([A-Za-z0-9])\$(?=[\s，。、；：,.;:()（）、一-鿿])/g, '$1$$$2$$')
+function fixBrokenLatex(text) {
+  // 1. 裸 \begin{env}...\end{env} 补 $$ 包裹
+  text = text.replace(
+    /(?<!\$)(\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\2\})(?!\$)/g,
+    '$$$1$$',
+  )
+  // 2. $ 放反：数学表达式后紧跟 $ 但前面无 $ 配对 → 补开头的 $
+  //    匹配多字符变量（AB、m×n）而非仅单个字母
+  return text.replace(
+    /(^|[^$\\{}^_])([A-Za-z0-9×÷±≤≥≠≈·∑∏∫√∞∂∇+\-*=<>]+)\$(?=[\s，。、；：,.;:()（）、一-鿿])/g,
+    '$1$$$2$$',
+  )
 }
 
 /**
@@ -29,12 +38,12 @@ function fixDollarSigns(text) {
 export function renderMath(text) {
   if (!text || typeof text !== 'string') return text
 
-  const fixed = fixDollarSigns(text)
+  const fixed = fixBrokenLatex(text)
 
   // 按顺序处理：块级优先，避免 $ 干扰 $$
   return fixed
     .replace(/\$\$([\s\S]*?)\$\$/g, (_, f) => render(f, true))
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, f) => render(f, true))
-    .replace(/\$([^\s\$][\s\S]*?[^\s\\])\$/g, (_, f) => render(f, false))
+    .replace(/\$([^\s\$][^\$]*)\$/g, (_, f) => render(f, false))
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, f) => render(f, false))
 }

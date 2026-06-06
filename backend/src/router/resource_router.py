@@ -94,6 +94,11 @@ async def generate_resource_stream(
     return StreamingResponse(
         ResourceService.generate_stream(data.topic, user_id, data.resource_types, data.chat_group_id),
         media_type = "text/event-stream",
+        headers = {
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 

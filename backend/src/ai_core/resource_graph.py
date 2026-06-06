@@ -170,14 +170,59 @@ async def generate_ppt_parallel(
     stream_writer=None,
 ) -> str:
     """按章节并行生成 PPT：大纲（固定10章节） → 10 条线并行（每条 2 页），固定 20 页"""
+    # 立即通知前端，避免长时间无反馈
+    if stream_writer:
+        try:
+            stream_writer({"type": "stream_start", "file_type": "ppt"})
+        except Exception:
+            stream_writer = None
+
     if sections is None:
+        if stream_writer:
+            try:
+                stream_writer({"type": "stream_progress", "file_type": "ppt", "message": "正在规划课程大纲..."})
+            except Exception:
+                stream_writer = None
         sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance)
 
     # 构建课程全景描述，让每个章节知道自己在哪里
     outline_lines = [f"第{i+1}章「{s}」" for i, s in enumerate(sections)]
     course_overview = "\n".join(outline_lines)
 
+    def _quick_check_ppt(content: str) -> bool:
+        """启发式快检：内容明显合格则跳过 LLM 审核，节省 token"""
+        slides = content.split("\n---\n")
+        for slide in slides:
+            slide = slide.strip()
+            if not slide or not slide.startswith("##"):
+                continue
+            if len(slide) < 200:
+                return False
+            if "（上）" in slide or "（下）" in slide:
+                return False
+            bullets = [l for l in slide.split("\n") if l.strip().startswith("-")]
+            if len(bullets) < 4:
+                return False
+            # $ 符号是否成对
+            dollars = slide.count("$")
+            if dollars % 2 != 0:
+                return False
+        return True
+
     async def gen_section(idx: int, section_title: str) -> tuple[int, str]:
+        # 推送开始生成通知
+        if stream_writer:
+            try:
+                stream_writer({
+                    "type": "stream_progress",
+                    "file_type": "ppt",
+                    "message": f"正在生成第 {idx + 1}/{total} 章「{section_title}」...",
+                    "current": idx + 1,
+                    "total": total,
+                })
+            except Exception:
+                pass
+
         base_prompt = build_resource_prompt(
             "ppt", topic,
             portrait=portrait, kb=kb, guidance=guidance,
@@ -207,7 +252,14 @@ async def generate_ppt_parallel(
                 logger.exception("[PPT-Section] idx=%d section=%s LLM 失败 耗时=%.2fs", idx, section_title, elapsed)
                 return idx, f"## {section_title}\n- 生成失败"
 
-            # Review 审核
+            # 快检通过则跳过 LLM 审核
+            if _quick_check_ppt(content):
+                logger.info("[PPT-Section] idx=%d section=%s 快检通过，跳过审核 耗时=%.2fs",
+                            idx, section_title, elapsed)
+                _push_section(idx, content)
+                return idx, content
+
+            # LLM 审核
             try:
                 review_prompt = fill_prompt(
                     load_prompt("agent/reviewer_ppt"),
@@ -223,8 +275,9 @@ async def generate_ppt_parallel(
                 review_feedback = result.get("feedback", "")
 
                 if passed:
-                    logger.info("[PPT-Section] idx=%d section=%s 生成+审核通过 score=%d 耗时=%.2fs attempt=%d",
+                    logger.info("[PPT-Section] idx=%d section=%s 审核通过 score=%d 耗时=%.2fs attempt=%d",
                                 idx, section_title, score, elapsed, attempt + 1)
+                    _push_section(idx, content)
                     return idx, content
 
                 logger.info("[PPT-Section] idx=%d section=%s 审核未通过 score=%d attempt=%d feedback=%s",
@@ -232,41 +285,58 @@ async def generate_ppt_parallel(
                 prompt_with_context = base_prompt + context + f"\n\n【审核未通过，必须修改】\n{review_feedback}\n请根据以上反馈重新生成。"
             except Exception:
                 logger.exception("[PPT-Section] idx=%d section=%s 审核异常，跳过", idx, section_title)
+                _push_section(idx, content)
                 return idx, content
 
         # 两次尝试均未通过，返回最后一次结果
         logger.info("[PPT-Section] idx=%d section=%s 两次审核均未通过，使用最后一次结果 耗时=%.2fs",
                     idx, section_title, time.perf_counter() - t0)
+        _push_section(idx, content)
         return idx, content
+
+    completed_count = 0
+    total = len(sections)
+
+    def _push_section(idx: int, content: str):
+        """将章节的幻灯片逐页推送给前端"""
+        nonlocal completed_count
+        if not stream_writer:
+            return
+        try:
+            for slide in content.split("\n---\n"):
+                slide = slide.strip()
+                if slide:
+                    if slide.startswith("# ") and not slide.startswith("## "):
+                        slide = slide.replace("# ", "## ", 1)
+                    stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide})
+            completed_count += 1
+            stream_writer({
+                "type": "stream_progress",
+                "file_type": "ppt",
+                "message": f"已生成 {completed_count}/{total} 章节",
+                "current": completed_count,
+                "total": total,
+            })
+        except Exception:
+            logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
 
     tasks = [gen_section(i, s) for i, s in enumerate(sections)]
     results = await asyncio.gather(*tasks)
     results.sort(key=lambda x: x[0])
 
-    # 组装：各章节幻灯片（固定 10 章节 20 页），第一页直接进入正题
+    # 组装全部幻灯片
     parts: list[str] = []
     for _, content in results:
-        slides = content.split("\n---\n")
-        for slide in slides:
+        for slide in content.split("\n---\n"):
             slide = slide.strip()
             if not slide:
                 continue
-            # 跳过章节内可能出现的重复一级标题
             if slide.startswith("# ") and not slide.startswith("## "):
                 slide = slide.replace("# ", "## ", 1)
             parts.append(slide)
 
     combined = "\n---\n".join(parts)
     logger.info("[PPT-Parallel] 合并完成 章节数=%d 总页数≈%d", len(sections), len(parts))
-
-    # 通过 graph custom stream 逐页推送给前端
-    if stream_writer:
-        try:
-            stream_writer({"type": "stream_start", "file_type": "ppt"})
-            for slide in parts:
-                stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide})
-        except Exception:
-            logger.exception("[PPT-Parallel] 流式推送异常")
 
     return combined
 
@@ -338,17 +408,17 @@ async def executor_node(state: ResourceState) -> dict:
             stream_writer=writer,
         )
 
-    ppt_task_coro = _run_ppt()
+    ppt_coro = _run_ppt()
 
     if non_ppt_types:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             other_futures = asyncio.gather(
                 *[loop.run_in_executor(pool, gen_one_sync, rt) for rt in non_ppt_types]
             )
-            ppt_content, other_results = await asyncio.gather(ppt_task_coro, other_futures)
+            ppt_content, other_results = await asyncio.gather(ppt_coro, other_futures)
     else:
         other_results = []
-        ppt_content = await ppt_task_coro
+        ppt_content = await ppt_coro
 
     logger.info("[Executor] 全部生成完成 并行总耗时=%.2fs types=%s", time.perf_counter() - t_gen_start, resource_types)
 

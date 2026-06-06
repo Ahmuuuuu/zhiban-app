@@ -261,6 +261,11 @@ export async function executeGeneration(
       },
       {
         onProgress: (eventData: any) => {
+          // stream_progress 事件：直接使用后端推送的进度消息
+          if (eventData?.message) {
+            callbacks.onProgress?.(eventData.message)
+            return
+          }
           const finished = Array.isArray(eventData?.resources) ? eventData.resources : []
           callbacks.onProgress?.(
             finished.length
