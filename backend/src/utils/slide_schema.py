@@ -26,6 +26,21 @@ THEMES = {
     "science_green",
     "warm_case",
     "graphite",
+    "aurora",
+    "coral",
+    "violet",
+    "sunlit",
+}
+
+THEME_PALETTES = {
+    "academic_blue": ["#163f8f", "#2f80ed", "#44c2ff", "#f7fbff"],
+    "science_green": ["#11695f", "#28b487", "#a7f3d0", "#f6fffb"],
+    "warm_case": ["#93491f", "#e86c00", "#ffd166", "#fff8ed"],
+    "graphite": ["#17202a", "#566573", "#aeb6bf", "#f7f9fb"],
+    "aurora": ["#0f766e", "#22d3ee", "#a78bfa", "#f0fdfa"],
+    "coral": ["#9f1239", "#fb7185", "#fbbf24", "#fff1f2"],
+    "violet": ["#4c1d95", "#8b5cf6", "#38bdf8", "#f5f3ff"],
+    "sunlit": ["#854d0e", "#f59e0b", "#84cc16", "#fffbeb"],
 }
 
 
@@ -71,9 +86,7 @@ def _choose_theme(index: int, title: str) -> str:
         return "warm_case"
     if re.search(r"生物|化学|物理|science|实验|细胞", title, re.IGNORECASE):
         return "science_green"
-    if index % 5 == 0:
-        return "graphite"
-    return "academic_blue"
+    return ["academic_blue", "aurora", "coral", "violet", "sunlit", "science_green", "warm_case", "graphite"][index % 8]
 
 
 def _visual_type(layout: str, text: str) -> str:
@@ -129,6 +142,11 @@ def normalize_slide(slide: dict, index: int = 0, total: int = 0) -> dict:
         "query": visual_query,
         "caption": _clean_text(visual.get("caption")) or (bullets[0] if bullets else title),
     }
+    visual["image"] = {
+        "kind": visual["type"],
+        "style": "generated_illustration",
+        "alt": visual_query or title,
+    }
 
     blocks = slide.get("blocks") if isinstance(slide.get("blocks"), list) else []
     if not blocks:
@@ -145,6 +163,7 @@ def normalize_slide(slide: dict, index: int = 0, total: int = 0) -> dict:
         "speaker_notes": _clean_text(slide.get("speaker_notes") or slide.get("notes")),
         "layout": layout,
         "theme": theme,
+        "palette": THEME_PALETTES.get(theme, THEME_PALETTES["academic_blue"]),
         "visual": visual,
         "blocks": blocks,
         "schema_version": 2,

@@ -1,6 +1,9 @@
 """将 Markdown 格式的幻灯片内容转换为真正的 .pptx 二进制文件"""
 import io
+import math
 import re
+import struct
+import zlib
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -19,6 +22,73 @@ MEDIUM_GRAY = RGBColor(0x66, 0x66, 0x66)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 LIGHT_BG = RGBColor(0xF7, 0xF9, 0xFC)
 ACCENT_ORANGE = RGBColor(0xE8, 0x6C, 0x00)
+
+THEME_PALETTES = {
+    "academic_blue": ["#163f8f", "#2f80ed", "#44c2ff", "#f7fbff"],
+    "science_green": ["#11695f", "#28b487", "#a7f3d0", "#f6fffb"],
+    "warm_case": ["#93491f", "#e86c00", "#ffd166", "#fff8ed"],
+    "graphite": ["#17202a", "#566573", "#aeb6bf", "#f7f9fb"],
+    "aurora": ["#0f766e", "#22d3ee", "#a78bfa", "#f0fdfa"],
+    "coral": ["#9f1239", "#fb7185", "#fbbf24", "#fff1f2"],
+    "violet": ["#4c1d95", "#8b5cf6", "#38bdf8", "#f5f3ff"],
+    "sunlit": ["#854d0e", "#f59e0b", "#84cc16", "#fffbeb"],
+}
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    value = (value or "#000000").strip().lstrip("#")
+    if len(value) != 6:
+        return (0, 0, 0)
+    return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _rgb(value: str) -> RGBColor:
+    r, g, b = _hex_to_rgb(value)
+    return RGBColor(r, g, b)
+
+
+def _palette(slide_data: dict) -> list[str]:
+    raw = slide_data.get("palette")
+    if isinstance(raw, list) and len(raw) >= 4:
+        return raw
+    return THEME_PALETTES.get(slide_data.get("theme"), THEME_PALETTES["academic_blue"])
+
+
+def _chunk(tag: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+
+def _make_visual_png(kind: str, palette: list[str], width: int = 720, height: int = 430) -> bytes:
+    c1 = _hex_to_rgb(palette[0])
+    c2 = _hex_to_rgb(palette[1])
+    c3 = _hex_to_rgb(palette[2])
+    rows = []
+    kind = kind or "diagram"
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            t = (x / max(width - 1, 1) * 0.65) + (y / max(height - 1, 1) * 0.35)
+            r = int(c1[0] * (1 - t) + c2[0] * t)
+            g = int(c1[1] * (1 - t) + c2[1] * t)
+            b = int(c1[2] * (1 - t) + c2[2] * t)
+            glow = 0
+            if kind == "timeline":
+                glow = 90 if abs(y - height * 0.52) < 5 or any((x - width * p) ** 2 + (y - height * 0.52) ** 2 < 28 ** 2 for p in (0.2, 0.4, 0.6, 0.8)) else 0
+            elif kind == "comparison":
+                glow = 80 if abs(x - width * 0.5) < 5 or (x < width * 0.48 and y > height * 0.22 and y < height * 0.78) or (x > width * 0.52 and y > height * 0.22 and y < height * 0.78) else 0
+            elif kind == "formula":
+                glow = 95 if abs((y - height * 0.52) - 34 * math.sin(x / 42)) < 4 else 0
+            elif kind == "map":
+                glow = 85 if ((x - width * 0.34) ** 2 / 19000 + (y - height * 0.48) ** 2 / 7200 < 1) or ((x - width * 0.62) ** 2 / 16000 + (y - height * 0.43) ** 2 / 10000 < 1) else 0
+            else:
+                glow = 70 if abs((x - width * 0.5) ** 2 / 40000 + (y - height * 0.5) ** 2 / 15000 - 1) < 0.04 or abs(x - y * 1.35) < 4 else 0
+            r = min(255, r + int(c3[0] * glow / 255))
+            g = min(255, g + int(c3[1] * glow / 255))
+            b = min(255, b + int(c3[2] * glow / 255))
+            row.extend((r, g, b))
+        rows.append(b"\x00" + bytes(row))
+    raw = b"".join(rows)
+    return b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + _chunk(b"IDAT", zlib.compress(raw, 9)) + _chunk(b"IEND", b"")
 
 
 def _parse_slides(markdown: str) -> list[dict]:
@@ -91,6 +161,39 @@ def _add_light_bg(slide, prs):
     bg.fill.solid()
     bg.fill.fore_color.rgb = LIGHT_BG
     bg.line.fill.background()
+
+
+def _add_theme_bg(slide, prs, slide_data: dict):
+    palette = _palette(slide_data)
+    bg = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), prs.slide_width, prs.slide_height
+    )
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = _rgb(palette[3])
+    bg.line.fill.background()
+
+    band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), prs.slide_width, Inches(0.34))
+    band.fill.solid()
+    band.fill.fore_color.rgb = _rgb(palette[0])
+    band.line.fill.background()
+
+    accent = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(6.92), prs.slide_width, Inches(0.58))
+    accent.fill.solid()
+    accent.fill.fore_color.rgb = _rgb(palette[1])
+    accent.line.fill.background()
+
+    for i, color in enumerate((palette[2], palette[1])):
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.OVAL,
+            Inches(9.3 + i * 1.25),
+            Inches(0.72 + i * 0.38),
+            Inches(2.25 - i * 0.25),
+            Inches(2.25 - i * 0.25),
+        )
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = _rgb(color)
+        shape.fill.transparency = 35 + i * 18
+        shape.line.fill.background()
 
 
 def _add_top_bar(slide, prs):
@@ -226,8 +329,9 @@ def _build_content_slide(prs, slide_data: dict, index: int, total: int):
     """纯内容页：标题 + 要点 + 页码"""
     layout = prs.slide_layouts[6]
     slide = prs.slides.add_slide(layout)
-    _add_light_bg(slide, prs)
+    _add_theme_bg(slide, prs, slide_data)
     _add_top_bar(slide, prs)
+    _add_visual_thumb(slide, slide_data)
     _add_title(slide, slide_data["title"] or f"第 {index} 页")
     _add_title_line(slide)
     _add_bullets(slide, slide_data["bullets"])
@@ -235,30 +339,18 @@ def _build_content_slide(prs, slide_data: dict, index: int, total: int):
     _add_notes(slide, slide_data)
 
 
-def _add_visual_panel(slide, x, y, w, h, caption: str = "", accent=ACCENT_BLUE):
+def _add_visual_panel(slide, x, y, w, h, caption: str = "", accent=ACCENT_BLUE, slide_data: dict | None = None):
+    palette = _palette(slide_data or {})
     panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
     panel.fill.solid()
-    panel.fill.fore_color.rgb = RGBColor(0xEE, 0xF5, 0xF8)
-    panel.line.color.rgb = RGBColor(0xC7, 0xD8, 0xE8)
+    panel.fill.fore_color.rgb = _rgb(palette[3])
+    panel.line.color.rgb = _rgb(palette[1])
 
-    circle = slide.shapes.add_shape(MSO_SHAPE.OVAL, x + Inches(0.45), y + Inches(0.45), Inches(1.2), Inches(1.2))
-    circle.fill.solid()
-    circle.fill.fore_color.rgb = accent
-    circle.line.fill.background()
+    visual = (slide_data or {}).get("visual") or {}
+    png = _make_visual_png(visual.get("type", "diagram"), palette)
+    slide.shapes.add_picture(io.BytesIO(png), x + Inches(0.25), y + Inches(0.25), width=w - Inches(0.5), height=h - Inches(1.25))
 
-    for offset in (0.0, 0.38, 0.76):
-        line = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            x + Inches(2.0),
-            y + Inches(0.58 + offset),
-            w - Inches(2.65),
-            Inches(0.08),
-        )
-        line.fill.solid()
-        line.fill.fore_color.rgb = RGBColor(0x99, 0xB4, 0xCB)
-        line.line.fill.background()
-
-    box = slide.shapes.add_textbox(x + Inches(0.55), y + h - Inches(1.05), w - Inches(1.1), Inches(0.58))
+    box = slide.shapes.add_textbox(x + Inches(0.55), y + h - Inches(0.92), w - Inches(1.1), Inches(0.58))
     tf = box.text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]
@@ -268,23 +360,35 @@ def _add_visual_panel(slide, x, y, w, h, caption: str = "", accent=ACCENT_BLUE):
     p.alignment = PP_ALIGN.CENTER
 
 
+def _add_visual_thumb(slide, slide_data: dict, left=Inches(10.25), top=Inches(5.2), width=Inches(2.45), height=Inches(1.45)):
+    palette = _palette(slide_data)
+    visual = slide_data.get("visual") or {}
+    png = _make_visual_png(visual.get("type", "diagram"), palette, width=520, height=310)
+    frame = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left - Inches(0.08), top - Inches(0.08), width + Inches(0.16), height + Inches(0.16))
+    frame.fill.solid()
+    frame.fill.fore_color.rgb = _rgb(palette[3])
+    frame.line.color.rgb = _rgb(palette[1])
+    slide.shapes.add_picture(io.BytesIO(png), left, top, width=width, height=height)
+
+
 def _build_concept_visual_slide(prs, slide_data: dict, index: int, total: int):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _add_light_bg(slide, prs)
+    _add_theme_bg(slide, prs, slide_data)
     _add_top_bar(slide, prs)
     _add_title(slide, slide_data["title"] or f"Slide {index}", width=Inches(6.2), font_size=Pt(30))
     _add_title_line(slide, width=Inches(6.0))
     _add_bullets(slide, slide_data.get("bullets", []), left=Inches(0.8), top=Inches(1.65), width=Inches(6.1), height=Inches(5.1), max_items=6)
     visual = slide_data.get("visual") or {}
-    _add_visual_panel(slide, Inches(7.3), Inches(1.35), Inches(5.25), Inches(4.9), visual.get("caption") or visual.get("query") or "")
+    _add_visual_panel(slide, Inches(7.3), Inches(1.35), Inches(5.25), Inches(4.9), visual.get("caption") or visual.get("query") or "", slide_data=slide_data)
     _add_page_number(slide, index, total)
     _add_notes(slide, slide_data)
 
 
 def _build_process_slide(prs, slide_data: dict, index: int, total: int):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _add_light_bg(slide, prs)
+    _add_theme_bg(slide, prs, slide_data)
     _add_top_bar(slide, prs)
+    _add_visual_thumb(slide, slide_data)
     _add_title(slide, slide_data["title"] or f"Slide {index}", font_size=Pt(30))
     steps = (slide_data.get("bullets") or [])[:5]
     start_x = Inches(1.0)
@@ -321,8 +425,9 @@ def _build_process_slide(prs, slide_data: dict, index: int, total: int):
 
 def _build_comparison_slide(prs, slide_data: dict, index: int, total: int):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _add_light_bg(slide, prs)
+    _add_theme_bg(slide, prs, slide_data)
     _add_top_bar(slide, prs)
+    _add_visual_thumb(slide, slide_data)
     _add_title(slide, slide_data["title"] or f"Slide {index}", font_size=Pt(30))
     items = (slide_data.get("bullets") or [])[:6]
     left_items = items[::2]
@@ -349,8 +454,9 @@ def _build_comparison_slide(prs, slide_data: dict, index: int, total: int):
 
 def _build_formula_slide(prs, slide_data: dict, index: int, total: int):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _add_light_bg(slide, prs)
+    _add_theme_bg(slide, prs, slide_data)
     _add_top_bar(slide, prs)
+    _add_visual_thumb(slide, slide_data)
     _add_title(slide, slide_data["title"] or f"Slide {index}", font_size=Pt(30))
     bullets = slide_data.get("bullets") or []
     formula = next((b for b in bullets if "=" in b or "$" in b), bullets[0] if bullets else "")
@@ -373,8 +479,9 @@ def _build_formula_slide(prs, slide_data: dict, index: int, total: int):
 
 def _build_cards_slide(prs, slide_data: dict, index: int, total: int):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _add_light_bg(slide, prs)
+    _add_theme_bg(slide, prs, slide_data)
     _add_top_bar(slide, prs)
+    _add_visual_thumb(slide, slide_data)
     _add_title(slide, slide_data["title"] or f"Slide {index}", font_size=Pt(30))
     items = (slide_data.get("bullets") or [])[:6]
     for i, item in enumerate(items):

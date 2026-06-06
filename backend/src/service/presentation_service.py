@@ -828,8 +828,14 @@ def _build_ppt_skeleton(record) -> dict:
         text = meta.get("text", "")
         estimated_dur = len(text) / 4 * 1000 if text else 5000
         slides.append({
+            **meta,
             "title": meta.get("title", ""),
+            "text": meta.get("text", ""),
             "bullets": bullets,
+            "blocks": meta.get("blocks", []),
+            "layout": meta.get("layout", "content_cards"),
+            "theme": meta.get("theme", "academic_blue"),
+            "visual": meta.get("visual", {}),
             "notes": meta.get("notes", ""),
             "audio_url": None,
             "duration_ms": int(estimated_dur),
