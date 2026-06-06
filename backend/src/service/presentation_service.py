@@ -599,29 +599,31 @@ async def _generate_skeleton_then_audio(record_id: int, topic: str, user_id: int
         await _flush(record, topic, chapters, "generating")
         logger.info("[课件] 骨架已出 record=%d chapters=%d", record_id, len(chapters))
 
-        # ── 阶段2：逐章补音频（预生成缓存命中则秒返）──
-        for task in audio_tasks:
+        # ── 阶段2：并行补音频（和 PPT 生成一样激进）──
+        async def _narrate_one(task: dict):
             res = task["resource"]
             try:
                 if isinstance(res, SimpleNamespace):
-                    narration = await narrate_content(res.content, res.resource_type, voice, res.id)
+                    return task["chapter_idx"], await narrate_content(res.content, res.resource_type, voice, res.id)
                 else:
-                    narration = await narrate_resource(res.id, voice)
+                    return task["chapter_idx"], await narrate_resource(res.id, voice)
             except Exception:
                 logger.exception("[课件] 旁白生成失败 resource=%d", res.id)
-                continue
+                return None
 
-            idx = task["chapter_idx"]
+        results = await asyncio.gather(*(_narrate_one(t) for t in audio_tasks))
+        for result in results:
+            if result is None:
+                continue
+            idx, narration = result
             ch = chapters[idx]
             ch_type = ch.get("type")
-
             if ch_type == "intro":
                 _patch_intro_audio(ch, narration)
             elif ch_type == "mindmap":
                 _patch_mindmap_audio(ch, narration)
             elif ch_type == "ppt":
                 _patch_ppt_audio(ch, narration)
-
             ch["is_audio_ready"] = True
             logger.info("[课件] 音频已补 chapter=%d type=%s record=%d", idx, ch_type, record_id)
 

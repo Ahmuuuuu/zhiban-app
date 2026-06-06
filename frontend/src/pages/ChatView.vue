@@ -452,7 +452,7 @@ const resourceTools = [
     icon: Video,
     prompt: '帮我生成一个学习视频：',
     generateMode: 'video',
-    resourceTypes: ['document']
+    resourceTypes: ['document', 'ppt']
   },
   {
     label: 'mindmap',
@@ -1168,16 +1168,35 @@ const saveGeneratedAnnotation = async (resourceId, payload) => {
   })
 }
 
+const _extractSlideMeta = (lines) => {
+  const meta: Record<string, string> = {}
+  const contentLines: string[] = []
+  for (const l of lines) {
+    const m = l.match(/^<!--\s*(layout|theme|visual)\s*:\s*(.+?)\s*-->$/i)
+    if (m) { meta[m[1].toLowerCase()] = m[2].trim(); continue }
+    contentLines.push(l)
+  }
+  return { meta, contentLines }
+}
+
 const parseSingleSlide = (content) => {
-  const lines = String(content || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
-  const titleLine = lines.find(l => /^#{1,3}\s+/.test(l)) || lines[0] || ''
+  const raw = String(content || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  const { meta, contentLines } = _extractSlideMeta(raw)
+  const titleLine = contentLines.find(l => /^#{1,3}\s+/.test(l)) || contentLines[0] || ''
   const title = titleLine.replace(/^#{1,3}\s+/, '').trim() || '未命名'
-  const text = lines
+  const text = contentLines
     .filter(l => l !== titleLine)
     .map(l => l.replace(/^[-*•]\s+/, '').trim())
     .filter(Boolean)
     .join('\n')
-  return { title, text, notes: '' }
+  return {
+    title,
+    text,
+    notes: '',
+    ...(meta.layout ? { layout: meta.layout } : {}),
+    ...(meta.theme ? { theme: meta.theme } : {}),
+    ...(meta.visual ? { visual_hint: meta.visual } : {}),
+  }
 }
 
 const parsePptSlidesFromContent = content => {
@@ -1192,7 +1211,10 @@ const parsePptSlidesFromContent = content => {
         index,
         title: slide.title || slide.heading || `第 ${index + 1} 页`,
         text: slide.text || slide.content || slide.body || '',
-        notes: slide.notes || slide.speaker_notes || ''
+        notes: slide.notes || slide.speaker_notes || '',
+        ...(slide.layout ? { layout: slide.layout } : {}),
+        ...(slide.theme ? { theme: slide.theme } : {}),
+        ...(slide.visual ? { visual: slide.visual } : {}),
       }))
     }
   } catch {
@@ -1207,20 +1229,23 @@ const parsePptSlidesFromContent = content => {
     .filter(Boolean)
 
   return blocks.map((block, index) => {
-    const lines = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
-    const titleLine = lines.find(line => /^#{1,3}\s+/.test(line)) || lines[0] || `第 ${index + 1} 页`
+    const raw = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const { meta, contentLines } = _extractSlideMeta(raw)
+    const titleLine = contentLines.find(line => /^#{1,3}\s+/.test(line)) || contentLines[0] || `第 ${index + 1} 页`
     const title = titleLine.replace(/^#{1,3}\s+/, '').replace(/^第?\s*\d+\s*[页章、.：:-]?\s*/, '').trim()
-    const body = lines
+    const body = contentLines
       .filter(line => line !== titleLine)
       .map(line => line.replace(/^[-*•]\s+/, '').trim())
       .filter(Boolean)
       .join('\n')
-
     return {
       index,
       title: title || `第 ${index + 1} 页`,
       text: body,
-      notes: ''
+      notes: '',
+      ...(meta.layout ? { layout: meta.layout } : {}),
+      ...(meta.theme ? { theme: meta.theme } : {}),
+      ...(meta.visual ? { visual_hint: meta.visual } : {}),
     }
   }).filter(slide => slide.title || slide.text)
 }

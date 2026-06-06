@@ -782,16 +782,20 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         await task.save()
         await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 10, "progress_msg": "AI 规划中…"})
 
-        async for chunk in resource_graph.astream(initial_state, stream_mode="values"):
+        async for mode, chunk in resource_graph.astream(initial_state, stream_mode=["values", "custom"]):
+            if mode == "custom":
+                # PPT 逐页流式事件直接转发到任务 SSE
+                await _notify_task_sse(task_id, chunk)
+                continue
+
             resources = chunk.get("generated_resources", {})
             if resources:
                 final_resources = resources
-                # 统计已产出的类型数
                 for rt in resources.keys():
                     if rt not in yielded_types:
                         yielded_types.add(rt)
                         done = len(yielded_types)
-                        pct = 20 + int((done / max(total_types, 1)) * 40)  # 20-60%
+                        pct = 20 + int((done / max(total_types, 1)) * 40)
                         task.progress = min(pct, 85)
                         task.progress_msg = f"正在生成「{rt}」…"
                         await task.save()
