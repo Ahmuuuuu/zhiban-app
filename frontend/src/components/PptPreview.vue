@@ -53,12 +53,21 @@
 
     <article
       class="ppt-slide"
-      :class="{
-        editing,
-        'is-dense': currentSlideTextLength > 420,
-        'is-very-dense': currentSlideTextLength > 800
-      }"
+      :class="[
+        `layout-${currentSlide.layout || 'content_cards'}`,
+        `theme-${currentSlide.theme || 'academic_blue'}`,
+        {
+          editing,
+          'is-dense': currentSlideTextLength > 420,
+          'is-very-dense': currentSlideTextLength > 800
+        }
+      ]"
     >
+      <div v-if="!editing" class="ppt-slide__kicker">
+        <span>{{ layoutLabel(currentSlide.layout) }}</span>
+        <small>{{ visualLabel(currentSlide.visual) }}</small>
+      </div>
+
       <div class="ppt-slide__stage">
         <input
           v-if="editing"
@@ -76,17 +85,73 @@
         ></textarea>
 
         <div v-else ref="slideContentRef" class="ppt-slide__content" @mouseup="handleTextSelection">
-          <template v-for="(segment, index) in slideSegments" :key="index">
-            <mark
-              v-if="segment.annotation"
-              class="ppt-annotation-mark"
-              :class="{ 'has-note': isNoteAnnotation(segment.annotation) }"
-              :data-annotation-id="segment.annotation.id"
-              :style="{ background: annotationBackground(segment.annotation) }"
-              @click.stop="openAnnotation(segment.annotation)"
-              v-html="renderMath(segment.text)"
-            ></mark>
-            <span v-else v-html="renderMath(segment.text)"></span>
+          <div v-if="currentSlide.layout === 'concept_visual'" class="layout-grid layout-grid--visual">
+            <div class="slide-rich-text">
+              <template v-for="(segment, index) in slideSegments" :key="index">
+                <mark
+                  v-if="segment.annotation"
+                  class="ppt-annotation-mark"
+                  :class="{ 'has-note': isNoteAnnotation(segment.annotation) }"
+                  :data-annotation-id="segment.annotation.id"
+                  :style="{ background: annotationBackground(segment.annotation) }"
+                  @click.stop="openAnnotation(segment.annotation)"
+                  v-html="renderMath(segment.text)"
+                ></mark>
+                <span v-else v-html="renderMath(segment.text)"></span>
+              </template>
+            </div>
+            <aside class="visual-panel">
+              <div class="visual-panel__glyph">{{ visualGlyph(currentSlide.visual) }}</div>
+              <strong>{{ currentSlide.visual?.query || currentSlide.title }}</strong>
+              <p>{{ currentSlide.visual?.caption || firstBlockText }}</p>
+            </aside>
+          </div>
+
+          <div v-else-if="currentSlide.layout === 'process_steps'" class="process-strip">
+            <article v-for="(block, index) in slideBlocks.slice(0, 5)" :key="index" class="process-step">
+              <b>{{ index + 1 }}</b>
+              <span v-html="renderMath(block.text)"></span>
+            </article>
+          </div>
+
+          <div v-else-if="currentSlide.layout === 'comparison'" class="comparison-grid">
+            <article class="comparison-card">
+              <b>A</b>
+              <p v-for="(block, index) in slideBlocks.filter((_, i) => i % 2 === 0).slice(0, 4)" :key="index" v-html="renderMath(block.text)"></p>
+            </article>
+            <article class="comparison-card comparison-card--accent">
+              <b>B</b>
+              <p v-for="(block, index) in slideBlocks.filter((_, i) => i % 2 === 1).slice(0, 4)" :key="index" v-html="renderMath(block.text)"></p>
+            </article>
+          </div>
+
+          <div v-else-if="currentSlide.layout === 'formula_focus'" class="formula-layout">
+            <div class="formula-box" v-html="renderMath(formulaText)"></div>
+            <div class="formula-points">
+              <p v-for="(block, index) in formulaBlocks" :key="index" v-html="renderMath(block.text)"></p>
+            </div>
+          </div>
+
+          <div v-else-if="currentSlide.layout === 'content_cards'" class="content-card-grid">
+            <article v-for="(block, index) in slideBlocks.slice(0, 6)" :key="index">
+              <span>{{ index + 1 }}</span>
+              <p v-html="renderMath(block.text)"></p>
+            </article>
+          </div>
+
+          <template v-else>
+            <template v-for="(segment, index) in slideSegments" :key="index">
+              <mark
+                v-if="segment.annotation"
+                class="ppt-annotation-mark"
+                :class="{ 'has-note': isNoteAnnotation(segment.annotation) }"
+                :data-annotation-id="segment.annotation.id"
+                :style="{ background: annotationBackground(segment.annotation) }"
+                @click.stop="openAnnotation(segment.annotation)"
+                v-html="renderMath(segment.text)"
+              ></mark>
+              <span v-else v-html="renderMath(segment.text)"></span>
+            </template>
           </template>
         </div>
       </div>
@@ -214,15 +279,97 @@ const highlightColors = [
   { value: '#c8b6ff', label: 'purple' }
 ]
 
-const normalizeSlide = (slide, index) => ({
-  ...slide,
-  index: Number(slide?.index ?? index),
-  title: slide?.title || '',
-  text: slide?.text || slide?.content || '',
-  content: slide?.content || slide?.text || '',
-  notes: slide?.notes || slide?.speaker_notes || '',
-  speaker_notes: slide?.speaker_notes || slide?.notes || ''
-})
+const layoutLabels = {
+  title_cover: '封面',
+  concept_visual: '图文讲解',
+  process_steps: '流程步骤',
+  comparison: '对比分析',
+  formula_focus: '公式推导',
+  content_cards: '重点卡片'
+}
+
+const layoutLabel = layout => layoutLabels[layout] || '内容讲解'
+
+const visualLabel = visual => {
+  const type = visual?.type || 'diagram'
+  const labels = {
+    diagram: '图解',
+    timeline: '时间线',
+    comparison: '对比图',
+    formula: '公式板',
+    map: '地图'
+  }
+  return labels[type] || '视觉辅助'
+}
+
+const visualGlyph = visual => {
+  const glyphs = {
+    timeline: '1-2-3',
+    comparison: 'A/B',
+    formula: 'f(x)',
+    map: 'MAP',
+    diagram: 'VIS'
+  }
+  return glyphs[visual?.type || 'diagram'] || 'VIS'
+}
+
+const splitTextBlocks = text => String(text || '')
+  .split(/\r?\n|[;；]/)
+  .map(line => line.replace(/^[-*•\s]+/, '').trim())
+  .filter(Boolean)
+
+const chooseLayout = (slide, index) => {
+  const text = `${slide?.title || ''}\n${slide?.text || slide?.content || ''}`
+  if (index === 0) return 'title_cover'
+  if (/对比|比较|区别|vs\.?|差异/i.test(text)) return 'comparison'
+  if (/步骤|流程|过程|阶段|路径|step|process/i.test(text)) return 'process_steps'
+  if (/\$[^$]+\$|=|\\sum|\\frac|\^|_/.test(text)) return 'formula_focus'
+  if (splitTextBlocks(slide?.text || slide?.content).length >= 5) return 'content_cards'
+  return 'concept_visual'
+}
+
+const chooseTheme = (slide, index) => {
+  const text = `${slide?.title || ''}\n${slide?.text || slide?.content || ''}`
+  if (/案例|场景|case|story/i.test(text)) return 'warm_case'
+  if (/生物|化学|物理|实验|细胞|science/i.test(text)) return 'science_green'
+  if (index % 5 === 0) return 'graphite'
+  return 'academic_blue'
+}
+
+const normalizeBlocks = slide => {
+  const blocks = Array.isArray(slide?.blocks) ? slide.blocks : []
+  if (blocks.length) {
+    return blocks
+      .map(block => ({
+        type: block?.type || 'key_point',
+        text: String(block?.text || block?.content || '').trim()
+      }))
+      .filter(block => block.text)
+  }
+  return splitTextBlocks(slide?.text || slide?.content).slice(0, 8).map(text => ({ type: 'key_point', text }))
+}
+
+const normalizeSlide = (slide, index) => {
+  const text = slide?.text || slide?.content || ''
+  const layout = slide?.layout || chooseLayout(slide, index)
+  const visual = typeof slide?.visual === 'object' && slide.visual
+    ? slide.visual
+    : { type: layout === 'process_steps' ? 'timeline' : layout === 'formula_focus' ? 'formula' : layout === 'comparison' ? 'comparison' : 'diagram', query: slide?.visual_hint || slide?.title || '', caption: '' }
+
+  return {
+    ...slide,
+    index: Number(slide?.index ?? index),
+    title: slide?.title || '',
+    text,
+    content: slide?.content || text,
+    notes: slide?.notes || slide?.speaker_notes || '',
+    speaker_notes: slide?.speaker_notes || slide?.notes || '',
+    layout,
+    theme: slide?.theme || chooseTheme(slide, index),
+    visual,
+    blocks: normalizeBlocks({ ...slide, text })
+  }
+}
 
 const syncLocalSlides = slides => {
   localSlides.value = (Array.isArray(slides) ? slides : []).map(normalizeSlide)
@@ -234,6 +381,10 @@ const syncLocalSlides = slides => {
 const currentSlide = computed(() => localSlides.value[activeIndex.value] || localSlides.value[0] || {})
 const canUndo = computed(() => undoStack.value.length > 0)
 const canRedo = computed(() => redoStack.value.length > 0)
+const slideBlocks = computed(() => normalizeBlocks(currentSlide.value))
+const firstBlockText = computed(() => slideBlocks.value[0]?.text || '')
+const formulaText = computed(() => slideBlocks.value.find(block => /=|\$|\\sum|\\frac|\^|_/.test(block.text))?.text || firstBlockText.value)
+const formulaBlocks = computed(() => slideBlocks.value.filter(block => block.text !== formulaText.value).slice(0, 5))
 
 const currentSlideTextLength = computed(() => {
   const slide = currentSlide.value || {}
@@ -642,6 +793,44 @@ watch(
   overflow: visible;
 }
 
+.ppt-slide.theme-science_green {
+  border-color: rgba(35, 132, 102, 0.22);
+  background: linear-gradient(135deg, #fbfffd 0%, #eef9f4 100%);
+}
+
+.ppt-slide.theme-warm_case {
+  border-color: rgba(188, 110, 50, 0.22);
+  background: linear-gradient(135deg, #fffdfa 0%, #fff3e9 100%);
+}
+
+.ppt-slide.theme-graphite {
+  background: linear-gradient(135deg, #f9fafb 0%, #eef1f3 100%);
+}
+
+.ppt-slide__kicker {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(95, 143, 195, 0.82);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.ppt-slide__kicker span,
+.ppt-slide__kicker small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(237, 249, 252, 0.82);
+}
+
+.ppt-slide__kicker small {
+  color: rgba(31, 51, 86, 0.62);
+}
+
 .ppt-slide.editing {
   outline: 2px solid rgba(95, 143, 195, 0.36);
   outline-offset: 3px;
@@ -665,7 +854,7 @@ watch(
 }
 
 .ppt-slide__content {
-  width: min(88%, 940px);
+  width: min(92%, 1040px);
   max-height: 100%;
   margin: 0 auto;
   padding: 2px 8px 2px 0;
@@ -675,6 +864,217 @@ watch(
   line-height: 1.62;
   white-space: pre-line;
   word-break: break-word;
+}
+
+.slide-rich-text {
+  min-width: 0;
+  padding-right: 6px;
+  overflow: auto;
+  white-space: pre-line;
+}
+
+.layout-grid {
+  display: grid;
+  gap: clamp(18px, 2.8vw, 32px);
+  align-items: stretch;
+}
+
+.layout-grid--visual {
+  grid-template-columns: minmax(0, 1.08fr) minmax(280px, 0.92fr);
+}
+
+.visual-panel {
+  min-height: 320px;
+  padding: clamp(20px, 2.5vw, 30px);
+  border: 1px solid rgba(95, 143, 195, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(237, 249, 252, 0.92), rgba(255, 255, 255, 0.78)),
+    radial-gradient(circle at 20% 20%, rgba(255, 225, 89, 0.18), transparent 32%);
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  color: #1f3356;
+  text-align: center;
+}
+
+.visual-panel__glyph {
+  width: min(170px, 42%);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border: 12px solid rgba(22, 63, 143, 0.1);
+  border-radius: 50%;
+  background: #163f8f;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: clamp(24px, 4vw, 44px);
+  font-weight: 900;
+}
+
+.visual-panel strong {
+  color: #163f8f;
+  font-size: clamp(18px, 2vw, 25px);
+  line-height: 1.25;
+}
+
+.visual-panel p {
+  margin: 0;
+  color: rgba(31, 51, 86, 0.7);
+  font-size: clamp(14px, 1.4vw, 17px);
+  line-height: 1.55;
+}
+
+.process-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.process-step {
+  position: relative;
+  min-height: 260px;
+  padding: 46px 14px 18px;
+  border: 1px solid rgba(95, 143, 195, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+  color: rgba(31, 51, 86, 0.82);
+  box-shadow: 0 12px 28px rgba(22, 63, 143, 0.09);
+}
+
+.process-step b {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  width: 42px;
+  height: 42px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: #e86c00;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+}
+
+.process-step span {
+  display: block;
+  font-size: clamp(13px, 1.25vw, 16px);
+  line-height: 1.55;
+}
+
+.comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(18px, 2.5vw, 28px);
+}
+
+.comparison-card {
+  min-height: 330px;
+  padding: 22px;
+  border: 1px solid rgba(95, 143, 195, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(22, 63, 143, 0.1);
+}
+
+.comparison-card b {
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 14px;
+  border-radius: 8px;
+  background: #163f8f;
+  color: #ffffff;
+}
+
+.comparison-card--accent b {
+  background: #e86c00;
+}
+
+.comparison-card p {
+  margin: 0 0 12px;
+  color: rgba(31, 51, 86, 0.82);
+  font-size: clamp(14px, 1.35vw, 18px);
+  line-height: 1.55;
+}
+
+.formula-layout {
+  display: grid;
+  gap: 22px;
+}
+
+.formula-box {
+  min-height: 128px;
+  padding: 28px;
+  border-radius: 8px;
+  background: #163f8f;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: clamp(24px, 3.5vw, 44px);
+  font-weight: 900;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.formula-points {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.formula-points p,
+.content-card-grid article p {
+  margin: 0;
+}
+
+.formula-points p {
+  padding: 14px 16px;
+  border-left: 4px solid #e86c00;
+  border-radius: 8px;
+  background: #ffffff;
+  color: rgba(31, 51, 86, 0.82);
+  font-size: clamp(14px, 1.3vw, 17px);
+  line-height: 1.55;
+}
+
+.content-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.content-card-grid article {
+  min-height: 145px;
+  padding: 16px;
+  border: 1px solid rgba(95, 143, 195, 0.16);
+  border-radius: 8px;
+  background: #ffffff;
+  color: rgba(31, 51, 86, 0.82);
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  box-shadow: 0 12px 26px rgba(22, 63, 143, 0.08);
+}
+
+.content-card-grid article span {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: rgba(22, 63, 143, 0.1);
+  color: #163f8f;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.content-card-grid article p {
+  font-size: clamp(13px, 1.2vw, 16px);
+  line-height: 1.52;
 }
 
 .ppt-slide.is-dense h3 {
@@ -924,5 +1324,31 @@ watch(
 
 .ppt-dots button.active {
   background: #163f8f;
+}
+
+@media (max-width: 860px) {
+  .ppt-slide {
+    min-height: 560px;
+  }
+
+  .layout-grid--visual,
+  .comparison-grid,
+  .formula-points,
+  .content-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .process-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .process-step {
+    min-height: auto;
+    padding-top: 34px;
+  }
+
+  .visual-panel {
+    min-height: 220px;
+  }
 }
 </style>

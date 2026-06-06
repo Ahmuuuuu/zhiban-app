@@ -103,6 +103,30 @@ def parse_slides(markdown: str) -> list[dict]:
     return slides
 
 
+def parse_slides(markdown: str) -> list[dict]:
+    """Parse PPT markdown and enrich each slide with the shared visual schema."""
+    from backend.src.utils.slide_schema import parse_markdown_slides
+
+    slides = []
+    for slide in parse_markdown_slides(markdown):
+        content_items = slide.get("bullets") or [
+            line.strip() for line in str(slide.get("text") or "").splitlines() if line.strip()
+        ]
+        tts_text = slide.get("title") or ""
+        if content_items:
+            tts_text += " " + " ".join(content_items[:6])
+        if slide.get("notes"):
+            tts_text += " " + str(slide.get("notes"))
+        tts_text = clean_for_tts(tts_text)
+        slides.append({
+            **slide,
+            "text": slide.get("text") or "\n".join(content_items),
+            "duration_ms": int(len(tts_text) / 4 * 1000),
+        })
+
+    return slides
+
+
 def parse_text_sections(markdown: str) -> list[dict]:
     """将非 PPT 的文本类内容拆分为可朗读的章节
 

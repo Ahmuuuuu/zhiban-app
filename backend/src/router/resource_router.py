@@ -27,6 +27,12 @@ def _clean_bullet_text(value: str) -> str:
 
 
 def _slides_to_markdown(title: str, slides: list[dict]) -> str:
+    try:
+        from backend.src.utils.slide_schema import slides_to_markdown
+        return slides_to_markdown(title, slides)
+    except Exception:
+        pass
+
     blocks: list[str] = []
     for index, slide in enumerate(slides or []):
         slide_title = str(slide.get("title") or title or f"第 {index + 1} 页").strip()
