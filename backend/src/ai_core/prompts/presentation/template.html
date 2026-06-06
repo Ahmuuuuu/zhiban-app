@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -878,6 +878,242 @@
       margin-bottom: 16px;
       opacity: 0.3;
     }
+    /* visual-v3: richer PPT/video stage */
+    body {
+      background:
+        radial-gradient(circle at 12% 10%, rgba(255, 210, 92, 0.24), transparent 24%),
+        radial-gradient(circle at 88% 18%, rgba(61, 220, 190, 0.2), transparent 26%),
+        linear-gradient(135deg, #091224 0%, #18335b 48%, #10253f 100%);
+    }
+
+    #bg-clouds {
+      display: none;
+    }
+
+    #player {
+      background: rgba(5, 12, 26, 0.35);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
+    .chapter {
+      padding: 24px 42px 18px;
+    }
+
+    .chapter-ppt {
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+      background-size: 54px 54px;
+    }
+
+    .chapter-ppt .slide-container {
+      position: relative;
+      width: min(100%, calc((100vh - 112px) * 16 / 9));
+      height: auto;
+      aspect-ratio: 16 / 9;
+      margin: 0 auto;
+      padding: clamp(22px, 3vw, 42px);
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 18px;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.26);
+    }
+
+    .chapter-ppt .slide-content {
+      position: relative;
+      z-index: 2;
+      max-width: none;
+      height: 100%;
+      justify-content: center;
+    }
+
+    .chapter-ppt .slide-content h2 {
+      width: min(100%, 980px);
+      color: #ffffff;
+      font-size: clamp(26px, 3.2vw, 48px);
+      line-height: 1.12;
+      margin-bottom: clamp(12px, 1.8vw, 24px);
+      padding-bottom: 12px;
+      border-bottom: 3px solid rgba(255, 255, 255, 0.28);
+      text-shadow: 0 3px 20px rgba(0, 0, 0, 0.18);
+    }
+
+    .chapter-ppt .slide-content ul li,
+    .chapter-ppt .process-card,
+    .chapter-ppt .comparison-card p,
+    .chapter-ppt .formula-point,
+    .chapter-ppt .content-card p,
+    .chapter-ppt .visual-card p {
+      color: rgba(255, 255, 255, 0.88);
+      font-size: clamp(14px, 1.3vw, 19px);
+      line-height: 1.48;
+    }
+
+    .chapter-ppt .slide-content ul li::before,
+    .intro-content ul li::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      top: 0.7em;
+      border-radius: 50%;
+      background: #ffd166;
+      box-shadow: 0 0 14px rgba(255, 209, 102, 0.42);
+    }
+
+    .chapter-ppt .slide-kicker {
+      position: absolute;
+      inset: 0 0 auto 0;
+      padding: 16px 18px 0;
+      margin: 0;
+      pointer-events: none;
+    }
+
+    .chapter-ppt .slide-kicker span {
+      color: rgba(255, 255, 255, 0.84);
+      background: rgba(0, 0, 0, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+    }
+
+    .chapter-ppt .slide-art {
+      right: clamp(24px, 3vw, 54px);
+      bottom: clamp(54px, 6vw, 86px);
+      width: min(27%, 300px);
+      height: auto;
+      aspect-ratio: 1.68;
+      opacity: 0.36;
+      border-radius: 18px;
+    }
+
+    .chapter-ppt .visual-slide-grid {
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 0.78fr);
+      gap: clamp(18px, 2.6vw, 34px);
+      height: 100%;
+      align-items: center;
+    }
+
+    .chapter-ppt .visual-card,
+    .chapter-ppt .process-card,
+    .chapter-ppt .comparison-card,
+    .chapter-ppt .content-card,
+    .chapter-ppt .formula-point {
+      background: rgba(255, 255, 255, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 18px 46px rgba(0, 0, 0, 0.16);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    .chapter-ppt .visual-card {
+      min-height: 0;
+      padding: clamp(14px, 1.8vw, 24px);
+    }
+
+    .chapter-ppt .visual-image {
+      min-height: clamp(160px, 25vh, 280px);
+      border-radius: 16px;
+    }
+
+    .chapter-ppt .process-grid,
+    .chapter-ppt .content-card-grid,
+    .chapter-ppt .comparison-grid,
+    .chapter-ppt .formula-points {
+      margin-top: clamp(14px, 2vw, 24px);
+    }
+
+    .chapter-ppt .process-card {
+      min-height: clamp(160px, 28vh, 240px);
+      padding: 42px 14px 16px;
+      overflow: hidden;
+    }
+
+    .chapter-ppt .comparison-card {
+      min-height: clamp(190px, 34vh, 310px);
+      padding: clamp(16px, 2vw, 24px);
+      overflow: hidden;
+    }
+
+    .chapter-ppt .content-card {
+      min-height: clamp(112px, 18vh, 155px);
+      padding: clamp(12px, 1.5vw, 18px);
+      overflow: hidden;
+    }
+
+    .chapter-ppt .formula-box {
+      min-height: clamp(108px, 18vh, 150px);
+      padding: clamp(20px, 2.4vw, 34px);
+      background:
+        linear-gradient(135deg, rgba(9, 18, 36, 0.86), rgba(18, 60, 92, 0.74)),
+        rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      font-size: clamp(28px, 4vw, 56px);
+    }
+
+    .math-expression {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.08em;
+      max-width: 100%;
+      padding: 0.08em 0.18em;
+      border-radius: 0.26em;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff8d1;
+      font-family: "Cambria Math", "Times New Roman", serif;
+      font-weight: 700;
+      line-height: 1.18;
+      white-space: normal;
+      vertical-align: middle;
+    }
+
+    .math-expression .frac {
+      display: inline-grid;
+      grid-template-rows: auto auto;
+      align-items: center;
+      margin: 0 0.18em;
+      vertical-align: middle;
+    }
+
+    .math-expression .frac > span {
+      display: block;
+      padding: 0 0.18em;
+      text-align: center;
+    }
+
+    .math-expression .frac > span:first-child {
+      border-bottom: 2px solid currentColor;
+    }
+
+    .math-expression sup,
+    .math-expression sub {
+      font-size: 0.68em;
+      line-height: 0;
+    }
+
+    .chapter-ppt .slide-nav {
+      position: absolute;
+      left: 24px;
+      bottom: 20px;
+      z-index: 3;
+      margin: 0;
+    }
+
+    .chapter-ppt .slide-nav button {
+      min-width: 34px;
+      height: 34px;
+      padding: 0 10px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+      font-size: 16px;
+    }
+
+    .chapter-ppt .slide-number {
+      z-index: 3;
+      right: 26px;
+      bottom: 28px;
+      color: rgba(255, 255, 255, 0.72);
+    }
   </style>
 </head>
 
@@ -922,9 +1158,9 @@
     </div>
 
     <div id="controls">
-      <button id="btn-prev" onclick="prevChapter()" title="上一章">◀◀</button>
+      <button id="btn-prev" onclick="prevChapter()" title="上一章">«</button>
       <button id="btn-play" class="primary" onclick="togglePlay()" title="播放/暂停">▶</button>
-      <button id="btn-next" onclick="nextChapter()" title="下一章">▶▶</button>
+      <button id="btn-next" onclick="nextChapter()" title="下一章">»</button>
       <span id="chapter-indicator">1 / 3</span>
       <span id="audio-progress" class="audio-progress"></span>
       <div id="chapter-dots"></div>
@@ -1169,14 +1405,68 @@
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    function cleanText(s) {
+      return String(s || '')
+        .replace(/<!--[\s\S]*?-->/g, ' ')
+        .replace(/<\/?[^>\n]+>/g, ' ')
+        .replace(/<[^>\n]*$/g, ' ')
+        .replace(/\s+\n/g, '\n')
+        .trim();
+    }
+
+    function renderMathCore(raw) {
+      var text = escHtml(cleanText(raw)).replace(/\$/g, '');
+      text = text.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '<span class="frac"><span>$1</span><span>$2</span></span>');
+      text = text.replace(/\\sqrt\{([^{}]+)\}/g, '<span class="sqrt">√<span>$1</span></span>');
+      text = text.replace(/\\sum/g, '∑').replace(/\\int/g, '∫').replace(/\\times/g, '×').replace(/\\cdot/g, '·');
+      text = text.replace(/\\leq/g, '≤').replace(/\\geq/g, '≥').replace(/\\neq/g, '≠').replace(/\\approx/g, '≈');
+      text = text.replace(/([A-Za-z0-9)\]}])\^(\{[^{}]+\}|[A-Za-z0-9+\-=]+)/g, function (_, base, exp) {
+        return base + '<sup>' + exp.replace(/[{}]/g, '') + '</sup>';
+      });
+      text = text.replace(/([A-Za-z0-9)\]}])_(\{[^{}]+\}|[A-Za-z0-9+\-=]+)/g, function (_, base, sub) {
+        return base + '<sub>' + sub.replace(/[{}]/g, '') + '</sub>';
+      });
+      return '<span class="math-expression no-karaoke">' + text + '</span>';
+    }
+
+    function renderRichText(value) {
+      var text = cleanText(value);
+      var parts = [];
+      var pattern = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\])/g;
+      var cursor = 0;
+      var match;
+      while ((match = pattern.exec(text))) {
+        if (match.index > cursor) parts.push(escHtml(text.slice(cursor, match.index)));
+        var formula = match[0]
+          .replace(/^\$\$|\$\$$/g, '')
+          .replace(/^\$|\$$/g, '')
+          .replace(/^\\\(|\\\)$/g, '')
+          .replace(/^\\\[|\\\]$/g, '');
+        parts.push(renderMathCore(formula));
+        cursor = match.index + match[0].length;
+      }
+      if (cursor < text.length) parts.push(escHtml(text.slice(cursor)));
+      return parts.join('');
+    }
+
+    function renderMaybeMath(value) {
+      var text = cleanText(value);
+      if (/\\frac|\\sqrt|\\sum|\\int|\$|[A-Za-z0-9]\^|[A-Za-z0-9]_/.test(text)) {
+        return renderRichText(text);
+      }
+      return escHtml(text);
+    }
+
     // 将 .slide-content 内的文本节点逐字包装为 <kw> 标签（导航按钮、页码不受影响）
     function getSlideBlocks(sl) {
       if (sl.blocks && sl.blocks.length) {
         return sl.blocks.map(function (b) {
           return typeof b === 'string' ? { text: b } : b;
+        }).map(function (b) {
+          return { text: cleanText(b.text || b.content || '') };
         }).filter(function (b) { return b && b.text; });
       }
-      return (sl.bullets || []).map(function (b) { return { text: b }; });
+      return (sl.bullets || []).map(function (b) { return { text: cleanText(b) }; }).filter(function (b) { return b.text; });
     }
 
     function layoutLabel(layout) {
@@ -1245,7 +1535,7 @@
     function renderBlocksAsList(blocks) {
       if (!blocks.length) return '';
       var html = '<ul>';
-      blocks.forEach(function (b) { html += '<li>' + escHtml(b.text) + '</li>'; });
+      blocks.forEach(function (b) { html += '<li>' + renderMaybeMath(b.text) + '</li>'; });
       html += '</ul>';
       return html;
     }
@@ -1254,33 +1544,33 @@
       var layout = sl.layout || 'content_cards';
       var visual = sl.visual || {};
       var blocks = getSlideBlocks(sl);
-      var title = escHtml(sl.title || '');
+      var title = renderRichText(sl.title || '');
       var kicker = '<div class="slide-kicker"><span>' + layoutLabel(layout) + '</span><span>' + visualLabel(visual) + '</span></div>';
       var inner = '';
 
       if (layout === 'concept_visual') {
         inner = '<div class="visual-slide-grid"><div><h2>' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 6)) + '</div>' +
-          '<aside class="visual-card"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + escHtml(visual.query || sl.title || '') + '</strong><p>' + escHtml(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
+          '<aside class="visual-card"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
       } else if (layout === 'process_steps') {
         inner = '<h2>' + title + '</h2><div class="process-grid">' + blocks.slice(0, 5).map(function (b, i) {
-          return '<article class="process-card"><b>' + (i + 1) + '</b>' + escHtml(b.text) + '</article>';
+          return '<article class="process-card"><b>' + (i + 1) + '</b><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else if (layout === 'comparison') {
         var left = blocks.filter(function (_, i) { return i % 2 === 0; }).slice(0, 4);
         var right = blocks.filter(function (_, i) { return i % 2 === 1; }).slice(0, 4);
         inner = '<h2>' + title + '</h2><div class="comparison-grid"><article class="comparison-card"><b>A</b>' +
-          left.map(function (b) { return '<p>' + escHtml(b.text) + '</p>'; }).join('') +
+          left.map(function (b) { return '<p>' + renderMaybeMath(b.text) + '</p>'; }).join('') +
           '</article><article class="comparison-card accent"><b>B</b>' +
-          right.map(function (b) { return '<p>' + escHtml(b.text) + '</p>'; }).join('') + '</article></div>';
+          right.map(function (b) { return '<p>' + renderMaybeMath(b.text) + '</p>'; }).join('') + '</article></div>';
       } else if (layout === 'formula_focus') {
         var formulaBlock = blocks.find(function (b) { return /=|\$|\\sum|\\frac|\^|_/.test(b.text); }) || blocks[0] || { text: '' };
         var formula = formulaBlock.text;
-        inner = '<h2>' + title + '</h2><div class="formula-box">' + escHtml(formula.replace(/\$/g, '')) + '</div><div class="formula-points">' +
-          blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b) { return '<div class="formula-point">' + escHtml(b.text) + '</div>'; }).join('') +
+        inner = '<h2>' + title + '</h2><div class="formula-box no-karaoke">' + renderMathCore(formula) + '</div><div class="formula-points">' +
+          blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b) { return '<div class="formula-point">' + renderMaybeMath(b.text) + '</div>'; }).join('') +
           '</div>';
       } else if (layout === 'content_cards') {
         inner = '<h2>' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 6).map(function (b, i) {
-          return '<article class="content-card"><span>' + (i + 1) + '</span><p>' + escHtml(b.text) + '</p></article>';
+          return '<article class="content-card"><span>' + (i + 1) + '</span><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else {
         inner = '<h2>' + title + '</h2>' + renderBlocksAsList(blocks);
@@ -1297,10 +1587,82 @@
         '</div></div>';
     }
 
+    function layoutLabel(layout) {
+      var labels = {
+        title_cover: '封面',
+        concept_visual: '图文讲解',
+        process_steps: '流程步骤',
+        comparison: '对比分析',
+        formula_focus: '公式推导',
+        content_cards: '重点卡片'
+      };
+      return labels[layout] || '内容讲解';
+    }
+
+    function visualLabel(visual) {
+      var labels = { diagram: '图解', timeline: '时间线', comparison: '对比图', formula: '公式板', map: '地图' };
+      return labels[(visual || {}).type] || '视觉辅助';
+    }
+
+    function renderPptSlide(sl, si, total) {
+      var layout = sl.layout || 'content_cards';
+      var visual = sl.visual || {};
+      var blocks = getSlideBlocks(sl);
+      var title = renderRichText(sl.title || '');
+      var kicker = '<div class="slide-kicker"><span>' + layoutLabel(layout) + '</span><span>' + visualLabel(visual) + '</span></div>';
+      var inner = '';
+
+      if (layout === 'concept_visual') {
+        inner = '<div class="visual-slide-grid"><div><h2>' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 6)) + '</div>' +
+          '<aside class="visual-card"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
+      } else if (layout === 'process_steps') {
+        inner = '<h2>' + title + '</h2><div class="process-grid">' + blocks.slice(0, 5).map(function (b, i) {
+          return '<article class="process-card"><b>' + (i + 1) + '</b><p>' + renderMaybeMath(b.text) + '</p></article>';
+        }).join('') + '</div>';
+      } else if (layout === 'comparison') {
+        var left = blocks.filter(function (_, i) { return i % 2 === 0; }).slice(0, 4);
+        var right = blocks.filter(function (_, i) { return i % 2 === 1; }).slice(0, 4);
+        inner = '<h2>' + title + '</h2><div class="comparison-grid"><article class="comparison-card"><b>A</b>' +
+          left.map(function (b) { return '<p>' + renderMaybeMath(b.text) + '</p>'; }).join('') +
+          '</article><article class="comparison-card accent"><b>B</b>' +
+          right.map(function (b) { return '<p>' + renderMaybeMath(b.text) + '</p>'; }).join('') + '</article></div>';
+      } else if (layout === 'formula_focus') {
+        var formulaBlock = blocks.find(function (b) { return /=|\$|\\sum|\\frac|\^|_/.test(b.text); }) || blocks[0] || { text: '' };
+        var formula = formulaBlock.text;
+        inner = '<h2>' + title + '</h2><div class="formula-box no-karaoke">' + renderMathCore(formula) + '</div><div class="formula-points">' +
+          blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b) { return '<div class="formula-point">' + renderMaybeMath(b.text) + '</div>'; }).join('') +
+          '</div>';
+      } else if (layout === 'content_cards') {
+        inner = '<h2>' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 6).map(function (b, i) {
+          return '<article class="content-card"><span>' + (i + 1) + '</span><p>' + renderMaybeMath(b.text) + '</p></article>';
+        }).join('') + '</div>';
+      } else {
+        inner = '<h2>' + title + '</h2>' + renderBlocksAsList(blocks);
+      }
+
+      var art = layout === 'concept_visual' ? '' : '<div class="slide-art" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div>';
+      return '<div class="slide-container layout-' + escHtml(layout) + '" data-slide="' + si + '" style="display:' + (si === 0 ? 'flex' : 'none') + ';background-image:' + svgUrl(slideBgSvg(sl)) + ';background-size:cover;background-position:center;">' +
+        art +
+        '<div class="slide-content">' + kicker + inner + '</div>' +
+        '<div class="slide-number">' + (si + 1) + ' / ' + total + '</div>' +
+        '<div class="slide-nav">' +
+        '<button onclick="prevSlide()" title="上一页">‹</button>' +
+        '<button onclick="nextSlide()" title="下一页">›</button>' +
+        '</div></div>';
+    }
+
     function wrapChars(container) {
       var content = container.querySelector('.slide-content');
       if (!content) return;
-      var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
+      var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (node) {
+          var parent = node.parentElement;
+          if (parent && parent.closest('.no-karaoke, .math-expression, .slide-nav, .slide-number, .visual-image')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }, false);
       var nodes = [];
       while (walker.nextNode()) nodes.push(walker.currentNode);
       var charIndex = 0;
@@ -1646,3 +2008,5 @@
 </body>
 
 </html>
+
+
