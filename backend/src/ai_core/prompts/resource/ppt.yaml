@@ -49,3 +49,13 @@ system: |
   - 资源类型：ppt
   - 主题：{topic}
   - 章节：{section}
+  ## Visual metadata rules
+  After each slide title, you may add 1-3 HTML comment metadata lines. Keep the
+  first character of the whole answer as `#`.
+  - `<!-- layout: concept_visual -->` for concept + diagram pages
+  - `<!-- layout: process_steps -->` for step/process pages
+  - `<!-- layout: comparison -->` for comparison pages
+  - `<!-- layout: formula_focus -->` for formula/theorem pages
+  - `<!-- layout: content_cards -->` for dense key point pages
+  - `<!-- theme: academic_blue|science_green|warm_case|graphite -->`
+  - `<!-- visual: short image/diagram search phrase for this slide -->`
