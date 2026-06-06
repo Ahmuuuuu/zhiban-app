@@ -1299,8 +1299,8 @@ const escapeHtml = value => {
 const isImageResourceUrl = url => /\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(String(url || ''))
 
 const _extractSlideMeta = (lines) => {
-  const meta: Record<string, string> = {}
-  const contentLines: string[] = []
+  const meta = {}
+  const contentLines = []
   for (const l of lines) {
     const m = l.match(/^<!--\s*(layout|theme|visual)\s*:\s*(.+?)\s*-->$/i)
     if (m) { meta[m[1].toLowerCase()] = m[2].trim(); continue }
