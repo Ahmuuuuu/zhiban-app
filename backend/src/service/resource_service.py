@@ -560,7 +560,13 @@ class ResourceService:
                 slides_data = parse_slides(record.content)
 
                 result["slides"] = [
-                    {"index": i, "title": s["title"], "text": s["text"], "notes": s.get("notes", "")}
+                    {
+                        **s,
+                        "index": i,
+                        "title": s.get("title", ""),
+                        "text": s.get("text", ""),
+                        "notes": s.get("notes", ""),
+                    }
                     for i, s in enumerate(slides_data)
                 ]
             except Exception:

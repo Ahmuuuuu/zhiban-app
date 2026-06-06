@@ -7,6 +7,7 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
+from backend.src.utils.slide_schema import parse_markdown_slides
 
 
 # 颜色方案
@@ -22,6 +23,10 @@ ACCENT_ORANGE = RGBColor(0xE8, 0x6C, 0x00)
 
 def _parse_slides(markdown: str) -> list[dict]:
     """解析 markdown，返回幻灯片列表 [{title, bullets, notes}]"""
+    enriched = parse_markdown_slides(markdown)
+    if enriched:
+        return enriched
+
     raw_slides = re.split(r'\n---\n', markdown.strip())
 
     slides = []
@@ -230,6 +235,172 @@ def _build_content_slide(prs, slide_data: dict, index: int, total: int):
     _add_notes(slide, slide_data)
 
 
+def _add_visual_panel(slide, x, y, w, h, caption: str = "", accent=ACCENT_BLUE):
+    panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = RGBColor(0xEE, 0xF5, 0xF8)
+    panel.line.color.rgb = RGBColor(0xC7, 0xD8, 0xE8)
+
+    circle = slide.shapes.add_shape(MSO_SHAPE.OVAL, x + Inches(0.45), y + Inches(0.45), Inches(1.2), Inches(1.2))
+    circle.fill.solid()
+    circle.fill.fore_color.rgb = accent
+    circle.line.fill.background()
+
+    for offset in (0.0, 0.38, 0.76):
+        line = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            x + Inches(2.0),
+            y + Inches(0.58 + offset),
+            w - Inches(2.65),
+            Inches(0.08),
+        )
+        line.fill.solid()
+        line.fill.fore_color.rgb = RGBColor(0x99, 0xB4, 0xCB)
+        line.line.fill.background()
+
+    box = slide.shapes.add_textbox(x + Inches(0.55), y + h - Inches(1.05), w - Inches(1.1), Inches(0.58))
+    tf = box.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.text = caption[:90]
+    p.font.size = Pt(13)
+    p.font.color.rgb = MEDIUM_GRAY
+    p.alignment = PP_ALIGN.CENTER
+
+
+def _build_concept_visual_slide(prs, slide_data: dict, index: int, total: int):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_light_bg(slide, prs)
+    _add_top_bar(slide, prs)
+    _add_title(slide, slide_data["title"] or f"Slide {index}", width=Inches(6.2), font_size=Pt(30))
+    _add_title_line(slide, width=Inches(6.0))
+    _add_bullets(slide, slide_data.get("bullets", []), left=Inches(0.8), top=Inches(1.65), width=Inches(6.1), height=Inches(5.1), max_items=6)
+    visual = slide_data.get("visual") or {}
+    _add_visual_panel(slide, Inches(7.3), Inches(1.35), Inches(5.25), Inches(4.9), visual.get("caption") or visual.get("query") or "")
+    _add_page_number(slide, index, total)
+    _add_notes(slide, slide_data)
+
+
+def _build_process_slide(prs, slide_data: dict, index: int, total: int):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_light_bg(slide, prs)
+    _add_top_bar(slide, prs)
+    _add_title(slide, slide_data["title"] or f"Slide {index}", font_size=Pt(30))
+    steps = (slide_data.get("bullets") or [])[:5]
+    start_x = Inches(1.0)
+    y = Inches(2.35)
+    card_w = Inches(2.15)
+    gap = Inches(0.22)
+    for i, step in enumerate(steps):
+        x = start_x + i * (card_w + gap)
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, card_w, Inches(3.0))
+        card.fill.solid()
+        card.fill.fore_color.rgb = WHITE
+        card.line.color.rgb = RGBColor(0xC7, 0xD8, 0xE8)
+        badge = slide.shapes.add_shape(MSO_SHAPE.OVAL, x + Inches(0.65), y - Inches(0.35), Inches(0.82), Inches(0.82))
+        badge.fill.solid()
+        badge.fill.fore_color.rgb = ACCENT_ORANGE if i % 2 else ACCENT_BLUE
+        badge.line.fill.background()
+        n = slide.shapes.add_textbox(x + Inches(0.65), y - Inches(0.22), Inches(0.82), Inches(0.4))
+        p = n.text_frame.paragraphs[0]
+        p.text = str(i + 1)
+        p.font.size = Pt(16)
+        p.font.bold = True
+        p.font.color.rgb = WHITE
+        p.alignment = PP_ALIGN.CENTER
+        box = slide.shapes.add_textbox(x + Inches(0.18), y + Inches(0.48), card_w - Inches(0.36), Inches(2.15))
+        tf = box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = step
+        p.font.size = Pt(13)
+        p.font.color.rgb = DARK_GRAY
+    _add_page_number(slide, index, total)
+    _add_notes(slide, slide_data)
+
+
+def _build_comparison_slide(prs, slide_data: dict, index: int, total: int):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_light_bg(slide, prs)
+    _add_top_bar(slide, prs)
+    _add_title(slide, slide_data["title"] or f"Slide {index}", font_size=Pt(30))
+    items = (slide_data.get("bullets") or [])[:6]
+    left_items = items[::2]
+    right_items = items[1::2] or items[3:]
+    for col, (x, color, heading) in enumerate(((Inches(0.9), ACCENT_BLUE, "A"), (Inches(6.85), ACCENT_ORANGE, "B"))):
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, Inches(1.65), Inches(5.55), Inches(4.95))
+        card.fill.solid()
+        card.fill.fore_color.rgb = WHITE
+        card.line.color.rgb = RGBColor(0xC7, 0xD8, 0xE8)
+        head = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, Inches(1.65), Inches(5.55), Inches(0.55))
+        head.fill.solid()
+        head.fill.fore_color.rgb = color
+        head.line.fill.background()
+        hb = slide.shapes.add_textbox(x + Inches(0.24), Inches(1.74), Inches(5.05), Inches(0.35))
+        hp = hb.text_frame.paragraphs[0]
+        hp.text = heading
+        hp.font.size = Pt(15)
+        hp.font.bold = True
+        hp.font.color.rgb = WHITE
+        _add_bullets(slide, left_items if col == 0 else right_items, left=x + Inches(0.35), top=Inches(2.45), width=Inches(4.9), height=Inches(3.6), max_items=4)
+    _add_page_number(slide, index, total)
+    _add_notes(slide, slide_data)
+
+
+def _build_formula_slide(prs, slide_data: dict, index: int, total: int):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_light_bg(slide, prs)
+    _add_top_bar(slide, prs)
+    _add_title(slide, slide_data["title"] or f"Slide {index}", font_size=Pt(30))
+    bullets = slide_data.get("bullets") or []
+    formula = next((b for b in bullets if "=" in b or "$" in b), bullets[0] if bullets else "")
+    panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.2), Inches(1.75), Inches(10.9), Inches(1.65))
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = DARK_BLUE
+    panel.line.fill.background()
+    box = slide.shapes.add_textbox(Inches(1.55), Inches(2.08), Inches(10.2), Inches(0.95))
+    p = box.text_frame.paragraphs[0]
+    p.text = formula.replace("$", "")
+    p.font.size = Pt(26)
+    p.font.bold = True
+    p.font.color.rgb = WHITE
+    p.alignment = PP_ALIGN.CENTER
+    rest = [b for b in bullets if b != formula]
+    _add_bullets(slide, rest, left=Inches(1.2), top=Inches(3.8), width=Inches(10.8), height=Inches(2.55), max_items=5)
+    _add_page_number(slide, index, total)
+    _add_notes(slide, slide_data)
+
+
+def _build_cards_slide(prs, slide_data: dict, index: int, total: int):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_light_bg(slide, prs)
+    _add_top_bar(slide, prs)
+    _add_title(slide, slide_data["title"] or f"Slide {index}", font_size=Pt(30))
+    items = (slide_data.get("bullets") or [])[:6]
+    for i, item in enumerate(items):
+        row = i // 3
+        col = i % 3
+        x = Inches(0.85 + col * 4.15)
+        y = Inches(1.65 + row * 2.25)
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, Inches(3.75), Inches(1.78))
+        card.fill.solid()
+        card.fill.fore_color.rgb = WHITE
+        card.line.color.rgb = RGBColor(0xC7, 0xD8, 0xE8)
+        stripe = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, Inches(0.12), Inches(1.78))
+        stripe.fill.solid()
+        stripe.fill.fore_color.rgb = ACCENT_BLUE if i % 2 == 0 else ACCENT_ORANGE
+        stripe.line.fill.background()
+        box = slide.shapes.add_textbox(x + Inches(0.3), y + Inches(0.22), Inches(3.15), Inches(1.26))
+        tf = box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = item
+        p.font.size = Pt(12.5)
+        p.font.color.rgb = DARK_GRAY
+    _add_page_number(slide, index, total)
+    _add_notes(slide, slide_data)
+
+
 def _add_page_number(slide, index: int, total: int):
     """右下角页码"""
     box = slide.shapes.add_textbox(Inches(11.5), Inches(7.0), Inches(1.5), Inches(0.4))
@@ -265,6 +436,16 @@ def markdown_to_pptx(markdown: str) -> bytes:
     for i, slide_data in enumerate(slides_data):
         if i == 0:
             _build_title_slide(prs, slide_data)
+        elif slide_data.get("layout") == "concept_visual":
+            _build_concept_visual_slide(prs, slide_data, i, total)
+        elif slide_data.get("layout") == "process_steps":
+            _build_process_slide(prs, slide_data, i, total)
+        elif slide_data.get("layout") == "comparison":
+            _build_comparison_slide(prs, slide_data, i, total)
+        elif slide_data.get("layout") == "formula_focus":
+            _build_formula_slide(prs, slide_data, i, total)
+        elif slide_data.get("layout") == "content_cards":
+            _build_cards_slide(prs, slide_data, i, total)
         else:
             _build_content_slide(prs, slide_data, i, total)
 
