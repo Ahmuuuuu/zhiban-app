@@ -50,6 +50,8 @@ export type GenerationCallbacks = {
   onImage?: (imageData: unknown) => void
   onDone?: (eventData?: unknown) => void
   onError?: (err: string) => void
+  onStreamStart?: (eventData: unknown) => void
+  onStreamSlide?: (eventData: unknown) => void
 }
 
 const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
@@ -268,6 +270,12 @@ export async function executeGeneration(
         },
         onFile: (fileData: unknown) => {
           callbacks.onFile?.(fileData)
+        },
+        onStreamStart: (eventData: unknown) => {
+          callbacks.onStreamStart?.(eventData)
+        },
+        onStreamSlide: (eventData: unknown) => {
+          callbacks.onStreamSlide?.(eventData)
         },
         onDone: (eventData: unknown) => {
           callbacks.onDone?.(eventData)

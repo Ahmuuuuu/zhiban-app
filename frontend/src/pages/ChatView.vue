@@ -406,6 +406,8 @@ import {
 import petHeroImage from '../assets/pic/zhiban-pet-base.png'
 import { looksLikeQuizContent, upsertQuizSet } from '../utils/quizBank'
 import { saveGeneratedResourceRef } from '../utils/savedResources'
+import { renderMath } from '../utils/renderMath'
+import 'katex/dist/katex.min.css'
 
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
@@ -865,7 +867,7 @@ const renderMarkdown = (content) => {
   flushParagraph()
   flushList()
 
-  return html.join('')
+  return renderMath(html.join(''))
 }
 
 //格式化后端时间
@@ -1166,6 +1168,18 @@ const saveGeneratedAnnotation = async (resourceId, payload) => {
   })
 }
 
+const parseSingleSlide = (content) => {
+  const lines = String(content || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  const titleLine = lines.find(l => /^#{1,3}\s+/.test(l)) || lines[0] || ''
+  const title = titleLine.replace(/^#{1,3}\s+/, '').trim() || '未命名'
+  const text = lines
+    .filter(l => l !== titleLine)
+    .map(l => l.replace(/^[-*•]\s+/, '').trim())
+    .filter(Boolean)
+    .join('\n')
+  return { title, text, notes: '' }
+}
+
 const parsePptSlidesFromContent = content => {
   const text = String(content || '').trim()
   if (!text) return []
@@ -1188,7 +1202,7 @@ const parsePptSlidesFromContent = content => {
   const blocks = text
     .replace(/^```(?:json|markdown|md)?\s*/i, '')
     .replace(/```$/i, '')
-    .split(/\n\s*---+\s*\n|(?=\n\s*#{1,3}\s+)/)
+    .split(/\n\s*---+\s*\n|(?=\n\s*#{1,2}\s+)/)
     .map(block => block.trim())
     .filter(Boolean)
 
@@ -1870,6 +1884,36 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         })
       }
 
+      // PPT 流式预览：逐页展示（批量累积后一次性更新，避免 O(n²) 重渲染）
+      const pptStream = (task as any)._pptStream
+      if (pptStream) {
+        if (!pptPreview.value.visible) {
+          pptPreview.value = {
+            visible: true,
+            loading: true,
+            messageId,
+            resourceId: '',
+            title: task.text || 'PPT 预览',
+            slides: [],
+            annotations: []
+          }
+        }
+        const streamedCount = (task as any)._pptSlideCursor || 0
+        if (streamedCount < pptStream.slides.length) {
+          ;(task as any)._pptSlideCursor = pptStream.slides.length
+          const baseIdx = pptPreview.value.slides.length
+          const newSlides = pptStream.slides.slice(streamedCount).map((content, i) => {
+            const slide = parseSingleSlide(content)
+            return { ...slide, index: baseIdx + i }
+          })
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: false,
+            slides: [...pptPreview.value.slides, ...newSlides]
+          }
+        }
+      }
+
       while (fileCursor < task.files.length) {
         const file = task.files[fileCursor]
         fileCursor += 1
@@ -1878,6 +1922,19 @@ const attachGenerationTaskToMessage = (task, messageId) => {
           continue
         }
         await appendFileMessage(file)
+
+        // PPT 全量文件到达 → 用完整内容刷新预览
+        if (isPptFile(file) && pptPreview.value.visible) {
+          const fullSlides = parsePptSlidesFromContent(file.content || file.text || '')
+          const resourceId = getFileResourceId(file)
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: false,
+            resourceId: resourceId || pptPreview.value.resourceId,
+            slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
+            title: file.filename || pptPreview.value.title
+          }
+        }
       }
 
       while (imageCursor < task.images.length) {
@@ -2051,6 +2108,31 @@ const sendMessage = async () => {
         target.time = getNowTime()
         await scrollToBottom()
       },
+      onStreamStart: async eventData => {
+        if (eventData?.file_type === 'ppt' && !pptPreview.value.visible) {
+          pptPreview.value = {
+            visible: true,
+            loading: true,
+            messageId: loadingMessageId,
+            resourceId: '',
+            title: text || 'PPT 预览',
+            slides: [],
+            annotations: []
+          }
+        }
+      },
+      onStreamSlide: async eventData => {
+        if (eventData?.file_type === 'ppt' && pptPreview.value.visible) {
+          const slide = parseSingleSlide(eventData?.content || '')
+          const idx = pptPreview.value.slides.length
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: pptPreview.value.slides.length === 0,
+            slides: [...pptPreview.value.slides, { ...slide, index: idx }]
+          }
+          scrollToBottom()
+        }
+      },
       onFile: async fileData => {
         if (target && !hasReceivedChunk) {
           target.content = '已生成文件，可以在下方查看预览。'
@@ -2059,6 +2141,20 @@ const sendMessage = async () => {
         }
 
         await appendFileMessage(fileData)
+
+        // PPT 全量 file 事件 → 用完整内容刷新预览
+        if (isPptFile(fileData) && pptPreview.value.visible) {
+          const fullSlides = parsePptSlidesFromContent(fileData.content || fileData.text || '')
+          const resourceId = getFileResourceId(fileData)
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: false,
+            resourceId: resourceId || pptPreview.value.resourceId,
+            slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
+            title: fileData.filename || pptPreview.value.title
+          }
+        }
+
         await scrollToBottom()
       },
       onDone: async data => {
