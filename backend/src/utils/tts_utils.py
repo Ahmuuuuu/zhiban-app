@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import re
 
 logger = logging.getLogger(__name__)
@@ -215,19 +216,16 @@ async def generate_audio_with_timestamps(text: str, output_path: str, voice: str
 
 async def _generate_audio_impl(text: str, output_path: str, voice: str, rate: str, capture_words: bool = False):
     """EdgeTTS 统一实现：支持普通模式和词级时间戳模式"""
-    import os
     import edge_tts
 
-    old_no_proxy = os.environ.get("NO_PROXY", "")
-    domains = "*.speech.microsoft.com,*.microsoft.com,*.bing.com,edge-tts.azurewebsites.net"
-    os.environ["NO_PROXY"] = f"{domains},{old_no_proxy}" if old_no_proxy else domains
-    os.environ["no_proxy"] = os.environ["NO_PROXY"]
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     try:
+        _tts_timeout = 90
         communicate = edge_tts.Communicate(text, voice, rate=rate)
 
         if not capture_words:
-            await asyncio.wait_for(communicate.save(output_path), timeout=60)
+            await asyncio.wait_for(communicate.save(output_path), timeout=_tts_timeout)
             return output_path, []
 
         # stream 模式：启用 WordBoundary 收集词级时间戳
@@ -235,28 +233,23 @@ async def _generate_audio_impl(text: str, output_path: str, voice: str, rate: st
         audio_data = bytearray()
         word_timestamps = []
 
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data.extend(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                # EdgeTTS offset/duration 单位是 Ticks (100ns)，转成毫秒
-                word_timestamps.append({
-                    "text": chunk["text"],
-                    "offset_ms": chunk["offset"] // 10000,
-                    "duration_ms": chunk["duration"] // 10000,
-                })
+        async def _stream_collect():
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_data.extend(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    word_timestamps.append({
+                        "text": chunk["text"],
+                        "offset_ms": chunk["offset"] // 10000,
+                        "duration_ms": chunk["duration"] // 10000,
+                    })
+
+        await asyncio.wait_for(_stream_collect(), timeout=_tts_timeout)
 
         with open(output_path, "wb") as f:
             f.write(audio_data)
 
         return output_path, word_timestamps
     except asyncio.TimeoutError:
-        logger.error("EdgeTTS 超时 (60s): text_len=%d voice=%s", len(text), voice)
+        logger.error("[TTS] 超时 (%ds): text_len=%d voice=%s", _tts_timeout, len(text), voice)
         raise
-    finally:
-        if old_no_proxy:
-            os.environ["NO_PROXY"] = old_no_proxy
-            os.environ["no_proxy"] = old_no_proxy
-        else:
-            os.environ.pop("NO_PROXY", None)
-            os.environ.pop("no_proxy", None)

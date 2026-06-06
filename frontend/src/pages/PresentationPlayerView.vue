@@ -187,7 +187,7 @@ const refreshPresentationStatus = async () => {
 
   try {
     const data = unwrapData(await getPresentation(presentationId.value))
-    const nextStatus = data.status || 'generating'
+    const nextStatus = data.status || (activePresentationUrl.value ? 'ready' : 'generating')
     presentationStatus.value = nextStatus
     if (data.file_url || data.fileUrl) {
       activePresentationUrl.value = resolveApiUrl(data.file_url || data.fileUrl)
@@ -197,12 +197,21 @@ const refreshPresentationStatus = async () => {
       if (nextStatus === 'ready') {
         loadLessonHtml()
       }
+    }
+    // 只要还有章节音频未就绪，就继续轮询刷新 HTML
+    const chapters = Array.isArray(data.chapters) ? data.chapters : []
+    const allAudioReady = chapters.length > 0 && chapters.every(ch => ch.is_audio_ready)
+    if (nextStatus === 'failed' || (nextStatus === 'ready' && allAudioReady)) {
       window.clearInterval(presentationPollTimer)
       presentationPollTimer = 0
     }
   } catch (error) {
     console.warn('[PresentationPlayer] status check failed:', error)
-    if (!activePresentationUrl.value) presentationStatus.value = 'failed'
+    if (activePresentationUrl.value) {
+      presentationStatus.value = 'ready'
+    } else {
+      presentationStatus.value = 'failed'
+    }
   }
 }
 

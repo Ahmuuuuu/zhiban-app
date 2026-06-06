@@ -926,6 +926,7 @@
       <button id="btn-play" class="primary" onclick="togglePlay()" title="播放/暂停">▶</button>
       <button id="btn-next" onclick="nextChapter()" title="下一章">▶▶</button>
       <span id="chapter-indicator">1 / 3</span>
+      <span id="audio-progress" class="audio-progress"></span>
       <div id="chapter-dots"></div>
       <span id="time-display">00:00</span>
     </div>
@@ -939,8 +940,7 @@
     // ══════════════════════════════════════════════
     var SECTIONS = {{SECTIONS}};
     var TITLE = {{TITLE_JSON}};
-    var MERGED_AUDIO_URL = "{{MERGED_AUDIO_URL}}";
-    var TIMELINE = {{TIMELINE}};
+    var AUDIO_SEGMENTS = {{AUDIO_SEGMENTS}};
 
     // ══════════════════════════════════════════════
     //  State
@@ -949,17 +949,24 @@
     var currentSlide = 0;
     var isPlaying = false;
     var totalChapters = SECTIONS.length;
-    var audio = null;  // 单一合并音频元素
+    var audio = null;       // 当前正在播放的 Audio 元素
+    var _segIdx = -1;       // 当前播放段在 AUDIO_SEGMENTS 中的索引
 
     function isChapterReady(idx) {
-      return !!(MERGED_AUDIO_URL && TIMELINE.length > 0);
+      return AUDIO_SEGMENTS.some(function (s) { return s.chapter === idx; });
     }
 
-    // 合并后总时长优先用时间线末值，否则等 audio.duration
     function getTotalDurationMs() {
-      if (TIMELINE.length) return TIMELINE[TIMELINE.length - 1].end_ms;
-      if (audio && audio.duration && isFinite(audio.duration)) return audio.duration * 1000;
-      return 0;
+      var total = 0;
+      for (var i = 0; i < AUDIO_SEGMENTS.length; i++) total += AUDIO_SEGMENTS[i].duration_ms;
+      return total;
+    }
+
+    function _currentPlayPosMs() {
+      if (!audio) return 0;
+      var pos = audio.currentTime * 1000;
+      for (var i = 0; i < _segIdx; i++) pos += AUDIO_SEGMENTS[i].duration_ms;
+      return pos;
     }
 
     function formatTime(sec) {
@@ -970,40 +977,35 @@
 
     function updateProgress() {
       var totalMs = getTotalDurationMs();
-      var posMs = audio ? audio.currentTime * 1000 : 0;
+      var posMs = _currentPlayPosMs();
       var pct = totalMs > 0 ? (posMs / totalMs) * 100 : 0;
       document.getElementById('progress-fill').style.width = Math.min(pct, 100) + '%';
       document.getElementById('time-display').textContent = formatTime(posMs / 1000) + ' / ' + formatTime(totalMs / 1000);
     }
 
-    // 从时间线找当前应显示的章节/幻灯片
-    function _syncChapterFromTime(timeMs) {
-      if (!TIMELINE.length) return;
-      for (var i = TIMELINE.length - 1; i >= 0; i--) {
-        var cue = TIMELINE[i];
-        if (timeMs >= cue.start_ms) {
-          var ch = cue.chapter;
-          var sl = cue.slide;
-          if (ch !== currentChapter) {
-            currentChapter = ch;
-            currentSlide = sl;
-            document.querySelectorAll('.chapter').forEach(function (el, j) { el.classList.toggle('active', j === ch); });
-            document.querySelectorAll('.dot').forEach(function (el, j) { el.classList.toggle('active', j === ch); });
-            updateUI();
-            resetKaraoke();
-            prepareTimedWords(getActiveWordRoot());
-            resetWordReveal(getActiveWordRoot());
-          } else if (sl !== currentSlide && SECTIONS[ch] && SECTIONS[ch].slides) {
-            currentSlide = sl;
-            var containers = document.querySelectorAll('.chapter.active .slide-container');
-            containers.forEach(function (el, j) { el.style.display = j === sl ? 'flex' : 'none'; });
-            updateUI();
-            resetKaraoke();
-            prepareTimedWords(getActiveWordRoot());
-            resetWordReveal(getActiveWordRoot());
-          }
-          return;
-        }
+    // 从当前播放段同步章节/幻灯片
+    function _syncFromCurrentSegment() {
+      if (_segIdx < 0 || _segIdx >= AUDIO_SEGMENTS.length) return;
+      var seg = AUDIO_SEGMENTS[_segIdx];
+      var ch = seg.chapter;
+      var sl = seg.slide;
+      if (ch !== currentChapter) {
+        currentChapter = ch;
+        currentSlide = sl;
+        document.querySelectorAll('.chapter').forEach(function (el, j) { el.classList.toggle('active', j === ch); });
+        document.querySelectorAll('.dot').forEach(function (el, j) { el.classList.toggle('active', j === ch); });
+        updateUI();
+        resetKaraoke();
+        prepareTimedWords(getActiveWordRoot());
+        resetWordReveal(getActiveWordRoot());
+      } else if (sl !== currentSlide && SECTIONS[ch] && SECTIONS[ch].slides) {
+        currentSlide = sl;
+        var containers = document.querySelectorAll('.chapter.active .slide-container');
+        containers.forEach(function (el, j) { el.style.display = j === sl ? 'flex' : 'none'; });
+        updateUI();
+        resetKaraoke();
+        prepareTimedWords(getActiveWordRoot());
+        resetWordReveal(getActiveWordRoot());
       }
     }
 
@@ -1071,13 +1073,26 @@
     })();
 
     function seekTo(fraction) {
-      if (!audio) return;
       var totalMs = getTotalDurationMs();
       if (totalMs <= 0) return;
       fraction = Math.max(0, Math.min(1, fraction));
-      var targetSec = fraction * (totalMs / 1000);
-      audio.currentTime = Math.max(0, Math.min(targetSec, (audio.duration || 9999) - 0.1));
-      _syncChapterFromTime(audio.currentTime * 1000);
+      var targetMs = fraction * totalMs;
+
+      var accumulated = 0;
+      for (var i = 0; i < AUDIO_SEGMENTS.length; i++) {
+        var dur = AUDIO_SEGMENTS[i].duration_ms;
+        if (targetMs < accumulated + dur || i === AUDIO_SEGMENTS.length - 1) {
+          _segIdx = i;
+          _ensureAudioForSegment();
+          if (audio) {
+            audio.currentTime = Math.max(0, (targetMs - accumulated) / 1000);
+            if (isPlaying) audio.play().catch(function () {});
+          }
+          break;
+        }
+        accumulated += dur;
+      }
+      _syncFromCurrentSegment();
       updateProgress();
     }
 
@@ -1093,13 +1108,6 @@
         div.className = 'chapter chapter-' + sec.type + (idx === 0 ? ' active' : '');
         div.dataset.index = idx;
 
-        // 未就绪章节加生成中遮罩
-        if (!sec.is_audio_ready) {
-          var mask = document.createElement('div');
-          mask.className = 'chapter-loading-mask';
-          mask.textContent = '音频生成中…';
-          div.appendChild(mask);
-        }
 
         if (sec.type === 'intro') {
           var slidesHtml = '';
@@ -1123,23 +1131,6 @@
           for (var si = 0; si < sec.slides.length; si++) {
             var sl = sec.slides[si];
             slidesHtml += renderPptSlide(sl, si, sec.slides.length);
-            continue;
-            var activeClass = si === 0 ? ' active-slide' : '';
-            var bulletsHtml = '';
-            if (sl.bullets && sl.bullets.length) {
-              bulletsHtml = '<ul>';
-              sl.bullets.forEach(function (b) {
-                bulletsHtml += '<li>' + b + '</li>';
-              });
-              bulletsHtml += '</ul>';
-            }
-            slidesHtml += '<div class="slide-container' + activeClass + '" data-slide="' + si + '" style="display:' + (si === 0 ? 'flex' : 'none') + '">' +
-              '<div class="slide-content"><h2>' + escHtml(sl.title) + '</h2>' + bulletsHtml + '</div>' +
-              '<div class="slide-number">' + (si + 1) + ' / ' + sec.slides.length + '</div>' +
-              '<div class="slide-nav">' +
-              '<button onclick="prevSlide()">◀ 上一页</button>' +
-              '<button onclick="nextSlide()">下一页 ▶</button>' +
-              '</div></div>';
           }
           div.innerHTML = slidesHtml;
           div.querySelectorAll('.slide-container').forEach(function (c) { wrapChars(c); });
@@ -1167,6 +1158,10 @@
       audio = _createAudio();
       prepareTimedWords(getActiveWordRoot());
       resetWordReveal(getActiveWordRoot());
+      // 无音频时直接显示全部文字（不要等在 karaoke 里不可见）
+      if (!audio) {
+        document.querySelectorAll('.kw').forEach(function (el) { el.className = 'kw done'; });
+      }
     }
 
     function escHtml(s) {
@@ -1331,19 +1326,19 @@
     }
 
     // ══════════════════════════════════════════════
-    //  Chapter Navigation (seeks merged audio to cue position)
+    //  Chapter Navigation (跳转至章节第一段)
     // ══════════════════════════════════════════════
     function goToChapter(idx) {
       if (idx < 0 || idx >= totalChapters) return;
       if (!isChapterReady(idx)) return;
-      // 找该章节第一个时间点
-      var targetMs = 0;
-      for (var i = 0; i < TIMELINE.length; i++) {
-        if (TIMELINE[i].chapter === idx) { targetMs = TIMELINE[i].start_ms; break; }
-      }
-      if (audio) {
-        audio.currentTime = targetMs / 1000;
-        _syncChapterFromTime(targetMs);
+      for (var i = 0; i < AUDIO_SEGMENTS.length; i++) {
+        if (AUDIO_SEGMENTS[i].chapter === idx) {
+          _segIdx = i;
+          _ensureAudioForSegment();
+          if (audio) audio.currentTime = 0;
+          _syncFromCurrentSegment();
+          break;
+        }
       }
       updateProgress();
     }
@@ -1382,10 +1377,11 @@
       resetKaraoke();
       prepareTimedWords(getActiveWordRoot());
       resetWordReveal(getActiveWordRoot());
-      // 找到此幻灯片在时间线中的位置并 seek
-      for (var i = 0; i < TIMELINE.length; i++) {
-        if (TIMELINE[i].chapter === currentChapter && TIMELINE[i].slide === idx) {
-          if (audio) audio.currentTime = TIMELINE[i].start_ms / 1000;
+      for (var i = 0; i < AUDIO_SEGMENTS.length; i++) {
+        if (AUDIO_SEGMENTS[i].chapter === currentChapter && AUDIO_SEGMENTS[i].slide === idx) {
+          _segIdx = i;
+          _ensureAudioForSegment();
+          if (audio) audio.currentTime = 0;
           break;
         }
       }
@@ -1393,39 +1389,67 @@
     }
 
     // ══════════════════════════════════════════════
-    //  Audio (单一合并元素)
+    //  Audio (逐段顺序播放)
     // ══════════════════════════════════════════════
-    function _createAudio() {
-      if (!MERGED_AUDIO_URL) return null;
-      var a = new Audio(MERGED_AUDIO_URL);
-      a.preload = 'auto';
+    function _ensureAudioForSegment() {
+      var seg = AUDIO_SEGMENTS[_segIdx];
+      if (!seg) { audio = null; return; }
 
-      a.ontimeupdate = function () {
-        var timeMs = a.currentTime * 1000;
-        _syncChapterFromTime(timeMs);
+      if (audio) {
+        audio.pause();
+        audio.onended = null;
+        audio.ontimeupdate = null;
+        audio.onplay = null;
+        audio.onpause = null;
+      }
+
+      audio = new Audio(seg.url);
+      audio.preload = 'auto';
+
+      audio.ontimeupdate = function () {
+        _syncFromCurrentSegment();
         updateProgress();
         updateKaraoke();
         savePlayState();
       };
 
-      a.onended = function () {
-        isPlaying = false;
-        document.getElementById('btn-play').textContent = '▶';
-        clearPlayState();
-        updateProgress();
+      audio.onended = function () {
+        if (_segIdx + 1 < AUDIO_SEGMENTS.length) {
+          _segIdx++;
+          _ensureAudioForSegment();
+          audio.play().catch(function () {});
+        } else {
+          isPlaying = false;
+          document.getElementById('btn-play').textContent = '▶';
+          clearPlayState();
+          updateProgress();
+        }
       };
 
-      a.onplay = function () {
+      audio.onplay = function () {
         isPlaying = true;
         document.getElementById('btn-play').textContent = '⏸';
       };
 
-      a.onpause = function () {
+      audio.onpause = function () {
         isPlaying = false;
         document.getElementById('btn-play').textContent = '▶';
       };
+    }
 
-      return a;
+    function _startPlayback() {
+      if (AUDIO_SEGMENTS.length === 0) return;
+      if (_segIdx < 0) _segIdx = 0;
+      if (_segIdx >= AUDIO_SEGMENTS.length) _segIdx = AUDIO_SEGMENTS.length - 1;
+      _ensureAudioForSegment();
+      if (audio) audio.play().catch(function (e) { console.warn('Audio play error:', e); });
+    }
+
+    function _createAudio() {
+      if (AUDIO_SEGMENTS.length === 0) return null;
+      _segIdx = 0;
+      _ensureAudioForSegment();
+      return audio;
     }
 
     // ══════════════════════════════════════════════
@@ -1439,7 +1463,8 @@
         var state = {
           chapter: currentChapter,
           slide: currentSlide,
-          time: audio.currentTime,
+          segIdx: _segIdx,
+          segTime: audio.currentTime,
           playing: isPlaying,
           ts: Date.now()
         };
@@ -1453,12 +1478,17 @@
         if (!raw) return false;
         var state = JSON.parse(raw);
         if (Date.now() - state.ts > 300000) { sessionStorage.removeItem(STORAGE_KEY); return false; }
-        if (!audio) return false;
+        if (AUDIO_SEGMENTS.length === 0) return false;
 
-        if (state.time > 0.5) {
-          audio.currentTime = Math.min(state.time, (audio.duration || 9999) - 0.1);
-          _syncChapterFromTime(state.time * 1000);
+        _segIdx = state.segIdx || 0;
+        if (_segIdx >= AUDIO_SEGMENTS.length) _segIdx = AUDIO_SEGMENTS.length - 1;
+        _ensureAudioForSegment();
+
+        if (state.segTime > 0.5) {
+          audio.currentTime = Math.min(state.segTime, (audio.duration || 9999) - 0.1);
         }
+        _syncFromCurrentSegment();
+
         if (state.playing) {
           audio.play().catch(function () {});
         }
@@ -1476,11 +1506,15 @@
     }
 
     function togglePlay() {
-      if (!audio || !isChapterReady(currentChapter)) return;
+      if (AUDIO_SEGMENTS.length === 0 || !isChapterReady(currentChapter)) return;
       if (isPlaying) {
-        audio.pause();
+        if (audio) audio.pause();
       } else {
-        audio.play().catch(function (e) { console.warn('Audio play error:', e); });
+        if (!audio || audio.ended) {
+          _startPlayback();
+        } else {
+          audio.play().catch(function (e) { console.warn('Audio play error:', e); });
+        }
       }
     }
 
@@ -1560,28 +1594,19 @@
       if (!chars.length) return;
 
       if (!audio || audio.paused) {
-        for (var i = 0; i < chars.length; i++) chars[i].className = 'kw';
+        for (var i = 0; i < chars.length; i++) chars[i].className = 'kw done';
         return;
       }
 
+      // 逐段播放时 audio.currentTime 已相对当前段开头
       var currentTimeMs = audio.currentTime * 1000;
-      // 换算为相对当前幻灯片的时间偏移
-      var slideStartMs = 0;
-      for (var t = 0; t < TIMELINE.length; t++) {
-        if (TIMELINE[t].chapter === currentChapter && TIMELINE[t].slide === currentSlide) {
-          slideStartMs = TIMELINE[t].start_ms;
-          break;
-        }
-      }
-      var relativeMs = currentTimeMs - slideStartMs;
       var timings = _getCharTimings(slide, chars.length);
       if (!timings) return;
 
-      // 二分查找当前时间已reveal的字数
       var lo = 0, hi = timings.length;
       while (lo < hi) {
         var mid = (lo + hi) >>> 1;
-        if (timings[mid] <= relativeMs) lo = mid + 1;
+        if (timings[mid] <= currentTimeMs) lo = mid + 1;
         else hi = mid;
       }
 

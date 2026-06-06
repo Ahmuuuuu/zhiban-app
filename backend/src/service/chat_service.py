@@ -134,9 +134,12 @@ def _get_or_create_chat(user_id: int, chat_group_id: int) -> Brain:
 
 async def get_max_chat_group(user_id: int):
     max_chat_group = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
-    if not max_chat_group:
+    if not max_chat_group or not max_chat_group.chat_group_id:
+        logger.info("文本对话分配首个聊天组 user_id=%s chat_group_id=1", user_id)
         return 1
-    return max_chat_group.chat_group_id + 1
+    new_id = max_chat_group.chat_group_id + 1
+    logger.info("文本对话分配新聊天组 user_id=%s chat_group_id=%d", user_id, new_id)
+    return new_id
 
 
 class ChatService:

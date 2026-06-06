@@ -554,8 +554,22 @@ const getRecordId = (record, fallback) => {
   return record?.id || record?.index || fallback
 }
 
+const expandResourceListMessages = (messages) => {
+  const result = []
+  for (const msg of messages) {
+    if (msg._resourceList) {
+      for (const resource of msg._resourceList) {
+        result.push({ ...normalizeFileMessage(resource), id: `${msg.id}-${resource.file_id || resource.resource_id}`, time: msg.time })
+      }
+    } else {
+      result.push(msg)
+    }
+  }
+  return result
+}
+
 const buildMessagesFromHistory = (records, conversationId) => {
-  return records
+  const messages = records
     .slice()
     .sort((a, b) => getTimeValue(getRecordTime(a)) - getTimeValue(getRecordTime(b)))
     .map((item, index) => {
@@ -580,6 +594,8 @@ const buildMessagesFromHistory = (records, conversationId) => {
       }
     })
     .filter(message => message.type !== 'text' || message.content)
+
+  return expandResourceListMessages(messages)
 }
 
 const normalizePresentationTopic = value => String(value || '')
@@ -1041,6 +1057,21 @@ const parseResourceHistoryMessage = value => {
 const normalizeHistoryAssistantMessage = (item, id, time) => {
   const rawContent = item.res || item.content || item.answer || ''
   const parsed = typeof rawContent === 'string' ? tryParseJson(rawContent) : rawContent
+
+  if (parsed && parsed.type === 'resource_list' && Array.isArray(parsed.resources)) {
+    if (parsed.resources.length === 0) {
+      return { id, role: 'assistant', type: 'text', content: parsed.message || '资源生成完成', time }
+    }
+    return {
+      id,
+      role: 'assistant',
+      type: 'text',
+      content: stripInternalInstructions(rawContent),
+      _resourceList: parsed.resources,
+      time
+    }
+  }
+
   const resourceHistory = parseResourceHistoryMessage(rawContent)
 
   if (resourceHistory) {

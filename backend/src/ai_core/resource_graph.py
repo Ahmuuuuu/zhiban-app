@@ -176,7 +176,7 @@ async def generate_ppt_parallel(
     stream_writer=None,
     section_count: int = PPT_DEFAULT_SECTIONS,
 ) -> str:
-    """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2 页），共 2N 页 + 2 页画像应用场景"""
+    """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2 页），共 2N 页 + 2 页画像学习引入"""
     # 立即通知前端，避免长时间无反馈
     if stream_writer:
         try:
@@ -192,10 +192,10 @@ async def generate_ppt_parallel(
                 stream_writer = None
         sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count)
 
-    # 追加画像应用场景章节（如果画像数据可用）
+    # 画像引入置顶（如果画像数据可用）
     has_portrait = portrait and portrait != "暂无画像数据"
     if has_portrait:
-        sections = list(sections) + ["应用场景与个性化实践"]
+        sections = ["学习引入：从你的视角出发"] + list(sections)
 
     # 构建课程全景描述，让每个章节知道自己在哪里
     outline_lines = [f"第{i+1}章「{s}」" for i, s in enumerate(sections)]
@@ -208,18 +208,19 @@ async def generate_ppt_parallel(
             slide = slide.strip()
             if not slide or not slide.startswith("##"):
                 continue
-            if len(slide) < 200:
+            if len(slide) < 120:
                 return False
             if "（上）" in slide or "（下）" in slide:
                 return False
             bullets = [l for l in slide.split("\n") if l.strip().startswith("-")]
-            if len(bullets) < 4:
+            if len(bullets) < 3:
                 return False
-            # $ 符号是否成对
             dollars = slide.count("$")
             if dollars % 2 != 0:
                 return False
         return True
+
+
 
     async def gen_section(idx: int, section_title: str) -> tuple[int, str]:
         # 推送开始生成通知
@@ -244,29 +245,34 @@ async def generate_ppt_parallel(
         )
         prev_section = sections[idx - 1] if idx > 0 else "（无，这是第一章）"
         next_section = sections[idx + 1] if idx < len(sections) - 1 else "（无，这是最后一章）"
-        is_portrait_section = has_portrait and idx == len(sections) - 1
+        is_portrait_section = has_portrait and idx == 0
 
         if is_portrait_section:
-            # 画像应用场景：结合学科与用户画像，展示实际应用
-            base_prompt = build_resource_prompt(
-                "ppt_apply", topic,
-                portrait=portrait, kb=kb, guidance=guidance,
-                feedback=feedback, user_notes=user_notes,
-                custom_prompts=custom_prompts,
-                section=section_title,
+            # 画像学习引入：从学生视角出发，建立学习连接
+            # 注意：不能用 ppt.yaml 模板，它的学术标题/6要点等要求与温暖引入冲突
+            portrait_context_block = ""
+            if guidance:
+                portrait_context_block += f"\n\n## 学习指导\n{guidance}"
+            if kb:
+                portrait_context_block += f"\n\n## 知识库参考资料\n{kb}"
+            if feedback:
+                portrait_context_block += f"\n\n## 额外反馈\n{feedback}"
+            prompt_with_context = (
+                f"你是一个贴心的学习导师。为课程「{topic}」撰写 2 页学习引入幻灯片。"
+                f"\n\n## 输出格式"
+                f"\n直接输出 PPT Markdown，第一个字符必须是 #。用 --- 分隔两页。每页 4-6 条要点，整页正文不低于 200 字。"
+                f"\n\n## 第1页：为什么这门课对你很重要"
+                f"\n- 用画像中的具体信息（专业、年级等）解释这门课和你的关联"
+                f"\n- 让你感受到'这课是为我准备的'"
+                f"\n- 语气亲切自然，像导师在课前和学生面对面聊天"
+                f"\n\n## 第2页：这门课你将学到什么"
+                f"\n- 简要预告本课程涵盖的核心内容（参考课程全景，不要展开讲）"
+                f"\n- 说明学完后你能收获什么"
+                f"\n- 保持鼓励和温暖的语气"
+                f"\n\n## 用户画像\n{portrait}"
+                f"\n\n## 课程全景（供预告参考，不要展开讲）\n{course_overview}"
+                f"{portrait_context_block}"
             )
-            context = (
-                f"\n\n【你的任务】为「{topic}」撰写 2 页应用场景幻灯片，标题为「应用场景与个性化实践」。"
-                f"\n\n## 核心要求"
-                f"\n你必须将学科知识与用户画像深度融合，让用户感受到'这门课是为我定制的'："
-                f"\n1. 第1页：从画像中的学习目标/兴趣出发，举 3 个具体的生活或职业场景，展示本课程知识如何解决实际问题"
-                f"\n2. 第2页：画像中的薄弱知识点如何通过本课程内容得到加强，规划一个简短的学习路径或实操建议"
-                f"\n3. 场景举例必须用到画像中的具体信息（年级、目标、兴趣、性格等），不要泛泛而谈"
-                f"\n4. 语气亲切，让学生觉得'这个老师了解我'"
-                f"\n\n## 画像数据\n{portrait}"
-                f"\n\n## 课程已覆盖的知识点（前面各章）\n{course_overview}"
-            )
-            prompt_with_context = base_prompt + context
         else:
             context = (
                 f"\n\n【课程全景 — 共 {len(sections)} 章 20 页】\n{course_overview}"
@@ -283,9 +289,14 @@ async def generate_ppt_parallel(
                 response = await llm.ainvoke(prompt_with_context)
                 content = response.content
                 elapsed = time.perf_counter() - t0
+                break
             except Exception:
                 elapsed = time.perf_counter() - t0
-                logger.exception("[PPT-Section] idx=%d section=%s LLM 失败 耗时=%.2fs", idx, section_title, elapsed)
+                if attempt < 2:
+                    logger.warning("[PPT-Section] idx=%d section=%s LLM 失败，重试 %d/3 耗时=%.2fs",
+                                   idx, section_title, attempt + 1, elapsed)
+                    continue
+                logger.exception("[PPT-Section] idx=%d section=%s LLM 重试耗尽 耗时=%.2fs", idx, section_title, elapsed)
                 return idx, f"## {section_title}\n- 生成失败"
 
             # 快检通过则跳过 LLM 审核
@@ -334,27 +345,37 @@ async def generate_ppt_parallel(
     total = len(sections)
 
     def _push_section(idx: int, content: str):
-        """将章节的幻灯片逐页推送给前端"""
+        """将章节的幻灯片逐页推送给前端，并立即后台预热 TTS"""
         nonlocal completed_count
-        if not stream_writer:
-            return
+        # 流式推前端
+        if stream_writer:
+            try:
+                for slide in content.split("\n---\n"):
+                    slide = slide.strip()
+                    if slide:
+                        if slide.startswith("# ") and not slide.startswith("## "):
+                            slide = slide.replace("# ", "## ", 1)
+                        stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide})
+                completed_count += 1
+                stream_writer({
+                    "type": "stream_progress",
+                    "file_type": "ppt",
+                    "message": f"已生成 {completed_count}/{total} 章节",
+                    "current": completed_count,
+                    "total": total,
+                })
+            except Exception:
+                logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
+        # 后台预热 TTS：该 section 每页的文本立即生成音频到全局缓存
         try:
-            for slide in content.split("\n---\n"):
-                slide = slide.strip()
-                if slide:
-                    if slide.startswith("# ") and not slide.startswith("## "):
-                        slide = slide.replace("# ", "## ", 1)
-                    stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide})
-            completed_count += 1
-            stream_writer({
-                "type": "stream_progress",
-                "file_type": "ppt",
-                "message": f"已生成 {completed_count}/{total} 章节",
-                "current": completed_count,
-                "total": total,
-            })
+            from backend.src.utils.tts_utils import parse_slides
+            from backend.src.service.narration_service import pre_warm_tts
+            for slide in parse_slides(content):
+                text = slide.get("text", "")
+                if text and len(text) > 5:
+                    asyncio.ensure_future(pre_warm_tts(text))
         except Exception:
-            logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
+            pass
 
     tasks = [gen_section(i, s) for i, s in enumerate(sections)]
     results = await asyncio.gather(*tasks)
