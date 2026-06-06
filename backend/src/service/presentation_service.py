@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 PRESENTATION_DIR = Path(__file__).parent.parent.parent / "static" / "presentations"
 TEMPLATE_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template.html"
+PRESENTATION_TEMPLATE_VERSION = "visual-v2"
 
 
 # ═══════════════════════════════════════════════
@@ -429,13 +430,14 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     existing = await Presentation.filter(
         user_id=user_id, topic=topic, created_at__gte=cutoff,
     ).order_by("-created_at").first()
-    if existing:
+    if existing and _presentation_file_matches_template(existing.file_url):
         logger.info("课件去重命中 user=%s topic=%s existing_id=%s", user_id, topic, existing.id)
         return {
             "id": existing.id,
-            "file_url": existing.file_url,
+            "file_url": _versioned_presentation_url(existing.file_url),
             "status": existing.status,
             "cached": True,
+            "template_version": PRESENTATION_TEMPLATE_VERSION,
         }
 
     doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
@@ -449,6 +451,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     record = await Presentation.create(user=user, topic=topic, status="generating")
 
     # 保存初始骨架 HTML
+    PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
     html = _render_html(topic, [])
     filename = f"{_safe_filename(topic)}_{uuid.uuid4().hex[:8]}.html"
     file_path = PRESENTATION_DIR / filename
@@ -468,7 +471,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
                 "type": "presentation",
                 "id": record.id,
                 "topic": topic,
-                "file_url": record.file_url,
+                "file_url": _versioned_presentation_url(record.file_url),
                 "status": "generating",
                 "_video_hint": "动态课件已生成",
             }, ensure_ascii=False)
@@ -486,8 +489,9 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
 
     return {
         "id": record.id,
-        "file_url": record.file_url,
+        "file_url": _versioned_presentation_url(record.file_url),
         "status": "generating",
+        "template_version": PRESENTATION_TEMPLATE_VERSION,
         "message": "课件骨架已生成，音频正在后台补充",
     }
 
@@ -506,7 +510,8 @@ async def get_presentation(presentation_id: int, user_id: int) -> dict | None:
         "id": record.id,
         "topic": record.topic,
         "status": record.status,
-        "file_url": record.file_url,
+        "file_url": _versioned_presentation_url(record.file_url),
+        "template_version": PRESENTATION_TEMPLATE_VERSION,
         "chapters": chapters,
         "chapter_count": len(chapters),
         "total_duration_ms": record.total_duration_ms,
@@ -525,7 +530,8 @@ async def list_presentations(user_id: int) -> list[dict]:
             "status": r.status,
             "chapter_count": len(json.loads(r.chapters_json)) if r.chapters_json else 0,
             "total_duration_ms": r.total_duration_ms,
-            "file_url": r.file_url,
+            "file_url": _versioned_presentation_url(r.file_url),
+            "template_version": PRESENTATION_TEMPLATE_VERSION,
             "created_at": str(r.created_at),
         }
         for r in records
@@ -539,9 +545,8 @@ async def delete_presentation(presentation_id: int, user_id: int) -> bool:
         return False
 
     if record.file_url:
-        fname = record.file_url.rsplit("/", 1)[-1]
-        fp = PRESENTATION_DIR / fname
-        if fp.exists():
+        fp = _presentation_file_path(record.file_url)
+        if fp and fp.exists():
             fp.unlink()
 
     await record.delete()
@@ -714,8 +719,10 @@ async def _build_merged_audio(chapters: list[dict]) -> dict:
 async def _flush(record, topic: str, chapters: list, status: str, merged_audio_url: str = "", timeline: list[dict] | None = None):
     """更新 HTML 文件 + DB + SSE 通知"""
     html = _render_html(topic, chapters, merged_audio_url, timeline)
-    fname = record.file_url.rsplit("/", 1)[-1]
-    file_path = PRESENTATION_DIR / fname
+    file_path = _presentation_file_path(record.file_url)
+    if file_path is None:
+        return
+    PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
     file_path.write_text(html, encoding="utf-8")
 
     record = await Presentation.filter(id=record.id).first()
@@ -729,7 +736,7 @@ async def _flush(record, topic: str, chapters: list, status: str, merged_audio_u
     await _notify_sse(record.id, {
         "status": status,
         "chapters": len(chapters),
-        "file_url": record.file_url,
+        "file_url": _versioned_presentation_url(record.file_url),
     })
 
 
@@ -1054,6 +1061,32 @@ def _max_depth(node) -> int:
 #  HTML 渲染
 # ═══════════════════════════════════════════════
 
+def _versioned_presentation_url(url: str | None) -> str:
+    if not url:
+        return ""
+    base = str(url).split("?", 1)[0]
+    return f"{base}?v={PRESENTATION_TEMPLATE_VERSION}"
+
+
+def _presentation_file_path(url: str | None) -> Path | None:
+    if not url:
+        return None
+    fname = str(url).split("?", 1)[0].rsplit("/", 1)[-1]
+    if not fname:
+        return None
+    return PRESENTATION_DIR / fname
+
+
+def _presentation_file_matches_template(url: str | None) -> bool:
+    path = _presentation_file_path(url)
+    if not path or not path.exists():
+        return False
+    try:
+        return f"template-version:{PRESENTATION_TEMPLATE_VERSION}" in path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False
+
+
 def _render_html(topic: str, sections: list[dict], merged_audio_url: str = "", timeline: list[dict] | None = None) -> str:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     sections_json = json.dumps(sections, ensure_ascii=False, indent=2)
@@ -1065,7 +1098,7 @@ def _render_html(topic: str, sections: list[dict], merged_audio_url: str = "", t
     html = html.replace("{{TITLE_JSON}}", topic_json)
     html = html.replace("{{MERGED_AUDIO_URL}}", merged_audio_url or "")
     html = html.replace("{{TIMELINE}}", timeline_json)
-    return html
+    return f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->\n{html}"
 
 
 def _safe_filename(topic: str) -> str:
