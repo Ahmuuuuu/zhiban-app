@@ -123,19 +123,25 @@ def build_resource_prompt(
 
 
 # PPT 并行生成参数
-PPT_PAGES_PER_SECTION = 2  # 每个章节生成 2 页
-PPT_MAX_SECTIONS = 10      # 最多 10 章节（20 页上限）
+PPT_PAGES_PER_SECTION = 2    # 每个章节生成 2 页
+PPT_DEFAULT_SECTIONS = 10    # 默认 10 章节（20 页）
+PPT_SECTION_COUNT_BY_DEPTH = {
+    "overview": 5,           # 快速概览 → 10 页
+    "standard": 10,           # 标准讲解 → 20 页
+    "deep": 15,              # 逐页详解 → 30 页
+}
 
 
-async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "") -> list[str]:
-    """快速生成 PPT 章节大纲，固定 10 章节 20 页"""
+async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", count: int = PPT_DEFAULT_SECTIONS) -> list[str]:
+    """快速生成 PPT 章节大纲，默认 {count} 章节"""
+    total_pages = count * PPT_PAGES_PER_SECTION
     prompt = f"""你是一个课程规划师。为以下主题设计PPT章节大纲。
 
 主题：{topic}
 学习指导：{guidance}
 
 要求：
-- 固定 10 个章节（必须恰好 10 个），每个章节生成 2 页幻灯片，总共 20 页
+- 固定 {count} 个章节（必须恰好 {count} 个），每个章节生成 {PPT_PAGES_PER_SECTION} 页幻灯片，总共 {total_pages} 页
 - 章节标题简洁（10 字以内），由浅入深，逻辑连贯，形成完整的课程体系
 - 覆盖主题的：定义概念 → 原理推导 → 方法技巧 → 典型案例 → 应用实践 → 总结回顾
 - 只返回 JSON 字符串数组，不要任何其他文字
@@ -147,16 +153,15 @@ async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "") -> 
         response = await llm.ainvoke(prompt)
         sections = parse_llm_json(response.content)
         if isinstance(sections, list) and len(sections) >= 1:
-            # 不足 10 个时用默认标题补齐
             defaults = ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "与其他知识的联系", "综合练习与思考", "课程总结与回顾"]
-            while len(sections) < 10:
-                sections.append(defaults[len(sections)])
-            sections = sections[:PPT_MAX_SECTIONS]
+            while len(sections) < count:
+                sections.append(defaults[len(sections) % len(defaults)])
+            sections = sections[:count]
             logger.info("[PPT-Outline] 大纲生成 章节数=%d 耗时=%.2fs", len(sections), time.perf_counter() - t0)
             return sections
     except Exception:
         logger.exception("[PPT-Outline] 大纲生成失败，使用默认章节")
-    return ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "与其他知识的联系", "综合练习与思考", "课程总结与回顾"]
+    return ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "与其他知识的联系", "综合练习与思考", "课程总结与回顾"][:count]
 
 
 async def generate_ppt_parallel(
@@ -169,8 +174,9 @@ async def generate_ppt_parallel(
     custom_prompts: dict | None = None,
     sections: list[str] | None = None,
     stream_writer=None,
+    section_count: int = PPT_DEFAULT_SECTIONS,
 ) -> str:
-    """按章节并行生成 PPT：大纲（固定10章节） → 10 条线并行（每条 2 页），共 20 页 + 2 页画像应用场景 = 22 页"""
+    """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2 页），共 2N 页 + 2 页画像应用场景"""
     # 立即通知前端，避免长时间无反馈
     if stream_writer:
         try:
@@ -184,7 +190,7 @@ async def generate_ppt_parallel(
                 stream_writer({"type": "stream_progress", "file_type": "ppt", "message": "正在规划课程大纲..."})
             except Exception:
                 stream_writer = None
-        sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance)
+        sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count)
 
     # 追加画像应用场景章节（如果画像数据可用）
     has_portrait = portrait and portrait != "暂无画像数据"
@@ -385,6 +391,11 @@ async def executor_node(state: ResourceState) -> dict:
 
     writer = get_stream_writer()
 
+    # PPT 章节数：根据追问答案的 depth 决定，默认 10
+    answers = state.get("answers", {}) or {}
+    depth = answers.get("depth", "standard")
+    ppt_section_count = PPT_SECTION_COUNT_BY_DEPTH.get(depth, PPT_DEFAULT_SECTIONS)
+
     # 分离 PPT 和其他类型
     has_ppt = "ppt" in resource_types
     non_ppt_types = [rt for rt in resource_types if rt != "ppt"]
@@ -436,6 +447,7 @@ async def executor_node(state: ResourceState) -> dict:
             feedback=feedback, user_notes=user_notes,
             custom_prompts=custom_prompts,
             stream_writer=writer,
+            section_count=ppt_section_count,
         )
 
     ppt_coro = _run_ppt()

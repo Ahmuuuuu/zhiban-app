@@ -12,7 +12,7 @@ export const resourceTools: ResourceToolConfig[] = [
   { label: 'image', generateMode: 'image', aspectRatio: '1:1', imageCount: 1 },
   { label: 'ppt', generateMode: 'resource', resourceTypes: ['ppt'] },
   { label: 'word', generateMode: 'resource', resourceTypes: ['document'] },
-  { label: 'video', generateMode: 'video', resourceTypes: ['document'] },
+  { label: 'video', generateMode: 'video', resourceTypes: ['document', 'ppt'] },
   { label: 'mindmap', generateMode: 'resource', resourceTypes: ['mindmap'] },
   { label: 'quiz', generateMode: 'resource', resourceTypes: ['exercise'] },
 ]
@@ -188,6 +188,11 @@ export async function executeGeneration(
         },
         {
           onProgress: (eventData: any) => {
+            // stream_progress 事件
+            if (eventData?.message) {
+              callbacks.onProgress?.(eventData.message)
+              return
+            }
             const finished = Array.isArray(eventData?.resources) ? eventData.resources : []
             callbacks.onProgress?.(
               finished.length ? '视频脚本已生成，正在整理内容...' : '正在生成视频脚本...',
@@ -195,6 +200,12 @@ export async function executeGeneration(
           },
           onFile: (fileData: any) => {
             generatedResources.push(fileData)
+          },
+          onStreamStart: (eventData: unknown) => {
+            callbacks.onStreamStart?.(eventData)
+          },
+          onStreamSlide: (eventData: unknown) => {
+            callbacks.onStreamSlide?.(eventData)
           },
           onDone: (eventData: any) => {
             if (Array.isArray(eventData?.resources)) {
