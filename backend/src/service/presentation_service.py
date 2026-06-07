@@ -419,6 +419,8 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
                   chapters: list[str] | None = None, answers: dict | None = None,
                   chat_group_id: int = 0) -> dict:
     """创建课件记录 + 立即出骨架 + 后台补音频（可选 answers 裁剪内容）"""
+    import time as _time
+    _t_total = _time.perf_counter()
     from datetime import datetime, timedelta
     from backend.src.models.usermodel import User
     user = await User.filter(id=user_id).first()
@@ -515,6 +517,9 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
 
     # 骨架已出，后台补音频
     asyncio_create_task(_add_audio_to_presentation(record.id, topic, user_id, voice, chapters, audio_tasks))
+
+    logger.info("[课件] 骨架生成完成 topic=%s record=%d chapters=%d 耗时=%.1fs（音频后台补充中）",
+                topic, record.id, len(chapters), _time.perf_counter() - _t_total)
 
     return {
         "id": record.id,

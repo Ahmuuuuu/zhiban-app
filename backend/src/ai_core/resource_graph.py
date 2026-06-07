@@ -177,6 +177,7 @@ async def generate_ppt_parallel(
     section_count: int = PPT_DEFAULT_SECTIONS,
 ) -> str:
     """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2 页），共 2N 页 + 2 页画像学习引入"""
+    _t_total = time.perf_counter()
     # 立即通知前端，避免长时间无反馈
     if stream_writer:
         try:
@@ -206,14 +207,14 @@ async def generate_ppt_parallel(
         slides = content.split("\n---\n")
         for slide in slides:
             slide = slide.strip()
-            if not slide or not slide.startswith("##"):
+            if not slide or not (slide.startswith("##") or slide.startswith("# ")):
                 continue
-            if len(slide) < 120:
+            if len(slide) < 100:
                 return False
             if "（上）" in slide or "（下）" in slide:
                 return False
             bullets = [l for l in slide.split("\n") if l.strip().startswith("-")]
-            if len(bullets) < 3:
+            if len(bullets) < 2:
                 return False
             dollars = slide.count("$")
             if dollars % 2 != 0:
@@ -345,7 +346,7 @@ async def generate_ppt_parallel(
     total = len(sections)
 
     def _push_section(idx: int, content: str):
-        """将章节的幻灯片逐页推送给前端，并立即后台预热 TTS"""
+        """将章节的幻灯片逐页推送给前端"""
         nonlocal completed_count
         # 流式推前端
         if stream_writer:
@@ -366,16 +367,6 @@ async def generate_ppt_parallel(
                 })
             except Exception:
                 logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
-        # 后台预热 TTS：该 section 每页的文本立即生成音频到全局缓存
-        try:
-            from backend.src.utils.tts_utils import parse_slides
-            from backend.src.service.narration_service import pre_warm_tts
-            for slide in parse_slides(content):
-                text = slide.get("text", "")
-                if text and len(text) > 5:
-                    asyncio.ensure_future(pre_warm_tts(text))
-        except Exception:
-            pass
 
     tasks = [gen_section(i, s) for i, s in enumerate(sections)]
     results = await asyncio.gather(*tasks)
@@ -393,7 +384,7 @@ async def generate_ppt_parallel(
             parts.append(slide)
 
     combined = "\n---\n".join(parts)
-    logger.info("[PPT-Parallel] 合并完成 章节数=%d 总页数≈%d", len(sections), len(parts))
+    logger.info("[PPT-Parallel] 完成 章节数=%d 总页数≈%d 全程耗时=%.1fs", len(sections), len(parts), time.perf_counter() - _t_total)
 
     return combined
 
