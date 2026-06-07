@@ -102,16 +102,8 @@ async def _extract_topic_from_chat(user_id: int, chat_group_id: int) -> str:
 
 
 async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
-    if chat_group_id and chat_group_id > 0:
-        return chat_group_id
-    latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
-    if not latest or not latest.chat_group_id:
-        new_id = 1
-        logger.info("分配首个聊天组 user_id=%s chat_group_id=%d", user_id, new_id)
-        return new_id
-    new_id = latest.chat_group_id + 1
-    logger.info("分配新聊天组 user_id=%s chat_group_id=%d (prev=%d)", user_id, new_id, latest.chat_group_id)
-    return new_id
+    """返回有效的 chat_group_id；为 0 时不再自动分配（学习路径等场景不需要聊天组）"""
+    return chat_group_id if chat_group_id and chat_group_id > 0 else 0
 
 
 def _resource_history_response(resources: list[dict]) -> str:
@@ -334,6 +326,8 @@ class ResourceService:
 
     @staticmethod
     async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "") -> list[dict]:
+        import time as _time
+        _t_total = _time.perf_counter()
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
         # ── 去重：近期已生成过同主题同类型资源 → 直接返回缓存 ──
         if topic:
@@ -388,11 +382,15 @@ class ResourceService:
             if item["resource_type"] == "mindmap":
                 item["content"] = _format_mindmap_content(item.get("content"))
 
+        logger.info("[Resource] generate_and_save 完成 topic=%s types=%s 全程耗时=%.1fs",
+                    topic, resource_types, _time.perf_counter() - _t_total)
         return saved
 
     @staticmethod
     async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = ""):
         """astream(stream_mode=["values", "custom"]) — PPT 通过 custom 事件逐页推送，其他类型通过 values 事件推送"""
+        import time as _time
+        _t_total = _time.perf_counter()
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
 
         def _make_file_event(for_topic: str, rt: str, content: str) -> str:
@@ -501,6 +499,8 @@ class ResourceService:
             ],
         }
         yield f"data: {json.dumps(done_data, ensure_ascii=False)}\n\n"
+        logger.info("[Resource] generate_stream 完成 topic=%s types=%s 全程耗时=%.1fs",
+                    topic, resource_types, _time.perf_counter() - _t_total)
         yield "data: [DONE]\n\n"
 
     @staticmethod
@@ -777,6 +777,8 @@ class ResourceService:
 
 async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = None):
     """后台运行资源生成任务，更新 DB 进度并推送 SSE"""
+    import time as _time
+    _t_total = _time.perf_counter()
     from backend.src.models.task_model import GenerationTask
 
     try:
@@ -877,6 +879,9 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
             }
             for r in saved
         ]
+
+        logger.info("[Task] 后台任务完成 task_id=%s topic=%s types=%s 全程耗时=%.1fs",
+                    task_id, topic, resource_types, _time.perf_counter() - _t_total)
 
         task.status = "success"
         task.progress = 100
