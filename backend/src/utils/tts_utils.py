@@ -56,8 +56,8 @@ def clean_for_tts(text: str) -> str:
     return text.strip()
 
 
-def parse_slides(markdown: str) -> list[dict]:
-    """解析 PPT markdown，返回每页的 {title, text, notes, duration_ms}"""
+def parse_slides_plain(markdown: str) -> list[dict]:
+    """解析 PPT markdown 为纯文本幻灯片 — 不注入任何视觉组件，供视频/TTS 使用"""
     raw_slides = re.split(r"\n---\n", markdown.strip())
     slides = []
 
@@ -105,7 +105,7 @@ def parse_slides(markdown: str) -> list[dict]:
 
 
 def parse_slides(markdown: str) -> list[dict]:
-    """Parse PPT markdown and enrich each slide with the shared visual schema."""
+    """解析 PPT markdown 并注入视觉布局元数据（layout/theme/visual/blocks）"""
     from backend.src.utils.slide_schema import parse_markdown_slides
 
     slides = []
@@ -121,7 +121,7 @@ def parse_slides(markdown: str) -> list[dict]:
         tts_text = clean_for_tts(tts_text)
         slides.append({
             **slide,
-            "text": slide.get("text") or "\n".join(content_items),
+            "text": tts_text,
             "duration_ms": int(len(tts_text) / 4 * 1000),
         })
 
