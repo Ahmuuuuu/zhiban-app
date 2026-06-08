@@ -3630,6 +3630,8 @@ onBeforeUnmount(() => {
 .resource-preview-body--ppt {
   overflow: hidden;
   padding: 10px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .resource-preview-body img {

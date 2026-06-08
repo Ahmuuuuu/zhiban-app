@@ -122,32 +122,32 @@
           <div v-else-if="currentSlide.layout === 'process_steps'" class="process-strip">
             <article v-for="(block, index) in slideBlocks.slice(0, 5)" :key="index" class="process-step">
               <b>{{ index + 1 }}</b>
-              <span v-html="renderMath(block.text)"></span>
+              <span v-html="renderMath(displayBlockText(block.text, 90))"></span>
             </article>
           </div>
 
           <div v-else-if="currentSlide.layout === 'comparison'" class="comparison-grid">
             <article class="comparison-card">
               <b>A</b>
-              <p v-for="(block, index) in slideBlocks.filter((_, i) => i % 2 === 0).slice(0, 4)" :key="index" v-html="renderMath(block.text)"></p>
+              <p v-for="(block, index) in slideBlocks.filter((_, i) => i % 2 === 0).slice(0, 4)" :key="index" v-html="renderMath(displayBlockText(block.text, 110))"></p>
             </article>
             <article class="comparison-card comparison-card--accent">
               <b>B</b>
-              <p v-for="(block, index) in slideBlocks.filter((_, i) => i % 2 === 1).slice(0, 4)" :key="index" v-html="renderMath(block.text)"></p>
+              <p v-for="(block, index) in slideBlocks.filter((_, i) => i % 2 === 1).slice(0, 4)" :key="index" v-html="renderMath(displayBlockText(block.text, 110))"></p>
             </article>
           </div>
 
           <div v-else-if="currentSlide.layout === 'formula_focus'" class="formula-layout">
             <div class="formula-box" v-html="renderMath(formulaText)"></div>
             <div class="formula-points">
-              <p v-for="(block, index) in formulaBlocks" :key="index" v-html="renderMath(block.text)"></p>
+              <p v-for="(block, index) in formulaBlocks" :key="index" v-html="renderMath(displayBlockText(block.text, 120))"></p>
             </div>
           </div>
 
           <div v-else-if="currentSlide.layout === 'content_cards'" class="content-card-grid">
             <article v-for="(block, index) in slideBlocks.slice(0, 6)" :key="index">
               <span>{{ index + 1 }}</span>
-              <p v-html="renderMath(block.text)"></p>
+              <p v-html="renderMath(displayBlockText(block.text, 105))"></p>
             </article>
           </div>
 
@@ -357,6 +357,8 @@ const compactDisplayText = (value, limit = 180) => {
   const text = cleanDisplayText(value).replace(/\s+/g, ' ').trim()
   return text.length > limit ? `${text.slice(0, limit - 1)}...` : text
 }
+
+const displayBlockText = (value, limit = 150) => compactDisplayText(value, limit)
 
 const visualSvgData = slide => {
   const [primary, secondary, accent, paper] = slidePalette(slide)
@@ -738,9 +740,13 @@ watch(
 .ppt-preview {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: stretch;
   gap: 8px;
-  height: min(100%, calc(100vh - 112px));
+  width: 100%;
+  height: 100%;
+  max-height: calc(100vh - 112px);
   min-height: 0;
+  overflow: hidden;
 }
 
 .ppt-toolbar {
@@ -875,8 +881,12 @@ watch(
 
 .ppt-slide {
   position: relative;
-  width: min(100%, calc((100vh - 168px) * 16 / 9));
+  justify-self: center;
+  align-self: center;
+  width: auto;
+  height: min(100%, calc((100vw - 96px) * 9 / 16));
   max-width: 100%;
+  max-height: 100%;
   aspect-ratio: 16 / 9;
   min-height: 0;
   margin: 0 auto;
@@ -971,6 +981,7 @@ watch(
 
 .ppt-slide__content {
   width: min(92%, 1040px);
+  min-height: 0;
   max-height: 100%;
   margin: 0 auto;
   padding: 2px 8px 2px 0;
@@ -982,17 +993,39 @@ watch(
   word-break: break-word;
 }
 
+.ppt-slide h3,
+.visual-panel strong,
+.visual-panel p,
+.process-step span,
+.comparison-card p,
+.formula-points p,
+.content-card-grid article p {
+  overflow-wrap: anywhere;
+}
+
+.ppt-slide h3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .slide-rich-text {
   min-width: 0;
+  max-height: 100%;
   padding-right: 6px;
-  overflow: auto;
+  overflow: hidden;
   white-space: pre-line;
+  display: -webkit-box;
+  -webkit-line-clamp: 10;
+  -webkit-box-orient: vertical;
 }
 
 .layout-grid {
   display: grid;
   gap: clamp(18px, 2.8vw, 32px);
   align-items: stretch;
+  min-height: 0;
 }
 
 .layout-grid--visual {
@@ -1001,6 +1034,7 @@ watch(
 
 .visual-panel {
   min-height: 0;
+  max-height: 100%;
   padding: clamp(10px, 1.5vw, 16px);
   border: 1px solid rgba(95, 143, 195, 0.18);
   border-radius: 8px;
@@ -1011,6 +1045,7 @@ watch(
   color: #1f3356;
   text-align: center;
   box-shadow: 0 10px 24px rgba(22, 63, 143, 0.1);
+  overflow: hidden;
 }
 
 .visual-panel__image {
@@ -1027,6 +1062,10 @@ watch(
   color: #163f8f;
   font-size: clamp(18px, 2vw, 25px);
   line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .visual-panel p {
@@ -1034,6 +1073,10 @@ watch(
   color: rgba(31, 51, 86, 0.7);
   font-size: clamp(14px, 1.4vw, 17px);
   line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .process-strip {
@@ -1041,6 +1084,8 @@ watch(
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   align-items: stretch;
+  min-height: 0;
+  height: 100%;
 }
 
 .process-step {
@@ -1052,6 +1097,7 @@ watch(
   background: #ffffff;
   color: rgba(31, 51, 86, 0.82);
   box-shadow: 0 12px 28px rgba(22, 63, 143, 0.09);
+  overflow: hidden;
 }
 
 .process-step b {
@@ -1073,12 +1119,19 @@ watch(
   display: block;
   font-size: clamp(13px, 1.25vw, 16px);
   line-height: 1.55;
+  max-height: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
 }
 
 .comparison-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: clamp(18px, 2.5vw, 28px);
+  min-height: 0;
+  height: 100%;
 }
 
 .comparison-card {
@@ -1088,6 +1141,7 @@ watch(
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 14px 34px rgba(22, 63, 143, 0.1);
+  overflow: hidden;
 }
 
 .comparison-card b {
@@ -1110,32 +1164,41 @@ watch(
   color: rgba(31, 51, 86, 0.82);
   font-size: clamp(14px, 1.35vw, 18px);
   line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .formula-layout {
   display: grid;
-  gap: 22px;
+  grid-template-rows: minmax(72px, auto) minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
 }
 
 .formula-box {
-  min-height: 128px;
-  padding: 28px;
+  min-height: 0;
+  max-height: 150px;
+  padding: clamp(14px, 2vw, 24px);
   border-radius: 8px;
   background:
     linear-gradient(135deg, var(--slide-primary, #163f8f), var(--slide-secondary, #2f80ed));
   color: #ffffff;
   display: grid;
   place-items: center;
-  font-size: clamp(24px, 3.5vw, 44px);
+  font-size: clamp(20px, 3vw, 38px);
   font-weight: 900;
   line-height: 1.25;
   text-align: center;
+  overflow: hidden;
 }
 
 .formula-points {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  min-height: 0;
 }
 
 .formula-points p,
@@ -1151,12 +1214,19 @@ watch(
   color: rgba(31, 51, 86, 0.82);
   font-size: clamp(14px, 1.3vw, 17px);
   line-height: 1.55;
+  min-height: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
 }
 
 .content-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
+  min-height: 0;
+  height: 100%;
 }
 
 .content-card-grid article {
@@ -1170,6 +1240,7 @@ watch(
   gap: 10px;
   align-content: start;
   box-shadow: 0 12px 26px rgba(22, 63, 143, 0.08);
+  overflow: hidden;
 }
 
 .content-card-grid article span {
@@ -1187,6 +1258,10 @@ watch(
 .content-card-grid article p {
   font-size: clamp(13px, 1.2vw, 16px);
   line-height: 1.52;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .ppt-slide.is-dense h3 {
@@ -1199,6 +1274,20 @@ watch(
   line-height: 1.45;
 }
 
+.ppt-slide.is-dense .slide-rich-text {
+  -webkit-line-clamp: 8;
+}
+
+.ppt-slide.is-dense .process-step span,
+.ppt-slide.is-dense .content-card-grid article p {
+  -webkit-line-clamp: 4;
+}
+
+.ppt-slide.is-dense .comparison-card p,
+.ppt-slide.is-dense .formula-points p {
+  -webkit-line-clamp: 3;
+}
+
 .ppt-slide.is-very-dense h3 {
   font-size: clamp(20px, 2.5vw, 32px);
 }
@@ -1207,6 +1296,22 @@ watch(
   width: min(96%, 1100px);
   font-size: clamp(12px, 1vw, 15px);
   line-height: 1.38;
+}
+
+.ppt-slide.is-very-dense .slide-rich-text {
+  -webkit-line-clamp: 6;
+}
+
+.ppt-slide.is-very-dense .process-step span,
+.ppt-slide.is-very-dense .content-card-grid article p,
+.ppt-slide.is-very-dense .comparison-card p,
+.ppt-slide.is-very-dense .formula-points p {
+  -webkit-line-clamp: 3;
+}
+
+.ppt-slide.is-very-dense .formula-box {
+  max-height: 110px;
+  font-size: clamp(18px, 2.4vw, 30px);
 }
 
 .ppt-slide__content span,
@@ -1441,13 +1546,16 @@ watch(
 
 @media (max-width: 860px) {
   .ppt-preview {
-    height: auto;
+    height: 100%;
+    max-height: calc(100vh - 96px);
   }
 
   .ppt-slide {
-    width: 100%;
-    aspect-ratio: auto;
-    min-height: 460px;
+    width: min(100%, calc((100vh - 132px) * 16 / 9));
+    height: auto;
+    max-height: 100%;
+    aspect-ratio: 16 / 9;
+    min-height: 0;
   }
 
   .layout-grid--visual,
