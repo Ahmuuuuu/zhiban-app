@@ -762,6 +762,11 @@ const downloadResource = async resource => {
   }
 }
 
+const getResourceIdFromUrl = url => {
+  const match = String(url || '').match(/\/resource\/([^/?#]+)(?:\/download)?/i)
+  return match?.[1] || ''
+}
+
 const pptxExportName = resource => {
   const raw = String(resource?.filename || resource?.title || 'edited-presentation')
     .replace(/[\\/:*?"<>|]/g, '_')
