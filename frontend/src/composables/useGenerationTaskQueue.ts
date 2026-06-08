@@ -79,6 +79,9 @@ const restorePersistedTasks = () => {
       if (!item?.id || tasks.some(task => task.id === item.id)) return
       const isRecent = Date.now() - Number(item.updatedAt || 0) < 60 * 60 * 1000
       if (item.status !== 'running' && !isRecent) return
+      // 超过 30 分钟的 running 任务视为已失效，不再恢复轮询
+      const stale = Date.now() - Number(item.createdAt || 0) > 30 * 60 * 1000
+      if (item.status === 'running' && stale) return
       tasks.push(reactive({
         id: item.id,
         backendTaskId: item.backendTaskId || '',
