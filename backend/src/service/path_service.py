@@ -1475,7 +1475,7 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
         # 检查是否视频模板，不是则清掉旧记录重建
         from pathlib import Path as _Path
         _html_path = _Path(__file__).parent.parent.parent / "static" / "presentations" / (file_url.split("/")[-1] if file_url else "")
-        if _html_path.exists() and "template-version:video-v2" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
+        if _html_path.exists() and "template-version:video-v3" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
             return {"html_id": existing_html.id, "presentation_id": pres_id, "file_url": file_url}
         # 旧模板 → 删记录和文件，重新生成
         logger.info("旧 HTML 非视频模板，重建 video-mode html_id=%s", existing_html.id)
