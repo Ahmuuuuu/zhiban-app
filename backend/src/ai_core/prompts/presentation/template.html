@@ -1117,7 +1117,20 @@
 
     .chapter-ppt [data-narration-block] {
       position: relative;
-      transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background 0.22s ease, opacity 0.22s ease;
+      transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background 0.22s ease, opacity 0.22s ease, filter 0.22s ease;
+    }
+
+    .chapter-ppt [data-narration-block].block-pending {
+      opacity: 0;
+      transform: translateY(12px);
+      filter: blur(3px);
+      pointer-events: none;
+    }
+
+    .chapter-ppt h2[data-narration-block].block-pending {
+      opacity: 1;
+      transform: none;
+      filter: none;
     }
 
     .chapter-ppt [data-narration-block]::after {
@@ -1142,7 +1155,7 @@
     }
 
     .chapter-ppt [data-narration-block].block-done {
-      opacity: 0.88;
+      opacity: 0.94;
     }
 
     .chapter-ppt h2[data-narration-block].block-current {
@@ -1717,7 +1730,7 @@
       if (!blocks.length) return '';
       startIndex = Number(startIndex || 0);
       var html = '<ul>';
-      blocks.forEach(function (b, i) { html += '<li data-narration-block="' + (startIndex + i) + '">' + renderMaybeMath(b.text) + '</li>'; });
+      blocks.forEach(function (b, i) { html += '<li class="block-pending" data-narration-block="' + (startIndex + i) + '">' + renderMaybeMath(b.text) + '</li>'; });
       html += '</ul>';
       return html;
     }
@@ -1796,27 +1809,27 @@
 
       if (layout === 'concept_visual') {
         inner = '<div class="visual-slide-grid"><div><h2 data-narration-block="0">' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 4), 1) + '</div>' +
-          '<aside class="visual-card" data-narration-block="' + (blocks.slice(0, 4).length + 1) + '"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
+          '<aside class="visual-card block-pending" data-narration-block="' + (blocks.slice(0, 4).length + 1) + '"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
       } else if (layout === 'process_steps') {
         inner = '<h2 data-narration-block="0">' + title + '</h2><div class="process-grid">' + blocks.slice(0, 4).map(function (b, i) {
-          return '<article class="process-card" data-narration-block="' + (i + 1) + '"><b>' + (i + 1) + '</b><p>' + renderMaybeMath(b.text) + '</p></article>';
+          return '<article class="process-card block-pending" data-narration-block="' + (i + 1) + '"><b>' + (i + 1) + '</b><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else if (layout === 'comparison') {
         var left = blocks.filter(function (_, i) { return i % 2 === 0; }).slice(0, 4);
         var right = blocks.filter(function (_, i) { return i % 2 === 1; }).slice(0, 4);
-        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="comparison-grid"><article class="comparison-card" data-narration-block="1"><b>A</b>' +
+        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="comparison-grid"><article class="comparison-card block-pending" data-narration-block="1"><b>A</b>' +
           left.map(function (b) { return '<p>' + renderMaybeMath(b.text) + '</p>'; }).join('') +
-          '</article><article class="comparison-card accent" data-narration-block="2"><b>B</b>' +
+          '</article><article class="comparison-card accent block-pending" data-narration-block="2"><b>B</b>' +
           right.map(function (b) { return '<p>' + renderMaybeMath(b.text) + '</p>'; }).join('') + '</article></div>';
       } else if (layout === 'formula_focus') {
         var formulaBlock = blocks.find(function (b) { return /=|\$|\\sum|\\frac|\^|_/.test(b.text); }) || blocks[0] || { text: '' };
         var formula = formulaBlock.text;
-        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="formula-box no-karaoke" data-narration-block="1">' + renderMathCore(formula) + '</div><div class="formula-points">' +
-          blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b, i) { return '<div class="formula-point" data-narration-block="' + (i + 2) + '">' + renderMaybeMath(b.text) + '</div>'; }).join('') +
+        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="formula-box no-karaoke block-pending" data-narration-block="1">' + renderMathCore(formula) + '</div><div class="formula-points">' +
+          blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b, i) { return '<div class="formula-point block-pending" data-narration-block="' + (i + 2) + '">' + renderMaybeMath(b.text) + '</div>'; }).join('') +
           '</div>';
       } else if (layout === 'content_cards') {
         inner = '<h2 data-narration-block="0">' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 4).map(function (b, i) {
-          return '<article class="content-card" data-narration-block="' + (i + 1) + '"><span>' + (i + 1) + '</span><p>' + renderMaybeMath(b.text) + '</p></article>';
+          return '<article class="content-card block-pending" data-narration-block="' + (i + 1) + '"><span>' + (i + 1) + '</span><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else {
         inner = '<h2 data-narration-block="0">' + title + '</h2>' + renderBlocksAsList(blocks, 1);
@@ -2152,6 +2165,7 @@
       blocks.forEach(function (block, i) {
         block.classList.toggle('block-current', !forceDone && i === activeIndex);
         block.classList.toggle('block-done', forceDone || i < activeIndex);
+        block.classList.toggle('block-pending', !forceDone && i > activeIndex);
       });
     }
 
@@ -2199,6 +2213,7 @@
       document.querySelectorAll('.chapter.active .kw').forEach(function (el) { el.className = 'kw'; });
       document.querySelectorAll('.chapter.active [data-narration-block]').forEach(function (el) {
         el.classList.remove('block-current', 'block-done');
+        el.classList.add('block-pending');
       });
     }
 
