@@ -429,7 +429,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
         return {"error": "用户不存在"}
 
     # 去重：2 分钟内同话题同模板已创建过课件 → 直接返回已有记录
-    _expected_tag = "template-version:video-v2" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
+    _expected_tag = "template-version:video-v3" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
     cutoff = datetime.now() - timedelta(minutes=2)
     existing = await Presentation.filter(
         user_id=user_id, topic=topic, created_at__gte=cutoff,
@@ -819,7 +819,7 @@ async def _flush(record, topic: str, chapters: list, status: str, segments: list
         fp = _presentation_file_path(record.file_url)
         if fp and fp.exists():
             _head = fp.read_text(encoding="utf-8", errors="ignore")[:200]
-            if "template-version:video-v2" in _head:
+            if "template-version:video-v3" in _head or "template-version:video-v2" in _head:
                 _tp = TEMPLATE_VIDEO_PATH
     except Exception:
         pass
@@ -1000,10 +1000,9 @@ def _build_mindmap_skeleton(record, svg: str) -> dict:
 
 
 def _build_ppt_skeleton(record, plain: bool = False) -> dict:
-    from backend.src.utils.tts_utils import parse_slides, parse_slides_plain
+    from backend.src.utils.tts_utils import parse_slides
     content = record.content or ""
-    parse_fn = parse_slides_plain if plain else parse_slides
-    slides_meta = parse_fn(content)
+    slides_meta = parse_slides(content)
 
     slides = []
     for meta in slides_meta:
@@ -1014,18 +1013,18 @@ def _build_ppt_skeleton(record, plain: bool = False) -> dict:
             "title": meta.get("title", ""),
             "text": meta.get("text", ""),
             "bullets": bullets,
+            "blocks": meta.get("blocks", []),
+            "layout": meta.get("layout", "content_cards"),
+            "theme": meta.get("theme", "academic_blue"),
+            "palette": meta.get("palette", []),
+            "visual": meta.get("visual", {}),
             "notes": meta.get("notes", ""),
             "audio_url": None,
             "duration_ms": int(estimated_dur),
             "word_timestamps": [],
         }
-        if not plain:
-            slide.update({
-                "blocks": meta.get("blocks", []),
-                "layout": meta.get("layout", "content_cards"),
-                "theme": meta.get("theme", "academic_blue"),
-                "visual": meta.get("visual", {}),
-            })
+        if plain:
+            slide["video_safe"] = True
         slides.append(slide)
 
     total_dur = sum(s.get("duration_ms", 0) for s in slides)
@@ -1321,6 +1320,111 @@ def _render_video_slides_html(sections: list[dict]) -> str:
     return "\n".join(parts)
 
 
+def _render_video_slides_html(sections: list[dict]) -> str:
+    import re as _re
+
+    def clean(value) -> str:
+        text = str(value or "")
+        text = _re.sub(r"<!--[\s\S]*?-->", " ", text)
+        text = _re.sub(r"</?[^>\n]+>", " ", text)
+        text = _re.sub(r"^\s*(layout|theme|visual)\s*:\s*.*$", " ", text, flags=_re.IGNORECASE | _re.MULTILINE)
+        text = _re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def safe(value) -> str:
+        return _escape(clean(value))
+
+    def slide_blocks(sl: dict) -> list[str]:
+        texts: list[str] = []
+        for block in sl.get("blocks") or []:
+            raw = block.get("text") if isinstance(block, dict) else block
+            text = clean(raw)
+            if text:
+                texts.append(text)
+        if not texts:
+            texts = [clean(item) for item in (sl.get("bullets") or [])]
+            texts = [item for item in texts if item]
+        if not texts:
+            raw_text = clean(sl.get("text", ""))
+            texts = [item.strip() for item in _re.split(r"[。；;]\s*|\n+", raw_text) if item.strip()]
+        return texts[:8]
+
+    def visual_html(sl: dict, block_id: str) -> str:
+        visual = sl.get("visual") or {}
+        kind = clean(visual.get("type") or "diagram")
+        caption = safe(visual.get("caption") or visual.get("query") or sl.get("title"))
+        return (
+            f'<div class="video-visual video-visual--{_escape(kind)}" data-narration-block="{block_id}">'
+            '<div class="visual-ring"></div><div class="visual-line visual-line--a"></div>'
+            '<div class="visual-line visual-line--b"></div><div class="visual-dot visual-dot--a"></div>'
+            '<div class="visual-dot visual-dot--b"></div><div class="visual-dot visual-dot--c"></div>'
+            f'<p>{caption}</p></div>'
+        )
+
+    def item_html(tag: str, text: str, block_id: str, index: int | None = None) -> str:
+        badge = f"<b>{index}</b>" if index is not None else ""
+        return f'<{tag} data-narration-block="{block_id}">{badge}<span>{_escape(text)}</span></{tag}>'
+
+    def render_ppt_slide(sl: dict, slide_index: int) -> str:
+        title = safe(sl.get("title") or f"Slide {slide_index + 1}")
+        layout = clean(sl.get("layout") or "content_cards")
+        items = slide_blocks(sl)
+        title_block = f"ppt-{slide_index}-title"
+
+        if layout == "process_steps":
+            cards = "".join(item_html("article", item, f"ppt-{slide_index}-block-{i}", i + 1) for i, item in enumerate(items[:4]))
+            body = f'<div class="video-process">{cards}</div>'
+        elif layout == "comparison":
+            left = "".join(item_html("li", item, f"ppt-{slide_index}-left-{i}") for i, item in enumerate(items[::2][:3]))
+            right = "".join(item_html("li", item, f"ppt-{slide_index}-right-{i}") for i, item in enumerate(items[1::2][:3]))
+            body = (
+                '<div class="video-compare">'
+                f'<section><h3>A</h3><ul>{left}</ul></section>'
+                f'<section><h3>B</h3><ul>{right}</ul></section>'
+                '</div>'
+            )
+        elif layout == "formula_focus":
+            formula = next((item for item in items if "=" in item or "$" in item or "\\" in item), items[0] if items else "")
+            rest = [item for item in items if item != formula][:4]
+            points = "".join(item_html("li", item, f"ppt-{slide_index}-formula-{i}") for i, item in enumerate(rest))
+            body = (
+                f'<div class="video-formula" data-narration-block="ppt-{slide_index}-formula-main">{_escape(formula)}</div>'
+                f'<ul class="video-points">{points}</ul>'
+            )
+        elif layout == "concept_visual":
+            bullets = "".join(item_html("li", item, f"ppt-{slide_index}-point-{i}") for i, item in enumerate(items[:5]))
+            body = (
+                '<div class="video-split">'
+                f'<ul class="video-points">{bullets}</ul>'
+                f'{visual_html(sl, f"ppt-{slide_index}-visual")}'
+                '</div>'
+            )
+        else:
+            cards = "".join(item_html("article", item, f"ppt-{slide_index}-card-{i}", i + 1) for i, item in enumerate(items[:6]))
+            body = f'<div class="video-card-grid">{cards}</div>'
+
+        return f'<div class="slide video-slide video-slide--{_escape(layout)}"><h2 data-narration-block="{title_block}">{title}</h2>{body}</div>'
+
+    parts: list[str] = []
+    ppt_index = 0
+    for sec in sections:
+        sec_type = sec.get("type", "")
+        if sec_type == "ppt":
+            for sl in sec.get("slides", []):
+                parts.append(render_ppt_slide(sl, ppt_index))
+                ppt_index += 1
+        elif sec_type in ("intro", "reading"):
+            for index, sl in enumerate(sec.get("slides", [])):
+                title = safe(sl.get("title") or sec.get("title"))
+                text = clean(sl.get("intro_text") or sl.get("text") or sl.get("content_html"))
+                paras = "".join(f'<p data-narration-block="intro-{index}-{i}">{_escape(p.strip())}</p>' for i, p in enumerate(_re.split(r"[。；;]\s*", text)) if p.strip())
+                parts.append(f'<div class="slide video-slide video-slide--intro"><h2 data-narration-block="intro-{index}-title">{title}</h2><div class="intro-content">{paras}</div></div>')
+        elif sec_type == "mindmap":
+            html = sec.get("content_html", "")
+            parts.append(f'<div class="slide video-slide video-slide--mindmap"><h2 data-narration-block="mindmap-title">思维导图</h2><div id="mindmap-container" data-narration-block="mindmap-body">{html}</div></div>')
+    return "\n".join(parts)
+
+
 def _render_html(topic: str, sections: list[dict], segments: list[dict] | None = None, template_path: Path | None = None) -> str:
     template = (template_path or TEMPLATE_PATH).read_text(encoding="utf-8")
     sections_json = json.dumps(sections, ensure_ascii=False, indent=2)
@@ -1334,7 +1438,7 @@ def _render_html(topic: str, sections: list[dict], segments: list[dict] | None =
     html = html.replace("{{TITLE}}", _escape(topic))
     html = html.replace("{{AUDIO_SEGMENTS}}", segments_json)
     html = html.replace("{{SLIDES_HTML}}", slides_html)
-    version_tag = "<!-- template-version:video-v2 -->" if is_video else f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->"
+    version_tag = "<!-- template-version:video-v3 -->" if is_video else f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->"
     return f"{version_tag}\n{html}"
 
 

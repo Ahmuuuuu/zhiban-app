@@ -56,6 +56,196 @@
     #mindmap-container { font-size: 22px; line-height: 1.7; }
     .katex { font-size: 1.1em; }
     .katex-display { margin: 0; }
+    .video-slide {
+      position: relative;
+      isolation: isolate;
+      border-radius: 0;
+      background:
+        radial-gradient(circle at 88% 18%, rgba(56, 189, 248, 0.24), transparent 24%),
+        linear-gradient(135deg, #101827 0%, #172033 48%, #0f172a 100%);
+    }
+    .video-slide::before {
+      content: "";
+      position: absolute;
+      inset: 34px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      z-index: -1;
+    }
+    .video-slide h2 {
+      max-width: 1120px;
+      font-size: 42px;
+      line-height: 1.18;
+      margin-bottom: 34px;
+      color: #f8fafc;
+      text-shadow: 0 2px 18px rgba(15, 23, 42, 0.5);
+    }
+    [data-narration-block] {
+      transition: transform 220ms ease, border-color 220ms ease, background 220ms ease;
+    }
+    [data-narration-block].block-current {
+      transform: translateY(-3px);
+      border-color: rgba(125, 211, 252, 0.85) !important;
+      background: rgba(14, 165, 233, 0.14) !important;
+    }
+    .video-card-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 22px;
+    }
+    .video-card-grid article,
+    .video-process article,
+    .video-compare section,
+    .video-compare li,
+    .video-points li {
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background: rgba(15, 23, 42, 0.68);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+      color: #dbeafe;
+    }
+    .video-card-grid article {
+      min-height: 148px;
+      padding: 22px 22px 20px;
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .video-card-grid b,
+    .video-process b {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: #0f172a;
+      background: #7dd3fc;
+      font-size: 20px;
+    }
+    .video-card-grid span,
+    .video-process span {
+      font-size: 21px;
+      line-height: 1.45;
+    }
+    .video-process {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      align-items: stretch;
+    }
+    .video-process article {
+      min-height: 300px;
+      padding: 28px 20px;
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      gap: 22px;
+    }
+    .video-compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+    }
+    .video-compare section {
+      min-height: 390px;
+      padding: 26px 30px;
+    }
+    .video-compare h3 {
+      width: 54px;
+      height: 54px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 20px;
+      background: #fbbf24;
+      color: #111827;
+      font-size: 26px;
+    }
+    .video-points {
+      display: grid;
+      gap: 14px;
+    }
+    .video-points li,
+    .video-compare li {
+      list-style: none;
+      padding: 16px 18px;
+      font-size: 21px;
+      line-height: 1.45;
+    }
+    .video-split {
+      display: grid;
+      grid-template-columns: 1.04fr 0.96fr;
+      gap: 34px;
+      align-items: stretch;
+    }
+    .video-visual {
+      position: relative;
+      min-height: 390px;
+      overflow: hidden;
+      border: 1px solid rgba(125, 211, 252, 0.32);
+      background: linear-gradient(145deg, rgba(8, 47, 73, 0.92), rgba(30, 41, 59, 0.88));
+      display: grid;
+      place-items: center;
+      padding: 34px;
+    }
+    .video-visual p {
+      position: absolute;
+      left: 34px;
+      right: 34px;
+      bottom: 28px;
+      font-size: 21px;
+      line-height: 1.35;
+      color: #e0f2fe;
+      text-align: center;
+    }
+    .visual-ring {
+      width: 210px;
+      height: 210px;
+      border-radius: 50%;
+      border: 22px solid rgba(125, 211, 252, 0.72);
+      border-right-color: rgba(251, 191, 36, 0.8);
+    }
+    .visual-line {
+      position: absolute;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(167, 139, 250, 0.72);
+    }
+    .visual-line--a { width: 260px; top: 112px; left: 86px; transform: rotate(-12deg); }
+    .visual-line--b { width: 220px; bottom: 118px; right: 76px; transform: rotate(16deg); }
+    .visual-dot {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #fbbf24;
+    }
+    .visual-dot--a { top: 96px; right: 120px; }
+    .visual-dot--b { left: 116px; bottom: 126px; background: #34d399; }
+    .visual-dot--c { right: 170px; bottom: 184px; background: #7dd3fc; }
+    .video-formula {
+      min-height: 170px;
+      margin-bottom: 26px;
+      padding: 38px 44px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(125, 211, 252, 0.42);
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.24), rgba(124, 58, 237, 0.22));
+      color: #ffffff;
+      font-size: 42px;
+      line-height: 1.25;
+      font-weight: 800;
+      text-align: center;
+    }
+    .video-slide--intro .intro-content {
+      max-width: 1060px;
+      display: grid;
+      gap: 14px;
+    }
+    .video-slide--intro p {
+      padding: 16px 20px;
+      border-left: 5px solid #7dd3fc;
+      background: rgba(15, 23, 42, 0.54);
+      font-size: 24px;
+      line-height: 1.55;
+    }
   </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
