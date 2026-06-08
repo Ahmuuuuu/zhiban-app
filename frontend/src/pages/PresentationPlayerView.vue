@@ -63,6 +63,7 @@ const chatGroupId = computed(() => {
   const raw = route.query.chat_group_id || route.query.chatGroupId || route.query.conversationId
   return String(Array.isArray(raw) ? raw[0] : raw || '').trim()
 })
+const returnFrom = computed(() => String(route.query.from || '').trim())
 const presentationUrl = computed(() => activePresentationUrl.value)
 const frameUrl = computed(() => {
   if (!activePresentationUrl.value) return ''
@@ -95,6 +96,10 @@ const goBack = () => {
   if (returning) return
   returning = true
   stopLessonMedia()
+  if (returnFrom.value === 'path') {
+    router.push({ name: 'learningPath' })
+    return
+  }
   router.push({
     name: 'chat',
     query: chatGroupId.value ? { chat_group_id: chatGroupId.value } : {}
