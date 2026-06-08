@@ -3507,8 +3507,10 @@ textarea::placeholder {
 .ppt-dialog__body {
   min-height: 0;
   flex: 1;
-  padding: clamp(14px, 1.8vw, 24px);
-  overflow: auto;
+  padding: 10px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .ppt-dialog__loading {

@@ -1347,6 +1347,8 @@ onBeforeUnmount(() => {
 .resource-fullscreen__content--ppt {
   overflow: hidden;
   padding: 10px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .resource-fullscreen__content--media {

@@ -878,7 +878,7 @@
       margin-bottom: 16px;
       opacity: 0.3;
     }
-    /* visual-v3: richer PPT/video stage */
+    /* visual-v4: richer PPT/video stage with block-level narration anchors */
     body {
       background:
         radial-gradient(circle at 12% 10%, rgba(255, 210, 92, 0.24), transparent 24%),
@@ -1113,6 +1113,40 @@
       right: 26px;
       bottom: 28px;
       color: rgba(255, 255, 255, 0.72);
+    }
+
+    .chapter-ppt [data-narration-block] {
+      position: relative;
+      transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background 0.22s ease, opacity 0.22s ease;
+    }
+
+    .chapter-ppt [data-narration-block]::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: inherit;
+      border: 2px solid rgba(255, 209, 102, 0);
+      pointer-events: none;
+      transition: border-color 0.22s ease, box-shadow 0.22s ease;
+    }
+
+    .chapter-ppt [data-narration-block].block-current {
+      transform: translateY(-3px);
+      border-color: rgba(255, 209, 102, 0.72);
+      box-shadow: 0 22px 62px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 209, 102, 0.34);
+    }
+
+    .chapter-ppt [data-narration-block].block-current::after {
+      border-color: rgba(255, 209, 102, 0.72);
+      box-shadow: 0 0 30px rgba(255, 209, 102, 0.26);
+    }
+
+    .chapter-ppt [data-narration-block].block-done {
+      opacity: 0.88;
+    }
+
+    .chapter-ppt h2[data-narration-block].block-current {
+      text-shadow: 0 0 24px rgba(255, 209, 102, 0.32);
     }
   </style>
 </head>
@@ -1397,6 +1431,7 @@
       // 无音频时直接显示全部文字（不要等在 karaoke 里不可见）
       if (!audio) {
         document.querySelectorAll('.kw').forEach(function (el) { el.className = 'kw done'; });
+        document.querySelectorAll('[data-narration-block]').forEach(function (el) { el.classList.add('block-done'); });
       }
     }
 
@@ -1532,10 +1567,11 @@
       return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720"><defs><linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="' + primary + '"/><stop offset=".55" stop-color="' + secondary + '"/><stop offset="1" stop-color="' + accent + '"/></linearGradient></defs><rect width="1200" height="720" fill="url(#bg)"/><path d="M0 0H1200V120C940 172 692 45 446 104 244 152 130 207 0 166Z" fill="' + paper + '" opacity=".18"/><path d="M760 720c112-184 320-206 440-120v120z" fill="' + paper + '" opacity=".16"/></svg>';
     }
 
-    function renderBlocksAsList(blocks) {
+    function renderBlocksAsList(blocks, startIndex) {
       if (!blocks.length) return '';
+      startIndex = Number(startIndex || 0);
       var html = '<ul>';
-      blocks.forEach(function (b) { html += '<li>' + renderMaybeMath(b.text) + '</li>'; });
+      blocks.forEach(function (b, i) { html += '<li data-narration-block="' + (startIndex + i) + '">' + renderMaybeMath(b.text) + '</li>'; });
       html += '</ul>';
       return html;
     }
@@ -1613,31 +1649,31 @@
       var inner = '';
 
       if (layout === 'concept_visual') {
-        inner = '<div class="visual-slide-grid"><div><h2>' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 6)) + '</div>' +
-          '<aside class="visual-card"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
+        inner = '<div class="visual-slide-grid"><div><h2 data-narration-block="0">' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 6), 1) + '</div>' +
+          '<aside class="visual-card" data-narration-block="' + (blocks.slice(0, 6).length + 1) + '"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
       } else if (layout === 'process_steps') {
-        inner = '<h2>' + title + '</h2><div class="process-grid">' + blocks.slice(0, 5).map(function (b, i) {
-          return '<article class="process-card"><b>' + (i + 1) + '</b><p>' + renderMaybeMath(b.text) + '</p></article>';
+        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="process-grid">' + blocks.slice(0, 5).map(function (b, i) {
+          return '<article class="process-card" data-narration-block="' + (i + 1) + '"><b>' + (i + 1) + '</b><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else if (layout === 'comparison') {
         var left = blocks.filter(function (_, i) { return i % 2 === 0; }).slice(0, 4);
         var right = blocks.filter(function (_, i) { return i % 2 === 1; }).slice(0, 4);
-        inner = '<h2>' + title + '</h2><div class="comparison-grid"><article class="comparison-card"><b>A</b>' +
+        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="comparison-grid"><article class="comparison-card" data-narration-block="1"><b>A</b>' +
           left.map(function (b) { return '<p>' + renderMaybeMath(b.text) + '</p>'; }).join('') +
-          '</article><article class="comparison-card accent"><b>B</b>' +
+          '</article><article class="comparison-card accent" data-narration-block="2"><b>B</b>' +
           right.map(function (b) { return '<p>' + renderMaybeMath(b.text) + '</p>'; }).join('') + '</article></div>';
       } else if (layout === 'formula_focus') {
         var formulaBlock = blocks.find(function (b) { return /=|\$|\\sum|\\frac|\^|_/.test(b.text); }) || blocks[0] || { text: '' };
         var formula = formulaBlock.text;
-        inner = '<h2>' + title + '</h2><div class="formula-box no-karaoke">' + renderMathCore(formula) + '</div><div class="formula-points">' +
-          blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b) { return '<div class="formula-point">' + renderMaybeMath(b.text) + '</div>'; }).join('') +
+        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="formula-box no-karaoke" data-narration-block="1">' + renderMathCore(formula) + '</div><div class="formula-points">' +
+          blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b, i) { return '<div class="formula-point" data-narration-block="' + (i + 2) + '">' + renderMaybeMath(b.text) + '</div>'; }).join('') +
           '</div>';
       } else if (layout === 'content_cards') {
-        inner = '<h2>' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 6).map(function (b, i) {
-          return '<article class="content-card"><span>' + (i + 1) + '</span><p>' + renderMaybeMath(b.text) + '</p></article>';
+        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 6).map(function (b, i) {
+          return '<article class="content-card" data-narration-block="' + (i + 1) + '"><span>' + (i + 1) + '</span><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else {
-        inner = '<h2>' + title + '</h2>' + renderBlocksAsList(blocks);
+        inner = '<h2 data-narration-block="0">' + title + '</h2>' + renderBlocksAsList(blocks, 1);
       }
 
       var art = layout === 'concept_visual' ? '' : '<div class="slide-art" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div>';
@@ -1943,6 +1979,36 @@
       return timings;
     }
 
+    function _slideDurationMs(slide) {
+      var wts = slide && slide.word_timestamps;
+      if (wts && wts.length) {
+        var last = wts[wts.length - 1];
+        return (last.offset_ms || 0) + (last.duration_ms || 0);
+      }
+      return slide && slide.duration_ms ? slide.duration_ms : 0;
+    }
+
+    function updateNarrationBlocks(container, slide, currentTimeMs, forceDone) {
+      if (!container) return;
+      var blocks = Array.prototype.slice.call(container.querySelectorAll('[data-narration-block]'));
+      if (!blocks.length) return;
+      blocks.sort(function (a, b) {
+        return Number(a.dataset.narrationBlock || 0) - Number(b.dataset.narrationBlock || 0);
+      });
+
+      var activeIndex = blocks.length - 1;
+      if (!forceDone) {
+        var totalDur = _slideDurationMs(slide) || blocks.length * 1800;
+        var perBlock = totalDur / Math.max(blocks.length, 1);
+        activeIndex = Math.max(0, Math.min(blocks.length - 1, Math.floor(currentTimeMs / Math.max(perBlock, 1))));
+      }
+
+      blocks.forEach(function (block, i) {
+        block.classList.toggle('block-current', !forceDone && i === activeIndex);
+        block.classList.toggle('block-done', forceDone || i < activeIndex);
+      });
+    }
+
     function updateKaraoke() {
       var sec = SECTIONS[currentChapter];
       if (!sec || !sec.slides) return;
@@ -1953,15 +2019,21 @@
       var container = containers[currentSlide];
       if (!container) return;
       var chars = container.querySelectorAll('.kw');
-      if (!chars.length) return;
 
-      if (!audio || audio.paused) {
+      if (!audio) {
         for (var i = 0; i < chars.length; i++) chars[i].className = 'kw done';
+        updateNarrationBlocks(container, slide, 0, true);
         return;
       }
 
       // 逐段播放时 audio.currentTime 已相对当前段开头
       var currentTimeMs = audio.currentTime * 1000;
+      updateNarrationBlocks(container, slide, currentTimeMs, false);
+      if (audio.paused) {
+        for (var i = 0; i < chars.length; i++) chars[i].className = 'kw done';
+        return;
+      }
+      if (!chars.length) return;
       var timings = _getCharTimings(slide, chars.length);
       if (!timings) return;
 
@@ -1979,6 +2051,9 @@
 
     function resetKaraoke() {
       document.querySelectorAll('.chapter.active .kw').forEach(function (el) { el.className = 'kw'; });
+      document.querySelectorAll('.chapter.active [data-narration-block]').forEach(function (el) {
+        el.classList.remove('block-current', 'block-done');
+      });
     }
 
     // ══════════════════════════════════════════════
