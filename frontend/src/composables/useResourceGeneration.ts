@@ -185,9 +185,13 @@ export async function executeGeneration(
           topic: text,
           resource_types: resourceTypes,
           chat_group_id: Number(chatGroupId || 0),
+          bind_chat_history: true,
         },
         {
           onProgress: (eventData: any) => {
+            if (eventData?.chat_group_id || eventData?.chatGroupId) {
+              callbacks.onSubmitted?.(eventData)
+            }
             // stream_progress 事件
             if (eventData?.message) {
               callbacks.onProgress?.(eventData.message)
@@ -269,9 +273,13 @@ export async function executeGeneration(
         topic: text,
         resource_types: resourceTypes,
         chat_group_id: Number(chatGroupId || 0),
+        bind_chat_history: true,
       },
       {
         onProgress: (eventData: any) => {
+          if (eventData?.chat_group_id || eventData?.chatGroupId) {
+            callbacks.onSubmitted?.(eventData)
+          }
           // stream_progress 事件：直接使用后端推送的进度消息
           if (eventData?.message) {
             callbacks.onProgress?.(eventData.message)

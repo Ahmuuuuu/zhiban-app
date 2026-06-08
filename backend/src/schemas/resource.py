@@ -1,11 +1,13 @@
-from pydantic import BaseModel, Field
+﻿from pydantic import BaseModel, Field
 
 
 class GenerateResourceRequest(BaseModel):
-    topic: str = Field(default="", description="学习主题，为空则从 chat_group_id 提取")
+    topic: str = Field(default="", description="瀛︿範涓婚锛屼负绌哄垯浠?chat_group_id 鎻愬彇")
     resource_types: list[str] = Field(
         default=[],
-        description="资源类型列表，为空则由 LeaderAgent 自动决定"
+        description="璧勬簮绫诲瀷鍒楄〃锛屼负绌哄垯鐢?LeaderAgent 鑷姩鍐冲畾"
     )
-    chat_group_id: int = Field(default=0, description="对话分组ID，传此值可自动提取主题")
-    answers: dict | None = Field(default=None, description="视频模式：用户追问作答 {focus, depth}，注入 prompt 按需生成")
+    chat_group_id: int = Field(default=0, description="瀵硅瘽鍒嗙粍ID锛屼紶姝ゅ€煎彲鑷姩鎻愬彇涓婚")
+    bind_chat_history: bool = Field(default=False, description="Bind generated resources to chat history when chat_group_id is missing")
+    answers: dict | None = Field(default=None, description="瑙嗛妯″紡锛氱敤鎴疯拷闂綔绛?{focus, depth}锛屾敞鍏?prompt 鎸夐渶鐢熸垚")
+

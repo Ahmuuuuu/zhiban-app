@@ -106,6 +106,21 @@ async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
     return chat_group_id if chat_group_id and chat_group_id > 0 else 0
 
 
+async def _allocate_chat_group_id(user_id: int) -> int:
+    latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
+    if not latest or not latest.chat_group_id:
+        return 1
+    return latest.chat_group_id + 1
+
+
+async def _ensure_generation_chat_group_id(user_id: int, chat_group_id: int = 0, bind_chat_history: bool = False) -> int:
+    if chat_group_id and chat_group_id > 0:
+        return chat_group_id
+    if bind_chat_history:
+        return await _allocate_chat_group_id(user_id)
+    return 0
+
+
 def _resource_history_response(resources: list[dict]) -> str:
     if not resources:
         return json.dumps({
@@ -327,10 +342,10 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
 class ResourceService:
 
     @staticmethod
-    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", skip_review: bool = False) -> list[dict]:
+    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", skip_review: bool = False, bind_chat_history: bool = False) -> list[dict]:
         import time as _time
         _t_total = _time.perf_counter()
-        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+        chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
         # ── 去重：近期已生成过同主题同类型资源 → 直接返回缓存 ──
         if topic:
             cached = await _find_cached_resources(topic, user_id, resource_types)
@@ -389,11 +404,12 @@ class ResourceService:
         return saved
 
     @staticmethod
-    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high"):
+    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", bind_chat_history: bool = False):
         """astream(stream_mode=["values", "custom"]) — PPT 通过 custom 事件逐页推送，其他类型通过 values 事件推送"""
         import time as _time
         _t_total = _time.perf_counter()
-        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+        chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
+        yield f"data: {json.dumps({'type': 'stream_progress', 'message': '资源生成已开始', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
 
         def _make_file_event(for_topic: str, rt: str, content: str) -> str:
             ext = _FILE_EXT_MAP.get(rt, "md")
@@ -702,11 +718,11 @@ class ResourceService:
     # ═══════════════════════════════════════════
 
     @staticmethod
-    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None) -> dict:
+    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None, bind_chat_history: bool = False) -> dict:
         """创建生成任务，启动后台运行，立即返回 task_id 和 chat_group_id"""
         from backend.src.models.task_model import GenerationTask
 
-        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+        chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
         tid = uuid.uuid4().hex
         task = await GenerationTask.create(
             task_id=tid,
@@ -752,6 +768,7 @@ class ResourceService:
                 "task_id": t.task_id,
                 "topic": t.topic,
                 "resource_types": json.loads(t.resource_types) if t.resource_types else [],
+                "chat_group_id": t.chat_group_id,
                 "status": t.status,
                 "progress": t.progress,
                 "progress_msg": t.progress_msg,

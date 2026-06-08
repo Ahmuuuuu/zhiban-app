@@ -370,7 +370,8 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
     body: JSON.stringify({
       topic: data.topic,
       resource_types: data.resource_types,
-      chat_group_id: Number(data.chat_group_id || 0)
+      chat_group_id: Number(data.chat_group_id || 0),
+      bind_chat_history: Boolean(data.bind_chat_history)
     })
   })
 
@@ -542,6 +543,7 @@ export function createResourceGenerationTask(data) {
       topic: data.topic,
       resource_types: data.resource_types,
       chat_group_id: Number(data.chat_group_id || 0),
+      bind_chat_history: Boolean(data.bind_chat_history),
       answers: data.answers || undefined,
     }
   })
