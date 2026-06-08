@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 PRESENTATION_DIR = Path(__file__).parent.parent.parent / "static" / "presentations"
 TEMPLATE_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template.html"
+TEMPLATE_VIDEO_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template_video.html"
 PRESENTATION_TEMPLATE_VERSION = "visual-v3"
 
 
@@ -417,8 +418,8 @@ async def _notify_sse(presentation_id: int, data: dict):
 
 async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural",
                   chapters: list[str] | None = None, answers: dict | None = None,
-                  chat_group_id: int = 0) -> dict:
-    """创建课件记录 + 立即出骨架 + 后台补音频（可选 answers 裁剪内容）"""
+                  chat_group_id: int = 0, video_mode: bool = False) -> dict:
+    """创建课件记录 + 立即出骨架 + 后台补音频。video_mode=True 使用简洁视频模板"""
     import time as _time
     _t_total = _time.perf_counter()
     from datetime import datetime, timedelta
@@ -427,19 +428,20 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     if not user:
         return {"error": "用户不存在"}
 
-    # 去重：2 分钟内同话题已创建过课件 → 直接返回已有记录
+    # 去重：2 分钟内同话题同模板已创建过课件 → 直接返回已有记录
+    _expected_tag = "template-version:video" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
     cutoff = datetime.now() - timedelta(minutes=2)
     existing = await Presentation.filter(
         user_id=user_id, topic=topic, created_at__gte=cutoff,
     ).order_by("-created_at").first()
-    if existing and _presentation_file_matches_template(existing.file_url):
-        logger.info("课件去重命中 user=%s topic=%s existing_id=%s", user_id, topic, existing.id)
+    if existing and _presentation_file_matches_template(existing.file_url, _expected_tag):
+        logger.info("课件去重命中 user=%s topic=%s existing_id=%s video_mode=%s", user_id, topic, existing.id, video_mode)
         return {
             "id": existing.id,
             "file_url": _versioned_presentation_url(existing.file_url),
             "status": existing.status,
             "cached": True,
-            "template_version": PRESENTATION_TEMPLATE_VERSION,
+            "template_version": "video" if video_mode else PRESENTATION_TEMPLATE_VERSION,
         }
 
     doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
@@ -454,7 +456,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     portrait_intro = await _build_portrait_intro(topic, user)
 
     # 构建骨架章节（立即可看），后台只补音频
-    chapters, audio_tasks = _build_chapter_skeletons(doc, mindmap_data, ppt_data)
+    chapters, audio_tasks = _build_chapter_skeletons(doc, mindmap_data, ppt_data, plain=video_mode)
 
     # 画像引入置顶
     if portrait_intro:
@@ -469,7 +471,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     record = await Presentation.create(user=user, topic=topic, status="ready")  # 骨架立即可看，音频后台补充
 
     PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
-    html = _render_html(topic, chapters)
+    html = _render_html(topic, chapters, template_path=TEMPLATE_VIDEO_PATH if video_mode else None)
     filename = f"{_safe_filename(topic)}_{uuid.uuid4().hex[:8]}.html"
     file_path = PRESENTATION_DIR / filename
     file_path.write_text(html, encoding="utf-8")
@@ -591,7 +593,7 @@ async def delete_presentation(presentation_id: int, user_id: int) -> bool:
 #  两阶段生成：骨架 → 音频
 # ═══════════════════════════════════════════════
 
-def _build_chapter_skeletons(doc=None, mindmap_data=None, ppt_data=None) -> tuple[list[dict], list[dict]]:
+def _build_chapter_skeletons(doc=None, mindmap_data=None, ppt_data=None, plain: bool = False) -> tuple[list[dict], list[dict]]:
     """从资源构建无音频的章节骨架，返回 (chapters, audio_tasks)"""
     from backend.src.utils.mindmap import parse_mindmap_text
 
@@ -609,7 +611,7 @@ def _build_chapter_skeletons(doc=None, mindmap_data=None, ppt_data=None) -> tupl
         chapters.append(ch)
         audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": mindmap_data})
     if ppt_data:
-        ch = _build_ppt_skeleton(ppt_data)
+        ch = _build_ppt_skeleton(ppt_data, plain=plain)
         chapters.append(ch)
         audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": ppt_data})
 
@@ -811,7 +813,17 @@ def _real_duration_from_timestamps(word_timestamps: list[dict], fallback_ms: int
 
 async def _flush(record, topic: str, chapters: list, status: str, segments: list[dict] | None = None):
     """更新 HTML 文件 + DB + SSE 通知"""
-    html = _render_html(topic, chapters, segments or [])
+    # 检测当前 HTML 是否使用视频模板，保持模板一致
+    _tp = None
+    try:
+        fp = _presentation_file_path(record.file_url)
+        if fp and fp.exists():
+            _head = fp.read_text(encoding="utf-8", errors="ignore")[:200]
+            if "template-version:video" in _head:
+                _tp = TEMPLATE_VIDEO_PATH
+    except Exception:
+        pass
+    html = _render_html(topic, chapters, segments or [], template_path=_tp)
     file_path = _presentation_file_path(record.file_url)
     if file_path is None:
         return
@@ -987,30 +999,34 @@ def _build_mindmap_skeleton(record, svg: str) -> dict:
     }
 
 
-def _build_ppt_skeleton(record) -> dict:
-    from backend.src.utils.tts_utils import parse_slides
+def _build_ppt_skeleton(record, plain: bool = False) -> dict:
+    from backend.src.utils.tts_utils import parse_slides, parse_slides_plain
     content = record.content or ""
-    slides_meta = parse_slides(content)
+    parse_fn = parse_slides_plain if plain else parse_slides
+    slides_meta = parse_fn(content)
 
     slides = []
     for meta in slides_meta:
         bullets = meta.get("bullets") or []
         text = meta.get("text", "")
         estimated_dur = len(text) / 4 * 1000 if text else 5000
-        slides.append({
-            **meta,
+        slide = {
             "title": meta.get("title", ""),
             "text": meta.get("text", ""),
             "bullets": bullets,
-            "blocks": meta.get("blocks", []),
-            "layout": meta.get("layout", "content_cards"),
-            "theme": meta.get("theme", "academic_blue"),
-            "visual": meta.get("visual", {}),
             "notes": meta.get("notes", ""),
             "audio_url": None,
             "duration_ms": int(estimated_dur),
             "word_timestamps": [],
-        })
+        }
+        if not plain:
+            slide.update({
+                "blocks": meta.get("blocks", []),
+                "layout": meta.get("layout", "content_cards"),
+                "theme": meta.get("theme", "academic_blue"),
+                "visual": meta.get("visual", {}),
+            })
+        slides.append(slide)
 
     total_dur = sum(s.get("duration_ms", 0) for s in slides)
     return {
@@ -1240,27 +1256,86 @@ def _presentation_file_path(url: str | None) -> Path | None:
     return PRESENTATION_DIR / fname
 
 
-def _presentation_file_matches_template(url: str | None) -> bool:
+def _presentation_file_matches_template(url: str | None, expected_tag: str | None = None) -> bool:
     path = _presentation_file_path(url)
     if not path or not path.exists():
         return False
+    tag = expected_tag or f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
     try:
-        return f"template-version:{PRESENTATION_TEMPLATE_VERSION}" in path.read_text(encoding="utf-8", errors="ignore")
+        return tag in path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return False
 
 
-def _render_html(topic: str, sections: list[dict], segments: list[dict] | None = None) -> str:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+def _render_video_slides_html(sections: list[dict]) -> str:
+    """预渲染视频用纯文字 HTML，不依赖 JS，无任何卡片/装饰"""
+    import re as _re
+
+    def _extract_texts(sl: dict) -> list[str]:
+        """从 slide 数据中统一提取要点文字，兼容旧版 bullets 和新版 blocks"""
+        bullets = sl.get("bullets") or []
+        if bullets:
+            return [_re.sub(r"<!--[\s\S]*?-->", "", str(b).strip()) for b in bullets if str(b).strip()]
+
+        # 新版 schema：blocks = [{"type": "key_point", "text": "..."}, ...]
+        blocks = sl.get("blocks") or []
+        if blocks:
+            texts = []
+            for blk in blocks:
+                if isinstance(blk, dict):
+                    t = str(blk.get("text", "")).strip()
+                else:
+                    t = str(blk).strip()
+                if t and not t.startswith("<!--"):
+                    texts.append(t)
+            if texts:
+                return texts
+
+        # 回退：从 text 字段按句子拆分
+        text = sl.get("text", "")
+        return [l.strip() for l in text.replace("。", "\n").replace("；", "\n").split("\n") if l.strip()] if text else []
+
+    parts: list[str] = []
+    for sec in sections:
+        sec_type = sec.get("type", "")
+        if sec_type == "ppt":
+            for sl in sec.get("slides", []):
+                title = _re.sub(r"^##\s*", "", sl.get("title", ""))
+                title = _re.sub(r"<!--[\s\S]*?-->", "", title).strip()
+                texts = _extract_texts(sl)
+                lis = "".join(
+                    f"<li>{t}</li>"
+                    for t in texts[:8] if t
+                )
+                parts.append(f'<div class="slide"><h2>{title}</h2><ul>{lis}</ul></div>')
+        elif sec_type in ("intro", "reading"):
+            for sl in sec.get("slides", []):
+                title = _re.sub(r"^##\s*", "", sl.get("title", ""))
+                title = _re.sub(r"<!--[\s\S]*?-->", "", title).strip()
+                text = sl.get("text", "")
+                paras = "".join(f"<p>{p.strip()}</p>" for p in text.split("。") if p.strip())
+                parts.append(f'<div class="slide"><h2>{title}</h2>{paras}</div>')
+        elif sec_type == "mindmap":
+            html = sec.get("content_html", "")
+            parts.append(f'<div class="slide"><h2>思维导图</h2><div id="mindmap-container">{html}</div></div>')
+    return "\n".join(parts)
+
+
+def _render_html(topic: str, sections: list[dict], segments: list[dict] | None = None, template_path: Path | None = None) -> str:
+    template = (template_path or TEMPLATE_PATH).read_text(encoding="utf-8")
     sections_json = json.dumps(sections, ensure_ascii=False, indent=2)
     topic_json = json.dumps(topic, ensure_ascii=False)
     segments_json = json.dumps(segments or [], ensure_ascii=False)
 
+    is_video = template_path == TEMPLATE_VIDEO_PATH
+    slides_html = _render_video_slides_html(sections) if is_video else ""
     html = template.replace("{{SECTIONS}}", sections_json)
     html = html.replace("{{TITLE_JSON}}", topic_json)  # 必须在 {{TITLE}} 之前替换，否则 {{TITLE}} 会匹配到 {{TITLE_JSON}} 的前缀
     html = html.replace("{{TITLE}}", _escape(topic))
     html = html.replace("{{AUDIO_SEGMENTS}}", segments_json)
-    return f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->\n{html}"
+    html = html.replace("{{SLIDES_HTML}}", slides_html)
+    version_tag = "<!-- template-version:video -->" if is_video else f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->"
+    return f"{version_tag}\n{html}"
 
 
 def _safe_filename(topic: str) -> str:
