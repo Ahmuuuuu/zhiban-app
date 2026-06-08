@@ -1281,6 +1281,24 @@ const isVideoResource = r => /video|mp4|webm|ogg/.test(String(r?.type || r?.file
 
 const isHtmlResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('html')
 
+const isDynamicLessonResource = r => {
+  const text = String([
+    r?.type,
+    r?.fileType,
+    r?.resource_type,
+    r?.resourceType,
+    r?.title,
+    r?.filename,
+    r?.previewUrl,
+    r?.downloadUrl,
+    r?.url
+  ].filter(Boolean).join(' ')).toLowerCase()
+  return isHtmlResource(r) ||
+    Boolean(r?.presentationId || r?.presentation_id) ||
+    /static\/presentations\/.+\.html/.test(text) ||
+    /动态课件|dynamic lesson/.test(text)
+}
+
 const isExerciseResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('exercise')
 
 const canPreviewResource = resource => {
@@ -2412,16 +2430,21 @@ const updateResourceInNodes = resource => {
 }
 
 const previewNodeResource = async resource => {
-  // HTML 动态课件 → 跳转 PresentationPlayerView（与 chat 课件技术栈一致）
-  if (isHtmlResource(resource) && resource.previewUrl) {
+  const openDynamicLesson = lesson => {
+    const url = lesson.previewUrl || lesson.file_url || lesson.fileUrl || lesson.url || lesson.downloadUrl || ''
     router.push({
       name: 'presentationPlayer',
       query: {
-        url: resource.previewUrl,
-        title: resource.title,
-        id: resource.presentationId || '',
+        url,
+        title: lesson.title,
+        id: lesson.presentationId || lesson.presentation_id || '',
+        from: 'path'
       }
     })
+  }
+
+  if (isDynamicLessonResource(resource) && (resource.previewUrl || resource.downloadUrl || resource.presentationId)) {
+    openDynamicLesson(resource)
     return
   }
 
@@ -2442,6 +2465,11 @@ const previewNodeResource = async resource => {
   try {
     const detail = await getGeneratedResource(resourceId)
     const merged = mergePreviewResource(resource, detail)
+    if (isDynamicLessonResource(merged) && (merged.previewUrl || merged.downloadUrl || merged.presentationId)) {
+      updateResourceInNodes(merged)
+      openDynamicLesson(merged)
+      return
+    }
     previewResource.value = merged
     updateResourceInNodes(merged)
     loadAnnotationsForResource(merged)
