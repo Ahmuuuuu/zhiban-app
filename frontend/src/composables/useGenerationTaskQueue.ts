@@ -413,6 +413,7 @@ export function useGenerationTaskQueue() {
       topic: task.text,
       resource_types: task.tool.resourceTypes || ['document'],
       chat_group_id: task.chatGroupId || 0,
+      bind_chat_history: true,
       answers: (task as any)._answers || undefined,
     }).then(result => {
       const data = unwrapResponseData(result)

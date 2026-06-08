@@ -84,7 +84,7 @@ async def generate_resource(
     data : GenerateResourceRequest = Body(...)
 ):
     try :
-        result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id)
+        result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history)
         return {"code" : 200, "msg" : "success", "data" : result}
     except HTTPException :
         raise
@@ -98,7 +98,7 @@ async def generate_resource_stream(
     data : GenerateResourceRequest = Body(...)
 ):
     return StreamingResponse(
-        ResourceService.generate_stream(data.topic, user_id, data.resource_types, data.chat_group_id),
+        ResourceService.generate_stream(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history),
         media_type = "text/event-stream",
         headers = {
             "Cache-Control": "no-cache",
@@ -118,7 +118,7 @@ async def create_generation_task(
     data: GenerateResourceRequest = Body(...),
 ):
     try:
-        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers)
+        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers, bind_chat_history=data.bind_chat_history)
         return {"code": 200, "msg": "success", "data": result}
     except Exception:
         raise HTTPException(500, "创建任务失败")

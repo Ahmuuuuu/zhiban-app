@@ -1903,6 +1903,11 @@ const attachGenerationTaskToMessage = (task, messageId) => {
   watch(
     () => [task.progress, task.status, task.files.length, task.images.length, task.updatedAt],
     async () => {
+      if (task.chatGroupId && !activeConversationId.value) {
+        activeConversationId.value = task.chatGroupId
+        await loadConversationList()
+      }
+
       const target = messages.value.find(item => item.id === messageId)
 
       if (target) {
