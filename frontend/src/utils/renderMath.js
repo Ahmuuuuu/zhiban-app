@@ -31,6 +31,9 @@ function fixBrokenLatex(text) {
   )
 }
 
+/** CJK 及中文标点 — 这些字符不应出现在纯数学公式中 */
+const NON_MATH_RE = /[一-鿿㐀-䶿豈-﫿　-〿＀-￯]/
+
 /**
  * 将文本中的 LaTeX 公式渲染为 HTML。
  * 支持：$$...$$ / \[...\] （块级），$...$ / \(...\) （行内）
@@ -44,6 +47,9 @@ export function renderMath(text) {
   return fixed
     .replace(/\$\$([\s\S]*?)\$\$/g, (_, f) => render(f, true))
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, f) => render(f, true))
-    .replace(/\$([^\s\$][^\$]*)\$/g, (_, f) => render(f, false))
+    .replace(/\$([^\s\$][^\$]*)\$/g, (_, f) => {
+      if (NON_MATH_RE.test(f)) return `$${f}$`
+      return render(f, false)
+    })
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, f) => render(f, false))
 }
