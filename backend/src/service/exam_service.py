@@ -16,6 +16,7 @@ from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.json_parser import parse_llm_json
 from backend.src.service.notification_service import check_and_create_ai_tip
+from backend.src.service.portrait_service import PortraitRadarService
 
 
 def _normalize_db_answer(raw: str) -> str:
@@ -138,8 +139,9 @@ class ExamService:
     @staticmethod
     async def generate_and_save(
         topic: str, user_id: int,
-        question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
-        node_id: int | None = None,
+        question_types: list[str] | None = None, count: int = 10, difficulty: str = "medium",
+        node_id: int | None = None, user_notes: str = "", chat_group_id: int = 0,
+        skip_review: bool = False, llm_priority: str = "high",
     ) -> dict:
         """走 graph 出题（Leader→Executor→Reviewer→retry）→ 存库 → 返回 session_id + questions"""
         await init_db()
@@ -150,12 +152,14 @@ class ExamService:
 
         from backend.src.service.resource_service import ResourceService  # deferred: circular exam<->resource
 
-        types = question_types or ["single_choice", "multi_choice", "true_false"]
+        types = question_types or ["single_choice", "multi_choice", "true_false", "fill_blank"]
         types_str = ", ".join(types)
 
         saved_resources = await ResourceService.generate_and_save(
             topic=topic, user_id=user_id, resource_types=["exercise"],
             exam_question_types=types_str, exam_count=count, exam_difficulty=difficulty,
+            chat_group_id=chat_group_id, user_notes=user_notes,
+            skip_review=skip_review, llm_priority=llm_priority,
         )
 
         for r in saved_resources:
@@ -195,8 +199,8 @@ class ExamService:
     @staticmethod
     async def generate_and_save_stream(
         topic: str, user_id: int,
-        question_types: list[str] | None = None, count: int = 5, difficulty: str = "medium",
-        node_id: int | None = None,
+        question_types: list[str] | None = None, count: int = 10, difficulty: str = "medium",
+        node_id: int | None = None, user_notes: str = "", chat_group_id: int = 0,
     ):
         """流式走 graph 出题 → SSE 推送进度 → 存库 → 返回 session"""
         await init_db()
@@ -208,15 +212,16 @@ class ExamService:
 
         from backend.src.service.resource_service import ResourceService  # deferred: circular exam<->resource
 
-        types = question_types or ["single_choice", "multi_choice", "true_false"]
+        types = question_types or ["single_choice", "multi_choice", "true_false", "fill_blank"]
         types_str = ", ".join(types)
 
         yield f"data: {json.dumps({'type': 'status', 'msg': '正在分析知识点并生成题目...'}, ensure_ascii=False)}\n\n"
 
         async for event in ResourceService.generate_stream(
             topic=topic, user_id=user_id, resource_types=["exercise"],
-            chat_group_id=0,
+            chat_group_id=chat_group_id,
             exam_question_types=types_str, exam_count=count, exam_difficulty=difficulty,
+            user_notes=user_notes,
         ):
             if isinstance(event, str) and event.startswith("data:"):
                 data_str = event[5:].strip()
@@ -397,6 +402,12 @@ class ExamService:
         except Exception:
             logger.exception("答题后画像同步失败 user_id=%s", user_id)
 
+        try:
+            await PortraitRadarService.compute(user_id)
+            await PortraitRadarService.sync_to_portrait(user_id)
+        except Exception:
+            logger.exception("雷达即时刷新失败 user_id=%s", user_id)
+
         # 汇总本轮会话成绩（总分恒为 100）
         raw_session_records = await ExamRecord.filter(user_id=user_id, session_id=sid).order_by("id").prefetch_related("question").all()
         latest_by_question = {}
@@ -419,7 +430,7 @@ class ExamService:
             "question_id": question_id,
             "is_correct": is_correct,
             "score": question_score,           # 百分制得分
-            "weight": w,                        # 题目权重
+            "weight": _weight(question.difficulty, question.question_type),
             "correct_answer": correct_answer if not is_correct else None,
             "analysis": question.analysis if not is_correct else None,
             "session_id": sid,

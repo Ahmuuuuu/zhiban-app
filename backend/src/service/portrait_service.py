@@ -316,7 +316,7 @@ class PortraitRadarService:
         multi_qs = [r.question for r in records if r.question and r.question.question_type == "multi_choice"]
         analysis = _accuracy(multi_qs)
 
-        # 广度 — 已覆盖知识标签种类数（上限 20 种 = 100 分）
+        # 广度 — 已覆盖知识标签种类数（50 种 = 100 分）
         mastery_records = await KnowledgeMastery.filter(user_id=user_id).all()
         tag_count = len(mastery_records)
         breadth = min(100, round(tag_count / 50 * 100))

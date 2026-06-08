@@ -121,7 +121,7 @@
                   <template v-else-if="node._resources?.length">
                     <div class="branch-resource-flow">
                       <article
-                        v-for="(resource, resourceIndex) in node._resources"
+                        v-for="(resource, resourceIndex) in node._resources.filter(r => !isExerciseResource(r))"
                         :key="resource.id"
                         class="branch-resource-card"
                         @click="previewNodeResource(resource)"
@@ -136,7 +136,7 @@
                               <Presentation v-else-if="isPptResource(resource)" :size="16" />
                               <GitBranch v-else-if="isMindmapResource(resource)" :size="16" />
                               <Volume2 v-else-if="isAudioResource(resource)" :size="16" />
-                              <MonitorPlay v-else-if="isHtmlResource(resource)" :size="16" />
+                              <MonitorPlay v-else-if="isVideoResource(resource) || isHtmlResource(resource)" :size="16" />
                               <FileText v-else :size="16" />
                             </span>
                             <strong>{{ resource.title }}</strong>
@@ -319,7 +319,7 @@
 
                 <template v-else-if="nodeResources.length > 0 || nodeQuizData">
                   <div
-                    v-for="resource in nodeResources"
+                    v-for="resource in nodeResources.filter(r => !isExerciseResource(r))"
                     :key="resource.id"
                     class="resource-item"
                   >
@@ -329,7 +329,7 @@
                         <Presentation v-else-if="isPptResource(resource)" :size="18" />
                         <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
                         <Volume2 v-else-if="isAudioResource(resource)" :size="18" />
-                        <MonitorPlay v-else-if="isHtmlResource(resource)" :size="18" />
+                        <MonitorPlay v-else-if="isVideoResource(resource) || isHtmlResource(resource)" :size="18" />
                         <FileText v-else :size="18" />
                       </span>
                       <div class="file-title">
@@ -435,7 +435,7 @@
             </div>
           </header>
 
-          <div class="resource-preview-body">
+          <div class="resource-preview-body" :class="{ 'resource-preview-body--ppt': isPptResource(previewResource) || isHtmlResource(previewResource) }">
             <div v-if="previewLoading" class="resources-loading">
               正在加载预览...
             </div>
@@ -446,9 +446,21 @@
             />
             <PptPreview
               v-else-if="(isPptResource(previewResource) || isHtmlResource(previewResource)) && previewResource.slides?.length"
-              :slides="previewResource.slides"
+              v-model:slides="previewResource.slides"
               :title="previewResource.title"
+              :editable="false"
+              :annotatable="true"
+              :annotations="previewResource.annotations || []"
+              @create-note="createAnnotation(previewResource, $event)"
+              @update-note="(id, payload) => updateAnnotation(previewResource, id, payload)"
+              @delete-note="deleteAnnotation(previewResource, $event)"
             />
+            <div v-else-if="isHtmlResource(previewResource) && previewResource.previewUrl" class="resource-html-placeholder">
+              <MonitorPlay :size="32" />
+              <strong>{{ previewResource.title }}</strong>
+              <span>动态课件 — 点击下方按钮在新窗口播放</span>
+              <a :href="resolveApiUrl(previewResource.previewUrl)" target="_blank" rel="noopener noreferrer" class="html-open-btn">打开课件</a>
+            </div>
             <div v-else-if="isAudioResource(previewResource)" class="resource-audio-player">
               <Volume2 :size="32" />
               <strong>{{ previewResource.title }}</strong>
@@ -459,11 +471,15 @@
               :content="previewResource.content"
               :title="previewResource.title"
             />
-            <article
+            <AnnotatedTextPreview
               v-else-if="previewResource.content"
-              class="resource-markdown markdown-body"
-              v-html="renderMarkdown(previewResource.content)"
-            ></article>
+              :content="previewResource.content"
+              :annotations="previewResource.annotations || []"
+              :annotatable="true"
+              @create-note="createAnnotation(previewResource, $event)"
+              @update-note="(id, payload) => updateAnnotation(previewResource, id, payload)"
+              @delete-note="deleteAnnotation(previewResource, $event)"
+            />
             <pre v-else>{{ previewResource.content || '暂无可预览内容，可以下载原文件查看。' }}</pre>
           </div>
 
@@ -478,14 +494,18 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2, MonitorPlay } from 'lucide-vue-next'
 import {
+  createResourceAnnotation,
+  deleteResourceAnnotation,
   getCurrentLearningPath, generateLearningPath,
   getLearningPaths, getLearningPathDetail, getLearningPathProgress, getStudyPathStats, sendStudyHeartbeat, enrollLearningPath,
-  generatePathNodeResources, generatePathNodeResourcesStream, generatePathNodeQuiz, downloadWithToken, getGeneratedResource, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl
+  generatePathNodeResources, generatePathNodeResourcesStream, generatePathNodeQuiz, downloadWithToken, exportEditedPptx, getGeneratedResource, getResourceAnnotations, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl,
+  updateResourceAnnotation
 } from '../api/apis'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
+import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
@@ -493,6 +513,7 @@ import { getExplicitResourceCoverUrl, getResourceCoverUrl } from '../utils/resou
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 const route = useRoute()
+const router = useRouter()
 
 const savePathToCache = state => {
   try { localStorage.setItem(PATH_CACHE_KEY, JSON.stringify(state)) } catch { /* ignore */ }
@@ -1240,6 +1261,7 @@ const fileTypeLabel = type => {
   if (t.includes('ppt')) return 'PPT 文件'
   if (t.includes('image')) return '图片'
   if (t.includes('mind')) return '思维导图'
+  if (t.includes('video') || t.includes('mp4')) return '视频'
   if (t.includes('html')) return '动态课件'
   if (t.includes('audio')) return '音频旁白'
   if (t.includes('txt') || t.includes('document')) return '学习文档'
@@ -1255,7 +1277,11 @@ const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.f
 
 const isAudioResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('audio')
 
+const isVideoResource = r => /video|mp4|webm|ogg/.test(String(r?.type || r?.fileType || r?.title || r?.filename || r?.previewUrl || r?.downloadUrl || '').toLowerCase())
+
 const isHtmlResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('html')
+
+const isExerciseResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('exercise')
 
 const canPreviewResource = resource => {
   return Boolean(resource?.previewUrl || resource?.content || resource?.id || resource?.downloadUrl)
@@ -1272,6 +1298,17 @@ const escapeHtml = value => {
 
 const isImageResourceUrl = url => /\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(String(url || ''))
 
+const _extractSlideMeta = (lines) => {
+  const meta = {}
+  const contentLines = []
+  for (const l of lines) {
+    const m = l.match(/^<!--\s*(layout|theme|visual)\s*:\s*(.+?)\s*-->$/i)
+    if (m) { meta[m[1].toLowerCase()] = m[2].trim(); continue }
+    contentLines.push(l)
+  }
+  return { meta, contentLines }
+}
+
 const parsePptSlidesFromContent = content => {
   const text = String(content || '').trim()
   if (!text) return []
@@ -1284,7 +1321,10 @@ const parsePptSlidesFromContent = content => {
         index,
         title: slide.title || slide.heading || `第 ${index + 1} 页`,
         text: slide.text || slide.content || slide.body || '',
-        notes: slide.notes || slide.speaker_notes || ''
+        notes: slide.notes || slide.speaker_notes || '',
+        ...(slide.layout ? { layout: slide.layout } : {}),
+        ...(slide.theme ? { theme: slide.theme } : {}),
+        ...(slide.visual ? { visual: slide.visual } : {}),
       }))
     }
   } catch {
@@ -1299,20 +1339,23 @@ const parsePptSlidesFromContent = content => {
     .filter(Boolean)
 
   return blocks.map((block, index) => {
-    const lines = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
-    const titleLine = lines.find(line => /^#{1,3}\s+/.test(line)) || lines[0] || `第 ${index + 1} 页`
+    const raw = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const { meta, contentLines } = _extractSlideMeta(raw)
+    const titleLine = contentLines.find(line => /^#{1,3}\s+/.test(line)) || contentLines[0] || `第 ${index + 1} 页`
     const title = titleLine.replace(/^#{1,3}\s+/, '').replace(/^第?\s*\d+\s*[页章、.：:-]?\s*/, '').trim()
-    const body = lines
+    const body = contentLines
       .filter(line => line !== titleLine)
       .map(line => line.replace(/^[-*•]\s+/, '').trim())
       .filter(Boolean)
       .join('\n')
-
     return {
       index,
       title: title || `第 ${index + 1} 页`,
       text: body,
-      notes: ''
+      notes: '',
+      ...(meta.layout ? { layout: meta.layout } : {}),
+      ...(meta.theme ? { theme: meta.theme } : {}),
+      ...(meta.visual ? { visual_hint: meta.visual } : {}),
     }
   }).filter(slide => slide.title || slide.text)
 }
@@ -1499,7 +1542,7 @@ const normalizeNodeResources = (resources, node = null) =>
     const resourceId = r.id || r.resource_id || r.resourceId || r.file_id || r.fileId || ''
     const usage = getResourceUsageById(resourceId)
     const fallbackType = node?.resourceTypes?.[i] || node?.resourceTypes?.[0] || 'document'
-    const fileType = r.file_type || r.fileType || r.resource_type || r.resourceType || r.type || usage?.type || fallbackType
+    const fileType = r.resource_type || r.resourceType || r.file_type || r.fileType || r.type || usage?.type || fallbackType
     const title = r.title || r.topic || r.filename || r.file_name || r.name || usage?.title || node?.title || `学习资料 ${i + 1}`
     const readStatus = r.read_status || r.readStatus || {}
     const isRead = Boolean(r.is_read ?? r.isRead ?? readStatus.is_read ?? readStatus.isRead ?? usage?.isRead ?? false)
@@ -1524,8 +1567,9 @@ const normalizeNodeResources = (resources, node = null) =>
       typeLabel: fileTypeLabel(fileType),
       content: r.content || r.preview || r.text || '',
       slides: Array.isArray(r.slides) ? r.slides : [],
-      previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || ''),
+      previewUrl: resolveApiUrl(r.preview_url || r.previewUrl || r.preview || r.file_url || r.fileUrl || r.url || ''),
       downloadUrl: resolveApiUrl(r.download_url || r.downloadUrl || r.url || usage?.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+      presentationId: r.presentation_id || r.presentationId || '',
       isRead,
       readAt: r.read_at || r.readAt || readStatus.read_at || readStatus.readAt || usage?.lastViewedAt || '',
       durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0,
@@ -1817,7 +1861,11 @@ const ensureNodeResources = async (node, target = 'all') => {
           resource_id: data.resource_id,
           resource_type: data.resource_type,
           title: data.title,
-          download_url: data.download_url
+          download_url: data.download_url,
+          file_url: data.file_url,
+          url: data.url,
+          preview_url: data.preview_url,
+          presentation_id: data.presentation_id || ''
         }], node)[0]
         if (!resource) return
         const current = node._resources || []
@@ -2048,7 +2096,125 @@ const downloadNodeResource = async resource => {
   }
 }
 
+const pptxExportName = resource => {
+  const raw = String(resource?.filename || resource?.title || 'edited-presentation')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\.[^.]+$/, '')
+  return `${raw || 'edited-presentation'}.pptx`
+}
+
+const exportPreviewPptx = async (resource, slides) => {
+  const resourceId = resource?.resourceId || resource?.resource_id || resource?.id || ''
+  if (!resourceId || String(resourceId).startsWith('res-')) {
+    window.alert('当前 PPT 没有资源 ID，暂时无法导出 PPTX。')
+    return
+  }
+
+  try {
+    await exportEditedPptx(resourceId, {
+      title: resource?.title || '',
+      filename: pptxExportName(resource),
+      slides
+    })
+  } catch (err) {
+    console.error('[StudyPath] export pptx failed:', err)
+    window.alert('导出 PPTX 失败，请确认后端已接入 /resource/{id}/export-pptx 接口。')
+  }
+}
+
 const getResourceIdentity = resource => String(resource?.resourceId || resource?.resource_id || resource?.id || getResourceIdFromUrl(resource?.downloadUrl) || '')
+
+const getAnnotationTarget = resource => ({
+  sourceType: resource?.sourceType || resource?.source_type || 'generated',
+  sourceId: getResourceIdentity(resource)
+})
+
+const normalizeAnnotations = result => {
+  const data = result?.data?.data || result?.data || result || []
+  const list = Array.isArray(data) ? data : data.records || data.list || data.annotations || []
+  return (Array.isArray(list) ? list : []).map(item => ({
+    ...item,
+    id: item.id || item.annotation_id || item.annotationId,
+    selected_text: item.selected_text || item.selectedText || '',
+    note: item.note || item.note_text || item.noteText || '',
+    note_text: item.note_text || item.note || item.noteText || '',
+    position: typeof item.position === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(item.position)
+          } catch {
+            return {}
+          }
+        })()
+      : item.position || {}
+  }))
+}
+
+const patchPreviewResource = patch => {
+  if (!previewResource.value) return
+  previewResource.value = { ...previewResource.value, ...patch }
+  updateResourceInNodes(previewResource.value)
+}
+
+const loadAnnotationsForResource = async resource => {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || String(target.sourceId).startsWith('res-')) {
+    patchPreviewResource({ annotations: [] })
+    return
+  }
+
+  try {
+    const result = await getResourceAnnotations(target.sourceId, target.sourceType)
+    patchPreviewResource({ annotations: normalizeAnnotations(result) })
+  } catch (error) {
+    console.warn('[StudyPath] load annotations failed:', error)
+    patchPreviewResource({ annotations: [] })
+  }
+}
+
+const createAnnotation = async (resource, payload) => {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || String(target.sourceId).startsWith('res-')) return
+
+  try {
+    await createResourceAnnotation(target.sourceId, {
+      ...payload,
+      source_type: target.sourceType,
+      source_id: target.sourceId
+    })
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('[StudyPath] save annotation failed:', error)
+    const detail = error?.response?.data?.detail || error?.response?.data?.msg || error?.message || ''
+    window.alert(`保存标注失败${detail ? `：${detail}` : '，请稍后再试。'}`)
+  }
+}
+
+const updateAnnotation = async (resource, annotationId, payload) => {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || !annotationId) return
+
+  try {
+    await updateResourceAnnotation(target.sourceId, annotationId, payload)
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('[StudyPath] update annotation failed:', error)
+    window.alert('更新笔记失败，请稍后再试。')
+  }
+}
+
+const deleteAnnotation = async (resource, annotationId) => {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || !annotationId) return
+
+  try {
+    await deleteResourceAnnotation(target.sourceId, annotationId)
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('[StudyPath] delete annotation failed:', error)
+    window.alert('删除笔记失败，请稍后再试。')
+  }
+}
 
 const formatReadDuration = seconds => {
   const total = Math.max(0, Math.round(Number(seconds || 0)))
@@ -2179,7 +2345,8 @@ const mergePreviewResource = (resource, detail) => {
   let slides = resource.slides || []
   let narration = data.narration || resource.narration || null
 
-  // html 资源：解析 JSON 提取 slides + narration
+  // html 资源：解析 JSON 提取 slides + narration + presentation_id
+  let presentationId = resource.presentationId || ''
   if (isHtmlResource({ ...resource, type: fileType, fileType, title })) {
     try {
       const parsed = typeof content === 'string' ? JSON.parse(content) : content
@@ -2192,6 +2359,7 @@ const mergePreviewResource = (resource, detail) => {
         }))
       }
       if (parsed.narration) narration = parsed.narration
+      if (parsed.presentation_id) presentationId = String(parsed.presentation_id)
     } catch { /* keep raw content */ }
   } else if (!slides.length) {
     slides = isPptResource({ ...resource, type: fileType, fileType, title, filename: data.filename || data.file_name || resource.filename || title })
@@ -2211,8 +2379,9 @@ const mergePreviewResource = (resource, detail) => {
     content,
     slides,
     narration,
-    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.url || resource.previewUrl || ''),
+    previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.file_url || data.fileUrl || data.url || resource.previewUrl || ''),
     downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || resource.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : '')),
+    presentationId: presentationId || resource.presentationId || '',
     isRead: Boolean(data.is_read ?? data.isRead ?? readStatus.is_read ?? readStatus.isRead ?? resource.isRead ?? false),
     readAt: data.read_at || data.readAt || readStatus.read_at || readStatus.readAt || resource.readAt || '',
     durationSeconds: Number.isFinite(durationSeconds) ? Math.max(0, durationSeconds) : 0
@@ -2243,6 +2412,19 @@ const updateResourceInNodes = resource => {
 }
 
 const previewNodeResource = async resource => {
+  // HTML 动态课件 → 跳转 PresentationPlayerView（与 chat 课件技术栈一致）
+  if (isHtmlResource(resource) && resource.previewUrl) {
+    router.push({
+      name: 'presentationPlayer',
+      query: {
+        url: resource.previewUrl,
+        title: resource.title,
+        id: resource.presentationId || '',
+      }
+    })
+    return
+  }
+
   previewResource.value = resource
   previewLoading.value = false
   previewOpenedAt.value = Date.now()
@@ -2251,7 +2433,10 @@ const previewNodeResource = async resource => {
   })
 
   const resourceId = getResourceIdentity(resource)
-  if (!resourceId || resource.slides?.length || (!isPptResource(resource) && (resource.content || resource.previewUrl))) return
+  if (!resourceId || resource.slides?.length || (!isPptResource(resource) && (resource.content || resource.previewUrl))) {
+    loadAnnotationsForResource(previewResource.value)
+    return
+  }
 
   previewLoading.value = true
   try {
@@ -2259,12 +2444,14 @@ const previewNodeResource = async resource => {
     const merged = mergePreviewResource(resource, detail)
     previewResource.value = merged
     updateResourceInNodes(merged)
+    loadAnnotationsForResource(merged)
   } catch (err) {
     console.error('[StudyPath] load resource preview failed:', err)
     previewResource.value = {
       ...resource,
       content: '预览加载失败，可以先下载原文件查看。'
     }
+    loadAnnotationsForResource(previewResource.value)
   } finally {
     previewLoading.value = false
   }
@@ -2816,6 +3003,7 @@ onBeforeUnmount(() => {
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -2936,6 +3124,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -3355,15 +3544,16 @@ onBeforeUnmount(() => {
   z-index: 4300;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: clamp(12px, 2vw, 24px);
   background: rgba(12, 28, 58, 0.32);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
 
 .resource-preview-panel {
-  width: min(880px, 100%);
-  max-height: min(760px, 90vh);
+  width: min(1380px, 98vw);
+  height: min(940px, 96vh);
+  max-height: 96vh;
   border: 1px solid rgba(22, 63, 143, 0.16);
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.97);
@@ -3432,8 +3622,16 @@ onBeforeUnmount(() => {
 
 .resource-preview-body {
   min-height: 0;
-  padding: 18px;
+  flex: 1;
+  padding: clamp(14px, 1.8vw, 24px);
   overflow: auto;
+}
+
+.resource-preview-body--ppt {
+  overflow: hidden;
+  padding: 10px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .resource-preview-body img {
@@ -3443,6 +3641,35 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   object-fit: contain;
   border-radius: 18px;
+}
+
+.resource-html-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: #5f8fc3;
+  text-align: center;
+}
+
+.resource-html-placeholder strong {
+  color: #163f8f;
+  font-size: 18px;
+}
+
+.html-open-btn {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 8px;
+  background: #163f8f;
+  color: #fff;
+  font: inherit;
+  font-weight: 900;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 .resource-audio-player {

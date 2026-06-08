@@ -51,6 +51,7 @@ class UserPathProgress(Model):
     id = fields.IntField(pk=True, description="进度记录ID")
     node_status = fields.CharField(max_length=16, default="locked", description="状态: locked/unlocked/in_progress/completed")
     resource_ids = fields.TextField(null=True, description="已生成资源 ID JSON")
+    narration_status = fields.CharField(max_length=16, default="", description="旁白状态: generating/done/failed")
     quiz_session_id = fields.CharField(max_length=64, null=True, description="预生成测验的 session_id")
     quiz_passed = fields.BooleanField(default=False, description="是否通过测验门禁")
     started_at = fields.DatetimeField(null=True, description="开始学习时间")

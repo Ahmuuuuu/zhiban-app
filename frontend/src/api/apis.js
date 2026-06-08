@@ -16,8 +16,12 @@ export const normalizeAvatarUrl = avatar => {
 }
 
 export async function downloadWithToken(url, filename = 'download') {
-  const href = resolveApiUrl(url)
   const token = localStorage.getItem('token')
+  const targetUrl = new URL(resolveApiUrl(url))
+  if (token && !targetUrl.searchParams.has('token')) {
+    targetUrl.searchParams.set('token', token)
+  }
+  const href = targetUrl.toString()
   const response = await fetch(href, {
     headers: {
       ...(token ? { token } : {})
@@ -25,7 +29,8 @@ export async function downloadWithToken(url, filename = 'download') {
   })
 
   if (!response.ok) {
-    throw new Error(`下载失败：${response.status}`)
+    const message = await response.text().catch(() => '')
+    throw new Error(message || `下载失败：${response.status}`)
   }
 
   const blob = await response.blob()
@@ -157,7 +162,7 @@ const parseStreamEvent = (eventText) => {
     .filter(Boolean)
 }
 
-export async function streamChatMessage(data, { onChunk, onDone, onError, onFile } = {}) {
+export async function streamChatMessage(data, { onChunk, onDone, onError, onFile, onStreamStart, onStreamSlide } = {}) {
   const isExistingConversation = Boolean(data.chat_group_id)
   const url = `${API_BASE_URL}${isExistingConversation ? 'ai_chat/stream_msg_into_history' : 'ai_chat/stream_new_history'}`
   const token = localStorage.getItem('token')
@@ -189,9 +194,10 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
   while (true) {
     const { done, value } = await reader.read()
 
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
+    // 处理最后一块数据（done 为 true 时可能仍携带数据）
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done })
+    }
     const events = buffer.split(/\r?\n\r?\n/)
     buffer = events.pop() || ''
 
@@ -230,6 +236,16 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
           eventData.preview_url ||
           eventData.previewUrl
 
+        if (eventData.type === 'stream_start') {
+          await onStreamStart?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_slide') {
+          await onStreamSlide?.(eventData)
+          continue
+        }
+
         if (isFileEvent) {
           await onFile?.(eventData)
           continue
@@ -244,6 +260,7 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
         }
       }
     }
+    if (done) break
   }
 }
 
@@ -340,7 +357,7 @@ export function getStudyCollections() {
 
 // ── 学习资源生成（流式）──
 
-export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile } = {}) {
+export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
   const token = localStorage.getItem('token')
 
@@ -367,9 +384,11 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
 
   while (true) {
     const { done, value } = await reader.read()
-    if (done) break
 
-    buffer += decoder.decode(value, { stream: true })
+    // 处理最后一块数据（done 为 true 时可能仍携带数据）
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done })
+    }
     const events = buffer.split(/\r?\n\r?\n/)
     buffer = events.pop() || ''
 
@@ -407,6 +426,21 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
           eventData.preview_url ||
           eventData.previewUrl
 
+        if (eventData.type === 'stream_start') {
+          onStreamStart?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_slide') {
+          onStreamSlide?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_progress') {
+          onProgress?.(eventData)
+          continue
+        }
+
         if (isFileEvent && !eventData.done) {
           onFile?.(eventData)
           continue
@@ -422,6 +456,7 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
         }
       }
     }
+    if (done) break
   }
 }
 
@@ -432,6 +467,71 @@ export function getGeneratedResources() {
 
 export function getGeneratedResource(resourceId) {
   return request.get(`/resource/${resourceId}`)
+}
+
+export function getResourceAnnotations(sourceId, sourceType = 'generated') {
+  return request.get('/annotation', {
+    params: {
+      source_type: sourceType,
+      source_id: sourceId
+    }
+  })
+}
+
+export function createResourceAnnotation(resourceId, data) {
+  return request.post('/annotation', {
+    source_type: data.source_type || data.sourceType || 'generated',
+    source_id: data.source_id || data.sourceId || resourceId,
+    selected_text: data.selected_text || data.selectedText || '',
+    note_text: data.note_text || data.note || '',
+    position: data.position || null
+  })
+}
+
+export function updateResourceAnnotation(resourceId, annotationId, data) {
+  return request.put(`/annotation/${annotationId}`, {
+    note_text: data.note_text || data.note || ''
+  })
+}
+
+export function deleteResourceAnnotation(resourceId, annotationId) {
+  return request.delete(`/annotation/${annotationId}`)
+}
+
+export async function exportEditedPptx(resourceId, data = {}) {
+  const token = localStorage.getItem('token')
+  const targetUrl = new URL(resolveApiUrl(`/resource/${resourceId}/export-pptx`))
+  if (token && !targetUrl.searchParams.has('token')) {
+    targetUrl.searchParams.set('token', token)
+  }
+  const href = targetUrl.toString()
+  const response = await fetch(href, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { token } : {})
+    },
+    body: JSON.stringify({
+      title: data.title || '',
+      slides: Array.isArray(data.slides) ? data.slides : []
+    })
+  })
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => '')
+    throw new Error(message || `导出 PPTX 失败：${response.status}`)
+  }
+
+  const blob = await response.blob()
+  const filename = data.filename || `${data.title || 'edited-presentation'}.pptx`
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
 }
 
 export function createResourceGenerationTask(data) {

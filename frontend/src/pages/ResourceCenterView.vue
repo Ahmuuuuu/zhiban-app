@@ -240,10 +240,13 @@
             </button>
           </div>
 
-          <div
-            class="resource-fullscreen__content"
-            :class="{ 'resource-fullscreen__content--media': isPresentationResource(selectedResource) || isVideoResource(selectedResource) }"
-          >
+            <div
+              class="resource-fullscreen__content"
+              :class="{
+                'resource-fullscreen__content--media': isPresentationResource(selectedResource) || isVideoResource(selectedResource),
+                'resource-fullscreen__content--ppt': isPptResource(selectedResource)
+              }"
+            >
             <template v-if="selectedResource.type === 'image' && selectedResource.previewUrl">
               <img
                 class="preview-image"
@@ -294,8 +297,10 @@
             <template v-else-if="isPptResource(selectedResource)">
               <PptPreview
                 v-if="selectedResource.slides?.length"
-                :slides="selectedResource.slides"
+                v-model:slides="selectedResource.slides"
                 :title="selectedResource.title"
+                :editable="canEditResource(selectedResource)"
+                @export-pptx="exportResourcePptx(selectedResource, $event)"
               />
               <div v-else-if="selectedResource.previewUrl" class="file-preview-wrap">
                 <img
@@ -305,7 +310,7 @@
                   @error="handleImageError"
                 />
               </div>
-              <div class="file-placeholder-block">
+              <div v-else class="file-placeholder-block">
                 <Presentation v-if="isPptResource(selectedResource)" :size="48" />
                 <GitBranch v-else :size="48" />
                 <p>{{ selectedResource.title || (isPptResource(selectedResource) ? 'PPT 文件' : '思维导图') }}</p>
@@ -348,6 +353,7 @@ import {
 } from 'lucide-vue-next'
 import {
   downloadWithToken,
+  exportEditedPptx,
   favoriteResource,
   getGeneratedImages,
   getGeneratedResource,
@@ -544,6 +550,18 @@ const normalizePresentations = data => {
   })
 }
 
+const mergeImageDuplicates = list => {
+  const seen = new Set()
+  return list.filter(item => {
+    if (item.type !== 'image') return true
+    const key = item.previewUrl || item.downloadUrl || item.sourceId || item.doc_id
+    if (!key) return true
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -561,7 +579,7 @@ const loadResources = async () => {
     const imageResult = await getGeneratedImages()
     const imageResources = normalizeGeneratedImages(imageResult)
     const presentationResources = normalizePresentations(presentationResult)
-    resources.value = [...presentationResources, ...imageResources, ...generatedBackendResources, ...myResources, ...publicResources]
+    resources.value = mergeImageDuplicates([...presentationResources, ...imageResources, ...generatedBackendResources, ...myResources, ...publicResources])
     selectedResource.value = resources.value[0] || null
     openNotificationTargetResource()
   } catch (error) {
@@ -740,7 +758,33 @@ const downloadResource = async resource => {
     await downloadWithToken(resource.downloadUrl, resource.filename || `${resource.title || 'resource'}.md`)
   } catch (error) {
     console.error('下载资源失败', error)
-    window.alert('下载失败，请检查网络连接或稍后重试')
+    window.alert(error?.message || '下载失败，请检查网络连接或稍后重试')
+  }
+}
+
+const pptxExportName = resource => {
+  const raw = String(resource?.filename || resource?.title || 'edited-presentation')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\.[^.]+$/, '')
+  return `${raw || 'edited-presentation'}.pptx`
+}
+
+const exportResourcePptx = async (resource, slides) => {
+  const resourceId = resource?.sourceId || resource?.resourceId || resource?.resource_id || resource?.id || getResourceIdFromUrl(resource?.downloadUrl) || ''
+  if (!resourceId) {
+    window.alert('当前 PPT 没有资源 ID，暂时无法导出 PPTX。')
+    return
+  }
+
+  try {
+    await exportEditedPptx(resourceId, {
+      title: resource?.title || '',
+      filename: pptxExportName(resource),
+      slides
+    })
+  } catch (error) {
+    console.error('导出 PPTX 失败', error)
+    window.alert(error?.message || '导出 PPTX 失败，请稍后再试。')
   }
 }
 
@@ -787,6 +831,12 @@ const getReactionId = resource => {
 }
 
 const canReactResource = resource => Boolean(getReactionId(resource))
+
+const canEditResource = resource => {
+  if (!resource) return false
+  if (resource.source === 'generated' || resource.source === 'presentation') return true
+  return resource.visibility !== 'public'
+}
 
 const reactionKey = (resource, type) => `${type}-${getReactionId(resource) || resource?.doc_id || ''}`
 
@@ -1227,7 +1277,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 3000;
-  padding: clamp(18px, 4vw, 46px);
+  padding: clamp(12px, 2.5vw, 32px);
   background: rgba(12, 28, 58, 0.34);
   display: flex;
   align-items: center;
@@ -1237,10 +1287,10 @@ onBeforeUnmount(() => {
 }
 
 .resource-fullscreen__panel {
-  width: min(1120px, 100%);
-  height: min(780px, 100%);
+  width: min(1380px, 100%);
+  height: min(940px, 96vh);
   min-height: 0;
-  padding: clamp(20px, 3vw, 34px);
+  padding: clamp(16px, 2vw, 28px);
   border: 1px solid rgba(22, 63, 143, 0.14);
   border-radius: 30px;
   background: rgba(255, 255, 255, 0.96);
@@ -1287,11 +1337,18 @@ onBeforeUnmount(() => {
 .resource-fullscreen__content {
   min-height: 0;
   flex: 1;
-  padding: 22px;
+  padding: clamp(14px, 1.7vw, 22px);
   border: 1px solid rgba(201, 220, 233, 0.72);
   border-radius: 24px;
   background: rgba(237, 249, 252, 0.48);
   overflow: auto;
+}
+
+.resource-fullscreen__content--ppt {
+  overflow: hidden;
+  padding: 10px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .resource-fullscreen__content--media {

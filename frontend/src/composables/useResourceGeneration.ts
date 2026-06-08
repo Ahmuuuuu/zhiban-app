@@ -12,7 +12,7 @@ export const resourceTools: ResourceToolConfig[] = [
   { label: 'image', generateMode: 'image', aspectRatio: '1:1', imageCount: 1 },
   { label: 'ppt', generateMode: 'resource', resourceTypes: ['ppt'] },
   { label: 'word', generateMode: 'resource', resourceTypes: ['document'] },
-  { label: 'video', generateMode: 'video', resourceTypes: ['document'] },
+  { label: 'video', generateMode: 'video', resourceTypes: ['document', 'ppt'] },
   { label: 'mindmap', generateMode: 'resource', resourceTypes: ['mindmap'] },
   { label: 'quiz', generateMode: 'resource', resourceTypes: ['exercise'] },
 ]
@@ -50,6 +50,8 @@ export type GenerationCallbacks = {
   onImage?: (imageData: unknown) => void
   onDone?: (eventData?: unknown) => void
   onError?: (err: string) => void
+  onStreamStart?: (eventData: unknown) => void
+  onStreamSlide?: (eventData: unknown) => void
 }
 
 const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
@@ -122,9 +124,6 @@ export async function executeGeneration(
         const immediateImages = normalizeImageRecords(submitRes)
         if (immediateImages.length) {
           immediateImages.forEach((image: unknown) => callbacks.onImage?.(image))
-          callbacks.onProgress?.(
-            immediateImages.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
-          )
           callbacks.onDone?.({ chat_group_id: submitData?.chat_group_id || submitData?.chatGroupId })
           return
         }
@@ -143,9 +142,6 @@ export async function executeGeneration(
           const images = normalizeImageRecords(taskInfo)
           if (images.length) {
             images.forEach((image: unknown) => callbacks.onImage?.(image))
-            callbacks.onProgress?.(
-              images.map((r: any) => `![${r.filename || '图片'}](${r.url || r.image_url || r.imageUrl})`).join('\n'),
-            )
             callbacks.onDone?.({ chat_group_id: taskInfo.chat_group_id || taskInfo.chatGroupId || submitData?.chat_group_id })
           } else {
             callbacks.onError?.('图片没有下载成功，请稍后重试。')
@@ -192,6 +188,11 @@ export async function executeGeneration(
         },
         {
           onProgress: (eventData: any) => {
+            // stream_progress 事件
+            if (eventData?.message) {
+              callbacks.onProgress?.(eventData.message)
+              return
+            }
             const finished = Array.isArray(eventData?.resources) ? eventData.resources : []
             callbacks.onProgress?.(
               finished.length ? '视频脚本已生成，正在整理内容...' : '正在生成视频脚本...',
@@ -199,6 +200,12 @@ export async function executeGeneration(
           },
           onFile: (fileData: any) => {
             generatedResources.push(fileData)
+          },
+          onStreamStart: (eventData: unknown) => {
+            callbacks.onStreamStart?.(eventData)
+          },
+          onStreamSlide: (eventData: unknown) => {
+            callbacks.onStreamSlide?.(eventData)
           },
           onDone: (eventData: any) => {
             if (Array.isArray(eventData?.resources)) {
@@ -265,6 +272,11 @@ export async function executeGeneration(
       },
       {
         onProgress: (eventData: any) => {
+          // stream_progress 事件：直接使用后端推送的进度消息
+          if (eventData?.message) {
+            callbacks.onProgress?.(eventData.message)
+            return
+          }
           const finished = Array.isArray(eventData?.resources) ? eventData.resources : []
           callbacks.onProgress?.(
             finished.length
@@ -274,6 +286,12 @@ export async function executeGeneration(
         },
         onFile: (fileData: unknown) => {
           callbacks.onFile?.(fileData)
+        },
+        onStreamStart: (eventData: unknown) => {
+          callbacks.onStreamStart?.(eventData)
+        },
+        onStreamSlide: (eventData: unknown) => {
+          callbacks.onStreamSlide?.(eventData)
         },
         onDone: (eventData: unknown) => {
           callbacks.onDone?.(eventData)

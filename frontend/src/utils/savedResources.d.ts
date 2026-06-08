@@ -13,6 +13,7 @@ export interface SavedResourceRef {
   coverUrl: string;
   previewUrl: string;
   downloadUrl: string;
+  annotations: Array<Record<string, unknown>>;
   visibility: string;
   createdAt: string;
 }
@@ -29,6 +30,7 @@ export interface SaveGeneratedResourcePayload {
   coverUrl?: string;
   previewUrl?: string;
   downloadUrl?: string;
+  annotations?: Array<Record<string, unknown>>;
   visibility?: string;
 }
 

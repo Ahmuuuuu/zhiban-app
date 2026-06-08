@@ -1,0 +1,70 @@
+<!-- template:video -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>{{TITLE}} - 学习课件</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      padding: 40px 0;
+    }
+    .slides-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 40px;
+      padding: 0 40px;
+    }
+    .slide {
+      width: 1280px;
+      min-height: 720px;
+      padding: 60px 80px 50px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .slide + .slide {
+      border-top: 1px solid #21262d;
+      padding-top: 80px;
+    }
+    .slide h2 {
+      color: #ffffff;
+      font-size: 36px;
+      line-height: 1.3;
+      margin-bottom: 24px;
+    }
+    .slide ul {
+      list-style: none;
+      padding: 0;
+    }
+    .slide ul li {
+      margin-bottom: 8px;
+      font-size: 22px;
+      line-height: 1.6;
+      color: #c9d1d9;
+    }
+    .intro-content { font-size: 24px; line-height: 1.8; color: #c9d1d9; }
+    .intro-content h1, .intro-content h2 { color: #fff; margin-bottom: 18px; font-size: 36px; }
+    .intro-content p { margin-bottom: 12px; }
+    .intro-content ul li { font-size: 22px; margin-bottom: 10px; }
+    #mindmap-container { font-size: 22px; line-height: 1.7; }
+    .katex { font-size: 1.1em; }
+    .katex-display { margin: 0; }
+  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],throwOnError:false})"></script>
+</head>
+<body>
+<div class="slides-wrapper">
+{{SLIDES_HTML}}
+</div>
+</body>
+</html>

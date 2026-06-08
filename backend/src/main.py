@@ -1,5 +1,12 @@
 import logging
+import sys
 import traceback
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    stream=sys.stdout,
+)
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +30,7 @@ from backend.src.router.video_router import router as video_router
 from backend.src.router.study_router import router as study_router
 from backend.src.router.presentation_router import router as presentation_router
 from backend.src.router.notification_router import router as notification_router
+from backend.src.router.annotation_router import router as annotation_router
 app = FastAPI(
     title="AI聊天后端",
     description="Swagger接口文档",
@@ -110,3 +118,4 @@ app.include_router(video_router)
 app.include_router(study_router)
 app.include_router(presentation_router)
 app.include_router(notification_router)
+app.include_router(annotation_router)

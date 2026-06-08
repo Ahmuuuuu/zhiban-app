@@ -29,6 +29,8 @@ export interface GenerationTask {
 const tasks = reactive<GenerationTask[]>([])
 const pollingTaskIds = new Set<string>()
 const GENERATION_TASKS_STORAGE_KEY = 'zhiban_generation_tasks_v2'
+let hasHydratedTasks = false
+let hydratePromise: Promise<GenerationTask[]> | null = null
 
 const isViewingGenerationPage = () => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return false
@@ -77,6 +79,9 @@ const restorePersistedTasks = () => {
       if (!item?.id || tasks.some(task => task.id === item.id)) return
       const isRecent = Date.now() - Number(item.updatedAt || 0) < 60 * 60 * 1000
       if (item.status !== 'running' && !isRecent) return
+      // 超过 30 分钟的 running 任务视为已失效，不再恢复轮询
+      const stale = Date.now() - Number(item.createdAt || 0) > 30 * 60 * 1000
+      if (item.status === 'running' && stale) return
       tasks.push(reactive({
         id: item.id,
         backendTaskId: item.backendTaskId || '',
@@ -250,6 +255,17 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.images.push(imageData)
       task.updatedAt = Date.now()
       persistTasks()
+    },
+    onStreamStart: (eventData: any) => {
+      ;(task as any)._pptStream = { slides: [] }
+      task.updatedAt = Date.now()
+    },
+    onStreamSlide: (eventData: any) => {
+      const stream = (task as any)._pptStream
+      if (stream && eventData?.content) {
+        stream.slides.push(eventData.content)
+        task.updatedAt = Date.now()
+      }
     },
     onDone: eventData => {
       task.doneEvent = eventData || null
@@ -436,7 +452,7 @@ export function useGenerationTaskQueue() {
     tasks.unshift(task)
     persistTasks()
 
-    if (tool.generateMode === 'image') {
+    if (tool.generateMode === 'image' || (tool.generateMode === 'resource' && tool.resourceTypes?.length === 1 && tool.resourceTypes[0] === 'ppt')) {
       runLegacyFrontendTask(task)
       return task
     }
@@ -502,22 +518,35 @@ export function useGenerationTaskQueue() {
   }
 
   const hydrateTasks = async () => {
-    const result = await getResourceGenerationTasks()
-    const list = unwrapResponseData(result)
-    const hydrated = (Array.isArray(list) ? list : [])
-      .map(item => upsertBackendTask(item))
-      .filter(Boolean) as GenerationTask[]
+    if (hydratePromise) return hydratePromise
+    if (hasHydratedTasks) {
+      tasks.filter(task => task.status === 'running').forEach(task => pollBackendTask(task))
+      return tasks
+    }
 
-    await Promise.all(hydrated.map(async task => {
-      try {
-        const detail = unwrapResponseData(await getResourceGenerationTask(task.backendTaskId))
-        applyBackendTaskData(task, detail)
-      } catch {
-        // Keep list-level task state if detail lookup is temporarily unavailable.
-      }
-      if (task.status === 'running') pollBackendTask(task)
-    }))
-    return hydrated
+    hydratePromise = (async () => {
+      const result = await getResourceGenerationTasks()
+      const list = unwrapResponseData(result)
+      const hydrated = (Array.isArray(list) ? list : [])
+        .map(item => upsertBackendTask(item))
+        .filter(Boolean) as GenerationTask[]
+
+      await Promise.all(hydrated.map(async task => {
+        try {
+          const detail = unwrapResponseData(await getResourceGenerationTask(task.backendTaskId))
+          applyBackendTaskData(task, detail)
+        } catch {
+          // Keep list-level task state if detail lookup is temporarily unavailable.
+        }
+        if (task.status === 'running') pollBackendTask(task)
+      }))
+      hasHydratedTasks = true
+      return hydrated
+    })().finally(() => {
+      hydratePromise = null
+    })
+
+    return hydratePromise
   }
 
   const getTask = (taskId: string) => tasks.find(task => task.id === taskId || task.backendTaskId === taskId)

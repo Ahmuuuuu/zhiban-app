@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import re
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"^\|(.+)\|$", lambda m: m.group(1).strip(), text, flags=re.MULTILINE)
     text = text.replace("|", "，")
     # HTML 实体
+    text = re.sub(r"<!--[\s\S]*?-->", "", text)  # 去掉 HTML 注释（layout/theme/visual 等视觉元数据）
     text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     text = text.replace("&quot;", '"').replace("&nbsp;", " ")
     text = re.sub(r"\n+", "，", text)
@@ -55,10 +57,13 @@ def clean_for_tts(text: str) -> str:
     return text.strip()
 
 
-def parse_slides(markdown: str) -> list[dict]:
-    """解析 PPT markdown，返回每页的 {title, text, notes, duration_ms}"""
+def parse_slides_plain(markdown: str) -> list[dict]:
+    """解析 PPT markdown 为纯文本幻灯片 — 不注入任何视觉组件，供视频/TTS 使用"""
     raw_slides = re.split(r"\n---\n", markdown.strip())
     slides = []
+
+    def _strip_comments(s: str) -> str:
+        return re.sub(r"<!--[\s\S]*?-->", "", s).strip()
 
     for block in raw_slides:
         block = block.strip()
@@ -74,16 +79,19 @@ def parse_slides(markdown: str) -> list[dict]:
             stripped = line.strip()
             if not stripped:
                 continue
+            # 跳过 HTML 注释和元数据行（layout/theme/visual）
+            if re.match(r"^<!--\s*(layout|theme|visual)\s*:", stripped):
+                continue
             if stripped.startswith("# ") or stripped.startswith("## "):
-                title = stripped.lstrip("#").strip()
+                title = _strip_comments(stripped.lstrip("#").strip())
             elif stripped.startswith("> "):
-                notes.append(stripped[2:].strip())
+                notes.append(_strip_comments(stripped[2:].strip()))
             elif stripped.startswith("- ") or stripped.startswith("* "):
-                bullets.append(stripped[2:].strip())
+                bullets.append(_strip_comments(stripped[2:].strip()))
             elif re.match(r"^\d+[.)]\s", stripped):
-                bullets.append(stripped)
+                bullets.append(_strip_comments(stripped))
             else:
-                body_lines.append(stripped)
+                body_lines.append(_strip_comments(stripped))
 
         if body_lines and not title:
             title = body_lines[0]
@@ -99,6 +107,30 @@ def parse_slides(markdown: str) -> list[dict]:
 
         duration_ms = int(len(text) / 4 * 1000)
         slides.append({"title": title, "text": text, "bullets": bullets, "notes": "\n".join(notes), "duration_ms": duration_ms})
+
+    return slides
+
+
+def parse_slides(markdown: str) -> list[dict]:
+    """解析 PPT markdown 并注入视觉布局元数据（layout/theme/visual/blocks）"""
+    from backend.src.utils.slide_schema import parse_markdown_slides
+
+    slides = []
+    for slide in parse_markdown_slides(markdown):
+        content_items = slide.get("bullets") or [
+            line.strip() for line in str(slide.get("text") or "").splitlines() if line.strip()
+        ]
+        tts_text = slide.get("title") or ""
+        if content_items:
+            tts_text += " " + " ".join(content_items[:6])
+        if slide.get("notes"):
+            tts_text += " " + str(slide.get("notes"))
+        tts_text = clean_for_tts(tts_text)
+        slides.append({
+            **slide,
+            "text": tts_text,
+            "duration_ms": int(len(tts_text) / 4 * 1000),
+        })
 
     return slides
 
@@ -191,19 +223,16 @@ async def generate_audio_with_timestamps(text: str, output_path: str, voice: str
 
 async def _generate_audio_impl(text: str, output_path: str, voice: str, rate: str, capture_words: bool = False):
     """EdgeTTS 统一实现：支持普通模式和词级时间戳模式"""
-    import os
     import edge_tts
 
-    old_no_proxy = os.environ.get("NO_PROXY", "")
-    domains = "*.speech.microsoft.com,*.microsoft.com,*.bing.com,edge-tts.azurewebsites.net"
-    os.environ["NO_PROXY"] = f"{domains},{old_no_proxy}" if old_no_proxy else domains
-    os.environ["no_proxy"] = os.environ["NO_PROXY"]
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     try:
+        _tts_timeout = 90
         communicate = edge_tts.Communicate(text, voice, rate=rate)
 
         if not capture_words:
-            await asyncio.wait_for(communicate.save(output_path), timeout=60)
+            await asyncio.wait_for(communicate.save(output_path), timeout=_tts_timeout)
             return output_path, []
 
         # stream 模式：启用 WordBoundary 收集词级时间戳
@@ -211,28 +240,23 @@ async def _generate_audio_impl(text: str, output_path: str, voice: str, rate: st
         audio_data = bytearray()
         word_timestamps = []
 
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data.extend(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                # EdgeTTS offset/duration 单位是 Ticks (100ns)，转成毫秒
-                word_timestamps.append({
-                    "text": chunk["text"],
-                    "offset_ms": chunk["offset"] // 10000,
-                    "duration_ms": chunk["duration"] // 10000,
-                })
+        async def _stream_collect():
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_data.extend(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    word_timestamps.append({
+                        "text": chunk["text"],
+                        "offset_ms": chunk["offset"] // 10000,
+                        "duration_ms": chunk["duration"] // 10000,
+                    })
+
+        await asyncio.wait_for(_stream_collect(), timeout=_tts_timeout)
 
         with open(output_path, "wb") as f:
             f.write(audio_data)
 
         return output_path, word_timestamps
     except asyncio.TimeoutError:
-        logger.error("EdgeTTS 超时 (60s): text_len=%d voice=%s", len(text), voice)
+        logger.error("[TTS] 超时 (%ds): text_len=%d voice=%s", _tts_timeout, len(text), voice)
         raise
-    finally:
-        if old_no_proxy:
-            os.environ["NO_PROXY"] = old_no_proxy
-            os.environ["no_proxy"] = old_no_proxy
-        else:
-            os.environ.pop("NO_PROXY", None)
-            os.environ.pop("no_proxy", None)
