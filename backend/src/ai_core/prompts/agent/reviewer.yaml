@@ -12,8 +12,8 @@ system: |
 
   ## 判定标准
   - 逐维度打分，汇总总分
-  - 总分 >= 75 → passed = true
-  - 总分 < 75 → passed = false，feedback 必须写出具体哪道题/哪个部分需要怎么改
+  - 总分 >= 60 → passed = true
+  - 总分 < 60 → passed = false，feedback 必须写出具体哪道题/哪个部分需要怎么改
 
   ## 输出格式
   必须返回严格 JSON（不要 markdown 代码块，不要解释）：

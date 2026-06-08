@@ -16,6 +16,7 @@ from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.json_parser import parse_llm_json
 from backend.src.service.notification_service import check_and_create_ai_tip
+from backend.src.service.portrait_service import PortraitRadarService
 
 
 def _normalize_db_answer(raw: str) -> str:
@@ -140,6 +141,7 @@ class ExamService:
         topic: str, user_id: int,
         question_types: list[str] | None = None, count: int = 10, difficulty: str = "medium",
         node_id: int | None = None, user_notes: str = "", chat_group_id: int = 0,
+        skip_review: bool = False, llm_priority: str = "high",
     ) -> dict:
         """走 graph 出题（Leader→Executor→Reviewer→retry）→ 存库 → 返回 session_id + questions"""
         await init_db()
@@ -157,6 +159,7 @@ class ExamService:
             topic=topic, user_id=user_id, resource_types=["exercise"],
             exam_question_types=types_str, exam_count=count, exam_difficulty=difficulty,
             chat_group_id=chat_group_id, user_notes=user_notes,
+            skip_review=skip_review, llm_priority=llm_priority,
         )
 
         for r in saved_resources:
@@ -398,6 +401,12 @@ class ExamService:
             await PathService._update_portrait_from_mastery(user_id)
         except Exception:
             logger.exception("答题后画像同步失败 user_id=%s", user_id)
+
+        try:
+            await PortraitRadarService.compute(user_id)
+            await PortraitRadarService.sync_to_portrait(user_id)
+        except Exception:
+            logger.exception("雷达即时刷新失败 user_id=%s", user_id)
 
         # 汇总本轮会话成绩（总分恒为 100）
         raw_session_records = await ExamRecord.filter(user_id=user_id, session_id=sid).order_by("id").prefetch_related("question").all()

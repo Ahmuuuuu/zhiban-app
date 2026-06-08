@@ -205,7 +205,7 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
-import { getLearningGuidance, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyPathStats, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
+import { getLearningGuidance, getPortrait, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyPathStats, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
 
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
 
@@ -235,13 +235,7 @@ const handleAvatarUpdated = event => {
 const studyMinutes = ref(0)
 const studyTimeNote = ref(zh([0x672c, 0x5468, 0x6682, 0x65e0, 0x5b66, 0x4e60, 0x65f6, 0x957f, 0x8bb0, 0x5f55]))
 
-const learnerTags = [
-  zh([0x7a33, 0x5b9a, 0x578b, 0x5b66, 0x4e60, 0x8005]),
-  zh([0x56fe, 0x50cf, 0x8bb0, 0x5fc6, 0x5f3a]),
-  zh([0x9002, 0x5408, 0x5206, 0x6bb5, 0x590d, 0x76d8]),
-  zh([0x7ec3, 0x4e60, 0x53cd, 0x9988, 0x654f, 0x611f]),
-  zh([0x5468, 0x672b, 0x6d3b, 0x8dc3])
-]
+const learnerTags = ref([])
 
 const fallbackRadarData = [
   { key: 'focus', label: zh([0x4e13, 0x6ce8, 0x5ea6]), en: 'Focus', value: 82 },
@@ -581,10 +575,25 @@ const loadStudyDashboard = async () => {
   }
 }
 
+const loadPortraitTags = async () => {
+  try {
+    const result = await getPortrait()
+    const portrait = result?.data || result || {}
+    let raw = portrait.personality_tags
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw) } catch { raw = [] }
+    }
+    learnerTags.value = Array.isArray(raw) ? raw : []
+  } catch {
+    learnerTags.value = []
+  }
+}
+
 onMounted(() => {
   window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
   loadUserAvatar()
   loadRadarData()
+  loadPortraitTags()
   loadStudyDashboard()
 })
 

@@ -47,6 +47,7 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"^\|(.+)\|$", lambda m: m.group(1).strip(), text, flags=re.MULTILINE)
     text = text.replace("|", "，")
     # HTML 实体
+    text = re.sub(r"<!--[\s\S]*?-->", "", text)  # 去掉 HTML 注释（layout/theme/visual 等视觉元数据）
     text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     text = text.replace("&quot;", '"').replace("&nbsp;", " ")
     text = re.sub(r"\n+", "，", text)
@@ -56,10 +57,13 @@ def clean_for_tts(text: str) -> str:
     return text.strip()
 
 
-def parse_slides(markdown: str) -> list[dict]:
-    """解析 PPT markdown，返回每页的 {title, text, notes, duration_ms}"""
+def parse_slides_plain(markdown: str) -> list[dict]:
+    """解析 PPT markdown 为纯文本幻灯片 — 不注入任何视觉组件，供视频/TTS 使用"""
     raw_slides = re.split(r"\n---\n", markdown.strip())
     slides = []
+
+    def _strip_comments(s: str) -> str:
+        return re.sub(r"<!--[\s\S]*?-->", "", s).strip()
 
     for block in raw_slides:
         block = block.strip()
@@ -75,16 +79,19 @@ def parse_slides(markdown: str) -> list[dict]:
             stripped = line.strip()
             if not stripped:
                 continue
+            # 跳过 HTML 注释和元数据行（layout/theme/visual）
+            if re.match(r"^<!--\s*(layout|theme|visual)\s*:", stripped):
+                continue
             if stripped.startswith("# ") or stripped.startswith("## "):
-                title = stripped.lstrip("#").strip()
+                title = _strip_comments(stripped.lstrip("#").strip())
             elif stripped.startswith("> "):
-                notes.append(stripped[2:].strip())
+                notes.append(_strip_comments(stripped[2:].strip()))
             elif stripped.startswith("- ") or stripped.startswith("* "):
-                bullets.append(stripped[2:].strip())
+                bullets.append(_strip_comments(stripped[2:].strip()))
             elif re.match(r"^\d+[.)]\s", stripped):
-                bullets.append(stripped)
+                bullets.append(_strip_comments(stripped))
             else:
-                body_lines.append(stripped)
+                body_lines.append(_strip_comments(stripped))
 
         if body_lines and not title:
             title = body_lines[0]
@@ -105,7 +112,7 @@ def parse_slides(markdown: str) -> list[dict]:
 
 
 def parse_slides(markdown: str) -> list[dict]:
-    """Parse PPT markdown and enrich each slide with the shared visual schema."""
+    """解析 PPT markdown 并注入视觉布局元数据（layout/theme/visual/blocks）"""
     from backend.src.utils.slide_schema import parse_markdown_slides
 
     slides = []
@@ -121,7 +128,7 @@ def parse_slides(markdown: str) -> list[dict]:
         tts_text = clean_for_tts(tts_text)
         slides.append({
             **slide,
-            "text": slide.get("text") or "\n".join(content_items),
+            "text": tts_text,
             "duration_ms": int(len(tts_text) / 4 * 1000),
         })
 
