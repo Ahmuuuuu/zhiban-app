@@ -158,6 +158,17 @@
             PPT 已生成，可以打开幻灯片预览。
           </div>
 
+          <AnnotatedTextPreview
+            v-else-if="message.content && canAnnotateFile(message)"
+            class="file-preview annotated-chat-preview"
+            :content="message.content"
+            :annotations="message.annotations || []"
+            :annotatable="true"
+            @create-note="createMessageAnnotation(message, $event)"
+            @update-note="(id, payload) => updateMessageAnnotation(message, id, payload)"
+            @delete-note="deleteMessageAnnotation(message, $event)"
+          />
+
           <pre v-else-if="message.content" class="file-preview">{{ message.content }}</pre>
 
           <div v-else class="file-placeholder">
@@ -314,8 +325,14 @@
             <div v-if="pptPreview.loading" class="ppt-dialog__loading">正在加载 PPT 预览...</div>
             <PptPreview
               v-else-if="pptPreview.slides.length"
-              :slides="pptPreview.slides"
+              v-model:slides="pptPreview.slides"
               :title="pptPreview.title"
+              :annotatable="Boolean(pptPreview.resourceId)"
+              :annotations="pptPreview.annotations || []"
+              @create-note="createPptPreviewAnnotation($event)"
+              @update-note="(id, payload) => updatePptPreviewAnnotation(id, payload)"
+              @delete-note="deletePptPreviewAnnotation($event)"
+              @export-pptx="exportChatPptx"
             />
             <div v-else class="ppt-dialog__loading">暂无可预览的幻灯片内容。</div>
           </div>
@@ -354,17 +371,23 @@
 import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  createResourceAnnotation,
+  deleteResourceAnnotation,
   downloadWithToken,
+  exportEditedPptx,
+  getResourceAnnotations,
   streamChatMessage,
   getConversationList,
   getConversationMessages,
   getGeneratedResource,
   getPresentations,
-  resolveApiUrl
+  resolveApiUrl,
+  updateResourceAnnotation
 } from '../api/apis'
 import { detectGenerationIntent } from '../composables/useResourceGeneration'
 import { useGenerationTaskQueue } from '../composables/useGenerationTaskQueue'
 import MindmapPreview from '../components/MindmapPreview.vue'
+import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import {
   FileText,
@@ -383,6 +406,8 @@ import {
 import petHeroImage from '../assets/pic/zhiban-pet-base.png'
 import { looksLikeQuizContent, upsertQuizSet } from '../utils/quizBank'
 import { saveGeneratedResourceRef } from '../utils/savedResources'
+import { renderMath } from '../utils/renderMath'
+import 'katex/dist/katex.min.css'
 
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
@@ -427,7 +452,7 @@ const resourceTools = [
     icon: Video,
     prompt: '帮我生成一个学习视频：',
     generateMode: 'video',
-    resourceTypes: ['document']
+    resourceTypes: ['document', 'ppt']
   },
   {
     label: 'mindmap',
@@ -529,8 +554,22 @@ const getRecordId = (record, fallback) => {
   return record?.id || record?.index || fallback
 }
 
+const expandResourceListMessages = (messages) => {
+  const result = []
+  for (const msg of messages) {
+    if (msg._resourceList) {
+      for (const resource of msg._resourceList) {
+        result.push({ ...normalizeFileMessage(resource), id: `${msg.id}-${resource.file_id || resource.resource_id}`, time: msg.time })
+      }
+    } else {
+      result.push(msg)
+    }
+  }
+  return result
+}
+
 const buildMessagesFromHistory = (records, conversationId) => {
-  return records
+  const messages = records
     .slice()
     .sort((a, b) => getTimeValue(getRecordTime(a)) - getTimeValue(getRecordTime(b)))
     .map((item, index) => {
@@ -555,6 +594,8 @@ const buildMessagesFromHistory = (records, conversationId) => {
       }
     })
     .filter(message => message.type !== 'text' || message.content)
+
+  return expandResourceListMessages(messages)
 }
 
 const normalizePresentationTopic = value => String(value || '')
@@ -842,7 +883,7 @@ const renderMarkdown = (content) => {
   flushParagraph()
   flushList()
 
-  return html.join('')
+  return renderMath(html.join(''))
 }
 
 //格式化后端时间
@@ -880,8 +921,10 @@ const pptPreview = ref({
   visible: false,
   loading: false,
   messageId: '',
+  resourceId: '',
   title: '',
-  slides: []
+  slides: [],
+  annotations: []
 })
 
 const normalizeFileMessage = data => {
@@ -907,6 +950,7 @@ const normalizeFileMessage = data => {
     filename,
     content: data.content || data.text || data.preview_content || data.previewContent || '',
     slides: Array.isArray(data.slides) ? data.slides : [],
+    annotations: Array.isArray(data.annotations) ? data.annotations : [],
     narration: data.narration || null,
     presentation: data.presentation || null,
     fileId,
@@ -1013,6 +1057,21 @@ const parseResourceHistoryMessage = value => {
 const normalizeHistoryAssistantMessage = (item, id, time) => {
   const rawContent = item.res || item.content || item.answer || ''
   const parsed = typeof rawContent === 'string' ? tryParseJson(rawContent) : rawContent
+
+  if (parsed && parsed.type === 'resource_list' && Array.isArray(parsed.resources)) {
+    if (parsed.resources.length === 0) {
+      return { id, role: 'assistant', type: 'text', content: parsed.message || '资源生成完成', time }
+    }
+    return {
+      id,
+      role: 'assistant',
+      type: 'text',
+      content: stripInternalInstructions(rawContent),
+      _resourceList: parsed.resources,
+      time
+    }
+  }
+
   const resourceHistory = parseResourceHistoryMessage(rawContent)
 
   if (resourceHistory) {
@@ -1090,6 +1149,87 @@ const canOpenPptPreview = message => {
   return Boolean(message?.slides?.length || message?.content || getFileResourceId(message))
 }
 
+const canAnnotateFile = message => {
+  if (!getFileResourceId(message)) return false
+  if (isPptFile(message) || isMindmapFile(message) || isVideoFile(message)) return false
+  return Boolean(message?.content)
+}
+
+const normalizeAnnotations = result => {
+  const data = result?.data?.data || result?.data || result || []
+  const list = Array.isArray(data) ? data : data.records || data.list || data.annotations || []
+  return (Array.isArray(list) ? list : []).map(item => ({
+    ...item,
+    id: item.id || item.annotation_id || item.annotationId,
+    selected_text: item.selected_text || item.selectedText || '',
+    note: item.note || item.note_text || item.noteText || '',
+    note_text: item.note_text || item.note || item.noteText || '',
+    position: typeof item.position === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(item.position)
+          } catch {
+            return {}
+          }
+        })()
+      : item.position || {}
+  }))
+}
+
+const loadMessageAnnotations = async message => {
+  const resourceId = getFileResourceId(message)
+  if (!resourceId) return []
+  try {
+    const result = await getResourceAnnotations(resourceId, 'generated')
+    const annotations = normalizeAnnotations(result)
+    message.annotations = annotations
+    return annotations
+  } catch (error) {
+    console.warn('[ChatView] load annotations failed:', error)
+    message.annotations = []
+    return []
+  }
+}
+
+const saveGeneratedAnnotation = async (resourceId, payload) => {
+  await createResourceAnnotation(resourceId, {
+    ...payload,
+    source_type: 'generated',
+    source_id: resourceId
+  })
+}
+
+const _extractSlideMeta = (lines) => {
+  const meta: Record<string, string> = {}
+  const contentLines: string[] = []
+  for (const l of lines) {
+    const m = l.match(/^<!--\s*(layout|theme|visual)\s*:\s*(.+?)\s*-->$/i)
+    if (m) { meta[m[1].toLowerCase()] = m[2].trim(); continue }
+    contentLines.push(l)
+  }
+  return { meta, contentLines }
+}
+
+const parseSingleSlide = (content) => {
+  const raw = String(content || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  const { meta, contentLines } = _extractSlideMeta(raw)
+  const titleLine = contentLines.find(l => /^#{1,3}\s+/.test(l)) || contentLines[0] || ''
+  const title = titleLine.replace(/^#{1,3}\s+/, '').trim() || '未命名'
+  const text = contentLines
+    .filter(l => l !== titleLine)
+    .map(l => l.replace(/^[-*•]\s+/, '').trim())
+    .filter(Boolean)
+    .join('\n')
+  return {
+    title,
+    text,
+    notes: '',
+    ...(meta.layout ? { layout: meta.layout } : {}),
+    ...(meta.theme ? { theme: meta.theme } : {}),
+    ...(meta.visual ? { visual_hint: meta.visual } : {}),
+  }
+}
+
 const parsePptSlidesFromContent = content => {
   const text = String(content || '').trim()
   if (!text) return []
@@ -1102,7 +1242,10 @@ const parsePptSlidesFromContent = content => {
         index,
         title: slide.title || slide.heading || `第 ${index + 1} 页`,
         text: slide.text || slide.content || slide.body || '',
-        notes: slide.notes || slide.speaker_notes || ''
+        notes: slide.notes || slide.speaker_notes || '',
+        ...(slide.layout ? { layout: slide.layout } : {}),
+        ...(slide.theme ? { theme: slide.theme } : {}),
+        ...(slide.visual ? { visual: slide.visual } : {}),
       }))
     }
   } catch {
@@ -1112,25 +1255,28 @@ const parsePptSlidesFromContent = content => {
   const blocks = text
     .replace(/^```(?:json|markdown|md)?\s*/i, '')
     .replace(/```$/i, '')
-    .split(/\n\s*---+\s*\n|(?=\n\s*#{1,3}\s+)/)
+    .split(/\n\s*---+\s*\n|(?=\n\s*#{1,2}\s+)/)
     .map(block => block.trim())
     .filter(Boolean)
 
   return blocks.map((block, index) => {
-    const lines = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
-    const titleLine = lines.find(line => /^#{1,3}\s+/.test(line)) || lines[0] || `第 ${index + 1} 页`
+    const raw = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const { meta, contentLines } = _extractSlideMeta(raw)
+    const titleLine = contentLines.find(line => /^#{1,3}\s+/.test(line)) || contentLines[0] || `第 ${index + 1} 页`
     const title = titleLine.replace(/^#{1,3}\s+/, '').replace(/^第?\s*\d+\s*[页章、.：:-]?\s*/, '').trim()
-    const body = lines
+    const body = contentLines
       .filter(line => line !== titleLine)
       .map(line => line.replace(/^[-*•]\s+/, '').trim())
       .filter(Boolean)
       .join('\n')
-
     return {
       index,
       title: title || `第 ${index + 1} 页`,
       text: body,
-      notes: ''
+      notes: '',
+      ...(meta.layout ? { layout: meta.layout } : {}),
+      ...(meta.theme ? { theme: meta.theme } : {}),
+      ...(meta.visual ? { visual_hint: meta.visual } : {}),
     }
   }).filter(slide => slide.title || slide.text)
 }
@@ -1162,27 +1308,35 @@ const hydratePptPreview = async message => {
 }
 
 const openPptPreview = async message => {
+  const resourceId = getFileResourceId(message) || ''
   pptPreview.value = {
     visible: true,
     loading: true,
     messageId: message.id,
+    resourceId,
     title: message.filename || 'PPT 预览',
-    slides: message.slides || []
+    slides: message.slides || [],
+    annotations: message.annotations || []
   }
 
   try {
-    const slides = await hydratePptPreview(message)
+    const [slides, annotations] = await Promise.all([
+      hydratePptPreview(message),
+      resourceId ? loadMessageAnnotations(message) : Promise.resolve([])
+    ])
     pptPreview.value = {
       ...pptPreview.value,
       loading: false,
-      slides: slides || []
+      slides: slides || [],
+      annotations
     }
   } catch (err) {
     console.error('[ChatView] load ppt preview failed:', err)
     pptPreview.value = {
       ...pptPreview.value,
       loading: false,
-      slides: parsePptSlidesFromContent(message.content)
+      slides: parsePptSlidesFromContent(message.content),
+      annotations: message.annotations || []
     }
   }
 }
@@ -1192,8 +1346,100 @@ const closePptPreview = () => {
     visible: false,
     loading: false,
     messageId: '',
+    resourceId: '',
     title: '',
-    slides: []
+    slides: [],
+    annotations: []
+  }
+}
+
+const patchMessageAnnotations = (messageId, annotations) => {
+  const target = messages.value.find(item => item.id === messageId)
+  if (target) target.annotations = annotations
+}
+
+const reloadPptPreviewAnnotations = async () => {
+  const target = messages.value.find(item => item.id === pptPreview.value.messageId)
+  if (!target) return
+  const annotations = await loadMessageAnnotations(target)
+  pptPreview.value = {
+    ...pptPreview.value,
+    annotations
+  }
+}
+
+const createPptPreviewAnnotation = async payload => {
+  const resourceId = pptPreview.value.resourceId
+  if (!resourceId) return
+  try {
+    await saveGeneratedAnnotation(resourceId, payload)
+    await reloadPptPreviewAnnotations()
+  } catch (error) {
+    console.error('[ChatView] save ppt annotation failed:', error)
+    const detail = error?.response?.data?.detail || error?.response?.data?.msg || error?.message || ''
+    window.alert(`保存标注失败${detail ? `：${detail}` : '，请稍后再试。'}`)
+  }
+}
+
+const updatePptPreviewAnnotation = async (annotationId, payload) => {
+  if (!pptPreview.value.resourceId || !annotationId) return
+  try {
+    await updateResourceAnnotation(pptPreview.value.resourceId, annotationId, payload)
+    await reloadPptPreviewAnnotations()
+  } catch (error) {
+    console.error('[ChatView] update ppt annotation failed:', error)
+    window.alert('更新标注失败，请稍后再试。')
+  }
+}
+
+const deletePptPreviewAnnotation = async annotationId => {
+  if (!pptPreview.value.resourceId || !annotationId) return
+  try {
+    await deleteResourceAnnotation(pptPreview.value.resourceId, annotationId)
+    await reloadPptPreviewAnnotations()
+  } catch (error) {
+    console.error('[ChatView] delete ppt annotation failed:', error)
+    window.alert('删除标注失败，请稍后再试。')
+  }
+}
+
+const createMessageAnnotation = async (message, payload) => {
+  const resourceId = getFileResourceId(message)
+  if (!resourceId) return
+  try {
+    await saveGeneratedAnnotation(resourceId, payload)
+    const annotations = await loadMessageAnnotations(message)
+    patchMessageAnnotations(message.id, annotations)
+  } catch (error) {
+    console.error('[ChatView] save message annotation failed:', error)
+    const detail = error?.response?.data?.detail || error?.response?.data?.msg || error?.message || ''
+    window.alert(`保存标注失败${detail ? `：${detail}` : '，请稍后再试。'}`)
+  }
+}
+
+const updateMessageAnnotation = async (message, annotationId, payload) => {
+  const resourceId = getFileResourceId(message)
+  if (!resourceId || !annotationId) return
+  try {
+    await updateResourceAnnotation(resourceId, annotationId, payload)
+    const annotations = await loadMessageAnnotations(message)
+    patchMessageAnnotations(message.id, annotations)
+  } catch (error) {
+    console.error('[ChatView] update message annotation failed:', error)
+    window.alert('更新标注失败，请稍后再试。')
+  }
+}
+
+const deleteMessageAnnotation = async (message, annotationId) => {
+  const resourceId = getFileResourceId(message)
+  if (!resourceId || !annotationId) return
+  try {
+    await deleteResourceAnnotation(resourceId, annotationId)
+    const annotations = await loadMessageAnnotations(message)
+    patchMessageAnnotations(message.id, annotations)
+  } catch (error) {
+    console.error('[ChatView] delete message annotation failed:', error)
+    window.alert('删除标注失败，请稍后再试。')
   }
 }
 
@@ -1391,6 +1637,7 @@ const confirmSaveGeneratedResource = async () => {
       previewUrl: message.previewUrl || '',
       downloadUrl: message.downloadUrl || '',
       content: message.content || '',
+      annotations: message.annotations || [],
       visibility: saveDialog.value.visibility,
       createdAt: new Date().toISOString()
     })
@@ -1423,6 +1670,32 @@ const getDownloadName = message => {
   return normalizeFileName(message.filename, message.fileType)
 }
 
+const getPptxExportName = title => {
+  return normalizeFileName(fileTitleWithoutExtension(title || 'edited-presentation'), 'ppt')
+}
+
+const exportChatPptx = async slides => {
+  const resourceId = pptPreview.value.resourceId
+  if (!resourceId) {
+    window.alert('当前 PPT 没有资源 ID，暂时无法导出 PPTX。')
+    return
+  }
+
+  try {
+    const target = messages.value.find(item => item.id === pptPreview.value.messageId)
+    if (target) target.slides = slides
+
+    await exportEditedPptx(resourceId, {
+      title: pptPreview.value.title || '',
+      filename: getPptxExportName(pptPreview.value.title),
+      slides
+    })
+  } catch (error) {
+    console.error('[ChatView] export pptx failed:', error)
+    window.alert(error?.message || '导出 PPTX 失败，请稍后再试。')
+  }
+}
+
 const downloadGeneratedFile = async message => {
   if (!message?.downloadUrl) return
 
@@ -1430,7 +1703,7 @@ const downloadGeneratedFile = async message => {
     await downloadWithToken(message.downloadUrl, getDownloadName(message))
   } catch (error) {
     console.error('下载生成文件失败：', error)
-    window.alert('下载失败，请确认登录状态和后端服务是否正常。')
+    window.alert(error?.message || '下载失败，请确认登录状态和后端服务是否正常。')
   }
 }
 
@@ -1667,6 +1940,36 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         })
       }
 
+      // PPT 流式预览：逐页展示（批量累积后一次性更新，避免 O(n²) 重渲染）
+      const pptStream = (task as any)._pptStream
+      if (pptStream) {
+        if (!pptPreview.value.visible) {
+          pptPreview.value = {
+            visible: true,
+            loading: true,
+            messageId,
+            resourceId: '',
+            title: task.text || 'PPT 预览',
+            slides: [],
+            annotations: []
+          }
+        }
+        const streamedCount = (task as any)._pptSlideCursor || 0
+        if (streamedCount < pptStream.slides.length) {
+          ;(task as any)._pptSlideCursor = pptStream.slides.length
+          const baseIdx = pptPreview.value.slides.length
+          const newSlides = pptStream.slides.slice(streamedCount).map((content, i) => {
+            const slide = parseSingleSlide(content)
+            return { ...slide, index: baseIdx + i }
+          })
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: false,
+            slides: [...pptPreview.value.slides, ...newSlides]
+          }
+        }
+      }
+
       while (fileCursor < task.files.length) {
         const file = task.files[fileCursor]
         fileCursor += 1
@@ -1675,6 +1978,19 @@ const attachGenerationTaskToMessage = (task, messageId) => {
           continue
         }
         await appendFileMessage(file)
+
+        // PPT 全量文件到达 → 用完整内容刷新预览
+        if (isPptFile(file) && pptPreview.value.visible) {
+          const fullSlides = parsePptSlidesFromContent(file.content || file.text || '')
+          const resourceId = getFileResourceId(file)
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: false,
+            resourceId: resourceId || pptPreview.value.resourceId,
+            slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
+            title: file.filename || pptPreview.value.title
+          }
+        }
       }
 
       while (imageCursor < task.images.length) {
@@ -1848,6 +2164,31 @@ const sendMessage = async () => {
         target.time = getNowTime()
         await scrollToBottom()
       },
+      onStreamStart: async eventData => {
+        if (eventData?.file_type === 'ppt' && !pptPreview.value.visible) {
+          pptPreview.value = {
+            visible: true,
+            loading: true,
+            messageId: loadingMessageId,
+            resourceId: '',
+            title: text || 'PPT 预览',
+            slides: [],
+            annotations: []
+          }
+        }
+      },
+      onStreamSlide: async eventData => {
+        if (eventData?.file_type === 'ppt' && pptPreview.value.visible) {
+          const slide = parseSingleSlide(eventData?.content || '')
+          const idx = pptPreview.value.slides.length
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: pptPreview.value.slides.length === 0,
+            slides: [...pptPreview.value.slides, { ...slide, index: idx }]
+          }
+          scrollToBottom()
+        }
+      },
       onFile: async fileData => {
         if (target && !hasReceivedChunk) {
           target.content = '已生成文件，可以在下方查看预览。'
@@ -1856,6 +2197,20 @@ const sendMessage = async () => {
         }
 
         await appendFileMessage(fileData)
+
+        // PPT 全量 file 事件 → 用完整内容刷新预览
+        if (isPptFile(fileData) && pptPreview.value.visible) {
+          const fullSlides = parsePptSlidesFromContent(fileData.content || fileData.text || '')
+          const resourceId = getFileResourceId(fileData)
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: false,
+            resourceId: resourceId || pptPreview.value.resourceId,
+            slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
+            title: fileData.filename || pptPreview.value.title
+          }
+        }
+
         await scrollToBottom()
       },
       onDone: async data => {
@@ -2637,6 +2992,12 @@ watch(
   word-break: break-word;
 }
 
+.annotated-chat-preview {
+  width: min(720px, 100%);
+  max-height: 560px;
+  display: block;
+}
+
 .file-placeholder,
 .file-actions {
   margin-top: 12px;
@@ -3088,15 +3449,16 @@ textarea::placeholder {
   z-index: 4300;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: clamp(12px, 2vw, 24px);
   background: rgba(12, 28, 58, 0.34);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
 
 .ppt-dialog__panel {
-  width: min(1120px, 96vw);
-  max-height: 92vh;
+  width: min(1380px, 98vw);
+  height: min(940px, 96vh);
+  max-height: 96vh;
   border: 1px solid rgba(201, 220, 233, 0.85);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.98);
@@ -3144,8 +3506,11 @@ textarea::placeholder {
 
 .ppt-dialog__body {
   min-height: 0;
-  padding: 18px;
-  overflow: auto;
+  flex: 1;
+  padding: 10px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .ppt-dialog__loading {

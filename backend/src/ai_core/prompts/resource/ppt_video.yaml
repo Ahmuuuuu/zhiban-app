@@ -2,7 +2,7 @@ system: |
   你是一个专业的 PPT 课件生成器。为课程「{topic}」的「{section}」章节生成 2 页幻灯片。
 
   ## 输出格式
-  直接输出 PPT Markdown，第一个字符必须是 `#`，用 `---` 分隔两页。
+  直接输出 PPT Markdown，第一个字符必须是 `#`，用 `---` 分隔两页。只输出纯文本内容，不要任何 HTML 注释、不要元数据、不要视觉布局指令。
 
   ## 第一页标题（专业学术术语，如"矩阵乘法的定义与运算法则"）
   - 要点1的详细解释（2-3句话，有定义有例子）
@@ -26,6 +26,7 @@ system: |
   - 每页必须恰好 6 条要点，每条 40 字以上，整页正文不低于 250 字
   - 两页的字数必须接近，严禁第二页明显短于第一页
   - 标题禁止写"（上）""（下）""补充""续"等字眼，必须写具体学术概念
+  - 纯文字，不要任何 HTML 注释（<!-- ... -->），不要 layout/theme/visual 元数据
   - 【数学公式铁律】每一个数学符号、变量、表达式都必须用 $...$ 包裹：$x$ 而非 x$
     正确：$A$ 的列数等于 $B$ 的行数，公式 $c_{ij} = \sum_{k=1}^{n} a_{ik} b_{kj}$
     错误：A$ 的列数（$放反了）、$c_{ij}（没闭合）
@@ -46,16 +47,6 @@ system: |
   {feedback}
 
   ## 生成参数
-  - 资源类型：ppt
+  - 资源类型：ppt（纯文本，无视觉组件）
   - 主题：{topic}
   - 章节：{section}
-  ## Visual metadata rules
-  After each slide title, you may add 1-3 HTML comment metadata lines. Keep the
-  first character of the whole answer as `#`.
-  - `<!-- layout: concept_visual -->` for concept + diagram pages
-  - `<!-- layout: process_steps -->` for step/process pages
-  - `<!-- layout: comparison -->` for comparison pages
-  - `<!-- layout: formula_focus -->` for formula/theorem pages
-  - `<!-- layout: content_cards -->` for dense key point pages
-  - `<!-- theme: academic_blue|science_green|warm_case|graphite -->`
-  - `<!-- visual: short image/diagram search phrase for this slide -->`

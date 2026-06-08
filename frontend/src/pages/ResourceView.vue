@@ -158,7 +158,10 @@
             </button>
           </div>
 
-          <div class="resource-fullscreen__content">
+          <div
+            class="resource-fullscreen__content"
+            :class="{ 'resource-fullscreen__content--ppt': isPptResource(selectedResource) }"
+          >
             <template v-if="selectedResource.type === 'image' && selectedResource.previewUrl">
               <img
                 class="preview-image"
@@ -201,6 +204,13 @@
                 v-if="selectedResource.slides?.length"
                 v-model:slides="selectedResource.slides"
                 :title="selectedResource.title"
+                :editable="true"
+                :annotatable="true"
+                :annotations="selectedResource.annotations || []"
+                @create-note="createAnnotation(selectedResource, $event)"
+                @update-note="(id, payload) => updateAnnotation(selectedResource, id, payload)"
+                @delete-note="deleteAnnotation(selectedResource, $event)"
+                @export-pptx="exportResourcePptx(selectedResource, $event)"
               />
               <div v-else-if="selectedResource.previewUrl" class="file-preview-wrap">
                 <img
@@ -210,7 +220,7 @@
                   @error="handleImageError"
                 />
               </div>
-              <div class="file-placeholder-block">
+              <div v-else class="file-placeholder-block">
                 <Presentation v-if="isPptResource(selectedResource)" :size="48" />
                 <GitBranch v-else :size="48" />
                 <p>{{ selectedResource.title || (isPptResource(selectedResource) ? 'PPT 文件' : '思维导图') }}</p>
@@ -224,7 +234,15 @@
                 </button>
               </div>
             </template>
-            <p v-else>{{ selectedResource.content || '暂无正文内容' }}</p>
+            <AnnotatedTextPreview
+              v-else
+              :content="selectedResource.content || '暂无正文内容'"
+              :annotations="selectedResource.annotations || []"
+              :annotatable="true"
+              @create-note="createAnnotation(selectedResource, $event)"
+              @update-note="(id, payload) => updateAnnotation(selectedResource, id, payload)"
+              @delete-note="deleteAnnotation(selectedResource, $event)"
+            />
           </div>
         </article>
       </section>
@@ -248,8 +266,21 @@ import {
   RefreshCw,
   ChevronLeft
 } from 'lucide-vue-next'
-import { downloadWithToken, getGeneratedImages, getGeneratedResource, getGeneratedResources, getStudyResources, resolveApiUrl } from '../api/apis'
+import {
+  createResourceAnnotation,
+  deleteResourceAnnotation,
+  downloadWithToken,
+  exportEditedPptx,
+  getGeneratedImages,
+  getGeneratedResource,
+  getGeneratedResources,
+  getResourceAnnotations,
+  getStudyResources,
+  resolveApiUrl,
+  updateResourceAnnotation
+} from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
+import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
@@ -306,6 +337,8 @@ const normalizeResources = data => {
     const videoUrl = isVideo ? resolveApiUrl(rawContent) : ''
     const resource = {
       doc_id: String(item.doc_id || item.id || index),
+      source: item.source || 'knowledge',
+      sourceId: String(item.resource_id || item.resourceId || item.id || item.doc_id || ''),
       title: item.title || '',
       content: isVideo ? videoUrl : rawContent,
       type: isVideo ? 'video' : (item.type || item.file_type || ''),
@@ -382,6 +415,18 @@ const normalizeGeneratedImages = data => {
   })
 }
 
+const mergeImageDuplicates = list => {
+  const seen = new Set()
+  return list.filter(item => {
+    if (item.type !== 'image') return true
+    const key = item.previewUrl || item.downloadUrl || item.sourceId || item.doc_id
+    if (!key) return true
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 const loadResources = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -401,7 +446,7 @@ const loadResources = async () => {
     const generatedBackendResources = normalizeGeneratedResources(generatedResult)
     const imageResult = await getGeneratedImages()
     const imageResources = normalizeGeneratedImages(imageResult)
-    resources.value = [...imageResources, ...generatedBackendResources, ...backendResources]
+    resources.value = mergeImageDuplicates([...imageResources, ...generatedBackendResources, ...backendResources])
     selectedResource.value = resources.value[0] || null
   } catch (error) {
     errorMessage.value =
@@ -443,6 +488,8 @@ const openResourcePreview = async resource => {
       console.error('加载资源详情失败：', error)
     }
   }
+
+  loadAnnotationsForResource(selectedResource.value)
 }
 
 const openResource = resource => {
@@ -458,6 +505,100 @@ const closeResourcePreview = () => {
 }
 
 const fileTitleWithoutExtension = filename => String(filename || '生成资源').replace(/\.[^.\\/]+$/, '')
+
+const getAnnotationTarget = resource => {
+  const id = resource?.sourceId || resource?.resourceId || resource?.resource_id || resource?.id || resource?.doc_id || ''
+  const sourceId = String(id || '').replace(/^(generated|image)-/, '')
+  const sourceType = resource?.source === 'generated' ? 'generated' : 'knowledge'
+  return { sourceType, sourceId }
+}
+
+const normalizeAnnotations = result => {
+  const data = result?.data?.data || result?.data || result || []
+  const list = Array.isArray(data) ? data : data.records || data.list || data.annotations || []
+  return (Array.isArray(list) ? list : []).map(item => ({
+    ...item,
+    id: item.id || item.annotation_id || item.annotationId,
+    selected_text: item.selected_text || item.selectedText || '',
+    note: item.note || item.note_text || item.noteText || '',
+    note_text: item.note_text || item.note || item.noteText || '',
+    position: typeof item.position === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(item.position)
+          } catch {
+            return {}
+          }
+        })()
+      : item.position || {}
+  }))
+}
+
+const patchSelectedResource = patch => {
+  if (!selectedResource.value) return
+  selectedResource.value = { ...selectedResource.value, ...patch }
+  resources.value = resources.value.map(item => item.doc_id === selectedResource.value.doc_id ? selectedResource.value : item)
+}
+
+const loadAnnotationsForResource = async resource => {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId) {
+    patchSelectedResource({ annotations: [] })
+    return
+  }
+
+  try {
+    const result = await getResourceAnnotations(target.sourceId, target.sourceType)
+    patchSelectedResource({ annotations: normalizeAnnotations(result) })
+  } catch (error) {
+    console.warn('加载资源笔记失败：', error)
+    patchSelectedResource({ annotations: [] })
+  }
+}
+
+const createAnnotation = async (resource, payload) => {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId) return
+
+  try {
+    await createResourceAnnotation(target.sourceId, {
+      ...payload,
+      source_type: target.sourceType,
+      source_id: target.sourceId
+    })
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('保存标注失败：', error)
+    const detail = error?.response?.data?.detail || error?.response?.data?.msg || error?.message || ''
+    window.alert(`保存标注失败${detail ? `：${detail}` : '，请稍后再试。'}`)
+  }
+}
+
+const updateAnnotation = async (resource, annotationId, payload) => {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || !annotationId) return
+
+  try {
+    await updateResourceAnnotation(target.sourceId, annotationId, payload)
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('更新笔记失败：', error)
+    window.alert('更新笔记失败，请稍后再试。')
+  }
+}
+
+const deleteAnnotation = async (resource, annotationId) => {
+  const target = getAnnotationTarget(resource)
+  if (!target.sourceId || !annotationId) return
+
+  try {
+    await deleteResourceAnnotation(target.sourceId, annotationId)
+    await loadAnnotationsForResource(resource)
+  } catch (error) {
+    console.error('删除笔记失败：', error)
+    window.alert('删除笔记失败，请稍后再试。')
+  }
+}
 
 const isQuizResource = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.filename || ''} ${resource?.title || ''}`).toLowerCase()
@@ -498,15 +639,10 @@ const matchesCategory = resource => {
 
 const downloadResource = async resource => {
   try {
-    if (isPptResource(resource) && Array.isArray(resource.slides) && resource.slides.length) {
-      downloadEditedPpt(resource)
-      return
-    }
-
     await downloadWithToken(resource.downloadUrl, resource.filename || `${resource.title || 'resource'}.md`)
   } catch (error) {
     console.error('下载资源失败：', error)
-    window.alert('下载失败，请确认登录状态和后端服务是否正常。')
+    window.alert(error?.message || '下载失败，请确认登录状态和后端服务是否正常。')
   }
 }
 
@@ -580,6 +716,37 @@ const downloadEditedPpt = resource => {
   link.click()
   link.remove()
   URL.revokeObjectURL(objectUrl)
+}
+
+const pptxExportName = resource => {
+  const raw = String(resource?.filename || resource?.title || 'edited-presentation')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\.[^.]+$/, '')
+  return `${raw || 'edited-presentation'}.pptx`
+}
+
+const getResourceIdFromUrl = url => {
+  const match = String(url || '').match(/\/resource\/([^/?#]+)(?:\/download)?/i)
+  return match?.[1] || ''
+}
+
+const exportResourcePptx = async (resource, slides) => {
+  const resourceId = resource?.sourceId || resource?.resourceId || resource?.resource_id || resource?.id || getResourceIdFromUrl(resource?.downloadUrl) || ''
+  if (!resourceId) {
+    window.alert('当前 PPT 没有资源 ID，暂时无法导出 PPTX。')
+    return
+  }
+
+  try {
+    await exportEditedPptx(resourceId, {
+      title: resource?.title || '',
+      filename: pptxExportName(resource),
+      slides
+    })
+  } catch (error) {
+    console.error('导出 PPTX 失败', error)
+    window.alert(error?.message || '导出 PPTX 失败，请稍后再试。')
+  }
 }
 
 const startResourceQuiz = async resource => {
@@ -1126,7 +1293,7 @@ onMounted(loadResources)
   position: fixed;
   inset: 0;
   z-index: 3000;
-  padding: clamp(18px, 4vw, 46px);
+  padding: clamp(12px, 2.5vw, 32px);
   background: rgba(12, 28, 58, 0.34);
   display: flex;
   align-items: center;
@@ -1136,10 +1303,10 @@ onMounted(loadResources)
 }
 
 .resource-fullscreen__panel {
-  width: min(1120px, 100%);
-  height: min(780px, 100%);
+  width: min(1380px, 100%);
+  height: min(940px, 96vh);
   min-height: 0;
-  padding: clamp(20px, 3vw, 34px);
+  padding: clamp(16px, 2vw, 28px);
   border: 1px solid rgba(22, 63, 143, 0.14);
   border-radius: 30px;
   background: rgba(255, 255, 255, 0.96);
@@ -1186,11 +1353,18 @@ onMounted(loadResources)
 .resource-fullscreen__content {
   min-height: 0;
   flex: 1;
-  padding: 22px;
+  padding: clamp(14px, 1.7vw, 22px);
   border: 1px solid rgba(201, 220, 233, 0.72);
   border-radius: 24px;
   background: rgba(237, 249, 252, 0.48);
   overflow: auto;
+}
+
+.resource-fullscreen__content--ppt {
+  overflow: hidden;
+  padding: 10px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .resource-fullscreen__content p {

@@ -42,6 +42,12 @@ const compactTitle = value => {
   return title.length > 18 ? `${title.slice(0, 18)}...` : title
 }
 
+const splitTitleLines = value => {
+  const title = String(value || '学习资源').replace(/\s+/g, ' ').trim()
+  if (title.length <= 12) return [title]
+  return [title.slice(0, 12), title.slice(12, 24)]
+}
+
 const resourceKind = resource => {
   const text = String(`${resource?.type || ''} ${resource?.category || ''} ${resource?.categoryLabel || ''} ${resource?.title || ''}`).toLowerCase()
   if (/image|图片/.test(text)) return 'image'
@@ -71,8 +77,47 @@ export const getResourceCoverUrl = resource => {
   if (kind === 'image' && resource?.previewUrl) return resolveApiUrl(resource.previewUrl)
 
   const [primary, accent, paper] = palettes[hashText(resource?.doc_id || resource?.sourceId || resource?.title) % palettes.length]
-  const title = escapeXml(compactTitle(resource?.title || resource?.filename))
+  const rawTitle = resource?.title || resource?.filename
+  const title = escapeXml(compactTitle(rawTitle))
   const label = escapeXml(typeLabels[kind] || '资源')
+  if (kind === 'ppt') {
+    const [lineOne, lineTwo = ''] = splitTitleLines(rawTitle).map(escapeXml)
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="520" height="280" viewBox="0 0 520 280">
+        <defs>
+          <linearGradient id="pptBg" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0%" stop-color="${primary}"/>
+            <stop offset="56%" stop-color="${accent}"/>
+            <stop offset="100%" stop-color="#ffffff"/>
+          </linearGradient>
+          <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#163f8f" flood-opacity="0.18"/>
+          </filter>
+        </defs>
+        <rect width="520" height="280" rx="20" fill="url(#pptBg)"/>
+        <circle cx="452" cy="42" r="92" fill="#ffffff" opacity="0.14"/>
+        <circle cx="64" cy="246" r="116" fill="#ffffff" opacity="0.12"/>
+        <rect x="54" y="42" width="354" height="196" rx="12" fill="#ffffff" filter="url(#shadow)"/>
+        <rect x="54" y="42" width="354" height="48" rx="12" fill="${primary}"/>
+        <rect x="54" y="78" width="354" height="12" fill="${primary}"/>
+        <text x="78" y="72" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="20" font-weight="900" fill="#ffffff">PPT</text>
+        <text x="78" y="136" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="28" font-weight="900" fill="#17345f">${lineOne}</text>
+        <text x="78" y="172" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="24" font-weight="800" fill="#31557f">${lineTwo}</text>
+        <rect x="78" y="196" width="142" height="9" rx="4.5" fill="${accent}" opacity="0.62"/>
+        <rect x="78" y="216" width="238" height="9" rx="4.5" fill="${primary}" opacity="0.18"/>
+        <g transform="translate(424 76)">
+          <rect x="0" y="0" width="58" height="40" rx="6" fill="#ffffff" opacity="0.9"/>
+          <rect x="9" y="9" width="28" height="5" rx="2.5" fill="${primary}" opacity="0.65"/>
+          <rect x="9" y="20" width="40" height="5" rx="2.5" fill="${accent}" opacity="0.55"/>
+          <rect x="-18" y="58" width="58" height="40" rx="6" fill="#ffffff" opacity="0.74"/>
+          <rect x="-9" y="67" width="32" height="5" rx="2.5" fill="${primary}" opacity="0.5"/>
+          <rect x="-9" y="78" width="42" height="5" rx="2.5" fill="${accent}" opacity="0.48"/>
+        </g>
+      </svg>
+    `.trim()
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
+  }
+
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="520" height="280" viewBox="0 0 520 280">
       <defs>
