@@ -1940,20 +1940,9 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         })
       }
 
-      // PPT 流式预览：逐页展示（批量累积后一次性更新，避免 O(n²) 重渲染）
+      // PPT 流式内容只缓存，不自动弹出预览；用户点击“预览”后才展示。
       const pptStream = (task as any)._pptStream
-      if (pptStream) {
-        if (!pptPreview.value.visible) {
-          pptPreview.value = {
-            visible: true,
-            loading: true,
-            messageId,
-            resourceId: '',
-            title: task.text || 'PPT 预览',
-            slides: [],
-            annotations: []
-          }
-        }
+      if (pptStream && pptPreview.value.visible && pptPreview.value.messageId === messageId) {
         const streamedCount = (task as any)._pptSlideCursor || 0
         if (streamedCount < pptStream.slides.length) {
           ;(task as any)._pptSlideCursor = pptStream.slides.length
@@ -2165,20 +2154,10 @@ const sendMessage = async () => {
         await scrollToBottom()
       },
       onStreamStart: async eventData => {
-        if (eventData?.file_type === 'ppt' && !pptPreview.value.visible) {
-          pptPreview.value = {
-            visible: true,
-            loading: true,
-            messageId: loadingMessageId,
-            resourceId: '',
-            title: text || 'PPT 预览',
-            slides: [],
-            annotations: []
-          }
-        }
+        // PPT 生成开始时不自动打开预览，等用户点击文件卡片里的“预览”。
       },
       onStreamSlide: async eventData => {
-        if (eventData?.file_type === 'ppt' && pptPreview.value.visible) {
+        if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
           const slide = parseSingleSlide(eventData?.content || '')
           const idx = pptPreview.value.slides.length
           pptPreview.value = {
