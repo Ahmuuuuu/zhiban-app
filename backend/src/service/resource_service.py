@@ -184,7 +184,7 @@ async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str
         logger.exception("保存资源生成历史失败 user_id=%s chat_group_id=%s", user_id, chat_group_id)
 
 
-async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False, user_notes: str = "") -> dict:
+async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high") -> dict:
     t0 = time.perf_counter()
     await init_db()
     chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
@@ -277,6 +277,8 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         "answers": answers or {},
         "skip_review": skip_review,
         "user_notes": user_notes,
+        "ppt_prompt_key": ppt_prompt_key,
+        "llm_priority": llm_priority,
     }
 
 
@@ -325,7 +327,7 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
 class ResourceService:
 
     @staticmethod
-    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "") -> list[dict]:
+    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", skip_review: bool = False) -> list[dict]:
         import time as _time
         _t_total = _time.perf_counter()
         chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
@@ -337,7 +339,7 @@ class ResourceService:
                     await _save_generation_to_history(user_id, chat_group_id, topic, cached)
                 return cached
 
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, user_notes=user_notes)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority, skip_review=skip_review)
         topic = initial_state["topic"]
 
         result = await resource_graph.ainvoke(initial_state)
@@ -387,7 +389,7 @@ class ResourceService:
         return saved
 
     @staticmethod
-    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = ""):
+    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high"):
         """astream(stream_mode=["values", "custom"]) — PPT 通过 custom 事件逐页推送，其他类型通过 values 事件推送"""
         import time as _time
         _t_total = _time.perf_counter()
@@ -435,7 +437,7 @@ class ResourceService:
 
         user = await User.filter(id=user_id).first()
 
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, skip_review=skip_review, user_notes=user_notes)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, skip_review=skip_review, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority)
         topic = initial_state["topic"]
 
         final_passed = False
@@ -801,7 +803,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 5, "progress_msg": "正在初始化…"})
 
         # 构建 graph 初始状态
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, answers=answers)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, answers=answers, ppt_prompt_key="ppt")
         topic = initial_state["topic"]
 
         # 更新 topic（可能从聊天记录提取）
