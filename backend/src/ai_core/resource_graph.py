@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 PROMPT_MAP = {
     "document": "resource/document",
     "ppt": "resource/ppt",
+    "ppt_video": "resource/ppt_video",
     "ppt_apply": "resource/ppt_apply",
     "mindmap": "resource/mindmap",
     "exercise": "resource/exam",
@@ -55,6 +56,8 @@ class ResourceState(TypedDict):
     file_urls: NotRequired[dict[str, str]]
     answers: NotRequired[dict]
     skip_review: NotRequired[bool]
+    ppt_prompt_key: NotRequired[str]
+    llm_priority: NotRequired[str]
 
 
 # ═══════════════════════════════════════
@@ -74,7 +77,7 @@ async def leader_node(state: ResourceState) -> dict:
     prompt_text = fill_prompt(load_prompt("agent/leader"), topic=topic, portrait_context=portrait, kb_context=kb, learning_guidance=guidance)
 
     try:
-        response = await llm.ainvoke(prompt_text)
+        response = await llm.ainvoke(prompt_text, priority=state.get("llm_priority", "high"))
     except Exception as e:
         logger.exception("LeaderAgent LLM 调用失败")
         return {"resource_types": ["document"]}
@@ -132,7 +135,7 @@ PPT_SECTION_COUNT_BY_DEPTH = {
 }
 
 
-async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", count: int = PPT_DEFAULT_SECTIONS) -> list[str]:
+async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", count: int = PPT_DEFAULT_SECTIONS, llm_priority: str = "high") -> list[str]:
     """快速生成 PPT 章节大纲，默认 {count} 章节"""
     total_pages = count * PPT_PAGES_PER_SECTION
     prompt = f"""你是一个课程规划师。为以下主题设计PPT章节大纲。
@@ -150,7 +153,7 @@ async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", cou
 """
     try:
         t0 = time.perf_counter()
-        response = await llm.ainvoke(prompt)
+        response = await llm.ainvoke(prompt, priority=llm_priority)
         sections = parse_llm_json(response.content)
         if isinstance(sections, list) and len(sections) >= 1:
             defaults = ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "与其他知识的联系", "综合练习与思考", "课程总结与回顾"]
@@ -175,8 +178,11 @@ async def generate_ppt_parallel(
     sections: list[str] | None = None,
     stream_writer=None,
     section_count: int = PPT_DEFAULT_SECTIONS,
+    ppt_prompt_key: str = "ppt",
+    llm_priority: str = "high",
 ) -> str:
     """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2 页），共 2N 页 + 2 页画像学习引入"""
+    _t_total = time.perf_counter()
     # 立即通知前端，避免长时间无反馈
     if stream_writer:
         try:
@@ -190,7 +196,7 @@ async def generate_ppt_parallel(
                 stream_writer({"type": "stream_progress", "file_type": "ppt", "message": "正在规划课程大纲..."})
             except Exception:
                 stream_writer = None
-        sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count)
+        sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority)
 
     # 画像引入置顶（如果画像数据可用）
     has_portrait = portrait and portrait != "暂无画像数据"
@@ -206,14 +212,14 @@ async def generate_ppt_parallel(
         slides = content.split("\n---\n")
         for slide in slides:
             slide = slide.strip()
-            if not slide or not slide.startswith("##"):
+            if not slide or not (slide.startswith("##") or slide.startswith("# ")):
                 continue
-            if len(slide) < 120:
+            if len(slide) < 100:
                 return False
             if "（上）" in slide or "（下）" in slide:
                 return False
             bullets = [l for l in slide.split("\n") if l.strip().startswith("-")]
-            if len(bullets) < 3:
+            if len(bullets) < 2:
                 return False
             dollars = slide.count("$")
             if dollars % 2 != 0:
@@ -237,7 +243,7 @@ async def generate_ppt_parallel(
                 pass
 
         base_prompt = build_resource_prompt(
-            "ppt", topic,
+            ppt_prompt_key, topic,
             portrait=portrait, kb=kb, guidance=guidance,
             feedback=feedback, user_notes=user_notes,
             custom_prompts=custom_prompts,
@@ -286,10 +292,9 @@ async def generate_ppt_parallel(
         t0 = time.perf_counter()
         for attempt in range(2):
             try:
-                response = await llm.ainvoke(prompt_with_context)
+                response = await llm.ainvoke(prompt_with_context, priority=llm_priority)
                 content = response.content
                 elapsed = time.perf_counter() - t0
-                break
             except Exception:
                 elapsed = time.perf_counter() - t0
                 if attempt < 2:
@@ -313,7 +318,7 @@ async def generate_ppt_parallel(
                     content=content[:3000],
                     topic=topic,
                 )
-                review_response = await llm.ainvoke(review_prompt)
+                review_response = await llm.ainvoke(review_prompt, priority=llm_priority)
                 result = _parse_review_response(review_response.content)
                 passed = result.get("passed", False)
                 if isinstance(passed, str):
@@ -345,7 +350,7 @@ async def generate_ppt_parallel(
     total = len(sections)
 
     def _push_section(idx: int, content: str):
-        """将章节的幻灯片逐页推送给前端，并立即后台预热 TTS"""
+        """将章节的幻灯片逐页推送给前端"""
         nonlocal completed_count
         # 流式推前端
         if stream_writer:
@@ -366,16 +371,6 @@ async def generate_ppt_parallel(
                 })
             except Exception:
                 logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
-        # 后台预热 TTS：该 section 每页的文本立即生成音频到全局缓存
-        try:
-            from backend.src.utils.tts_utils import parse_slides
-            from backend.src.service.narration_service import pre_warm_tts
-            for slide in parse_slides(content):
-                text = slide.get("text", "")
-                if text and len(text) > 5:
-                    asyncio.ensure_future(pre_warm_tts(text))
-        except Exception:
-            pass
 
     tasks = [gen_section(i, s) for i, s in enumerate(sections)]
     results = await asyncio.gather(*tasks)
@@ -393,7 +388,7 @@ async def generate_ppt_parallel(
             parts.append(slide)
 
     combined = "\n---\n".join(parts)
-    logger.info("[PPT-Parallel] 合并完成 章节数=%d 总页数≈%d", len(sections), len(parts))
+    logger.info("[PPT-Parallel] 完成 章节数=%d 总页数≈%d 全程耗时=%.1fs", len(sections), len(parts), time.perf_counter() - _t_total)
 
     return combined
 
@@ -436,14 +431,15 @@ async def executor_node(state: ResourceState) -> dict:
 
     user_id = state.get("user_id", "0")
     max_workers = min(len(non_ppt_types), 5)
+    llm_priority = state.get("llm_priority", "high")
 
     def gen_one_sync(rt: str) -> tuple[str, str]:
         t_start = time.perf_counter()
         try:
             if rt == "image":
-                result = _generate_image_sync(prompts[rt], user_id)
+                result = _generate_image_sync(prompts[rt], user_id, llm_priority)
             else:
-                response = llm.invoke(prompts[rt])
+                response = llm.invoke(prompts[rt], priority=llm_priority)
                 result = rt, response.content
             elapsed = time.perf_counter() - t_start
             logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
@@ -469,6 +465,8 @@ async def executor_node(state: ResourceState) -> dict:
             custom_prompts=custom_prompts,
             stream_writer=writer,
             section_count=ppt_section_count,
+            ppt_prompt_key=state.get("ppt_prompt_key", "ppt"),
+            llm_priority=llm_priority,
         )
 
     ppt_coro = _run_ppt()
@@ -510,10 +508,10 @@ async def executor_node(state: ResourceState) -> dict:
     }
 
 
-def _generate_image_sync(prompt_text: str, user_id: str) -> tuple[str, dict]:
+def _generate_image_sync(prompt_text: str, user_id: str, llm_priority: str = "high") -> tuple[str, dict]:
     """两阶段图片生成：LLM 产出 prompt → ImageService 生图（线程内）"""
     try:
-        response = llm.invoke(prompt_text)
+        response = llm.invoke(prompt_text, priority=llm_priority)
         image_prompt = response.content.strip()
     except Exception as e:
         logger.exception("图片 prompt 生成失败")
@@ -572,6 +570,7 @@ _REVIEWER_MAP = {
 async def reviewer_node(state: ResourceState) -> dict:
     """ReviewerAgent: 每种资源类型由专用审核员独立审查，并行执行"""
     generated = state.get("generated_resources", {})
+    llm_priority = state.get("llm_priority", "high")
 
     async def review_one(rt: str, content: str) -> dict:
         # PPT 已在 generate_ppt_parallel 内部逐章节审核，此处跳过
@@ -592,7 +591,7 @@ async def reviewer_node(state: ResourceState) -> dict:
                 topic=state.get("topic", ""),
                 kb_context=state.get("kb_context", "暂无相关知识库资料"),
             )
-            response = await llm.ainvoke(prompt_text)
+            response = await llm.ainvoke(prompt_text, priority=llm_priority)
             result = _parse_review_response(response.content)
             logger.info(f"[审核] {rt}: passed={result.get('passed')} score={result.get('score')}")
             return result
