@@ -456,10 +456,8 @@ class PathService:
             return
 
         topic = node.topic
-        node_resource_types = json.loads(node.resource_types) if node.resource_types else ["document", "ppt", "mindmap"]
-        # 学习路径节点始终带 video（HTML 动态课件），LLM 生成时可能遗漏
-        if "video" not in node_resource_types:
-            node_resource_types = list(node_resource_types) + ["video"]
+        # 每个节点固定一套资源：文档 + PPT + 思维导图 + 视频（PPT 衍生），不受 LLM 输出波动影响
+        node_resource_types = ["document", "ppt", "mindmap", "video"]
         existing_records, missing_types = await PathService._check_existing_resources(user_id, topic, node_resource_types)
 
         for r in existing_records:
@@ -478,8 +476,8 @@ class PathService:
             yield _sse_done(all_ids)
             return
 
-        # video/html 不由 LLM 生成；PPT 是 HTML 课件的基础，缺失就自动补
-        gen_types = [t for t in missing_types if t != "video"]
+        # video/html 不由 LLM 生成，exercise 由测验独立处理
+        gen_types = [t for t in missing_types if t not in ("video", "exercise")]
         if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
             gen_types.insert(0, "ppt")
 
@@ -493,6 +491,7 @@ class PathService:
                 from backend.src.service.resource_service import ResourceService
                 async for event_str in ResourceService.generate_stream(
                     topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
+                    ppt_prompt_key="ppt_video",
                 ):
                     yield event_str
                     if event_str.startswith("data:") and "[DONE]" not in event_str:
@@ -557,13 +556,11 @@ class PathService:
             raise ValueError("未加入该路径")
 
         topic = node.topic
-        node_resource_types = json.loads(node.resource_types) if node.resource_types else ["document", "ppt", "mindmap"]
-        # 学习路径节点始终带 video（HTML 动态课件）
-        if "video" not in node_resource_types:
-            node_resource_types = list(node_resource_types) + ["video"]
+        # 每个节点固定一套资源：文档 + PPT + 思维导图 + 视频（PPT 衍生），不受 LLM 输出波动影响
+        node_resource_types = ["document", "ppt", "mindmap", "video"]
         existing_records, missing_types = await PathService._check_existing_resources(user_id, topic, node_resource_types)
 
-        gen_types = [t for t in missing_types if t != "video"]
+        gen_types = [t for t in missing_types if t not in ("video", "exercise")]
         if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
             gen_types.insert(0, "ppt")
 
@@ -574,6 +571,8 @@ class PathService:
                     topic=topic,
                     user_id=user_id,
                     resource_types=gen_types,
+                    ppt_prompt_key="ppt_video",
+                    skip_review=True,
                 )
                 generated_ids = [r.get("resource_id") or r.get("id") for r in saved if r]
             except Exception:
@@ -581,19 +580,12 @@ class PathService:
 
         all_ids = [r.id for r in existing_records] + generated_ids
 
-        # PPT → 生成 HTML 动态课件（复用已有的 presentation_service 逻辑）
-        ppt_record = None
-        html_result = None
+        # PPT → 后台生成 HTML 动态课件，不阻塞返回
         ppt_record = await GeneratedResource.filter(
             id__in=all_ids, user_id=user_id, resource_type="ppt"
         ).first()
         if ppt_record:
-            try:
-                html_result = await _create_video_html(topic, user_id, ppt_record)
-            except Exception:
-                logger.exception("动态课件生成失败 topic=%s ppt_id=%s", topic, ppt_record.id)
-            if html_result:
-                all_ids.append(html_result["html_id"])
+            asyncio.create_task(_create_video_html_and_update_progress(topic, user_id, ppt_record, progress))
 
         await PathService._update_progress_resource_ids(progress, all_ids)
 
@@ -710,6 +702,8 @@ class PathService:
             difficulty=difficulty,
             node_id=node_id,
             user_notes=user_notes,
+            skip_review=pre_generate,
+            llm_priority="low" if pre_generate else "high",
         )
 
         sid = result.get("session_id")
@@ -1097,15 +1091,14 @@ class PathService:
 
         await check_and_create_node_unlocked(user_id, next_node.topic, path_id, next_node.id)
 
-        # 自动为新节点生成学习资源 + 检测题
+        # 自动为新节点生成学习资源 + 检测题（并行）
         try:
-            await PathService.generate_node_resources(path_id, next_node.id, user_id)
+            await asyncio.gather(
+                PathService.generate_node_resources(path_id, next_node.id, user_id),
+                PathService.generate_node_quiz(path_id, next_node.id, user_id, pre_generate=True),
+            )
         except Exception:
-            logger.exception("自动生成下一节点资源失败 path_id=%s node_id=%s", path_id, next_node.id)
-        try:
-            await PathService.generate_node_quiz(path_id, next_node.id, user_id, pre_generate=True)
-        except Exception:
-            logger.exception("自动生成下一节点检测题失败 path_id=%s node_id=%s", path_id, next_node.id)
+            logger.exception("自动生成下一节点资源/检测题失败 path_id=%s node_id=%s", path_id, next_node.id)
 
     @staticmethod
     async def _update_portrait_from_mastery(user_id: int):
@@ -1448,13 +1441,27 @@ def _ppt_to_slides(content: str) -> list[dict]:
     return slides
 
 
+async def _create_video_html_and_update_progress(topic: str, user_id: int, ppt_record, progress):
+    """后台生成视频 HTML 并更新进度中的资源列表"""
+    try:
+        html_result = await _create_video_html(topic, user_id, ppt_record)
+        if html_result:
+            current_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
+            if html_result["html_id"] not in current_ids:
+                current_ids.append(html_result["html_id"])
+                progress.resource_ids = json.dumps(current_ids, ensure_ascii=False)
+                await progress.save()
+    except Exception:
+        logger.exception("后台动态课件生成失败 topic=%s ppt_id=%s", topic, ppt_record.id)
+
+
 async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | None:
     """通过已有的 presentation_service 创建动态课件（含骨架→后台补音频→状态轮询）。
     返回 {"html_id": int, "presentation_id": int, "file_url": str} 或 None。"""
     from backend.src.service.presentation_service import generate as generate_presentation
     from backend.src.models.resource_model import GeneratedResource
 
-    # 已有 HTML GeneratedResource 则复用
+    # 已有 HTML GeneratedResource 且是视频模板 → 复用；否则删旧重建
     existing_html = await GeneratedResource.filter(
         user_id=user_id, topic=topic, resource_type="html"
     ).first()
@@ -1464,14 +1471,24 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
         except (json.JSONDecodeError, TypeError):
             content = {}
         pres_id = content.get("presentation_id", 0)
-        return {"html_id": existing_html.id, "presentation_id": pres_id, "file_url": existing_html.file_url or ""}
+        file_url = existing_html.file_url or ""
+        # 检查是否视频模板，不是则清掉旧记录重建
+        from pathlib import Path as _Path
+        _html_path = _Path(__file__).parent.parent.parent / "static" / "presentations" / (file_url.split("/")[-1] if file_url else "")
+        if _html_path.exists() and "template-version:video-v2" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
+            return {"html_id": existing_html.id, "presentation_id": pres_id, "file_url": file_url}
+        # 旧模板 → 删记录和文件，重新生成
+        logger.info("旧 HTML 非视频模板，重建 video-mode html_id=%s", existing_html.id)
+        if _html_path.exists():
+            _html_path.unlink()
+        await existing_html.delete()
 
     user = await User.filter(id=user_id).first()
     if not user:
         return None
 
-    # 调用已有的 presentation 生成逻辑（骨架 + 后台补音频 + Presentation 记录）
-    pres = await generate_presentation(topic, user_id)
+    # 调用已有的 presentation 生成逻辑（骨架 + 后台补音频 + Presentation 记录），视频模式使用简洁模板
+    pres = await generate_presentation(topic, user_id, video_mode=True)
     if not pres or "error" in pres:
         logger.error("课件生成失败 topic=%s error=%s", topic, pres.get("error") if pres else "unknown")
         return None

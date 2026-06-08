@@ -47,6 +47,7 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r"^\|(.+)\|$", lambda m: m.group(1).strip(), text, flags=re.MULTILINE)
     text = text.replace("|", "，")
     # HTML 实体
+    text = re.sub(r"<!--[\s\S]*?-->", "", text)  # 去掉 HTML 注释（layout/theme/visual 等视觉元数据）
     text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     text = text.replace("&quot;", '"').replace("&nbsp;", " ")
     text = re.sub(r"\n+", "，", text)
@@ -60,6 +61,9 @@ def parse_slides_plain(markdown: str) -> list[dict]:
     """解析 PPT markdown 为纯文本幻灯片 — 不注入任何视觉组件，供视频/TTS 使用"""
     raw_slides = re.split(r"\n---\n", markdown.strip())
     slides = []
+
+    def _strip_comments(s: str) -> str:
+        return re.sub(r"<!--[\s\S]*?-->", "", s).strip()
 
     for block in raw_slides:
         block = block.strip()
@@ -75,16 +79,19 @@ def parse_slides_plain(markdown: str) -> list[dict]:
             stripped = line.strip()
             if not stripped:
                 continue
+            # 跳过 HTML 注释和元数据行（layout/theme/visual）
+            if re.match(r"^<!--\s*(layout|theme|visual)\s*:", stripped):
+                continue
             if stripped.startswith("# ") or stripped.startswith("## "):
-                title = stripped.lstrip("#").strip()
+                title = _strip_comments(stripped.lstrip("#").strip())
             elif stripped.startswith("> "):
-                notes.append(stripped[2:].strip())
+                notes.append(_strip_comments(stripped[2:].strip()))
             elif stripped.startswith("- ") or stripped.startswith("* "):
-                bullets.append(stripped[2:].strip())
+                bullets.append(_strip_comments(stripped[2:].strip()))
             elif re.match(r"^\d+[.)]\s", stripped):
-                bullets.append(stripped)
+                bullets.append(_strip_comments(stripped))
             else:
-                body_lines.append(stripped)
+                body_lines.append(_strip_comments(stripped))
 
         if body_lines and not title:
             title = body_lines[0]
