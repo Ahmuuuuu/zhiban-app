@@ -429,7 +429,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
         return {"error": "用户不存在"}
 
     # 去重：2 分钟内同话题同模板已创建过课件 → 直接返回已有记录
-    _expected_tag = "template-version:video" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
+    _expected_tag = "template-version:video-v2" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
     cutoff = datetime.now() - timedelta(minutes=2)
     existing = await Presentation.filter(
         user_id=user_id, topic=topic, created_at__gte=cutoff,
@@ -819,7 +819,7 @@ async def _flush(record, topic: str, chapters: list, status: str, segments: list
         fp = _presentation_file_path(record.file_url)
         if fp and fp.exists():
             _head = fp.read_text(encoding="utf-8", errors="ignore")[:200]
-            if "template-version:video" in _head:
+            if "template-version:video-v2" in _head:
                 _tp = TEMPLATE_VIDEO_PATH
     except Exception:
         pass
@@ -1334,7 +1334,7 @@ def _render_html(topic: str, sections: list[dict], segments: list[dict] | None =
     html = html.replace("{{TITLE}}", _escape(topic))
     html = html.replace("{{AUDIO_SEGMENTS}}", segments_json)
     html = html.replace("{{SLIDES_HTML}}", slides_html)
-    version_tag = "<!-- template-version:video -->" if is_video else f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->"
+    version_tag = "<!-- template-version:video-v2 -->" if is_video else f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->"
     return f"{version_tag}\n{html}"
 
 
