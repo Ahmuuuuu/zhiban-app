@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 PRESENTATION_DIR = Path(__file__).parent.parent.parent / "static" / "presentations"
 TEMPLATE_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template.html"
 TEMPLATE_VIDEO_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template_video.html"
-PRESENTATION_TEMPLATE_VERSION = "visual-v5"
+PRESENTATION_TEMPLATE_VERSION = "visual-v6"
 
 
 # ═══════════════════════════════════════════════
