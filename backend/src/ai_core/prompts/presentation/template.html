@@ -1148,6 +1148,139 @@
     .chapter-ppt h2[data-narration-block].block-current {
       text-shadow: 0 0 24px rgba(255, 209, 102, 0.32);
     }
+
+    /* visual-v5: keep generated PPT pages inside the 16:9 stage */
+    .chapter-ppt .slide-container {
+      width: min(100%, calc((100vh - 128px) * 16 / 9));
+      max-height: calc(100vh - 104px);
+      padding: clamp(18px, 2.4vw, 34px);
+      border-radius: 12px;
+    }
+
+    .chapter-ppt .slide-art {
+      display: none;
+    }
+
+    .chapter-ppt .slide-content {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      align-content: stretch;
+      gap: clamp(10px, 1.5vw, 18px);
+      overflow: hidden;
+    }
+
+    .chapter-ppt .slide-kicker {
+      display: none;
+    }
+
+    .chapter-ppt .slide-content h2 {
+      max-width: 100%;
+      margin: 0;
+      padding: 0 0 10px;
+      font-size: clamp(26px, 3vw, 42px);
+      line-height: 1.12;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .chapter-ppt .content-card-grid {
+      height: 100%;
+      min-height: 0;
+      margin: 0;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(2, minmax(0, 1fr));
+      gap: clamp(12px, 1.5vw, 18px);
+      overflow: hidden;
+    }
+
+    .chapter-ppt .content-card {
+      min-height: 0;
+      height: 100%;
+      padding: clamp(12px, 1.4vw, 18px);
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      align-items: start;
+      gap: 10px;
+    }
+
+    .chapter-ppt .content-card p,
+    .chapter-ppt .comparison-card p,
+    .chapter-ppt .formula-point,
+    .chapter-ppt .process-card p,
+    .chapter-ppt .visual-card p,
+    .chapter-ppt .slide-content li {
+      max-height: 100%;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 5;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      font-size: clamp(15px, 1.35vw, 21px);
+      line-height: 1.42;
+    }
+
+    .chapter-ppt .content-card .math-expression,
+    .chapter-ppt .comparison-card .math-expression,
+    .chapter-ppt .formula-point .math-expression {
+      font-size: 0.92em;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .matrix-expression {
+      display: inline-grid;
+      gap: 0.08em 0.22em;
+      padding: 0.08em 0.45em;
+      margin: 0 0.08em;
+      border-left: 2px solid currentColor;
+      border-right: 2px solid currentColor;
+      border-radius: 0.12em;
+      vertical-align: middle;
+    }
+
+    .matrix-expression span {
+      min-width: 0.9em;
+      text-align: center;
+      line-height: 1.08;
+    }
+
+    .chapter-ppt .process-grid,
+    .chapter-ppt .comparison-grid,
+    .chapter-ppt .formula-points,
+    .chapter-ppt .visual-slide-grid {
+      height: 100%;
+      min-height: 0;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    .chapter-ppt .process-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .chapter-ppt .process-card,
+    .chapter-ppt .comparison-card,
+    .chapter-ppt .formula-point {
+      min-height: 0;
+      height: 100%;
+    }
+
+    .chapter-ppt .formula-box {
+      min-height: 0;
+      max-height: 150px;
+      padding: clamp(14px, 1.8vw, 24px);
+      font-size: clamp(22px, 2.7vw, 36px);
+      overflow: hidden;
+    }
+
+    .chapter-ppt .formula-points {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-auto-rows: minmax(0, 1fr);
+      gap: 12px;
+    }
   </style>
 </head>
 
@@ -1451,6 +1584,16 @@
 
     function renderMathCore(raw) {
       var text = escHtml(cleanText(raw)).replace(/\$/g, '');
+      text = text.replace(/\\begin\{bmatrix\}([\s\S]+?)\\end\{bmatrix\}/g, function (_, body) {
+        var rows = body.split(/\\\\/).map(function (row) {
+          return row.trim().split(/&amp;|&/).map(function (cell) { return cell.trim(); }).filter(Boolean);
+        }).filter(function (row) { return row.length; });
+        var cols = rows.reduce(function (n, row) { return Math.max(n, row.length); }, 1);
+        var cells = rows.map(function (row) {
+          return row.map(function (cell) { return '<span>' + cell + '</span>'; }).join('');
+        }).join('');
+        return '<span class="matrix-expression" style="grid-template-columns:repeat(' + cols + ', auto)">' + cells + '</span>';
+      });
       text = text.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '<span class="frac"><span>$1</span><span>$2</span></span>');
       text = text.replace(/\\sqrt\{([^{}]+)\}/g, '<span class="sqrt">√<span>$1</span></span>');
       text = text.replace(/\\sum/g, '∑').replace(/\\int/g, '∫').replace(/\\times/g, '×').replace(/\\cdot/g, '·');
@@ -1486,7 +1629,10 @@
 
     function renderMaybeMath(value) {
       var text = cleanText(value);
-      if (/\\frac|\\sqrt|\\sum|\\int|\$|[A-Za-z0-9]\^|[A-Za-z0-9]_/.test(text)) {
+      if (/\\begin\{bmatrix\}/.test(text)) {
+        return renderMathCore(text);
+      }
+      if (/\\begin\{bmatrix\}|\\frac|\\sqrt|\\sum|\\int|\$|[A-Za-z0-9]\^|[A-Za-z0-9]_/.test(text)) {
         return renderRichText(text);
       }
       return escHtml(text);
@@ -1585,10 +1731,10 @@
       var inner = '';
 
       if (layout === 'concept_visual') {
-        inner = '<div class="visual-slide-grid"><div><h2>' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 6)) + '</div>' +
+        inner = '<div class="visual-slide-grid"><div><h2>' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 4)) + '</div>' +
           '<aside class="visual-card"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
       } else if (layout === 'process_steps') {
-        inner = '<h2>' + title + '</h2><div class="process-grid">' + blocks.slice(0, 5).map(function (b, i) {
+        inner = '<h2>' + title + '</h2><div class="process-grid">' + blocks.slice(0, 4).map(function (b, i) {
           return '<article class="process-card"><b>' + (i + 1) + '</b><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else if (layout === 'comparison') {
@@ -1605,7 +1751,7 @@
           blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b) { return '<div class="formula-point">' + renderMaybeMath(b.text) + '</div>'; }).join('') +
           '</div>';
       } else if (layout === 'content_cards') {
-        inner = '<h2>' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 6).map(function (b, i) {
+        inner = '<h2>' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 4).map(function (b, i) {
           return '<article class="content-card"><span>' + (i + 1) + '</span><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else {
@@ -1649,10 +1795,10 @@
       var inner = '';
 
       if (layout === 'concept_visual') {
-        inner = '<div class="visual-slide-grid"><div><h2 data-narration-block="0">' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 6), 1) + '</div>' +
-          '<aside class="visual-card" data-narration-block="' + (blocks.slice(0, 6).length + 1) + '"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
+        inner = '<div class="visual-slide-grid"><div><h2 data-narration-block="0">' + title + '</h2>' + renderBlocksAsList(blocks.slice(0, 4), 1) + '</div>' +
+          '<aside class="visual-card" data-narration-block="' + (blocks.slice(0, 4).length + 1) + '"><div class="visual-image" style="background-image:' + svgUrl(visualSvgData(sl)) + '"></div><strong>' + renderRichText(visual.query || sl.title || '') + '</strong><p>' + renderMaybeMath(visual.caption || (blocks[0] && blocks[0].text) || '') + '</p></aside></div>';
       } else if (layout === 'process_steps') {
-        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="process-grid">' + blocks.slice(0, 5).map(function (b, i) {
+        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="process-grid">' + blocks.slice(0, 4).map(function (b, i) {
           return '<article class="process-card" data-narration-block="' + (i + 1) + '"><b>' + (i + 1) + '</b><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else if (layout === 'comparison') {
@@ -1669,7 +1815,7 @@
           blocks.filter(function (b) { return b.text !== formula; }).slice(0, 4).map(function (b, i) { return '<div class="formula-point" data-narration-block="' + (i + 2) + '">' + renderMaybeMath(b.text) + '</div>'; }).join('') +
           '</div>';
       } else if (layout === 'content_cards') {
-        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 6).map(function (b, i) {
+        inner = '<h2 data-narration-block="0">' + title + '</h2><div class="content-card-grid">' + blocks.slice(0, 4).map(function (b, i) {
           return '<article class="content-card" data-narration-block="' + (i + 1) + '"><span>' + (i + 1) + '</span><p>' + renderMaybeMath(b.text) + '</p></article>';
         }).join('') + '</div>';
       } else {
