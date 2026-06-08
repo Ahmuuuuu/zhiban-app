@@ -1266,59 +1266,6 @@ def _presentation_file_matches_template(url: str | None, expected_tag: str | Non
         return False
 
 
-def _render_video_slides_html(sections: list[dict]) -> str:
-    """预渲染视频用纯文字 HTML，不依赖 JS，无任何卡片/装饰"""
-    import re as _re
-
-    def _extract_texts(sl: dict) -> list[str]:
-        """从 slide 数据中统一提取要点文字，兼容旧版 bullets 和新版 blocks"""
-        bullets = sl.get("bullets") or []
-        if bullets:
-            return [_re.sub(r"<!--[\s\S]*?-->", "", str(b).strip()) for b in bullets if str(b).strip()]
-
-        # 新版 schema：blocks = [{"type": "key_point", "text": "..."}, ...]
-        blocks = sl.get("blocks") or []
-        if blocks:
-            texts = []
-            for blk in blocks:
-                if isinstance(blk, dict):
-                    t = str(blk.get("text", "")).strip()
-                else:
-                    t = str(blk).strip()
-                if t and not t.startswith("<!--"):
-                    texts.append(t)
-            if texts:
-                return texts
-
-        # 回退：从 text 字段按句子拆分
-        text = sl.get("text", "")
-        return [l.strip() for l in text.replace("。", "\n").replace("；", "\n").split("\n") if l.strip()] if text else []
-
-    parts: list[str] = []
-    for sec in sections:
-        sec_type = sec.get("type", "")
-        if sec_type == "ppt":
-            for sl in sec.get("slides", []):
-                title = _re.sub(r"^##\s*", "", sl.get("title", ""))
-                title = _re.sub(r"<!--[\s\S]*?-->", "", title).strip()
-                texts = _extract_texts(sl)
-                lis = "".join(
-                    f"<li>{t}</li>"
-                    for t in texts[:8] if t
-                )
-                parts.append(f'<div class="slide"><h2>{title}</h2><ul>{lis}</ul></div>')
-        elif sec_type in ("intro", "reading"):
-            for sl in sec.get("slides", []):
-                title = _re.sub(r"^##\s*", "", sl.get("title", ""))
-                title = _re.sub(r"<!--[\s\S]*?-->", "", title).strip()
-                text = sl.get("text", "")
-                paras = "".join(f"<p>{p.strip()}</p>" for p in text.split("。") if p.strip())
-                parts.append(f'<div class="slide"><h2>{title}</h2>{paras}</div>')
-        elif sec_type == "mindmap":
-            html = sec.get("content_html", "")
-            parts.append(f'<div class="slide"><h2>思维导图</h2><div id="mindmap-container">{html}</div></div>')
-    return "\n".join(parts)
-
 
 def _render_video_slides_html(sections: list[dict]) -> str:
     import re as _re
