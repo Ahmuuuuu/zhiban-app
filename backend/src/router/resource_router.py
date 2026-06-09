@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import re
 from urllib.parse import quote
 
@@ -31,7 +32,7 @@ def _slides_to_markdown(title: str, slides: list[dict]) -> str:
         from backend.src.utils.slide_schema import slides_to_markdown
         return slides_to_markdown(title, slides)
     except Exception:
-        pass
+        logging.getLogger("resource_router").warning("slide_schema 导入失败，回退到手动解析")
 
     blocks: list[str] = []
     for index, slide in enumerate(slides or []):

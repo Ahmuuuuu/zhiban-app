@@ -33,7 +33,7 @@ system: |
         "question": "需要多深的内容？",
         "multi": false,
         "options": [
-          {"label": "5分钟概览，了解核心概念", "value": "overview"},
+          {"label": "极速概览，了解核心概念", "value": "overview"},
           {"label": "标准讲解，理解原理和应用", "value": "standard"},
           {"label": "逐页详解，包含推导和案例", "value": "deep"}
         ]

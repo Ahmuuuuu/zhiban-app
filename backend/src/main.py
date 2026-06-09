@@ -47,6 +47,19 @@ app.add_middleware(
 )
 
 
+from backend.src.utils.exceptions import ServiceError
+
+
+@app.exception_handler(ServiceError)
+async def service_error_handler(request: Request, exc: ServiceError):
+    return JSONResponse(status_code=400, content={"detail": exc.detail})
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理：记录完整 traceback，返回统一 500"""

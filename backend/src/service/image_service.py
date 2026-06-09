@@ -166,7 +166,7 @@ class ImageService:
         return {"task_id": task_id, "status": "processing", "chat_group_id": chat_group_id}
 
     @staticmethod
-    async def poll_once(task_id: str) -> dict | None:
+    async def poll_once(task_id: str, save_history: bool = True) -> dict | None:
         """查询讯飞一次，如果完成则下载存库并更新状态。返回当前任务状态。"""
         info = _task_status.get(task_id)
         if not info:
@@ -217,7 +217,14 @@ class ImageService:
                     return _task_status[task_id]
 
                 SAVE_DIR.mkdir(parents=True, exist_ok=True)
-                items = json.loads(base64.b64decode(result_text).decode())
+                try:
+                    decoded_raw = base64.b64decode(result_text).decode()
+                except Exception:
+                    _logger.exception(f"task_id={task_id} base64 解码失败")
+                    _task_status[task_id] = {**info, "status": "failed", "error": "图片结果解码失败"}
+                    return _task_status[task_id]
+                items = json.loads(decoded_raw)
+                _logger.info(f"task_id={task_id} 解码得到 {len(items)} 个 item, 首个 keys={list(items[0].keys()) if items else 'EMPTY'} raw[:300]={decoded_raw[:300]}")
                 images = []
                 for item in items:
                     img_url = item.get("image_wm") or item.get("image")
@@ -247,7 +254,8 @@ class ImageService:
                     })
 
                 if images:
-                    await _save_image_history(info, images)
+                    if save_history:
+                        await _save_image_history(info, images)
                     _task_status[task_id] = {**info, "status": "done", "images": images}
                     _logger.info(f"task_id={task_id} 完成 {len(images)} 张图片")
                 else:
@@ -261,14 +269,15 @@ class ImageService:
             return _task_status[task_id]
 
     @staticmethod
-    async def generate(prompt: str, user_id: str, aspect_ratio: str = "1:1", img_count: int = 1, chat_group_id: int = 0) -> list[dict]:
-        """同步生成（供 tool 使用，阻塞等待结果）"""
+    async def generate(prompt: str, user_id: str, aspect_ratio: str = "1:1", img_count: int = 1, chat_group_id: int = 0, save_history: bool = True) -> list[dict]:
+        """同步生成（供 tool 使用，阻塞等待结果）。
+        save_history=False 时跳过聊天记录写入（资源整合流程已有统一记录）。"""
         result = await ImageService.submit(prompt, int(user_id), aspect_ratio, img_count, chat_group_id=chat_group_id)
         task_id = result["task_id"]
 
         for _ in range(30):
             await asyncio.sleep(2)
-            status = await ImageService.poll_once(task_id)
+            status = await ImageService.poll_once(task_id, save_history=save_history)
             if status["status"] == "done":
                 return status.get("images", [])
             if status["status"] == "failed":

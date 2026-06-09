@@ -20,8 +20,6 @@ router = APIRouter(prefix="/path", tags=["学习路径"])
 async def generate_path(data: GeneratePathRequest, user_id: int = Depends(get_user_id_from_token)):
     """AI 生成学习路径"""
     result = await PathService.generate_path(data.subject, user_id, data.difficulty, data.node_count)
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -127,8 +125,6 @@ async def regenerate_path(data: RegeneratePathRequest, user_id: int = Depends(ge
         result = await PathService.regenerate_path(data.path_id, user_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -168,8 +164,6 @@ async def generate_paths_from_profile(data: GenerateFromProfileRequest, user_id:
     cached_count = 0
     for course, result in zip(courses, results):
         if isinstance(result, Exception):
-            continue
-        if "error" in result:
             continue
         if result.get("cached"):
             cached_count += 1

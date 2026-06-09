@@ -11,8 +11,10 @@ from types import SimpleNamespace
 from backend.src.models.presentation_model import Presentation
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.notification_model import Notification
+from backend.src.models.chat_history_model import ChatHistory
 from backend.src.ai_core.llm_config import llm
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
+from backend.src.utils.exceptions import ServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,16 @@ async def preview(topic: str, user_id: int) -> dict:
     return {"chapters": chapters}
 
 
+async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
+    """如果 chat_group_id 为 0，分配一个新的；否则直接返回"""
+    if chat_group_id and chat_group_id > 0:
+        return chat_group_id
+    latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
+    if not latest or not latest.chat_group_id:
+        return 1
+    return latest.chat_group_id + 1
+
+
 async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -> dict:
     """分析资源内容或话题本身，生成 2-3 个选择题帮助用户聚焦课件方向"""
     from backend.src.models.usermodel import User
@@ -120,26 +132,25 @@ async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -
             "question": "需要多深的内容？",
             "multi": False,
             "options": [
-                {"label": "5分钟概览，了解核心概念", "value": "overview"},
+                {"label": "极速概览，了解核心概念", "value": "overview"},
                 {"label": "标准讲解，理解原理和应用", "value": "standard"},
                 {"label": "逐页详解，包含推导和案例", "value": "deep"},
             ],
         }]
 
-    # 写入聊天历史
-    if chat_group_id and chat_group_id > 0:
-        from backend.src.models.chat_history_model import ChatHistory
-        try:
-            await ChatHistory.create(
-                user=user,
-                chat_group_id=chat_group_id,
-                req="",
-                res=json.dumps({"type": "presentation_questions", "topic": topic, "questions": questions_list, "_video_hint": "动态课件"}, ensure_ascii=False),
-            )
-        except Exception:
-            logger.exception("保存追问到聊天历史失败")
+    # 写入聊天历史 — 新对话自动分配 chat_group_id
+    chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+    try:
+        await ChatHistory.create(
+            user=user,
+            chat_group_id=chat_group_id,
+            req="",
+            res=json.dumps({"type": "presentation_questions", "topic": topic, "questions": questions_list, "_video_hint": "动态课件"}, ensure_ascii=False),
+        )
+    except Exception:
+        logger.exception("保存追问到聊天历史失败")
 
-    return {"questions": questions_list}
+    return {"questions": questions_list, "chat_group_id": chat_group_id}
 
 
 async def _generate_questions_from_content(topic: str, portrait_context: str, doc, ppt_data) -> list[dict]:
@@ -253,7 +264,7 @@ def _default_questions(doc, ppt_data) -> list[dict]:
         "question": "需要多深的内容？",
         "multi": False,
         "options": [
-            {"label": "5分钟概览，了解核心概念", "value": "overview"},
+            {"label": "极速概览，了解核心概念", "value": "overview"},
             {"label": "标准讲解，理解原理和应用", "value": "standard"},
             {"label": "逐页详解，包含推导和案例", "value": "deep"},
         ],
@@ -426,7 +437,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     from backend.src.models.usermodel import User
     user = await User.filter(id=user_id).first()
     if not user:
-        return {"error": "用户不存在"}
+        raise ServiceError("用户不存在")
 
     # 去重：2 分钟内同话题同模板已创建过课件 → 直接返回已有记录
     _expected_tag = "template-version:video-v3" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
@@ -446,7 +457,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
 
     doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
     if not any([doc, mindmap_data, ppt_data]):
-        return {"error": f"话题「{topic}」暂无已生成的资源，请先通过 /resource/generate 生成"}
+        raise ServiceError(f"话题「{topic}」暂无已生成的资源，请先通过 /resource/generate 生成")
 
     # 用户作答 → 裁剪内容
     if answers:
@@ -481,29 +492,35 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     record.total_duration_ms = sum(c.get("total_duration_ms", 0) for c in chapters)
     await record.save()
 
-    # 保存到聊天历史
-    if chat_group_id and chat_group_id > 0:
-        from backend.src.models.chat_history_model import ChatHistory
-        try:
-            req_text = topic
-            if answers:
-                req_text = json.dumps({"topic": topic, "answers": answers}, ensure_ascii=False)
-            res_json = json.dumps({
-                "type": "presentation",
-                "id": record.id,
-                "topic": topic,
-                "file_url": _versioned_presentation_url(record.file_url),
-                "status": "ready",
-                "_video_hint": "动态课件已生成，可立即查看",
-            }, ensure_ascii=False)
-            await ChatHistory.create(
-                user=user,
-                chat_group_id=chat_group_id,
-                req=req_text,
-                res=res_json,
-            )
-        except Exception:
-            logger.exception("保存课件到聊天历史失败")
+    # 保存到聊天历史 — 新对话自动分配 chat_group_id
+    chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+    try:
+        req_text = topic
+        if answers:
+            selected = []
+            for v in answers.values():
+                if isinstance(v, list):
+                    selected.extend(str(x) for x in v)
+                elif v:
+                    selected.append(str(v))
+            if selected:
+                req_text = f"{topic}（已选择：{' / '.join(selected)}）"
+        res_json = json.dumps({
+            "type": "presentation",
+            "id": record.id,
+            "topic": topic,
+            "file_url": _versioned_presentation_url(record.file_url),
+            "status": "ready",
+            "_video_hint": "动态课件已生成，可立即查看",
+        }, ensure_ascii=False)
+        await ChatHistory.create(
+            user=user,
+            chat_group_id=chat_group_id,
+            req=req_text,
+            res=res_json,
+        )
+    except Exception:
+        logger.exception("保存课件到聊天历史失败")
 
     # 立即推送通知，用户不用等音频
     try:
@@ -954,14 +971,14 @@ async def _build_portrait_intro(topic: str, user) -> dict | None:
     }
 
 
-def _build_intro_skeleton(record) -> dict:
+def _build_intro_skeleton(record, max_slides: int = 8) -> dict:
     content = record.content or ""
     raw_parts = re.split(r"\n(?=## )", content.strip())
     if len(raw_parts) <= 1:
         raw_parts = re.split(r"\n(?=# )", content.strip())
 
     slides = []
-    for part in raw_parts:
+    for part in raw_parts[:max_slides]:
         part = part.strip()
         if not part:
             continue

@@ -10,11 +10,12 @@ from pathlib import Path
 import shutil
 
 from backend.src.utils.tts_utils import parse_by_type, generate_audio_with_timestamps, NARRATABLE_TYPES
+from backend.src.utils.exceptions import ServiceError
 
 logger = logging.getLogger(__name__)
 
 # EdgeTTS 并发上限（微软免费服务，减少并发避免带宽挤占和超时）
-_TTS_SEMAPHORE = asyncio.Semaphore(6)
+_TTS_SEMAPHORE = asyncio.Semaphore(10)
 
 _tts_cache_key = lambda text, voice: hashlib.md5(f"{text}_{voice}".encode()).hexdigest()[:12]
 
@@ -56,9 +57,9 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
 
     resource = await GeneratedResource.filter(id=resource_id).first()
     if not resource:
-        return {"error": "资源不存在"}
+        raise ServiceError("资源不存在")
     if resource.resource_type not in NARRATABLE_TYPES:
-        return {"error": f"资源类型 {resource.resource_type} 不支持旁白，仅支持：{', '.join(sorted(NARRATABLE_TYPES))}"}
+        raise ServiceError(f"资源类型 {resource.resource_type} 不支持旁白，仅支持：{', '.join(sorted(NARRATABLE_TYPES))}")
 
     # 强制重生成 → 删旧记录和音频文件
     if force_regenerate:
@@ -82,7 +83,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
 
     sections = parse_by_type(resource.content or "", resource.resource_type or "document")
     if not sections:
-        return {"error": "无法解析内容，资源可能为空"}
+        raise ServiceError("无法解析内容，资源可能为空")
 
     base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
     base_dir.mkdir(parents=True, exist_ok=True)

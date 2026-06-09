@@ -8,6 +8,7 @@ breaking existing resources.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from html import unescape
 from typing import Any
@@ -195,7 +196,7 @@ def parse_markdown_slides(markdown: str) -> list[dict]:
             if isinstance(raw_slides, list):
                 return normalize_slides([item for item in raw_slides if isinstance(item, dict)])
         except json.JSONDecodeError:
-            pass
+            logging.getLogger("slide_schema").debug("JSON 解析失败，回退到正则解析 content[:100]=%s", content[:100])
 
     raw_slides = re.split(r"\n---\n", content)
     slides: list[dict] = []
