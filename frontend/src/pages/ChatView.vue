@@ -1632,7 +1632,7 @@ const replaceTextWithQuizMessage = async (message, title = 'AI 生成题目') =>
 const appendFileMessage = async fileData => {
   if (isExerciseFile(fileData)) {
     await appendQuizMessage(fileData)
-    return
+    return { index: -1, isNew: false }
   }
 
   const fileMessage = normalizeFileMessage(fileData)
@@ -1646,7 +1646,7 @@ const appendFileMessage = async fileData => {
     if (isMindmapFile(fileMessage) && !fileMessage.content) {
       await hydrateMindmapPreview(fileMessage)
     }
-    return
+    return { index: messages.value.length - 1, isNew: true }
   }
 
   messages.value[fallbackIndex] = {
@@ -1658,6 +1658,7 @@ const appendFileMessage = async fileData => {
   if (isMindmapFile(messages.value[fallbackIndex]) && !messages.value[fallbackIndex].content) {
     await hydrateMindmapPreview(messages.value[fallbackIndex])
   }
+  return { index: fallbackIndex, isNew: false }
 }
 
 const normalizeImageFileMessage = imageData => {
@@ -2192,13 +2193,16 @@ const attachGenerationTaskToMessage = (task, messageId) => {
           }
         }
 
+        let addedNewFiles = false
+
         while (fileCursor < task.files.length) {
           const file = task.files[fileCursor]
           fileCursor += 1
           if (task.tool?.generateMode === 'video' && file.file_type !== 'video' && file.resource_type !== 'video') {
             continue
           }
-          await appendFileMessage(file)
+          const result = await appendFileMessage(file)
+          if (result.isNew) addedNewFiles = true
 
           if (isPptFile(file) && pptPreview.value.visible) {
             const fullSlides = parsePptSlidesFromContent(file.content || file.text || '')
@@ -2219,6 +2223,14 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             task.tool?.generateMode === 'image' && imageCursor === 0 ? messageId : ''
           )
           imageCursor += 1
+        }
+
+        // 如果任务已完成且所有文件/图片都是去重的（历史中已存在），清理残留的占位文本消息
+        if (task.status === 'done' && !addedNewFiles && task.files.length > 0) {
+          const placeholderIdx = messages.value.findIndex(m => m.id === messageId && m.type === 'text')
+          if (placeholderIdx !== -1) {
+            messages.value.splice(placeholderIdx, 1)
+          }
         }
       } else {
         // 外来任务：只推进游标不往当前界面塞消息
