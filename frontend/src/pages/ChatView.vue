@@ -69,7 +69,7 @@
     </aside>
 
     <main class="main">
-<section class="chat-content" ref="chatContentRef">
+<section class="chat-content" ref="chatContentRef" @scroll="handleChatScroll">
   <div v-if="historyLoading" class="history-loading">
     正在加载历史对话...
   </div>
@@ -193,6 +193,9 @@
             </button>
             <button v-if="isVideoFile(message) && message.previewUrl" type="button" @click="openPresentationPlayer(message)">打开课件</button>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
+            <button v-if="isDocumentFile(message) && !message.content && getFileResourceId(message)" type="button" @click="loadDocumentPreview(message)">
+              {{ message._documentLoading ? '加载中...' : '预览' }}
+            </button>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
             <button
               type="button"
@@ -584,6 +587,16 @@ const historyLoading = ref(false)
 const deletingConversationId = ref('')
 const loading = ref(false)
 const chatContentRef = ref(null)
+const userScrolledUp = ref(false)
+const SCROLL_THRESHOLD = 80
+
+const handleChatScroll = () => {
+  const el = chatContentRef.value
+  if (!el) return
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  userScrolledUp.value = distanceFromBottom > SCROLL_THRESHOLD
+}
+
 const saveDialog = ref({
   visible: false,
   visibility: 'private',
@@ -1907,7 +1920,35 @@ const isVideoFile = message => {
   return text.includes('video') || text.includes('视频')
 }
 
-const scrollToBottom = async () => {
+const isDocumentFile = message => {
+  if (isPptFile(message) || isMindmapFile(message) || isVideoFile(message)) return false
+  const ft = String(message?.fileType || '').toLowerCase()
+  if (ft.includes('image') || ft.includes('exercise') || ft.includes('quiz')) return false
+  return true
+}
+
+const loadDocumentPreview = async message => {
+  const resourceId = getFileResourceId(message)
+  if (!resourceId || message._documentLoading) return
+
+  message._documentLoading = true
+  try {
+    const res = await getGeneratedResource(resourceId)
+    const data = getResponseData(res)?.data || getResponseData(res)
+    Object.assign(message, {
+      content: data.content || data.preview || data.preview_content || message.content || '',
+      filename: data.filename || data.title || data.topic || message.filename,
+    })
+  } catch (error) {
+    console.error('[ChatView] load document preview failed:', error)
+    window.alert('文档预览加载失败，请稍后重试')
+  } finally {
+    message._documentLoading = false
+  }
+}
+
+const scrollToBottom = async (force = false) => {
+  if (!force && userScrolledUp.value) return
   await nextTick()
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -1965,7 +2006,7 @@ const handleConfirmAnswers = async (message) => {
 
   await answerQuestionsAndGenerate(task, message._answers || {})
   await loadConversationList()
-  await scrollToBottom()
+  await scrollToBottom(true)
 }
 
 const handleGenerationDone = async eventData => {
@@ -2178,6 +2219,10 @@ const restoreGenerationTasksInChat = () => {
 
     const isRecent = Date.now() - task.updatedAt < 10 * 60 * 1000
     if (task.status === 'running' || isRecent) {
+      // 自动激活生成任务所属的对话，避免返回时看到空白新对话
+      if (!activeConversationId.value && task.chatGroupId) {
+        activeConversationId.value = task.chatGroupId
+      }
       addGenerationTaskMessage(task)
     }
   })
@@ -2218,7 +2263,7 @@ const sendMessage = async () => {
     time: getNowTime()
   })
 
-  await scrollToBottom()
+  await scrollToBottom(true)
 
   loading.value = true
 
@@ -2231,7 +2276,7 @@ const sendMessage = async () => {
       window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
       attachGenerationTaskToMessage(task, loadingMessageId)
-      await scrollToBottom()
+      await scrollToBottom(true)
       return
     }
 
@@ -2242,7 +2287,7 @@ const sendMessage = async () => {
       window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
       attachGenerationTaskToMessage(task, loadingMessageId)
-      await scrollToBottom()
+      await scrollToBottom(true)
       return
     }
 
@@ -2419,7 +2464,7 @@ const openConversation = async (conversationId) => {
       console.warn('[ChatView] restore generation tasks failed:', error)
     })
     restoreGenerationTasksInChat()
-    await scrollToBottom()
+    await scrollToBottom(true)
   } catch (error) {
     console.error('获取历史对话详情失败：', error)
 
@@ -2507,6 +2552,18 @@ onMounted(async () => {
     loadConversationList()
   ])
   if (await openConversationFromRoute()) return
+
+  // 如果有正在运行的生成任务，自动打开对应的对话（而非展示空白新对话）
+  const runningTask = generationTasks.find(t => t.chatGroupId && t.status === 'running')
+  if (runningTask && !activeConversationId.value) {
+    try {
+      await openConversation(runningTask.chatGroupId)
+      if (activeConversationId.value) return
+    } catch {
+      // openConversation 内部已处理错误，如果失败则回退到只展示任务消息
+    }
+  }
+
   restoreGenerationTasksInChat()
 })
 
