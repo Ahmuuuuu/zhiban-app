@@ -20,6 +20,9 @@
         <button class="icon-btn refresh-btn" type="button" :disabled="loading" title="刷新资源" @click="loadResources">
           <RefreshCw :size="24" :class="{ spinning: loading }" />
         </button>
+        <router-link class="import-link secondary" to="/learning-resources">
+          我的资源
+        </router-link>
         <router-link class="import-link" to="/study-import">
           资料导入
         </router-link>
@@ -186,8 +189,6 @@
           </button>
           <p v-if="!hotResources.length" class="hot-empty">暂无热门资源</p>
         </div>
-
-        <button class="share-btn" type="button">分享资源</button>
       </aside>
     </section>
 
@@ -1666,6 +1667,13 @@ onBeforeUnmount(() => {
     inset 0 1px 0 rgba(250, 250, 250, 0.18);
 }
 
+.import-link.secondary {
+  background: rgba(250, 250, 250, 0.88);
+  color: #163f8f;
+  border-color: rgba(22, 63, 143, 0.42);
+  box-shadow: none;
+}
+
 .center-header :deep(.account-entry.dark) {
   min-width: 128px;
   max-width: 156px;
@@ -1699,6 +1707,12 @@ onBeforeUnmount(() => {
   background: #1d5dab;
   border-color: #1d5dab;
   color: #fafafa;
+}
+
+.import-link.secondary:hover {
+  background: #c9dce9;
+  border-color: #5f8fc3;
+  color: #163f8f;
 }
 
 .resource-shell {
@@ -2180,19 +2194,6 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-}
-
-.share-btn {
-  align-self: flex-end;
-  min-width: 124px;
-  height: 34px;
-  border: 1px solid rgba(22, 63, 143, 0.32);
-  border-radius: 8px;
-  background: rgba(250, 250, 250, 0.82);
-  color: #163f8f;
-  font-size: 15px;
-  font-weight: 800;
-  cursor: pointer;
 }
 
 .notice {
