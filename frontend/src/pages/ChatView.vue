@@ -371,6 +371,8 @@
 import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  publishGeneratedResource,
+  publishGeneratedImage,
   createResourceAnnotation,
   deleteResourceAnnotation,
   downloadWithToken,
@@ -1682,6 +1684,23 @@ const confirmSaveGeneratedResource = async () => {
   message.centerSaveStatus = 'saving'
 
   try {
+    const visibility = saveDialog.value.visibility
+    const sourceId = message.fileId || ''
+    const resourceKind = message.resourceKind || 'resource'
+
+    if (visibility === 'public') {
+      if (!sourceId) {
+        throw new Error('当前资源缺少后端资源 ID，暂时无法公开到资源中心。')
+      }
+      if (resourceKind === 'image') {
+        await publishGeneratedImage(sourceId, 'public')
+      } else if (resourceKind === 'resource') {
+        await publishGeneratedResource(sourceId, 'public')
+      } else {
+        throw new Error('当前资源类型暂时无法公开到资源中心。')
+      }
+    }
+
     const category = isExerciseFile(message)
       ? 'exercise'
       : String(message.fileType || '').toLowerCase().includes('ppt')
@@ -1689,8 +1708,8 @@ const confirmSaveGeneratedResource = async () => {
         : 'reference'
 
     saveGeneratedResourceRef({
-      sourceId: message.fileId || '',
-      kind: message.resourceKind || 'resource',
+      sourceId,
+      kind: resourceKind,
       fileType: message.fileType,
       category,
       quizId: message.quizId || '',
@@ -1700,12 +1719,12 @@ const confirmSaveGeneratedResource = async () => {
       downloadUrl: message.downloadUrl || '',
       content: message.content || '',
       annotations: message.annotations || [],
-      visibility: saveDialog.value.visibility,
+      visibility,
       createdAt: new Date().toISOString()
     })
 
     message.centerSaveStatus = 'saved'
-    message.savedVisibility = saveDialog.value.visibility
+    message.savedVisibility = visibility
     closeSaveDialog()
   } catch (error) {
     console.error('存入资源中心失败：', error)
