@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 from backend.src.ai_core.resource_graph import resource_graph
 from backend.src.utils.prompt_loader import fill_prompt
+from backend.src.utils.chat_utils import allocate_chat_group_id
 from backend.src.ai_core.llm_config import llm
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.agent_skill_model import AgentSkill
@@ -106,18 +107,13 @@ async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
     return chat_group_id if chat_group_id and chat_group_id > 0 else 0
 
 
-async def _allocate_chat_group_id(user_id: int) -> int:
-    latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
-    if not latest or not latest.chat_group_id:
-        return 1
-    return latest.chat_group_id + 1
 
 
 async def _ensure_generation_chat_group_id(user_id: int, chat_group_id: int = 0, bind_chat_history: bool = False) -> int:
     if chat_group_id and chat_group_id > 0:
         return chat_group_id
     if bind_chat_history:
-        return await _allocate_chat_group_id(user_id)
+        return await allocate_chat_group_id(user_id)
     return 0
 
 
