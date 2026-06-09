@@ -193,6 +193,9 @@
             </button>
             <button v-if="isVideoFile(message) && message.previewUrl" type="button" @click="openPresentationPlayer(message)">打开课件</button>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
+            <button v-if="isDocumentFile(message) && !message.content && getFileResourceId(message)" type="button" @click="loadDocumentPreview(message)">
+              {{ message._documentLoading ? '加载中...' : '预览' }}
+            </button>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
             <button
               type="button"
@@ -1917,6 +1920,33 @@ const isVideoFile = message => {
   return text.includes('video') || text.includes('视频')
 }
 
+const isDocumentFile = message => {
+  if (isPptFile(message) || isMindmapFile(message) || isVideoFile(message)) return false
+  const ft = String(message?.fileType || '').toLowerCase()
+  if (ft.includes('image') || ft.includes('exercise') || ft.includes('quiz')) return false
+  return true
+}
+
+const loadDocumentPreview = async message => {
+  const resourceId = getFileResourceId(message)
+  if (!resourceId || message._documentLoading) return
+
+  message._documentLoading = true
+  try {
+    const res = await getGeneratedResource(resourceId)
+    const data = getResponseData(res)?.data || getResponseData(res)
+    Object.assign(message, {
+      content: data.content || data.preview || data.preview_content || message.content || '',
+      filename: data.filename || data.title || data.topic || message.filename,
+    })
+  } catch (error) {
+    console.error('[ChatView] load document preview failed:', error)
+    window.alert('文档预览加载失败，请稍后重试')
+  } finally {
+    message._documentLoading = false
+  }
+}
+
 const scrollToBottom = async (force = false) => {
   if (!force && userScrolledUp.value) return
   await nextTick()
@@ -2189,6 +2219,10 @@ const restoreGenerationTasksInChat = () => {
 
     const isRecent = Date.now() - task.updatedAt < 10 * 60 * 1000
     if (task.status === 'running' || isRecent) {
+      // 自动激活生成任务所属的对话，避免返回时看到空白新对话
+      if (!activeConversationId.value && task.chatGroupId) {
+        activeConversationId.value = task.chatGroupId
+      }
       addGenerationTaskMessage(task)
     }
   })
@@ -2518,6 +2552,18 @@ onMounted(async () => {
     loadConversationList()
   ])
   if (await openConversationFromRoute()) return
+
+  // 如果有正在运行的生成任务，自动打开对应的对话（而非展示空白新对话）
+  const runningTask = generationTasks.find(t => t.chatGroupId && t.status === 'running')
+  if (runningTask && !activeConversationId.value) {
+    try {
+      await openConversation(runningTask.chatGroupId)
+      if (activeConversationId.value) return
+    } catch {
+      // openConversation 内部已处理错误，如果失败则回退到只展示任务消息
+    }
+  }
+
   restoreGenerationTasksInChat()
 })
 
