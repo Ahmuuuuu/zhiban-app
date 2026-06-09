@@ -23,6 +23,7 @@ export {
 } from './user'
 
 export {
+  deleteConversation,
   getConversationList,
   getConversationMessages,
   sendChatMessage,
@@ -37,6 +38,7 @@ export {
 
 export {
   collectStudyResource,
+  deleteStudyResource,
   getLearningGuidance,
   getStudyCollections,
   getStudyExamWeekly,

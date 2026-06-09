@@ -149,6 +149,16 @@
               >
                 <Download :size="15" />
               </button>
+              <button
+                v-if="canDeleteResource(resource)"
+                class="resource-action danger"
+                type="button"
+                title="删除资源"
+                :disabled="isDeleteLoading(resource)"
+                @click.stop="deleteVisibleResource(resource)"
+              >
+                <Trash2 :size="15" />
+              </button>
             </div>
           </article>
         </template>
@@ -349,10 +359,14 @@ import {
   RefreshCw,
   Search,
   ThumbsUp,
+  Trash2,
   Video,
   Volume2
 } from 'lucide-vue-next'
 import {
+  deleteGeneratedImage,
+  deleteGeneratedResource,
+  deleteStudyResource,
   downloadWithToken,
   exportEditedPptx,
   favoriteResource,
@@ -380,6 +394,7 @@ const previewOpen = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
 const reactionLoading = ref({})
+const deleteLoading = ref({})
 const {
   canNarrateResource,
   toggleNarration,
@@ -429,6 +444,16 @@ const normalizeReactionFields = item => ({
   isFavorited: pickBoolean(item.is_favorited, item.isFavorited, item.favorited, item.collected, item.is_collected, item.has_favorited)
 })
 
+const currentUserId = () => String(localStorage.getItem('user_id') || localStorage.getItem('userId') || '')
+
+const normalizeOwnerFields = item => {
+  const ownerUserId = String(item.owner_user_id || item.ownerUserId || item.user_id || item.userId || '')
+  return {
+    ownerUserId,
+    isOwner: pickBoolean(item.is_owner, item.isOwner, item.owner, ownerUserId && ownerUserId === currentUserId())
+  }
+}
+
 const attachResourceCover = (resource, rawItem = {}) => {
   const explicitCover = getExplicitResourceCoverUrl({ ...resource, ...rawItem })
   const shouldUseVideoFrame = !explicitCover && isVideoResource(resource) && resource.previewUrl
@@ -459,7 +484,8 @@ const normalizeResources = data => {
       created_at: item.created_at || item.createdAt || '',
       previewUrl: item.previewUrl || item.preview_url || videoUrl || '',
       downloadUrl: item.downloadUrl || item.download_url || videoUrl || '',
-      ...normalizeReactionFields(item)
+      ...normalizeReactionFields(item),
+      ...normalizeOwnerFields(item)
     }
     return attachResourceCover(resource, item)
   })
@@ -495,7 +521,8 @@ const normalizeGeneratedResources = data => {
       created_at: item.created_at || item.createdAt || '',
       previewUrl: resolveApiUrl(item.preview_url || item.previewUrl || (isVideoResource({ type: resourceType, filename, title: item.title || item.topic }) ? (item.content || item.preview || '') : '')),
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : (isVideoResource({ type: resourceType, filename, title: item.title || item.topic }) ? (item.content || item.preview || '') : ''))),
-      ...normalizeReactionFields(item)
+      ...normalizeReactionFields(item),
+      ...normalizeOwnerFields(item)
     }
     return attachResourceCover(resource, item)
   })
@@ -522,7 +549,8 @@ const normalizeGeneratedImages = data => {
       created_at: item.created_at || item.createdAt || '',
       previewUrl: resolveApiUrl(url),
       downloadUrl: resolveApiUrl(item.download_url || item.downloadUrl || url || (imageId ? `/image/${imageId}/download` : '')),
-      ...normalizeReactionFields(item)
+      ...normalizeReactionFields(item),
+      ...normalizeOwnerFields(item)
     }
     return attachResourceCover(resource, item)
   })
@@ -844,6 +872,60 @@ const canEditResource = resource => {
   if (resource.visibility === 'public') return false
   if (resource.source === 'generated' || resource.source === 'presentation') return true
   return resource.visibility !== 'public'
+}
+
+const getDeleteId = resource => String(resource?.sourceId || resource?.resourceId || resource?.resource_id || resource?.id || resource?.doc_id || '').replace(/^(generated|image)-/, '')
+
+const deleteKey = resource => `${resource?.type || resource?.source || 'resource'}-${getDeleteId(resource) || resource?.doc_id || ''}`
+
+const isDeleteLoading = resource => Boolean(deleteLoading.value[deleteKey(resource)])
+
+const setDeleteLoading = (resource, value) => {
+  deleteLoading.value = {
+    ...deleteLoading.value,
+    [deleteKey(resource)]: value
+  }
+}
+
+const canDeleteResource = resource => {
+  if (!resource) return false
+  return resource.isOwner === true || resource.visibility !== 'public'
+}
+
+const removeResourceFromList = resource => {
+  resources.value = resources.value.filter(item => item.doc_id !== resource.doc_id)
+  if (selectedResource.value?.doc_id === resource.doc_id) {
+    selectedResource.value = resources.value[0] || null
+    previewOpen.value = false
+  }
+}
+
+const deleteVisibleResource = async resource => {
+  if (!resource || isDeleteLoading(resource)) return
+  const resourceId = getDeleteId(resource)
+  if (!resourceId) {
+    window.alert('当前资源缺少删除 ID，暂时无法删除。')
+    return
+  }
+  const confirmed = window.confirm(`确定删除「${resource.title || '这个资源'}」吗？删除后不可恢复。`)
+  if (!confirmed) return
+
+  setDeleteLoading(resource, true)
+  try {
+    if (resource.type === 'image') {
+      await deleteGeneratedImage(resourceId)
+    } else if (resource.source === 'generated') {
+      await deleteGeneratedResource(resourceId)
+    } else {
+      await deleteStudyResource(resourceId)
+    }
+    removeResourceFromList(resource)
+  } catch (error) {
+    console.error('删除资源失败', error)
+    window.alert(error?.response?.data?.detail || error?.response?.data?.msg || error?.message || '删除失败，请稍后再试')
+  } finally {
+    setDeleteLoading(resource, false)
+  }
 }
 
 const reactionKey = (resource, type) => `${type}-${getReactionId(resource) || resource?.doc_id || ''}`
@@ -2037,6 +2119,17 @@ onBeforeUnmount(() => {
 .resource-action:disabled {
   opacity: 0.62;
   cursor: wait;
+}
+
+.resource-action.danger {
+  border-color: rgba(220, 63, 48, 0.28);
+  background: rgba(220, 63, 48, 0.12);
+  color: #c7352d;
+}
+
+.resource-action.danger:hover:not(:disabled) {
+  background: #c7352d;
+  color: #ffffff;
 }
 
 .listen-inline-btn {

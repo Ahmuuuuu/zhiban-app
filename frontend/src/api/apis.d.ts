@@ -33,6 +33,8 @@ export function getConversationList(): Promise<unknown>;
 
 export function getConversationMessages(chatGroupId: number | string): Promise<unknown>;
 
+export function deleteConversation(chatGroupId: number | string): Promise<unknown>;
+
 export function streamChatMessage(
   data: {
     user_req: string;
@@ -55,6 +57,8 @@ export function initPortrait(data: unknown): Promise<unknown>;
 export function uploadStudyMaterial(data: unknown): Promise<unknown>;
 
 export function getStudyResources(params?: Record<string, unknown>): Promise<unknown>;
+
+export function deleteStudyResource(resourceId: number | string): Promise<unknown>;
 
 export function getStudyStats(): Promise<unknown>;
 

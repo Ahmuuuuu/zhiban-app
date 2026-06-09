@@ -53,6 +53,15 @@
       <span class="recent-time">
         {{ item.time }}
       </span>
+      <button
+        class="recent-delete"
+        type="button"
+        title="删除对话"
+        :disabled="deletingConversationId === String(item.id)"
+        @click.stop="deleteHistoryConversation(item)"
+      >
+        <Trash2 :size="15" />
+      </button>
     </div>
   </div>
 </div>
@@ -371,6 +380,7 @@
 import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  deleteConversation,
   publishGeneratedResource,
   publishGeneratedImage,
   createResourceAnnotation,
@@ -402,6 +412,7 @@ import {
   Presentation,
   CircleHelp,
   SendHorizontal,
+  Trash2,
   X,
   Video
 } from 'lucide-vue-next'
@@ -568,6 +579,7 @@ const inputValue = ref('')
 const recentChats = ref([])
 const activeConversationId = ref(null)
 const historyLoading = ref(false)
+const deletingConversationId = ref('')
 const loading = ref(false)
 const chatContentRef = ref(null)
 const saveDialog = ref({
@@ -2410,6 +2422,33 @@ const openConversation = async (conversationId) => {
   }
 }
 
+const deleteHistoryConversation = async (item) => {
+  const conversationId = item?.id
+  const numericId = Number(conversationId)
+  if (!Number.isFinite(numericId) || numericId <= 0 || deletingConversationId.value) return
+
+  const confirmed = window.confirm(`确定删除「${item.title || '这个对话'}」吗？删除后不可恢复。`)
+  if (!confirmed) return
+
+  deletingConversationId.value = String(conversationId)
+  try {
+    await deleteConversation(numericId)
+    recentChats.value = recentChats.value.filter(chat => String(chat.id) !== String(conversationId))
+    if (String(activeConversationId.value || '') === String(conversationId)) {
+      activeConversationId.value = null
+      messages.value = []
+      inputValue.value = ''
+      showAddMenu.value = false
+      window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
+    }
+  } catch (error) {
+    console.error('删除历史对话失败：', error)
+    window.alert(error?.response?.data?.detail || error?.response?.data?.msg || error?.message || '删除失败，请稍后再试。')
+  } finally {
+    deletingConversationId.value = ''
+  }
+}
+
 const routeChatGroupId = () => {
   const raw = route.query.chat_group_id || route.query.chatGroupId || route.query.conversationId
   return Array.isArray(raw) ? raw[0] : raw
@@ -2762,6 +2801,37 @@ watch(
   color: rgba(22, 63, 143, 0.56);
   font-size: 12px;
   flex-shrink: 0;
+}
+
+.recent-delete {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(220, 63, 48, 0.18);
+  border-radius: 999px;
+  background: rgba(220, 63, 48, 0.08);
+  color: #c7352d;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.recent-item:hover .recent-delete,
+.recent-delete:focus-visible {
+  opacity: 1;
+}
+
+.recent-delete:hover:not(:disabled) {
+  background: #c7352d;
+  color: #ffffff;
+}
+
+.recent-delete:disabled {
+  cursor: wait;
+  opacity: 0.58;
 }
 
 .main {

@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
-import { getConversationList, getConversationMessages, resolveApiUrl, streamChatMessage } from "../api/apis";
+import { deleteConversation, getConversationList, getConversationMessages, resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
 import { looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
@@ -65,6 +65,7 @@ const messagesRef = ref<HTMLElement | null>(null);
 const historyOpen = ref(false);
 const historyLoading = ref(false);
 const petHistory = ref<PetHistoryItem[]>([]);
+const deletingHistoryId = ref("");
 
 const petMessages = ref<PetChatMessage[]>([
   {
@@ -211,6 +212,30 @@ const openPetHistory = async (id: number | string) => {
     chatError.value = "小知历史打开失败";
   } finally {
     historyLoading.value = false;
+  }
+};
+
+const deletePetHistory = async (item: PetHistoryItem) => {
+  const historyId = String(item?.id || "");
+  const numericId = Number(historyId);
+  if (!Number.isFinite(numericId) || numericId <= 0 || deletingHistoryId.value) return;
+  if (!window.confirm(`确定删除「${item.title || "这个对话"}」吗？删除后不可恢复。`)) return;
+
+  deletingHistoryId.value = historyId;
+  try {
+    await deleteConversation(numericId);
+    petHistory.value = petHistory.value.filter(history => String(history.id) !== historyId);
+    if (String(petChatGroupId.value || "") === historyId) {
+      petChatGroupId.value = null;
+      petMessages.value = [createWelcomeMessage()];
+      chatInput.value = "";
+      chatError.value = "";
+    }
+  } catch (error: any) {
+    console.error("删除小知历史失败：", error);
+    window.alert(error?.response?.data?.detail || error?.response?.data?.msg || error?.message || "删除失败，请稍后再试。");
+  } finally {
+    deletingHistoryId.value = "";
   }
 };
 
@@ -645,17 +670,26 @@ watch(
         <p v-if="historyLoading" class="pet-chat__history-empty">正在加载...</p>
         <p v-else-if="!petHistory.length" class="pet-chat__history-empty">暂无小知历史</p>
         <template v-else>
-          <button
+          <div
             v-for="item in petHistory"
             :key="item.id"
-            type="button"
             class="pet-chat__history-item"
             :class="{ active: String(petChatGroupId || '') === String(item.id) }"
             @click="openPetHistory(item.id)"
           >
-            <span>{{ item.title }}</span>
-            <small>{{ item.time }}</small>
-          </button>
+            <button type="button" class="pet-chat__history-open">
+              <span>{{ item.title }}</span>
+              <small>{{ item.time }}</small>
+            </button>
+            <button
+              type="button"
+              class="pet-chat__history-delete"
+              :disabled="deletingHistoryId === String(item.id)"
+              @click.stop="deletePetHistory(item)"
+            >
+              {{ deletingHistoryId === String(item.id) ? '...' : '删' }}
+            </button>
+          </div>
         </template>
       </aside>
     </Transition>
@@ -906,7 +940,9 @@ watch(
 }
 
 .pet-chat__history-head button,
-.pet-chat__history-item {
+.pet-chat__history-item,
+.pet-chat__history-open,
+.pet-chat__history-delete {
   border: 0;
   font: inherit;
   cursor: pointer;
@@ -925,11 +961,12 @@ watch(
 .pet-chat__history-item {
   width: 100%;
   min-height: 42px;
-  padding: 8px 10px;
+  padding: 0;
   border-radius: 10px;
   background: rgba(250, 250, 250, 0.78);
   color: #163f8f;
   text-align: left;
+  overflow: hidden;
 }
 
 .pet-chat__history-item.active,
@@ -937,7 +974,40 @@ watch(
   background: rgba(201, 220, 233, 0.72);
 }
 
-.pet-chat__history-item span {
+.pet-chat__history-open {
+  flex: 1;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.pet-chat__history-delete {
+  width: 34px;
+  min-height: 42px;
+  background: rgba(220, 63, 48, 0.08);
+  color: #c7352d;
+  font-size: 12px;
+  font-weight: 900;
+  flex: 0 0 auto;
+}
+
+.pet-chat__history-delete:hover:not(:disabled) {
+  background: #c7352d;
+  color: #ffffff;
+}
+
+.pet-chat__history-delete:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.pet-chat__history-open span {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
