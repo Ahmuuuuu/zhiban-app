@@ -115,6 +115,16 @@
               >
                 下载原文件
               </button>
+              <button
+                v-if="canDeleteResource(resource)"
+                class="resource-action danger"
+                type="button"
+                :disabled="isDeleteLoading(resource)"
+                @click.stop="deleteVisibleResource(resource)"
+              >
+                <Trash2 :size="15" />
+                {{ isDeleteLoading(resource) ? '删除中' : '删除' }}
+              </button>
             </div>
           </article>
         </template>
@@ -264,11 +274,15 @@ import {
   Video,
   Volume2,
   RefreshCw,
-  ChevronLeft
+  ChevronLeft,
+  Trash2
 } from 'lucide-vue-next'
 import {
   createResourceAnnotation,
+  deleteGeneratedImage,
+  deleteGeneratedResource,
   deleteResourceAnnotation,
+  deleteStudyResource,
   downloadWithToken,
   exportEditedPptx,
   getGeneratedImages,
@@ -292,6 +306,7 @@ const selectedResource = ref(null)
 const previewOpen = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
+const deleteLoading = ref({})
 const {
   canNarrateResource,
   toggleNarration,
@@ -643,6 +658,57 @@ const downloadResource = async resource => {
   } catch (error) {
     console.error('下载资源失败：', error)
     window.alert(error?.message || '下载失败，请确认登录状态和后端服务是否正常。')
+  }
+}
+
+const getDeleteId = resource => String(resource?.sourceId || resource?.resourceId || resource?.resource_id || resource?.id || resource?.doc_id || '').replace(/^(generated|image)-/, '')
+
+const deleteKey = resource => `${resource?.type || resource?.source || 'resource'}-${getDeleteId(resource) || resource?.doc_id || ''}`
+
+const isDeleteLoading = resource => Boolean(deleteLoading.value[deleteKey(resource)])
+
+const setDeleteLoading = (resource, value) => {
+  deleteLoading.value = {
+    ...deleteLoading.value,
+    [deleteKey(resource)]: value
+  }
+}
+
+const canDeleteResource = resource => Boolean(resource && getDeleteId(resource))
+
+const removeResourceFromList = resource => {
+  resources.value = resources.value.filter(item => item.doc_id !== resource.doc_id)
+  if (selectedResource.value?.doc_id === resource.doc_id) {
+    selectedResource.value = resources.value[0] || null
+    previewOpen.value = false
+  }
+}
+
+const deleteVisibleResource = async resource => {
+  if (!resource || isDeleteLoading(resource)) return
+  const resourceId = getDeleteId(resource)
+  if (!resourceId) {
+    window.alert('当前资源缺少删除 ID，暂时无法删除。')
+    return
+  }
+  const confirmed = window.confirm(`确定删除「${resource.title || '这个资源'}」吗？删除后不可恢复。`)
+  if (!confirmed) return
+
+  setDeleteLoading(resource, true)
+  try {
+    if (resource.type === 'image') {
+      await deleteGeneratedImage(resourceId)
+    } else if (resource.source === 'generated') {
+      await deleteGeneratedResource(resourceId)
+    } else {
+      await deleteStudyResource(resourceId)
+    }
+    removeResourceFromList(resource)
+  } catch (error) {
+    console.error('删除资源失败：', error)
+    window.alert(error?.response?.data?.detail || error?.response?.data?.msg || error?.message || '删除失败，请稍后再试。')
+  } finally {
+    setDeleteLoading(resource, false)
   }
 }
 
@@ -1203,6 +1269,17 @@ onMounted(loadResources)
 .resource-action:disabled {
   opacity: 0.62;
   cursor: wait;
+}
+
+.resource-action.danger {
+  border-color: rgba(220, 63, 48, 0.28);
+  background: rgba(220, 63, 48, 0.12);
+  color: #c7352d;
+}
+
+.resource-action.danger:hover:not(:disabled) {
+  background: #c7352d;
+  color: #ffffff;
 }
 
 .listen-inline-btn {

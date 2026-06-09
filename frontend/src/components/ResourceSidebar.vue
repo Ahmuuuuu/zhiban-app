@@ -99,6 +99,15 @@
               >
                 下载
               </button>
+              <button
+                v-if="res.resource_id"
+                type="button"
+                class="delete-btn"
+                :disabled="deletingResourceId === String(res.resource_id)"
+                @click="deleteGeneratedCard(res)"
+              >
+                {{ deletingResourceId === String(res.resource_id) ? '删除中' : '删除' }}
+              </button>
             </div>
             <div v-if="expandedIdx === idx" class="resource-content markdown-body"
               v-html="renderMarkdown(res.content)"
@@ -125,7 +134,7 @@
 
 <script setup>
 import { ref, watch, defineEmits } from 'vue'
-import { resolveApiUrl, streamResourceGeneration } from '../api/apis'
+import { deleteGeneratedResource, resolveApiUrl, streamResourceGeneration } from '../api/apis'
 
 const emit = defineEmits(['toggle'])
 
@@ -152,6 +161,7 @@ const generatedResources = ref([])
 const progressItems = ref([])
 const showResult = ref(false)
 const expandedIdx = ref(-1)
+const deletingResourceId = ref('')
 
 // 资源类型及其状态（用于进度展示）
 const resourceStatusMap = {
@@ -253,6 +263,26 @@ const downloadResource = async resource => {
   } catch (error) {
     console.error('下载生成资源失败：', error)
     window.alert('下载失败，请确认登录状态和后端服务是否正常。')
+  }
+}
+
+const deleteGeneratedCard = async resource => {
+  const resourceId = String(resource?.resource_id || '')
+  if (!resourceId || deletingResourceId.value) return
+  if (!window.confirm('确定删除这个资源吗？删除后不可恢复。')) return
+
+  deletingResourceId.value = resourceId
+  try {
+    await deleteGeneratedResource(resourceId)
+    generatedResources.value = generatedResources.value.filter(item => String(item.resource_id || '') !== resourceId)
+    if (expandedIdx.value >= generatedResources.value.length) {
+      expandedIdx.value = -1
+    }
+  } catch (error) {
+    console.error('删除生成资源失败：', error)
+    window.alert(error?.response?.data?.detail || error?.response?.data?.msg || error?.message || '删除失败，请稍后再试。')
+  } finally {
+    deletingResourceId.value = ''
   }
 }
 
@@ -886,7 +916,8 @@ const renderMarkdown = (content) => {
 }
 
 .view-btn,
-.download-btn {
+.download-btn,
+.delete-btn {
   padding: 4px 12px;
   border: 1px solid rgba(196, 226, 248, 0.5);
   border-radius: 8px;
@@ -902,6 +933,20 @@ const renderMarkdown = (content) => {
 .view-btn:hover,
 .download-btn:hover {
   background: rgba(22, 63, 143, 0.06);
+}
+
+.delete-btn {
+  border-color: rgba(220, 63, 48, 0.28);
+  color: #c7352d;
+}
+
+.delete-btn:hover:not(:disabled) {
+  background: rgba(220, 63, 48, 0.12);
+}
+
+.delete-btn:disabled {
+  opacity: 0.62;
+  cursor: wait;
 }
 
 .resource-content {
