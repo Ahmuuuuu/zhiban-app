@@ -15,6 +15,7 @@ from backend.src.models.chat_history_model import ChatHistory
 from backend.src.ai_core.llm_config import llm
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.utils.exceptions import ServiceError
+from backend.src.utils.chat_utils import allocate_chat_group_id
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +92,6 @@ async def preview(topic: str, user_id: int) -> dict:
     return {"chapters": chapters}
 
 
-async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
-    """如果 chat_group_id 为 0，分配一个新的；否则直接返回"""
-    if chat_group_id and chat_group_id > 0:
-        return chat_group_id
-    latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
-    if not latest or not latest.chat_group_id:
-        return 1
-    return latest.chat_group_id + 1
 
 
 async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -> dict:
@@ -139,7 +132,8 @@ async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -
         }]
 
     # 写入聊天历史 — 新对话自动分配 chat_group_id
-    chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+    chat_group_id = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
+    logger.info("generate_questions() user_id=%d chat_group_id=%d topic=%s", user_id, chat_group_id, topic[:60])
     try:
         await ChatHistory.create(
             user=user,
@@ -493,7 +487,8 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     await record.save()
 
     # 保存到聊天历史 — 新对话自动分配 chat_group_id
-    chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+    chat_group_id = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
+    logger.info("generate() user_id=%d chat_group_id=%d topic=%s", user_id, chat_group_id, topic[:60])
     try:
         req_text = topic
         if answers:

@@ -19,6 +19,7 @@ from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 from backend.src.models.image_model import GeneratedImage
 from backend.src.models.notification_model import Notification
+from backend.src.utils.chat_utils import allocate_chat_group_id
 
 
 HOST = "cn-huadong-1.xf-yun.com"
@@ -58,15 +59,6 @@ def _make_auth_url(path: str, api_key: str, api_secret: str) -> str:
 SAVE_DIR = Path(__file__).parent.parent.parent / "static" / "images"
 
 
-async def _next_chat_group_id(user_id: int) -> int:
-    latest = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
-    if not latest or not latest.chat_group_id:
-        return 1
-    return latest.chat_group_id + 1
-
-
-async def _ensure_chat_group_id(user_id: int, chat_group_id: int = 0) -> int:
-    return chat_group_id if chat_group_id and chat_group_id > 0 else await _next_chat_group_id(user_id)
 
 
 async def _save_image_history(info: dict, images: list[dict]) -> None:
@@ -83,6 +75,8 @@ async def _save_image_history(info: dict, images: list[dict]) -> None:
         url = image.get("url") or ""
         lines.append(f"- [{label}]({url})" if url else f"- {label}")
 
+    _logger.info("_save_image_history() user_id=%s chat_group_id=%s prompt=%s",
+                  info.get("user_id"), info.get("chat_group_id"), info.get("prompt", "")[:60])
     await ChatHistory.create(
         user=user,
         chat_group_id=info.get("chat_group_id"),
@@ -110,7 +104,8 @@ class ImageService:
         if not user:
             raise RuntimeError("用户不存在")
 
-        chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
+        chat_group_id = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
+        _logger.info("submit() user_id=%d chat_group_id=%d prompt=%s", user_id, chat_group_id, prompt[:60])
 
         prompt_json = json.dumps({
             "image": [],
