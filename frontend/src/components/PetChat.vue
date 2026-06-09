@@ -98,6 +98,22 @@ const getResponseData = (res: any) => res?.data ?? res ?? {};
 const stripTypedInstruction = (value: unknown) =>
   String(value || "").replace(/\n\n【生成类型指令】[\s\S]*$/, "").trim();
 
+const stripJsonResponse = (value: unknown) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed.type === "presentation") return "动态课件已生成，可立即查看";
+      if (parsed.type === "presentation_questions") return "课件问答已准备好";
+      if (parsed.type || parsed.resource_type || parsed.resources) return "资源已生成";
+    } catch {
+      // not JSON
+    }
+  }
+  return text;
+};
+
 const getRecordTime = (record: any) =>
   record?.created_time || record?.created_at || record?.createTime || record?.updated_at || record?.updateTime || "";
 
@@ -135,7 +151,7 @@ const normalizePetHistoryGroups = (res: any) => {
       return {
         id: Number(groupId) || firstRecord.chat_group_id || groupId,
         title: stripTypedInstruction(firstRecord.req) || `对话 ${groupId}`,
-        lastMessage: stripTypedInstruction(lastRecord.req || lastRecord.res) || "",
+        lastMessage: stripJsonResponse(stripTypedInstruction(lastRecord.req || lastRecord.res)) || "",
         time: formatPetTime(getRecordTime(lastRecord)),
       };
     }).reverse();

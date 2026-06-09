@@ -24,9 +24,6 @@ class NarrateRequest(BaseModel):
 async def narrate_resource_endpoint(data: NarrateRequest, user_id: int = Depends(get_user_id_from_token)):
     """对文字类资源逐段生成旁白语音"""
     result = await narrate_resource(data.resource_id, data.voice, force_regenerate=data.force_regenerate)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-
     return {"code": 200, "msg": "success", "data": result}
 
 

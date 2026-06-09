@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const request = axios.create({
-  baseURL: 'http://10.109.96.72:8000',
+  baseURL: 'http://127.0.0.1:8000',
   timeout: 300000
 })
 
@@ -14,6 +14,7 @@ const clearAuthStorage = () => {
   localStorage.removeItem('role')
   localStorage.removeItem('identity')
   localStorage.removeItem('avatar')
+  localStorage.removeItem('zhiban_generation_tasks_v2')
 }
 
 const notifyAuthExpired = () => {
@@ -49,7 +50,11 @@ request.interceptors.request.use(
 
 request.interceptors.response.use(
   response => {
-    return response.data
+    const data = response.data
+    if (data && data.token) {
+      localStorage.setItem('token', data.token)
+    }
+    return data
   },
   error => {
     if (error.response && error.response.status === 401) {

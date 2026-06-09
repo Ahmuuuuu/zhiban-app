@@ -506,6 +506,47 @@ const stripTypedResourceInstruction = value => {
   return String(value || '').replace(/\n\n【生成类型指令】[\s\S]*$/, '')
 }
 
+// 过滤掉 AI 生成的 JSON 资源响应（如课件/视频生成后的 JSON 元数据），保留友好文案
+const stripJsonResponse = value => {
+  const text = String(value || '').trim()
+  if (!text) return ''
+
+  // 如果看起来像 JSON 对象，尝试解析
+  if (text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text)
+      // 课件/视频等生成资源类响应
+      if (parsed.type === 'presentation') {
+        return '动态课件已生成，可立即查看'
+      }
+      if (parsed.type === 'presentation_questions') {
+        return '课件问答已准备好'
+      }
+      // 其他 JSON 响应（可能是资源列表等），不显示
+      if (parsed.type || parsed.resource_type || parsed.resources) {
+        return '资源已生成'
+      }
+    } catch {
+      // 非 JSON，保持原样
+    }
+  }
+
+  return text
+}
+
+const formatUserAnswers = value => {
+  const text = String(value || '').trim()
+  if (!text.startsWith('{')) return text
+  try {
+    const parsed = JSON.parse(text)
+    if (parsed.topic && parsed.answers && typeof parsed.answers === 'object') {
+      const selected = Object.values(parsed.answers).filter(Boolean)
+      return selected.length ? `${parsed.topic}（已选择：${selected.join(' / ')}）` : parsed.topic
+    }
+  } catch {}
+  return text
+}
+
 const stripInternalInstructions = value => stripTypedResourceInstruction(value)
 
 const handleAddFile = () => {
@@ -589,7 +630,7 @@ const buildMessagesFromHistory = (records, conversationId) => {
         id: `${conversationId}-${id}`,
         role: 'user',
         type: 'text',
-        content: stripInternalInstructions(content),
+        content: formatUserAnswers(stripInternalInstructions(content)),
         time
       }
     })
@@ -662,6 +703,17 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
       }))
       existingUrls.add(previewUrl)
       if (presentationId) existingIds.add(presentationId)
+    }
+
+    // 已有课件 → 移除冗余的中间资源卡片（PPT/文档），避免过程文件干扰
+    if (existingUrls.size > 0 || existingIds.size > 0) {
+      for (let i = targetMessages.length - 1; i >= 0; i--) {
+        const msg = targetMessages[i]
+        const ft = String(msg.file_type || msg.fileType || '').toLowerCase()
+        if ((ft === 'ppt' || ft === 'document') && !msg.presentation) {
+          targetMessages.splice(i, 1)
+        }
+      }
     }
   } catch (error) {
     console.warn('[ChatView] load presentations for history failed:', error)
@@ -1070,6 +1122,14 @@ const normalizeHistoryAssistantMessage = (item, id, time) => {
       _resourceList: parsed.resources,
       time
     }
+  }
+
+  // 课件问答元数据，不单独展示（课件卡片由 appendPresentationCardsFromHistory 统一处理）
+  if (parsed && parsed.type === 'presentation_questions') {
+    return { id, role: 'assistant', type: 'text', content: '课件问答已准备好', time }
+  }
+  if (parsed && parsed.type === 'presentation') {
+    return { id, role: 'assistant', type: 'text', content: '动态课件已生成，可立即查看', time }
   }
 
   const resourceHistory = parseResourceHistoryMessage(rawContent)
@@ -2246,7 +2306,7 @@ const loadConversationList = async () => {
         id,
         sortTime: item.sortTime || getTimeValue(item.created_time) || 0,
         title: stripTypedResourceInstruction(item.title || item.req) || `对话 ${id}`,
-        lastMessage: stripTypedResourceInstruction(item.lastMessage || item.last_message || item.req) || '',
+        lastMessage: stripJsonResponse(stripTypedResourceInstruction(item.lastMessage || item.last_message || item.req)) || '',
         time: item.time || formatTime(item.updateTime || item.created_time)
       }
     })

@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 import asyncio
 
 from backend.src.ai_core.llm_config import llm
+from backend.src.ai_core.path_graph import path_graph
 
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
@@ -24,6 +25,7 @@ from backend.src.service.exam_service import ExamService, _normalize_db_answer, 
 from backend.src.service.resource_service import ResourceService
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.json_parser import parse_llm_json
+from backend.src.utils.exceptions import ServiceError
 
 
 def _compute_node_count(subject: str, picture) -> int:
@@ -66,6 +68,12 @@ class PathService:
     async def generate_path(subject: str, user_id: int, difficulty: str = "medium", node_count: int = 0) -> dict:
         """LLM 生成路径结构 → 存库（node_count=0 自动计算）。同用户同 subject 已存在则跳过。"""
         await init_db()
+
+        # >admin 快捷模式：强制 2 节点，跳过预生成
+        admin_mode = subject.rstrip().endswith(">admin")
+        if admin_mode:
+            subject = subject.rstrip()[:-6].rstrip()
+            node_count = 2
 
         existing = await LearningPath.filter(user_id=user_id, subject=subject).first()
         if existing:
@@ -111,30 +119,50 @@ class PathService:
                 lines.append(f"- {m.knowledge_tag}: {m.mastery_level}（准确率 {acc}，练习 {m.total_attempts} 次）")
             mastery_context = "已掌握知识点：\n" + "\n".join(lines)
 
-        template = load_prompt("path/path_generation")
-        prompt_text = fill_prompt(
-            template,
-            subject=subject,
-            difficulty=difficulty,
-            node_count=str(node_count),
-            portrait_context=portrait_context,
-            mastery_context=mastery_context,
-            kb_context=kb_context,
-            learning_guidance=learning_guidance,
-        )
+        if not admin_mode:
+            # 多智能体 graph：Leader(大纲) → Executor(并行分组生成) → Reviewer(审核)
+            initial_state = {
+                "user_id": str(user_id),
+                "subject": subject,
+                "difficulty": difficulty,
+                "node_count": node_count,
+                "portrait_context": portrait_context,
+                "mastery_context": mastery_context,
+                "kb_context": kb_context,
+                "learning_guidance": learning_guidance,
+            }
+            try:
+                final_state = await path_graph.ainvoke(initial_state)
+                nodes_data = final_state.get("nodes", [])
+            except Exception:
+                logger.exception("Path graph 调用失败 subject=%s", subject)
+                raise RuntimeError("路径生成失败")
+        else:
+            # admin 快捷模式：单次 LLM 调用，不走 graph
+            template = load_prompt("path/path_generation")
+            prompt_text = fill_prompt(
+                template,
+                subject=subject,
+                difficulty=difficulty,
+                node_count=str(node_count),
+                portrait_context=portrait_context,
+                mastery_context=mastery_context,
+                kb_context=kb_context,
+                learning_guidance=learning_guidance,
+            )
+            try:
+                response = await llm.ainvoke(prompt_text)
+                result = parse_llm_json(response.content)
+                if not isinstance(result, dict):
+                    result = {}
+            except Exception:
+                logger.exception("LLM 路径生成调用失败 subject=%s", subject)
+                raise RuntimeError("路径生成失败")
+            nodes_data = result.get("nodes", [])
+            nodes_data = nodes_data[:2]
 
-        try:
-            response = await llm.ainvoke(prompt_text)
-            result = parse_llm_json(response.content)
-            if not isinstance(result, dict):
-                result = {}
-        except Exception:
-            logger.exception("LLM 路径生成调用失败 subject=%s", subject)
-            return {"error": "路径生成失败"}
-
-        nodes_data = result.get("nodes", [])
         if not nodes_data:
-            return {"error": "LLM 未返回有效节点"}
+            raise RuntimeError("LLM 未返回有效节点")
 
         from tortoise.exceptions import IntegrityError
         try:
@@ -195,9 +223,9 @@ class PathService:
         if first_node:
             await check_and_create_node_unlocked(user_id, first_node.topic, path.id, first_node.id)
 
-        # 只为首个解锁节点预生成资源 + 测验，其余按需懒加载
+        # 只为首个解锁节点预生成资源 + 测验，其余按需懒加载（admin 模式跳过预生成）
         node_results = {}
-        if first_node:
+        if first_node and not admin_mode:
             async def gen_resources():
                 try:
                     r = await PathService.generate_node_resources(path.id, first_node.id, user_id)
@@ -916,7 +944,7 @@ class PathService:
                 score = round(correct / len(direct_results) * 100, 1) if direct_results else 0.0
                 judged_questions = direct_results
             else:
-                return {"error": "该会话无已判分的答题记录"}
+                raise ServiceError("该会话无已判分的答题记录")
         else:
             correct = sum(1 for r in judged if r.is_correct)
             score = round(correct / len(judged) * 100, 1) if judged else 0.0
@@ -1079,8 +1107,19 @@ class PathService:
     # ── 内部辅助 ──
 
     @staticmethod
+    @staticmethod
+    async def _pre_generate_node(path_id: int, node_id: int, user_id: int):
+        try:
+            await asyncio.gather(
+                PathService.generate_node_resources(path_id, node_id, user_id),
+                PathService.generate_node_quiz(path_id, node_id, user_id, pre_generate=True),
+            )
+        except Exception:
+            logger.exception("预生成节点资源/检测题失败 path_id=%s node_id=%s", path_id, node_id)
+
+    @staticmethod
     async def _unlock_next_node(path_id: int, current_order: int, user_id: int):
-        """解锁下一顺序节点并自动生成资源"""
+        """解锁下一顺序节点并预生成下两个节点的资源"""
         next_node = await PathNode.filter(path_id=path_id, order_index=current_order + 1).first()
         if not next_node:
             return
@@ -1091,14 +1130,11 @@ class PathService:
 
         await check_and_create_node_unlocked(user_id, next_node.topic, path_id, next_node.id)
 
-        # 自动为新节点生成学习资源 + 检测题（并行）
-        try:
-            await asyncio.gather(
-                PathService.generate_node_resources(path_id, next_node.id, user_id),
-                PathService.generate_node_quiz(path_id, next_node.id, user_id, pre_generate=True),
-            )
-        except Exception:
-            logger.exception("自动生成下一节点资源/检测题失败 path_id=%s node_id=%s", path_id, next_node.id)
+        pre_gen_ids = [next_node.id]
+        node_after = await PathNode.filter(path_id=path_id, order_index=current_order + 2).first()
+        if node_after:
+            pre_gen_ids.append(node_after.id)
+        await asyncio.gather(*(PathService._pre_generate_node(path_id, nid, user_id) for nid in pre_gen_ids))
 
     @staticmethod
     async def _update_portrait_from_mastery(user_id: int):

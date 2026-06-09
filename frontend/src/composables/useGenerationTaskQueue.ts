@@ -413,7 +413,8 @@ export function useGenerationTaskQueue() {
       topic: task.text,
       resource_types: task.tool.resourceTypes || ['document'],
       chat_group_id: task.chatGroupId || 0,
-      bind_chat_history: true,
+      // 视频模式：中间资源不写入聊天记录，最终课件卡片才是用户想看到的
+      bind_chat_history: task.tool.generateMode !== 'video',
       answers: (task as any)._answers || undefined,
     }).then(result => {
       const data = unwrapResponseData(result)

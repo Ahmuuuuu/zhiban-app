@@ -154,14 +154,11 @@ def _resource_history_response(resources: list[dict]) -> str:
 
 
 async def _find_cached_resources(topic: str, user_id: int, resource_types: list[str]) -> list[dict] | None:
-    """5 分钟内同主题同类型已生成过 → 直接返回缓存，避免重复跑 graph"""
-    cutoff = datetime.now() - timedelta(minutes=5)
+    """同主题同类型已生成过 → 直接返回缓存，避免重复跑 graph（不限时间和审核状态，学习路径资源 skip_review 后 review_passed=False）"""
     existing = await GeneratedResource.filter(
         user_id=user_id,
         topic=topic,
         resource_type__in=resource_types,
-        review_passed=True,
-        created_at__gte=cutoff,
     ).order_by("-created_at").all()
 
     if not existing:
@@ -411,7 +408,7 @@ class ResourceService:
         chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
         yield f"data: {json.dumps({'type': 'stream_progress', 'message': '资源生成已开始', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
 
-        def _make_file_event(for_topic: str, rt: str, content: str) -> str:
+        def _make_file_event(for_topic: str, rt: str, content: str, resource_id: int = 0, download_url: str = "") -> str:
             ext = _FILE_EXT_MAP.get(rt, "md")
             filename = f"{for_topic}_{rt}.{ext}"
             event_content = content
@@ -420,7 +417,7 @@ class ResourceService:
                     event_content = parse_mindmap_text(content)
                 except Exception:
                     logger.exception("SSE 思维导图 JSON 转换失败")
-            return f"data: {json.dumps({'type': 'file', 'file_type': rt, 'filename': filename, 'content': event_content}, ensure_ascii=False)}\n\n"
+            return f"data: {json.dumps({'type': 'file', 'file_type': rt, 'filename': filename, 'content': event_content, 'resource_id': resource_id, 'download_url': download_url}, ensure_ascii=False)}\n\n"
 
         # ── 去重：近期已生成过 → 直接推送缓存结果 ──
         if topic:
@@ -432,7 +429,7 @@ class ResourceService:
                         content = r["content"]
                         if isinstance(content, dict):
                             content = json.dumps(content, ensure_ascii=False)
-                        yield _make_file_event(r["topic"], rt, content)
+                        yield _make_file_event(r["topic"], rt, content, resource_id=r["resource_id"], download_url=f"/resource/{r['resource_id']}/download")
                         yield f"data: {json.dumps({'resources': [rt], 'review_passed': True}, ensure_ascii=False)}\n\n"
                     done_data = {
                         "done": True,
@@ -487,7 +484,7 @@ class ResourceService:
                             })
                             logger.info("[SSE] 即时存库 %s id=%s topic=%s", rt, record.id, topic)
                             yielded_types.add(rt)
-                            yield _make_file_event(topic, rt, content)
+                            yield _make_file_event(topic, rt, content, resource_id=record.id, download_url=f"/resource/{record.id}/download")
                 final_passed = chunk.get("review_passed", False)
                 final_retry = chunk.get("retry_count", 0)
 

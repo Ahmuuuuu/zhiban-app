@@ -1,5 +1,6 @@
 """将 Markdown 格式的幻灯片内容转换为真正的 .pptx 二进制文件"""
 import io
+import logging
 import math
 import re
 import struct
@@ -698,7 +699,7 @@ def _add_notes(slide, slide_data: dict):
             notes_slide = slide.notes_slide
             notes_slide.notes_text_frame.text = _clean_ppt_text(slide_data["notes"], 1000)
         except Exception:
-            pass
+            logging.getLogger("pptx").warning("添加备注失败 slide_title=%s", slide_data.get("title", ""))
 
 
 def markdown_to_pptx(markdown: str) -> bytes:

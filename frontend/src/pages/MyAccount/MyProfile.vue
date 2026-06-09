@@ -588,6 +588,7 @@ const logout = () => {
   localStorage.removeItem('role')
   localStorage.removeItem('identity')
   localStorage.removeItem('avatar')
+  localStorage.removeItem('zhiban_generation_tasks_v2')
   dispatchAvatarUpdated('')
   window.dispatchEvent(new CustomEvent('zhiban:user-logged-out'))
   router.push('/')

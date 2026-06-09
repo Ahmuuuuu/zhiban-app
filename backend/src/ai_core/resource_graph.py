@@ -77,7 +77,7 @@ async def leader_node(state: ResourceState) -> dict:
     prompt_text = fill_prompt(load_prompt("agent/leader"), topic=topic, portrait_context=portrait, kb_context=kb, learning_guidance=guidance)
 
     try:
-        response = await llm.ainvoke(prompt_text, priority=state.get("llm_priority", "high"))
+        response = await llm.ainvoke(prompt_text, priority=state.get("llm_priority", "high"), user_id=int(state.get("user_id", 0)), pool="leader")
     except Exception as e:
         logger.exception("LeaderAgent LLM 调用失败")
         return {"resource_types": ["document"]}
@@ -129,13 +129,21 @@ def build_resource_prompt(
 PPT_PAGES_PER_SECTION = 2    # 每个章节生成 2 页
 PPT_DEFAULT_SECTIONS = 10    # 默认 10 章节（20 页）
 PPT_SECTION_COUNT_BY_DEPTH = {
-    "overview": 5,           # 快速概览 → 10 页
+    "overview": 5,            # 快速概览 → 10 页
     "standard": 10,           # 标准讲解 → 20 页
     "deep": 15,              # 逐页详解 → 30 页
 }
 
+# 文档并行生成参数
+DOC_DEFAULT_SECTIONS = 4     # 默认 4 章节，与 PPT 错开
+DOC_SECTION_COUNT_BY_DEPTH = {
+    "overview": 2,
+    "standard": 4,
+    "deep": 8,
+}
 
-async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", count: int = PPT_DEFAULT_SECTIONS, llm_priority: str = "high") -> list[str]:
+
+async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", count: int = PPT_DEFAULT_SECTIONS, llm_priority: str = "high", user_id: int = 0) -> list[str]:
     """快速生成 PPT 章节大纲，默认 {count} 章节"""
     total_pages = count * PPT_PAGES_PER_SECTION
     prompt = f"""你是一个课程规划师。为以下主题设计PPT章节大纲。
@@ -153,7 +161,7 @@ async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", cou
 """
     try:
         t0 = time.perf_counter()
-        response = await llm.ainvoke(prompt, priority=llm_priority)
+        response = await llm.ainvoke(prompt, priority=llm_priority, user_id=user_id, pool="ppt")
         sections = parse_llm_json(response.content)
         if isinstance(sections, list) and len(sections) >= 1:
             defaults = ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "与其他知识的联系", "综合练习与思考", "课程总结与回顾"]
@@ -180,6 +188,7 @@ async def generate_ppt_parallel(
     section_count: int = PPT_DEFAULT_SECTIONS,
     ppt_prompt_key: str = "ppt",
     llm_priority: str = "high",
+    user_id: int = 0,
 ) -> str:
     """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2 页），共 2N 页 + 2 页画像学习引入"""
     _t_total = time.perf_counter()
@@ -196,7 +205,7 @@ async def generate_ppt_parallel(
                 stream_writer({"type": "stream_progress", "file_type": "ppt", "message": "正在规划课程大纲..."})
             except Exception:
                 stream_writer = None
-        sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority)
+        sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority, user_id=user_id)
 
     # 画像引入置顶（如果画像数据可用）
     has_portrait = portrait and portrait != "暂无画像数据"
@@ -292,7 +301,7 @@ async def generate_ppt_parallel(
         t0 = time.perf_counter()
         for attempt in range(2):
             try:
-                response = await llm.ainvoke(prompt_with_context, priority=llm_priority)
+                response = await llm.ainvoke(prompt_with_context, priority=llm_priority, user_id=user_id, pool="ppt")
                 content = response.content
                 elapsed = time.perf_counter() - t0
             except Exception:
@@ -318,7 +327,7 @@ async def generate_ppt_parallel(
                     content=content[:3000],
                     topic=topic,
                 )
-                review_response = await llm.ainvoke(review_prompt, priority=llm_priority)
+                review_response = await llm.ainvoke(review_prompt, priority=llm_priority, user_id=user_id, pool="ppt")
                 result = _parse_review_response(review_response.content)
                 passed = result.get("passed", False)
                 if isinstance(passed, str):
@@ -393,6 +402,142 @@ async def generate_ppt_parallel(
     return combined
 
 
+# ═══════════════════════════════════════
+#  文档并行生成（与 PPT 对称）
+# ═══════════════════════════════════════
+
+async def generate_doc_outline(topic: str, kb: str = "", guidance: str = "", count: int = DOC_DEFAULT_SECTIONS, llm_priority: str = "high", user_id: int = 0) -> list[str]:
+    """快速生成文档章节大纲，默认 {count} 章节"""
+    prompt = f"""你是一个课程规划师。为以下主题设计文档章节大纲。
+
+主题：{topic}
+学习指导：{guidance}
+
+要求：
+- 固定 {count} 个章节（必须恰好 {count} 个）
+- 章节标题简洁（15 字以内），由浅入深，逻辑连贯
+- 覆盖：概念引入 → 原理解析 → 方法技巧 → 案例应用 → 常见误区 → 进阶拓展 → 总结回顾
+- 只返回 JSON 字符串数组，不要任何其他文字
+
+返回示例：["线性方程组的定义与几何意义", "高斯消元法的原理与步骤", "矩阵秩与解的判定", "向量空间与线性无关性", "特征值与对角化", "线性变换的几何直观", "工程中的线性代数应用", "易错点辨析与总结"]"""
+
+    try:
+        t0 = time.perf_counter()
+        response = await llm.ainvoke(prompt, priority=llm_priority, user_id=user_id, pool="document")
+        sections = parse_llm_json(response.content)
+        if isinstance(sections, list) and len(sections) >= 1:
+            defaults = ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "总结与回顾"]
+            while len(sections) < count:
+                sections.append(defaults[len(sections) % len(defaults)])
+            sections = sections[:count]
+            logger.info("[Doc-Outline] 大纲生成 章节数=%d 耗时=%.2fs", len(sections), time.perf_counter() - t0)
+            return sections
+    except Exception:
+        logger.exception("[Doc-Outline] 大纲生成失败，使用默认章节")
+    return ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "总结与回顾"][:count]
+
+
+async def generate_document_parallel(
+    topic: str,
+    portrait: str = "",
+    kb: str = "",
+    guidance: str = "",
+    feedback: str = "",
+    user_notes: str = "",
+    custom_prompts: dict | None = None,
+    sections: list[str] | None = None,
+    stream_writer=None,
+    section_count: int = DOC_DEFAULT_SECTIONS,
+    llm_priority: str = "high",
+    user_id: int = 0,
+) -> str:
+    """按章节并行生成文档：大纲 → N 条线并行（每条约 400 字），最后按序拼接"""
+    _t_total = time.perf_counter()
+    if stream_writer:
+        try:
+            stream_writer({"type": "stream_start", "file_type": "document"})
+        except Exception:
+            stream_writer = None
+
+    if sections is None:
+        if stream_writer:
+            try:
+                stream_writer({"type": "stream_progress", "file_type": "document", "message": "正在规划文档大纲..."})
+            except Exception:
+                stream_writer = None
+        sections = await generate_doc_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority, user_id=user_id)
+
+    outline_lines = [f"第{i+1}章「{s}」" for i, s in enumerate(sections)]
+    course_overview = "\n".join(outline_lines)
+
+    total = len(sections)
+    completed_count = [0]
+
+    async def gen_section(idx: int, section_title: str) -> tuple[int, str]:
+        if stream_writer:
+            try:
+                stream_writer({
+                    "type": "stream_progress",
+                    "file_type": "document",
+                    "message": f"正在生成第 {idx + 1}/{total} 节「{section_title}」...",
+                    "current": idx + 1,
+                    "total": total,
+                })
+            except Exception:
+                pass
+
+        prev_section = sections[idx - 1] if idx > 0 else "（无）"
+        next_section = sections[idx + 1] if idx < len(sections) - 1 else "（无）"
+
+        section_prompt = f"""你是一个专业的学习文档撰写者。请为「{topic}」撰写一个章节。
+
+## 当前章节
+{section_title}
+
+## 课程全景
+{course_overview}
+
+## 上下文
+- 前一章：{prev_section}（自然承接）
+- 后一章：{next_section}（做好铺垫）
+- 严禁重复其他章节内容
+
+## 学习指导
+{guidance or '无特殊要求'}
+
+直接输出该章节的 Markdown 内容，以 ### {section_title} 开头。"""
+
+        t0 = time.perf_counter()
+        try:
+            response = await llm.ainvoke(section_prompt, priority=llm_priority, user_id=user_id, pool="document")
+            content = response.content.strip()
+            elapsed = time.perf_counter() - t0
+            completed_count[0] += 1
+            logger.info("[Doc-Section] %d/%d idx=%d section=%s len=%d 耗时=%.2fs",
+                        completed_count[0], total, idx, section_title, len(content), elapsed)
+            return idx, content
+        except Exception:
+            elapsed = time.perf_counter() - t0
+            logger.exception("[Doc-Section] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
+            return idx, f"### {section_title}\n- 生成失败"
+
+    tasks = [gen_section(i, s) for i, s in enumerate(sections)]
+    results = await asyncio.gather(*tasks)
+    results.sort(key=lambda x: x[0])
+
+    parts = [content for _, content in results if content]
+    combined = "\n\n".join(parts)
+    logger.info("[Doc-Parallel] 完成 章节数=%d 全程耗时=%.1fs", len(sections), time.perf_counter() - _t_total)
+
+    if stream_writer:
+        try:
+            stream_writer({"type": "stream_progress", "file_type": "document", "message": "文档生成完成", "current": total, "total": total})
+        except Exception:
+            pass
+
+    return combined
+
+
 async def executor_node(state: ResourceState) -> dict:
     """并行生成所有资源类型，PPT 通过 get_stream_writer 逐页流式推送"""
     topic = state["topic"]
@@ -407,16 +552,18 @@ async def executor_node(state: ResourceState) -> dict:
 
     writer = get_stream_writer()
 
-    # PPT 章节数：根据追问答案的 depth 决定，默认 10
+    # 章节数：根据追问答案的 depth 决定
     answers = state.get("answers", {}) or {}
     depth = answers.get("depth", "standard")
     ppt_section_count = PPT_SECTION_COUNT_BY_DEPTH.get(depth, PPT_DEFAULT_SECTIONS)
+    doc_section_count = DOC_SECTION_COUNT_BY_DEPTH.get(depth, DOC_DEFAULT_SECTIONS)
 
-    # 分离 PPT 和其他类型
+    # PPT / 文档 → 异步章节并行；其余 → 线程池
     has_ppt = "ppt" in resource_types
-    non_ppt_types = [rt for rt in resource_types if rt != "ppt"]
+    has_doc = "document" in resource_types or "case" in resource_types or "reading" in resource_types
+    thread_types = [rt for rt in resource_types if rt not in ("ppt", "document", "case", "reading")]
 
-    # 非 PPT 类型线程池并行
+    # 非 PPT/文档 类型线程池并行
     prompts = {
         rt: build_resource_prompt(
             rt, topic, portrait=portrait, kb=kb, guidance=guidance,
@@ -426,20 +573,21 @@ async def executor_node(state: ResourceState) -> dict:
             difficulty=state.get("exam_difficulty", "medium"),
             custom_prompts=custom_prompts, focus_guidance=focus_guidance,
         )
-        for rt in non_ppt_types
+        for rt in thread_types
     }
 
     user_id = state.get("user_id", "0")
-    max_workers = min(len(non_ppt_types), 5)
+    user_id_int = int(user_id)
+    max_workers = min(len(thread_types), 5)
     llm_priority = state.get("llm_priority", "high")
 
     def gen_one_sync(rt: str) -> tuple[str, str]:
         t_start = time.perf_counter()
         try:
             if rt == "image":
-                result = _generate_image_sync(prompts[rt], user_id, llm_priority)
+                result = _generate_image_sync(prompts[rt], user_id, user_id_int, llm_priority)
             else:
-                response = llm.invoke(prompts[rt], priority=llm_priority)
+                response = llm.invoke(prompts[rt], priority=llm_priority, user_id=user_id_int, pool="thread")
                 result = rt, response.content
             elapsed = time.perf_counter() - t_start
             logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
@@ -451,9 +599,7 @@ async def executor_node(state: ResourceState) -> dict:
 
     t_gen_start = time.perf_counter()
 
-    # PPT 与非 PPT 并行执行
-    ppt_task = None
-    other_futures = None
+    # PPT / 文档 / 其余 全部并行执行
     loop = asyncio.get_running_loop()
 
     async def _run_ppt():
@@ -467,19 +613,34 @@ async def executor_node(state: ResourceState) -> dict:
             section_count=ppt_section_count,
             ppt_prompt_key=state.get("ppt_prompt_key", "ppt"),
             llm_priority=llm_priority,
+            user_id=user_id_int,
+        )
+
+    async def _run_doc():
+        if not has_doc:
+            return None
+        return await generate_document_parallel(
+            topic, portrait=portrait, kb=kb, guidance=guidance,
+            feedback=feedback, user_notes=user_notes,
+            custom_prompts=custom_prompts,
+            stream_writer=writer,
+            section_count=doc_section_count,
+            llm_priority=llm_priority,
+            user_id=user_id_int,
         )
 
     ppt_coro = _run_ppt()
+    doc_coro = _run_doc()
 
-    if non_ppt_types:
+    if thread_types:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             other_futures = asyncio.gather(
-                *[loop.run_in_executor(pool, gen_one_sync, rt) for rt in non_ppt_types]
+                *[loop.run_in_executor(pool, gen_one_sync, rt) for rt in thread_types]
             )
-            ppt_content, other_results = await asyncio.gather(ppt_coro, other_futures)
+            ppt_content, doc_content, other_results = await asyncio.gather(ppt_coro, doc_coro, other_futures)
     else:
         other_results = []
-        ppt_content = await ppt_coro
+        ppt_content, doc_content = await asyncio.gather(ppt_coro, doc_coro)
 
     logger.info("[Executor] 全部生成完成 并行总耗时=%.2fs types=%s", time.perf_counter() - t_gen_start, resource_types)
 
@@ -499,6 +660,8 @@ async def executor_node(state: ResourceState) -> dict:
             generated[rt] = content
     if ppt_content:
         generated["ppt"] = ppt_content
+    if doc_content:
+        generated["document"] = doc_content
 
     return {
         "generated_resources": generated,
@@ -508,10 +671,10 @@ async def executor_node(state: ResourceState) -> dict:
     }
 
 
-def _generate_image_sync(prompt_text: str, user_id: str, llm_priority: str = "high") -> tuple[str, dict]:
+def _generate_image_sync(prompt_text: str, user_id: str, user_id_int: int = 0, llm_priority: str = "high") -> tuple[str, dict]:
     """两阶段图片生成：LLM 产出 prompt → ImageService 生图（线程内）"""
     try:
-        response = llm.invoke(prompt_text, priority=llm_priority)
+        response = llm.invoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="thread")
         image_prompt = response.content.strip()
     except Exception as e:
         logger.exception("图片 prompt 生成失败")
@@ -520,7 +683,7 @@ def _generate_image_sync(prompt_text: str, user_id: str, llm_priority: str = "hi
     try:
         from backend.src.service.image_service import ImageService
         image_prompt = image_prompt[:900]
-        images = asyncio.run(ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=2))
+        images = asyncio.run(ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=2, save_history=False))
         if images and len(images) > 0:
             return ("image:image", {"prompt": image_prompt, "url": images[0].get("url", "")})
     except Exception as e:
@@ -571,10 +734,11 @@ async def reviewer_node(state: ResourceState) -> dict:
     """ReviewerAgent: 每种资源类型由专用审核员独立审查，并行执行"""
     generated = state.get("generated_resources", {})
     llm_priority = state.get("llm_priority", "high")
+    user_id_int = int(state.get("user_id", 0))
 
     async def review_one(rt: str, content: str) -> dict:
-        # PPT 已在 generate_ppt_parallel 内部逐章节审核，此处跳过
-        if rt == "ppt":
+        # PPT / 文档 已在 generate_*_parallel 内部按章节生成，质量足够，跳过审核
+        if rt in ("ppt", "document", "case", "reading"):
             return {"passed": True, "score": 100, "feedback": ""}
         # API 生成的图片跳过文本审核
         file_urls = state.get("file_urls", {})
@@ -591,7 +755,7 @@ async def reviewer_node(state: ResourceState) -> dict:
                 topic=state.get("topic", ""),
                 kb_context=state.get("kb_context", "暂无相关知识库资料"),
             )
-            response = await llm.ainvoke(prompt_text, priority=llm_priority)
+            response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="reviewer")
             result = _parse_review_response(response.content)
             logger.info(f"[审核] {rt}: passed={result.get('passed')} score={result.get('score')}")
             return result
@@ -654,7 +818,7 @@ def _build_focus_guidance(answers: dict) -> str:
         parts.append("- 仅生成上述方向的内容，不要展开无关话题")
     if depth:
         depth_map = {
-            "overview": "- 深度：5分钟快速概览，只讲核心概念和关键结论，省略推导和案例",
+            "overview": "- 深度：极速概览，只讲核心概念和关键结论，省略推导和案例",
             "standard": "- 深度：标准讲解，涵盖原理和应用，适量举例",
             "deep": "- 深度：逐页详解，包含完整推导、案例分析和深入讨论",
         }

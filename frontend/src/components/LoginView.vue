@@ -200,6 +200,8 @@ const buildLoginPayload = () => {
 const saveLoginUser = (result) => {
   const user = result?.data || result?.user || result
 
+  localStorage.removeItem('zhiban_generation_tasks_v2')
+
   if (user?.token) {
     localStorage.setItem('token', user.token)
   }

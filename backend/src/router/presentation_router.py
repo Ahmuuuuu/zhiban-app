@@ -44,8 +44,6 @@ class QuestionsRequest(BaseModel):
 async def generate_presentation(data: GenerateRequest, user_id: int = Depends(get_user_id_from_token)):
     """生成动态 HTML 课件：学科介绍 → 思维导图 → PPT讲解 → EdgeTTS 配音"""
     result = await generate(data.topic, user_id, voice=data.voice, chapters=data.chapters, answers=data.answers, chat_group_id=data.chat_group_id)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -53,8 +51,6 @@ async def generate_presentation(data: GenerateRequest, user_id: int = Depends(ge
 async def get_questions(data: QuestionsRequest, user_id: int = Depends(get_user_id_from_token)):
     """AI 分析资源内容，返回 2-3 个选择题帮助用户聚焦课件方向"""
     result = await generate_questions(data.topic, user_id, chat_group_id=data.chat_group_id)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -78,8 +74,6 @@ async def get_presentation_detail(presentation_id: int, user_id: int = Depends(g
 async def preview_presentation(data: PreviewRequest, user_id: int = Depends(get_user_id_from_token)):
     """预览话题的可用章节，供用户选择"""
     result = await preview(data.topic, user_id)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
     return {"code": 200, "msg": "success", "data": result}
 
 
