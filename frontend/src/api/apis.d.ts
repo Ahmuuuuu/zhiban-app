@@ -91,13 +91,15 @@ export function generateImage(data: {
 
 export function getImageTaskStatus(taskId: string): Promise<unknown>;
 
-export function getGeneratedImages(): Promise<unknown>;
+export function getGeneratedImages(params?: Record<string, unknown>): Promise<unknown>;
 
 export function getGeneratedImage(imageId: number | string): Promise<unknown>;
 
 export function deleteGeneratedImage(imageId: number | string): Promise<unknown>;
 
-export function getGeneratedResources(): Promise<unknown>;
+export function publishGeneratedImage(imageId: number | string, visibility?: 'public' | 'private' | string): Promise<unknown>;
+
+export function getGeneratedResources(params?: Record<string, unknown>): Promise<unknown>;
 
 export function getGeneratedResource(resourceId: number | string): Promise<unknown>;
 
@@ -181,6 +183,8 @@ export function getPresentations(): Promise<unknown>;
 export function getPresentation(presentationId: number | string): Promise<unknown>;
 
 export function deleteGeneratedResource(resourceId: number | string): Promise<unknown>;
+
+export function publishGeneratedResource(resourceId: number | string, visibility?: 'public' | 'private' | string): Promise<unknown>;
 
 export function generateExamQuestions(data: {
   topic: string;
