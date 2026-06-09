@@ -5,6 +5,7 @@ from collections import OrderedDict
 from backend.src.ai_core.brain import Brain
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
+from backend.src.utils.chat_utils import allocate_chat_group_id
 
 logger = logging.getLogger(__name__)
 
@@ -132,16 +133,6 @@ def _get_or_create_chat(user_id: int, chat_group_id: int) -> Brain:
     return _chat_instances[instance_key]
 
 
-async def get_max_chat_group(user_id: int):
-    max_chat_group = await ChatHistory.filter(user_id=user_id).order_by("-chat_group_id").first()
-    if not max_chat_group or not max_chat_group.chat_group_id:
-        logger.info("文本对话分配首个聊天组 user_id=%s chat_group_id=1", user_id)
-        return 1
-    new_id = max_chat_group.chat_group_id + 1
-    logger.info("文本对话分配新聊天组 user_id=%s chat_group_id=%d", user_id, new_id)
-    return new_id
-
-
 class ChatService:
 
     @staticmethod
@@ -149,7 +140,7 @@ class ChatService:
         user = await User.filter(id=user_id).first()
         if not user:
             return None, "未查找到用户"
-        chat_group_id = await get_max_chat_group(user_id)
+        chat_group_id = await allocate_chat_group_id(user_id)
         bot = _get_or_create_chat(user_id, chat_group_id)
         path_context = await _build_path_context(user_id)
         portrait_context = await _build_portrait_context(user_id)
@@ -204,7 +195,7 @@ class ChatService:
             yield f"data: {json.dumps({'error': '未查找到用户'})}\n\n"
             yield "data: [DONE]\n\n"
             return
-        chat_group_id = await get_max_chat_group(user_id)
+        chat_group_id = await allocate_chat_group_id(user_id)
         async for event in ChatService._stream_chat(user_id, chat_group_id, user_req):
             yield event
 
@@ -230,21 +221,25 @@ class ChatService:
                 continue  # 跳过 chat_group_id 为 NULL 的旧记录
             if gid not in group_history:
                 group_history[gid] = []
-            group_history[gid].append({
-                "role": "user",
-                "type": "text",
-                "content": record.req,
-                "created_time": str(record.created_at) if record.created_at else None,
-            })
-            group_history[gid].append({
-                "role": "assistant",
-                "type": "text",
-                "content": record.res,
-                "created_time": str(record.created_at) if record.created_at else None,
-            })
+            if record.req:
+                group_history[gid].append({
+                    "role": "user",
+                    "type": "text",
+                    "content": record.req,
+                    "created_time": str(record.created_at) if record.created_at else None,
+                })
+            if record.res:
+                group_history[gid].append({
+                    "role": "assistant",
+                    "type": "text",
+                    "content": record.res,
+                    "created_time": str(record.created_at) if record.created_at else None,
+                })
 
         result = []
         for gid, messages in group_history.items():
+            if not messages:
+                continue
             first_user = next((m for m in messages if m["role"] == "user"), None)
             last_msg = messages[-1] if messages else None
             result.append({
@@ -262,8 +257,10 @@ class ChatService:
         messages = []
         for r in records:
             created_time = str(r.created_at) if r.created_at else None
-            messages.append({"role": "user", "type": "text", "content": r.req, "created_time": created_time})
-            messages.append({"role": "assistant", "type": "text", "content": r.res, "created_time": created_time})
+            if r.req:
+                messages.append({"role": "user", "type": "text", "content": r.req, "created_time": created_time})
+            if r.res:
+                messages.append({"role": "assistant", "type": "text", "content": r.res, "created_time": created_time})
         return messages, "返回消息列表成功"
 
     @staticmethod
