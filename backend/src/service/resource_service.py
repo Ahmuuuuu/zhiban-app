@@ -4,7 +4,7 @@ import logging
 import time
 import uuid
 
-from tortoise.expressions import F
+from tortoise.expressions import F, Q
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +301,56 @@ def build_cover_url(resource_type: str, file_url: str | None, resource_id: int) 
     return f"/static/covers/default_{resource_type}.svg"
 
 
+async def _resource_to_dict(record: GeneratedResource, current_user_id: int | None = None, include_content: bool = False) -> dict:
+    ext = _FILE_EXT_MAP.get(record.resource_type, "md")
+    content = record.content
+    preview = content[:200] if content else ""
+    if record.resource_type == "mindmap" and content:
+        try:
+            preview = parse_mindmap_text(content)
+            if include_content:
+                content = _format_mindmap_content(content)
+        except Exception:
+            logger.exception("思维导图 JSON 转换失败 resource_id=%s", record.id)
+
+    item = {
+        "resource_id": record.id,
+        "topic": record.topic,
+        "title": record.topic,
+        "resource_type": record.resource_type,
+        "filename": f"{record.topic}_{record.resource_type}.{ext}",
+        "file_type": ext,
+        "preview": preview,
+        "download_url": f"/resource/{record.id}/download",
+        "review_passed": record.review_passed,
+        "created_at": str(record.created_at),
+        "view_count": record.view_count,
+        "download_count": record.download_count,
+        "like_count": record.like_count,
+        "favorite_count": record.favorite_count,
+        "cover_url": record.cover_url,
+        "visibility": record.visibility or "private",
+        "owner_user_id": record.user_id,
+        "is_owner": bool(current_user_id and record.user_id == current_user_id),
+    }
+    if include_content:
+        item["content"] = content
+        item["retry_count"] = record.retry_count
+    if record.file_url:
+        item["file_url"] = record.file_url
+        item["url"] = record.file_url
+        item["preview_url"] = record.file_url if record.resource_type in ("html", "video") else ""
+
+    if current_user_id:
+        from backend.src.models.study_model import ResourceLike, ResourceCollection
+        item["liked"] = await ResourceLike.filter(user_id=current_user_id, resource_id=record.id).exists()
+        item["favorited"] = await ResourceCollection.filter(user_id=current_user_id, resource_id=record.id).exists()
+    else:
+        item["liked"] = False
+        item["favorited"] = False
+    return item
+
+
 async def _save_resources(topic: str, user_id: int, generated: dict, review_passed: bool, retry_count: int,
                           file_urls: dict | None = None) -> list[dict]:
     """存库并返回记录列表"""
@@ -332,6 +382,7 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
             "retry_count": record.retry_count,
             "file_url": record.file_url,
             "cover_url": cover_url,
+            "visibility": record.visibility or "private",
         })
     return saved
 
@@ -481,6 +532,7 @@ class ResourceService:
                                 "resource_id": record.id, "topic": topic,
                                 "resource_type": rt, "content": content,
                                 "review_passed": False, "retry_count": 0,
+                                "visibility": record.visibility or "private",
                             })
                             logger.info("[SSE] 即时存库 %s id=%s topic=%s", rt, record.id, topic)
                             yielded_types.add(rt)
@@ -566,11 +618,11 @@ class ResourceService:
 
     @staticmethod
     async def get_resource(resource_id: int, user_id: int) -> dict | None:
-        record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
+        record = await GeneratedResource.filter(Q(id=resource_id), Q(user_id=user_id) | Q(visibility="public")).first()
         if not record:
             return None
         # 原子递增查看计数
-        await GeneratedResource.filter(id=resource_id, user_id=user_id).update(
+        await GeneratedResource.filter(id=resource_id).update(
             view_count=F('view_count') + 1, last_viewed_at=datetime.now()
         )
         await record.refresh_from_db()
@@ -591,6 +643,9 @@ class ResourceService:
             "like_count": record.like_count,
             "favorite_count": record.favorite_count,
             "cover_url": record.cover_url,
+            "visibility": record.visibility or "private",
+            "owner_user_id": record.user_id,
+            "is_owner": record.user_id == user_id,
         }
         if record.file_url:
             result["file_url"] = record.file_url
@@ -642,8 +697,11 @@ class ResourceService:
         return result
 
     @staticmethod
-    async def list_resources(user_id: int) -> list[dict]:
-        records = await GeneratedResource.filter(user_id=user_id).order_by("-created_at").all()
+    async def list_resources(user_id: int, visibility: str | None = None) -> list[dict]:
+        if visibility == "public":
+            records = await GeneratedResource.filter(visibility="public").order_by("-created_at").all()
+        else:
+            records = await GeneratedResource.filter(user_id=user_id).order_by("-created_at").all()
         result = []
         for r in records:
             ext = _FILE_EXT_MAP.get(r.resource_type, "md")
@@ -668,6 +726,9 @@ class ResourceService:
                 "like_count": r.like_count,
                 "favorite_count": r.favorite_count,
                 "cover_url": r.cover_url,
+                "visibility": r.visibility or "private",
+                "owner_user_id": r.user_id,
+                "is_owner": r.user_id == user_id,
             }
             if r.file_url:
                 item["file_url"] = r.file_url
@@ -681,8 +742,19 @@ class ResourceService:
         return result
 
     @staticmethod
-    async def download_resource(resource_id: int, user_id: int) -> tuple[bytes, str, str] | None:
+    async def publish_resource(resource_id: int, user_id: int, visibility: str = "public") -> dict | None:
+        if visibility not in ("public", "private"):
+            visibility = "private"
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
+        if not record:
+            return None
+        record.visibility = visibility
+        await record.save(update_fields=["visibility", "updated_at"])
+        return await _resource_to_dict(record, user_id, include_content=True)
+
+    @staticmethod
+    async def download_resource(resource_id: int, user_id: int) -> tuple[bytes, str, str] | None:
+        record = await GeneratedResource.filter(Q(id=resource_id), Q(user_id=user_id) | Q(visibility="public")).first()
         if not record:
             return None
         record.download_count += 1

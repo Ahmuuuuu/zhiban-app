@@ -356,10 +356,9 @@ import {
   downloadWithToken,
   exportEditedPptx,
   favoriteResource,
-  getGeneratedImages,
   getGeneratedResource,
+  getGeneratedImages,
   getGeneratedResources,
-  getPresentations,
   getStudyResources,
   likeResource,
   resolveApiUrl,
@@ -517,7 +516,7 @@ const normalizeGeneratedImages = data => {
       type: 'image',
       category: 'reference',
       categoryLabel: 'AI 生成图片',
-      visibility: 'private',
+      visibility: item.visibility || 'private',
       quizId: '',
       sessionId: '',
       created_at: item.created_at || item.createdAt || '',
@@ -568,19 +567,21 @@ const loadResources = async () => {
   errorMessage.value = ''
 
   try {
-    const [publicResult, myResult, presentationResult] = await Promise.all([
+    const [publicResult, publicGeneratedResult, publicImageResult] = await Promise.all([
       getStudyResources({ visibility: 'public' }),
-      getStudyResources({ mine: true }),
-      getPresentations()
+      getGeneratedResources({ visibility: 'public' }),
+      getGeneratedImages({ visibility: 'public' })
     ])
     const publicResources = normalizeResources(publicResult).filter(item => item.visibility === 'public')
-    const myResources = normalizeResources(myResult)
-    const generatedResult = await getGeneratedResources()
-    const generatedBackendResources = normalizeGeneratedResources(generatedResult)
-    const imageResult = await getGeneratedImages()
-    const imageResources = normalizeGeneratedImages(imageResult)
-    const presentationResources = normalizePresentations(presentationResult)
-    resources.value = mergeImageDuplicates([...presentationResources, ...imageResources, ...generatedBackendResources, ...myResources, ...publicResources])
+    const publishedGeneratedResources = normalizeGeneratedResources(publicGeneratedResult)
+      .filter(item => item.visibility === 'public')
+      .map(resource => attachResourceCover({
+        ...resource,
+        categoryLabel: resource.categoryLabel || '用户公开',
+        visibility: 'public'
+      }, resource))
+    const publicImages = normalizeGeneratedImages(publicImageResult).filter(item => item.visibility === 'public')
+    resources.value = mergeImageDuplicates([...publicImages, ...publishedGeneratedResources, ...publicResources])
     selectedResource.value = resources.value[0] || null
     openNotificationTargetResource()
   } catch (error) {
@@ -840,6 +841,7 @@ const canReactResource = resource => Boolean(getReactionId(resource))
 
 const canEditResource = resource => {
   if (!resource) return false
+  if (resource.visibility === 'public') return false
   if (resource.source === 'generated' || resource.source === 'presentation') return true
   return resource.visibility !== 'public'
 }
@@ -1843,11 +1845,14 @@ onBeforeUnmount(() => {
 }
 
 .resource-cover {
-  height: 108px;
+  height: auto;
+  aspect-ratio: 13 / 7;
   border-radius: 16px;
   overflow: hidden;
-  background: rgba(237, 249, 252, 0.76);
-  box-shadow: inset 0 0 0 1px rgba(22, 63, 143, 0.08);
+  background: #e9eff3;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 0 0 1px rgba(22, 63, 143, 0.08);
   flex-shrink: 0;
 }
 
@@ -1855,7 +1860,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .resource-cover__video {

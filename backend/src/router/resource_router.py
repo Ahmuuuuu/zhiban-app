@@ -23,6 +23,10 @@ class ExportPptxRequest(BaseModel):
     slides: list[dict] = Field(default_factory=list)
 
 
+class ResourceVisibilityRequest(BaseModel):
+    visibility: str = Field(default="public", pattern="^(public|private)$")
+
+
 def _clean_bullet_text(value: str) -> str:
     return re.sub(r"^[-*•\s]+", "", str(value or "").strip())
 
@@ -189,9 +193,12 @@ async def stream_generation_task(
 
 
 @router.get("/list")
-async def list_resources(user_id : int = Depends(get_user_id_from_token)):
+async def list_resources(
+    user_id : int = Depends(get_user_id_from_token),
+    visibility: str | None = Query(None),
+):
     try :
-        records = await ResourceService.list_resources(user_id)
+        records = await ResourceService.list_resources(user_id, visibility=visibility)
         return {"code" : 200, "msg" : "success", "data" : records}
     except HTTPException :
         raise
@@ -202,6 +209,23 @@ async def list_resources(user_id : int = Depends(get_user_id_from_token)):
 # ═══════════════════════════════════════
 #  Skill 管理
 # ═══════════════════════════════════════
+
+@router.post("/{resource_id}/visibility")
+async def update_resource_visibility(
+    resource_id: int,
+    data: ResourceVisibilityRequest = Body(...),
+    user_id: int = Depends(get_user_id_from_token),
+):
+    try:
+        record = await ResourceService.publish_resource(resource_id, user_id, data.visibility)
+        if record is None:
+            return {"code": 404, "msg": "资源不存在或无权操作"}
+        return {"code": 200, "msg": "success", "data": record}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "更新资源可见性失败")
+
 
 @router.post("/skill/upsert")
 async def upsert_skill(

@@ -11,7 +11,7 @@
       <nav class="nav-links">
         <router-link to="/" class="nav-pill" exact>首页</router-link>
         <router-link to="/chat" class="nav-pill">AI 对话</router-link>
-        <router-link to="/resources" class="nav-pill">资源中心</router-link>
+        <router-link to="/resources" class="nav-pill" :class="{ active: isResourceSection }">资源中心</router-link>
         <router-link to="/learning-path" class="nav-pill">学习路径</router-link>
         <router-link to="/learning-situation" class="nav-pill">学习情况</router-link>
       </nav>
@@ -50,14 +50,20 @@
 
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { Bell, Pause, Play, Square } from 'lucide-vue-next'
 import UserAccountButton from './UserAccountButton.vue'
 import { getUnreadNotificationCount } from '../api/apis'
 import { useResourceNarration } from '../composables/useResourceNarration'
 
 const unreadCount = ref(0)
+const route = useRoute()
 let pollTimer = null
 const { narrationState, toggleCurrentAudio, stopCurrentAudio } = useResourceNarration()
+
+const isResourceSection = computed(() => {
+  return route.path === '/resources' || route.path === '/learning-resources'
+})
 
 const audioVisible = computed(() => {
   return Boolean(narrationState.value.resourceId && (narrationState.value.sections.length || narrationState.value.loading))
@@ -226,7 +232,8 @@ onBeforeUnmount(() => {
 }
 
 .nav-pill.router-link-active,
-.nav-pill.router-link-exact-active {
+.nav-pill.router-link-exact-active,
+.nav-pill.active {
   background:
     radial-gradient(circle at 18% 10%, rgba(95, 143, 195, 0.32), transparent 45%),
     #143761;
@@ -238,7 +245,8 @@ onBeforeUnmount(() => {
 }
 
 .nav-pill.router-link-active:hover,
-.nav-pill.router-link-exact-active:hover {
+.nav-pill.router-link-exact-active:hover,
+.nav-pill.active:hover {
   background:
     radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.2), transparent 45%),
     #143761;

@@ -404,7 +404,7 @@ const normalizeGeneratedImages = data => {
       type: 'image',
       category: 'reference',
       categoryLabel: 'AI 生成图片',
-      visibility: 'private',
+      visibility: item.visibility || 'private',
       quizId: '',
       sessionId: '',
       created_at: item.created_at || item.createdAt || '',

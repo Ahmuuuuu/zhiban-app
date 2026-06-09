@@ -4,6 +4,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Depends, Body, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from tortoise.expressions import Q
 
 from backend.src.service.image_service import ImageService
 from backend.src.models.image_model import GeneratedImage
@@ -13,6 +15,10 @@ from backend.src.utils.jwt import get_user_id_from_token
 router = APIRouter(prefix="/image", tags=["AI 图片生成"])
 
 IMAGES_DIR = Path(__file__).parent.parent.parent / "static" / "images"
+
+
+class ImageVisibilityRequest(BaseModel):
+    visibility: str = Field(default="public", pattern="^(public|private)$")
 
 
 @router.post("/generate")
@@ -46,10 +52,16 @@ async def get_task_status(task_id: str):
 
 
 @router.get("/list")
-async def list_images(user_id: int = Depends(get_user_id_from_token)):
+async def list_images(
+    user_id: int = Depends(get_user_id_from_token),
+    visibility: str | None = Query(None),
+):
     """列出当前用户生成的所有图片"""
     try:
-        records = await GeneratedImage.filter(user_id=user_id).order_by("-created_at").all()
+        if visibility == "public":
+            records = await GeneratedImage.filter(visibility="public").order_by("-created_at").all()
+        else:
+            records = await GeneratedImage.filter(user_id=user_id).order_by("-created_at").all()
         data = [
             {
                 "image_id": r.id,
@@ -57,6 +69,9 @@ async def list_images(user_id: int = Depends(get_user_id_from_token)):
                 "filename": r.filename,
                 "url": f"/static/images/{r.filename}",
                 "aspect_ratio": r.aspect_ratio,
+                "visibility": r.visibility or "private",
+                "owner_user_id": r.user_id,
+                "is_owner": r.user_id == user_id,
                 "created_at": str(r.created_at),
             }
             for r in records
@@ -66,6 +81,37 @@ async def list_images(user_id: int = Depends(get_user_id_from_token)):
         raise HTTPException(500, "服务器错误")
 
 
+@router.post("/{image_id}/visibility")
+async def update_image_visibility(
+    image_id: int,
+    data: ImageVisibilityRequest = Body(...),
+    user_id: int = Depends(get_user_id_from_token),
+):
+    try:
+        r = await GeneratedImage.filter(id=image_id, user_id=user_id).first()
+        if not r:
+            return {"code": 404, "msg": "图片不存在或无权操作"}
+        r.visibility = data.visibility
+        await r.save(update_fields=["visibility"])
+        return {
+            "code": 200,
+            "msg": "success",
+            "data": {
+                "image_id": r.id,
+                "prompt": r.prompt,
+                "filename": r.filename,
+                "url": f"/static/images/{r.filename}",
+                "aspect_ratio": r.aspect_ratio,
+                "visibility": r.visibility,
+                "owner_user_id": r.user_id,
+                "is_owner": True,
+                "created_at": str(r.created_at),
+            },
+        }
+    except Exception:
+        raise HTTPException(500, "更新图片可见性失败")
+
+
 @router.get("/{image_id}")
 async def get_image(
     image_id: int,
@@ -73,7 +119,7 @@ async def get_image(
 ):
     """获取单张图片的详情"""
     try:
-        r = await GeneratedImage.filter(id=image_id, user_id=user_id).first()
+        r = await GeneratedImage.filter(Q(id=image_id), Q(user_id=user_id) | Q(visibility="public")).first()
         if not r:
             return {"code": 404, "msg": "图片不存在"}
         return {
@@ -85,6 +131,9 @@ async def get_image(
                 "filename": r.filename,
                 "url": f"/static/images/{r.filename}",
                 "aspect_ratio": r.aspect_ratio,
+                "visibility": r.visibility or "private",
+                "owner_user_id": r.user_id,
+                "is_owner": r.user_id == user_id,
                 "created_at": str(r.created_at),
             },
         }
@@ -99,7 +148,7 @@ async def download_image(
 ):
     """下载图片文件"""
     try:
-        r = await GeneratedImage.filter(id=image_id, user_id=user_id).first()
+        r = await GeneratedImage.filter(Q(id=image_id), Q(user_id=user_id) | Q(visibility="public")).first()
         if not r:
             return {"code": 404, "msg": "图片不存在"}
         filepath = IMAGES_DIR / r.filename

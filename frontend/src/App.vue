@@ -56,6 +56,7 @@ function resolveComponent(targetRoute) {
 // Must match TopNav order exactly: 首页→AI对话→资源中心→学习路径→学习情况
 const navOrder = ['/', '/chat', '/resources', '/learning-path', '/learning-situation']
 function navIndex(p) {
+  if (p.startsWith('/learning-resources')) return navOrder.indexOf('/resources')
   const i = navOrder.indexOf(p)
   if (i !== -1) return i
   for (let j = navOrder.length - 1; j >= 0; j--) {

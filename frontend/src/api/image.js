@@ -17,8 +17,8 @@ export function getImageTaskStatus(taskId) {
   return request.get(`/image/status/${taskId}`)
 }
 
-export function getGeneratedImages() {
-  return request.get('/image/list')
+export function getGeneratedImages(params = {}) {
+  return request.get('/image/list', { params })
 }
 
 export function getGeneratedImage(imageId) {
@@ -27,4 +27,8 @@ export function getGeneratedImage(imageId) {
 
 export function deleteGeneratedImage(imageId) {
   return request.delete(`/image/${imageId}`)
+}
+
+export function publishGeneratedImage(imageId, visibility = 'public') {
+  return request.post(`/image/${imageId}/visibility`, { visibility })
 }

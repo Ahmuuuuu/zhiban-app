@@ -14,6 +14,18 @@ if "mysql://" in database and "minsize" not in database:
 #幂等初始化连接数据库，防止数据库重复连接
 _DB_INITIALIZED = False
 
+async def _ensure_generated_resource_visibility_column():
+    conn = Tortoise.get_connection("default")
+    try:
+        await conn.execute_query("ALTER TABLE generated_resources ADD COLUMN visibility VARCHAR(10) NOT NULL DEFAULT 'private'")
+    except Exception:
+        # Column already exists or database does not support this ALTER form.
+        pass
+    try:
+        await conn.execute_query("ALTER TABLE generated_images ADD COLUMN visibility VARCHAR(10) NOT NULL DEFAULT 'private'")
+    except Exception:
+        pass
+
 async def init_db():
     global _DB_INITIALIZED
     if _DB_INITIALIZED :
@@ -23,6 +35,7 @@ async def init_db():
         modules={"models": ["backend.src.models.usermodel", "backend.src.models.chat_history_model", "backend.src.models.portraitmodel", "backend.src.models.portrait_radar_model", "backend.src.models.knowledgemodel", "backend.src.models.resource_model", "backend.src.models.agent_skill_model", "backend.src.models.image_model", "backend.src.models.exam_model", "backend.src.models.path_model", "backend.src.models.narration_model", "backend.src.models.study_model", "backend.src.models.presentation_model", "backend.src.models.task_model", "backend.src.models.email_code_model", "backend.src.models.notification_model", "backend.src.models.curriculum_model", "backend.src.models.annotation_model"]}
     )
     await Tortoise.generate_schemas()
+    await _ensure_generated_resource_visibility_column()
     _DB_INITIALIZED = True
 
 async def close_db():
