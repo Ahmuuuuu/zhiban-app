@@ -69,7 +69,7 @@
     </aside>
 
     <main class="main">
-<section class="chat-content" ref="chatContentRef">
+<section class="chat-content" ref="chatContentRef" @scroll="handleChatScroll">
   <div v-if="historyLoading" class="history-loading">
     正在加载历史对话...
   </div>
@@ -584,6 +584,16 @@ const historyLoading = ref(false)
 const deletingConversationId = ref('')
 const loading = ref(false)
 const chatContentRef = ref(null)
+const userScrolledUp = ref(false)
+const SCROLL_THRESHOLD = 80
+
+const handleChatScroll = () => {
+  const el = chatContentRef.value
+  if (!el) return
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  userScrolledUp.value = distanceFromBottom > SCROLL_THRESHOLD
+}
+
 const saveDialog = ref({
   visible: false,
   visibility: 'private',
@@ -1907,7 +1917,8 @@ const isVideoFile = message => {
   return text.includes('video') || text.includes('视频')
 }
 
-const scrollToBottom = async () => {
+const scrollToBottom = async (force = false) => {
+  if (!force && userScrolledUp.value) return
   await nextTick()
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -1965,7 +1976,7 @@ const handleConfirmAnswers = async (message) => {
 
   await answerQuestionsAndGenerate(task, message._answers || {})
   await loadConversationList()
-  await scrollToBottom()
+  await scrollToBottom(true)
 }
 
 const handleGenerationDone = async eventData => {
@@ -2218,7 +2229,7 @@ const sendMessage = async () => {
     time: getNowTime()
   })
 
-  await scrollToBottom()
+  await scrollToBottom(true)
 
   loading.value = true
 
@@ -2231,7 +2242,7 @@ const sendMessage = async () => {
       window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
       attachGenerationTaskToMessage(task, loadingMessageId)
-      await scrollToBottom()
+      await scrollToBottom(true)
       return
     }
 
@@ -2242,7 +2253,7 @@ const sendMessage = async () => {
       window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
       attachGenerationTaskToMessage(task, loadingMessageId)
-      await scrollToBottom()
+      await scrollToBottom(true)
       return
     }
 
@@ -2419,7 +2430,7 @@ const openConversation = async (conversationId) => {
       console.warn('[ChatView] restore generation tasks failed:', error)
     })
     restoreGenerationTasksInChat()
-    await scrollToBottom()
+    await scrollToBottom(true)
   } catch (error) {
     console.error('获取历史对话详情失败：', error)
 
