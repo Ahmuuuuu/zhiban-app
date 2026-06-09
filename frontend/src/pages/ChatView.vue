@@ -1984,116 +1984,126 @@ const attachGenerationTaskToMessage = (task, messageId) => {
   watch(
     () => [task.progress, task.status, task.files.length, task.images.length, task.updatedAt],
     async () => {
-      if (task.chatGroupId && !activeConversationId.value && !preventAutoConversationSwitch.value) {
+      // 任务是否属于当前显示的对话：chatGroupId 未分配或未匹配时视为外来任务
+      const taskChatId = task.chatGroupId
+      const currentChatId = activeConversationId.value
+      const taskIsForeign = taskChatId != null && currentChatId != null && String(taskChatId) !== String(currentChatId)
+
+      if (!taskIsForeign && task.chatGroupId && !activeConversationId.value && !preventAutoConversationSwitch.value) {
         activeConversationId.value = task.chatGroupId
         await loadConversationList()
       }
 
-      const target = messages.value.find(item => item.id === messageId)
+      if (!taskIsForeign) {
+        const target = messages.value.find(item => item.id === messageId)
 
-      if (target) {
-        if (task.status === 'failed') {
-          target.content = task.error || '资源生成失败，请稍后再试。'
-        } else {
-          let text = task.progress || '正在生成资源...'
-          if (task.images.length > 0 || task.files.length > 0) {
-            text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim()
+        if (target) {
+          if (task.status === 'failed') {
+            target.content = task.error || '资源生成失败，请稍后再试。'
+          } else {
+            let text = task.progress || '正在生成资源...'
+            if (task.images.length > 0 || task.files.length > 0) {
+              text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim()
+            }
+            target.content = text
           }
-          target.content = text
+          target.time = getNowTime()
         }
-        target.time = getNowTime()
-      }
 
-      if (task.status === 'done' && task.tool?.generateMode === 'video') {
-        await maybeGeneratePresentation(task)
-        // 课件生成完后刷新左侧历史列表
-        await loadConversationList()
+        if (task.status === 'done' && task.tool?.generateMode === 'video') {
+          await maybeGeneratePresentation(task)
+          await loadConversationList()
+        }
       }
 
       // 追问环节：检测 pendingQuestions 并渲染交互消息
-      const pendingQuestions = (task as any).pendingQuestions
-      if (pendingQuestions && !(task as any)._questionsMsgId) {
-        const qMsgId = `questions-${task.id}`
-        ;(task as any)._questionsMsgId = qMsgId
-        messages.value.push({
-          id: qMsgId,
-          role: 'assistant',
-          type: 'questions',
-          taskId: task.id,
-          questions: pendingQuestions,
-          _answers: {},
-          time: getNowTime()
-        })
-      }
-
-      // PPT 流式内容只缓存，不自动弹出预览；用户点击“预览”后才展示。
-      const pptStream = (task as any)._pptStream
-      if (pptStream && pptPreview.value.visible && pptPreview.value.messageId === messageId) {
-        const streamedCount = (task as any)._pptSlideCursor || 0
-        if (streamedCount < pptStream.slides.length) {
-          ;(task as any)._pptSlideCursor = pptStream.slides.length
-          const baseIdx = pptPreview.value.slides.length
-          const newSlides = pptStream.slides.slice(streamedCount).map((content, i) => {
-            const slide = parseSingleSlide(content)
-            return { ...slide, index: baseIdx + i }
+      if (!taskIsForeign) {
+        const pendingQuestions = (task as any).pendingQuestions
+        if (pendingQuestions && !(task as any)._questionsMsgId) {
+          const qMsgId = `questions-${task.id}`
+          ;(task as any)._questionsMsgId = qMsgId
+          messages.value.push({
+            id: qMsgId,
+            role: 'assistant',
+            type: 'questions',
+            taskId: task.id,
+            questions: pendingQuestions,
+            _answers: {},
+            time: getNowTime()
           })
-          pptPreview.value = {
-            ...pptPreview.value,
-            loading: false,
-            slides: [...pptPreview.value.slides, ...newSlides]
-          }
         }
       }
 
-      while (fileCursor < task.files.length) {
-        const file = task.files[fileCursor]
-        fileCursor += 1
-        // 视频模式：中间资源文件（document/ppt/mindmap）不展示，最终课件文件才展示
-        if (task.tool?.generateMode === 'video' && file.file_type !== 'video' && file.resource_type !== 'video') {
-          continue
-        }
-        await appendFileMessage(file)
-
-        // PPT 全量文件到达 → 用完整内容刷新预览
-        if (isPptFile(file) && pptPreview.value.visible) {
-          const fullSlides = parsePptSlidesFromContent(file.content || file.text || '')
-          const resourceId = getFileResourceId(file)
-          pptPreview.value = {
-            ...pptPreview.value,
-            loading: false,
-            resourceId: resourceId || pptPreview.value.resourceId,
-            slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
-            title: file.filename || pptPreview.value.title
+      // PPT 流式内容只缓存，不自动弹出预览；用户点击”预览”后才展示。
+      if (!taskIsForeign) {
+        const pptStream = (task as any)._pptStream
+        if (pptStream && pptPreview.value.visible && pptPreview.value.messageId === messageId) {
+          const streamedCount = (task as any)._pptSlideCursor || 0
+          if (streamedCount < pptStream.slides.length) {
+            ;(task as any)._pptSlideCursor = pptStream.slides.length
+            const baseIdx = pptPreview.value.slides.length
+            const newSlides = pptStream.slides.slice(streamedCount).map((content, i) => {
+              const slide = parseSingleSlide(content)
+              return { ...slide, index: baseIdx + i }
+            })
+            pptPreview.value = {
+              ...pptPreview.value,
+              loading: false,
+              slides: [...pptPreview.value.slides, ...newSlides]
+            }
           }
         }
-      }
 
-      while (imageCursor < task.images.length) {
-        appendImageMessage(
-          task.images[imageCursor],
-          task.tool?.generateMode === 'image' && imageCursor === 0 ? messageId : ''
-        )
-        imageCursor += 1
+        while (fileCursor < task.files.length) {
+          const file = task.files[fileCursor]
+          fileCursor += 1
+          if (task.tool?.generateMode === 'video' && file.file_type !== 'video' && file.resource_type !== 'video') {
+            continue
+          }
+          await appendFileMessage(file)
+
+          if (isPptFile(file) && pptPreview.value.visible) {
+            const fullSlides = parsePptSlidesFromContent(file.content || file.text || '')
+            const resourceId = getFileResourceId(file)
+            pptPreview.value = {
+              ...pptPreview.value,
+              loading: false,
+              resourceId: resourceId || pptPreview.value.resourceId,
+              slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
+              title: file.filename || pptPreview.value.title
+            }
+          }
+        }
+
+        while (imageCursor < task.images.length) {
+          appendImageMessage(
+            task.images[imageCursor],
+            task.tool?.generateMode === 'image' && imageCursor === 0 ? messageId : ''
+          )
+          imageCursor += 1
+        }
+      } else {
+        // 外来任务：只推进游标不往当前界面塞消息
+        fileCursor = task.files.length
+        imageCursor = task.images.length
       }
 
       if (task.status === 'done' && !doneHandled) {
         doneHandled = true
         const doneEvent = task.doneEvent || {}
-        // 同步 chatGroupId（新对话在任务期间才获得 ID）
         if (doneEvent.chat_group_id && !task.chatGroupId) {
           task.chatGroupId = doneEvent.chat_group_id
         }
-        // 视频模式不需要 handleGenerationDone 追加中间资源，
-        // 课件文件已由 while loop 追加到聊天消息中
-        if (task.tool?.generateMode === 'video') {
-          // 仅在新对话（尚未分配 ID）时同步 chatGroupId，避免后台任务覆盖用户当前所在对话
-          if (doneEvent.chat_group_id && !activeConversationId.value && !preventAutoConversationSwitch.value) {
-            activeConversationId.value = doneEvent.chat_group_id
+        if (!taskIsForeign) {
+          if (task.tool?.generateMode === 'video') {
+            if (doneEvent.chat_group_id && !activeConversationId.value && !preventAutoConversationSwitch.value) {
+              activeConversationId.value = doneEvent.chat_group_id
+            }
+            await loadConversationList()
+            window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
+          } else {
+            await handleGenerationDone(doneEvent)
           }
-          await loadConversationList()
-          window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
-        } else {
-          await handleGenerationDone(doneEvent)
         }
       }
 
