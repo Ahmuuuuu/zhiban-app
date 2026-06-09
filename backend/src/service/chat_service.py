@@ -268,8 +268,10 @@ class ChatService:
         user = await User.filter(id=user_id).first()
         if not user:
             return None, None, "未查找到该用户"
-        records = await ChatHistory.filter(user__id=user_id, chat_group_id=chat_group_id).all()
+        records = await ChatHistory.filter(user_id=user_id, chat_group_id=chat_group_id).all()
         if not records:
             return None, None, "未查找到该聊天组"
-        await ChatHistory.filter(user__id=user_id, chat_group_id=chat_group_id).delete()
+        await ChatHistory.filter(user_id=user_id, chat_group_id=chat_group_id).delete()
+        from backend.src.models.task_model import GenerationTask
+        await GenerationTask.filter(chat_group_id=chat_group_id, user_id=user_id).delete()
         return user_id, chat_group_id, "删除成功"
