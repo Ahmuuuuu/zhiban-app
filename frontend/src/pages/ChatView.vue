@@ -167,6 +167,10 @@
             PPT 已生成，可以打开幻灯片预览。
           </div>
 
+          <div v-else-if="isDocumentFile(message)" class="file-placeholder">
+            {{ message.content ? '文档已生成，点击下方预览按钮查看完整内容' : '文档已生成，点击预览加载内容' }}
+          </div>
+
           <AnnotatedTextPreview
             v-else-if="message.content && canAnnotateFile(message)"
             class="file-preview annotated-chat-preview"
@@ -193,8 +197,8 @@
             </button>
             <button v-if="isVideoFile(message) && message.previewUrl" type="button" @click="openPresentationPlayer(message)">打开课件</button>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
-            <button v-if="isDocumentFile(message) && !message.content && getFileResourceId(message)" type="button" @click="loadDocumentPreview(message)">
-              {{ message._documentLoading ? '加载中...' : '预览' }}
+            <button v-if="isDocumentFile(message) && getFileResourceId(message)" type="button" @click="openDocumentPreview(message)">
+              {{ documentPreview.loading && documentPreview.messageId === message.id ? '加载中...' : '预览' }}
             </button>
             <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
             <button
@@ -347,6 +351,27 @@
               @export-pptx="exportChatPptx"
             />
             <div v-else class="ppt-dialog__loading">暂无可预览的幻灯片内容。</div>
+          </div>
+        </article>
+      </section>
+    </Teleport>
+
+    <Teleport to="body">
+      <section v-if="documentPreview.visible" class="doc-dialog" @click.self="closeDocumentPreview">
+        <article class="doc-dialog__panel">
+          <header class="doc-dialog__header">
+            <div>
+              <span>文档预览</span>
+              <h2>{{ documentPreview.title }}</h2>
+            </div>
+            <button type="button" aria-label="关闭文档预览" @click="closeDocumentPreview">
+              <X :size="20" />
+            </button>
+          </header>
+
+          <div class="doc-dialog__body">
+            <div v-if="documentPreview.loading" class="doc-dialog__loading">正在加载文档内容...</div>
+            <pre v-else class="doc-dialog__content">{{ documentPreview.content }}</pre>
           </div>
         </article>
       </section>
@@ -1008,6 +1033,14 @@ const pptPreview = ref({
   annotations: []
 })
 
+const documentPreview = ref({
+  visible: false,
+  loading: false,
+  messageId: '',
+  title: '',
+  content: ''
+})
+
 const normalizeFileMessage = data => {
   const hasPresentationUrl = Boolean(data.presentation_url || data.presentationUrl || data.file_url || data.fileUrl)
   const resourceKind = data.resourceKind || data.kind || (hasPresentationUrl ? 'presentation' : 'resource')
@@ -1603,13 +1636,7 @@ const appendFileMessage = async fileData => {
   }
 
   const fileMessage = normalizeFileMessage(fileData)
-  // 按 fileId 精确去重；课件额外按 previewUrl 去重，避免同一视频卡片重复出现
-  let existingIndex = messages.value.findIndex(item => {
-    if (item.type !== 'file') return false
-    if (item.fileId && item.fileId === fileMessage.fileId) return true
-    if (fileMessage.previewUrl && item.previewUrl === fileMessage.previewUrl) return true
-    return false
-  })
+  let existingIndex = findDuplicateFileIndex(fileMessage)
   const fallbackIndex = existingIndex === -1 && fileMessage.fileType
     ? messages.value.findIndex(item => item.type === 'file' && !item.fileId && item.fileType === fileMessage.fileType)
     : existingIndex
@@ -1649,10 +1676,38 @@ const normalizeImageFileMessage = imageData => {
   })
 }
 
+const findDuplicateFileIndex = (fileMessage) => {
+  return messages.value.findIndex(item => {
+    if (item.type !== 'file') return false
+    if (item.fileId && item.fileId === fileMessage.fileId) return true
+    if (fileMessage.previewUrl && item.previewUrl === fileMessage.previewUrl) return true
+    if (fileMessage.downloadUrl && item.downloadUrl === fileMessage.downloadUrl) return true
+    return false
+  })
+}
+
 const appendImageMessage = (imageData, targetMessageId = '') => {
   const fileMessage = normalizeImageFileMessage(imageData)
-  const target = targetMessageId ? messages.value.find(item => item.id === targetMessageId) : null
 
+  // 先检查是否已有相同图片（历史记录中可能存在），避免重复显示
+  const existingIdx = findDuplicateFileIndex(fileMessage)
+  if (existingIdx !== -1) {
+    // 更新已有图片消息的数据，并移除占位消息
+    Object.assign(messages.value[existingIdx], {
+      ...fileMessage,
+      id: messages.value[existingIdx].id,
+      content: fileMessage.content || messages.value[existingIdx].content || '',
+      centerSaveStatus: messages.value[existingIdx].centerSaveStatus || '',
+      time: messages.value[existingIdx].time || getNowTime()
+    })
+    if (targetMessageId) {
+      const targetIdx = messages.value.findIndex(item => item.id === targetMessageId)
+      if (targetIdx !== -1) messages.value.splice(targetIdx, 1)
+    }
+    return
+  }
+
+  const target = targetMessageId ? messages.value.find(item => item.id === targetMessageId) : null
   if (target) {
     Object.assign(target, {
       ...fileMessage,
@@ -1927,24 +1982,54 @@ const isDocumentFile = message => {
   return true
 }
 
-const loadDocumentPreview = async message => {
-  const resourceId = getFileResourceId(message)
-  if (!resourceId || message._documentLoading) return
+const openDocumentPreview = async message => {
+  // 如果还没加载过内容，先从后端拉取
+  if (!message.content) {
+    const resourceId = getFileResourceId(message)
+    if (!resourceId) return
 
-  message._documentLoading = true
-  try {
-    const res = await getGeneratedResource(resourceId)
-    const data = getResponseData(res)?.data || getResponseData(res)
-    Object.assign(message, {
-      content: data.content || data.preview || data.preview_content || message.content || '',
-      filename: data.filename || data.title || data.topic || message.filename,
-    })
-  } catch (error) {
-    console.error('[ChatView] load document preview failed:', error)
-    window.alert('文档预览加载失败，请稍后重试')
-  } finally {
-    message._documentLoading = false
+    documentPreview.value = {
+      visible: true,
+      loading: true,
+      messageId: message.id,
+      title: message.filename || '文档预览',
+      content: ''
+    }
+
+    try {
+      const res = await getGeneratedResource(resourceId)
+      const data = getResponseData(res)?.data || getResponseData(res)
+      const content = data.content || data.preview || data.preview_content || ''
+      Object.assign(message, {
+        content,
+        filename: data.filename || data.title || data.topic || message.filename,
+      })
+      documentPreview.value = {
+        visible: true,
+        loading: false,
+        messageId: message.id,
+        title: message.filename || '文档预览',
+        content
+      }
+    } catch (error) {
+      console.error('[ChatView] load document preview failed:', error)
+      window.alert('文档预览加载失败，请稍后重试')
+      documentPreview.value.visible = false
+    }
+    return
   }
+
+  documentPreview.value = {
+    visible: true,
+    loading: false,
+    messageId: message.id,
+    title: message.filename || '文档预览',
+    content: message.content
+  }
+}
+
+const closeDocumentPreview = () => {
+  documentPreview.value = { visible: false, loading: false, messageId: '', title: '', content: '' }
 }
 
 const scrollToBottom = async (force = false) => {
@@ -3721,6 +3806,97 @@ textarea::placeholder {
 
 .ppt-dialog__loading {
   min-height: 360px;
+  display: grid;
+  place-items: center;
+  color: var(--primary-soft);
+  font-weight: 900;
+}
+
+/* ── 文档预览弹窗 ── */
+.doc-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 4300;
+  display: grid;
+  place-items: center;
+  padding: clamp(12px, 2vw, 24px);
+  background: rgba(12, 28, 58, 0.34);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.doc-dialog__panel {
+  width: min(900px, 98vw);
+  max-height: 90vh;
+  border: 1px solid rgba(201, 220, 233, 0.85);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 28px 90px rgba(22, 63, 143, 0.24);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-dialog__header {
+  min-height: 68px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.doc-dialog__header span {
+  color: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.doc-dialog__header h2 {
+  margin: 3px 0 0;
+  color: var(--primary);
+  font-size: 20px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70vw;
+}
+
+.doc-dialog__header button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(201, 220, 233, 0.86);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.doc-dialog__body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px;
+}
+
+.doc-dialog__content {
+  margin: 0;
+  color: var(--primary);
+  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.85;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.doc-dialog__loading {
+  min-height: 200px;
   display: grid;
   place-items: center;
   color: var(--primary-soft);
