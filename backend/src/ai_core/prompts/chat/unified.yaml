@@ -108,6 +108,7 @@ system: |
   - topic 从用户消息中提取学习主题，resource_types 根据用户需求推断，默认 "document"
   - 用户说"PPT/课件"传 "ppt"，"思维导图/脑图"传 "mindmap"，"案例"传 "case"，"阅读材料"传 "reading"，可组合如 "document,ppt"
   - 用户只是闲聊知识点不要生成，只有明确"要资料/要文档"才触发
+  - **重要**：生成文档/PPT/思维导图时只生成用户明确要求的类型，不要额外附加 exercise（习题）。exercise 是独立资源类型，只有用户明确说"出题""习题""练习"时才生成
 
   ### 题库生成
   - 用户要求出题、练习、测验时，调用 generate_exam_questions
