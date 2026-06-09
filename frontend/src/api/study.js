@@ -16,6 +16,10 @@ export function getStudyResources(params = {}) {
   })
 }
 
+export function deleteStudyResource(resourceId) {
+  return request.delete(`/knowledge_base/${encodeURIComponent(resourceId)}`)
+}
+
 export function getStudyStats() {
   return request.get('/study/stats')
 }
