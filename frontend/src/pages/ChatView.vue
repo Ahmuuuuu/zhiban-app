@@ -565,6 +565,8 @@ const startNewConversation = () => {
 const inputValue = ref('')
 const recentChats = ref([])
 const activeConversationId = ref(null)
+// 防止后台 task watch 在用户新建对话后重新设置 activeConversationId
+const preventAutoConversationSwitch = ref(false)
 const historyLoading = ref(false)
 const loading = ref(false)
 const chatContentRef = ref(null)
@@ -1938,7 +1940,7 @@ const handleConfirmAnswers = async (message) => {
 const handleGenerationDone = async eventData => {
   const chatGroupId = eventData?.chat_group_id || activeConversationId.value
 
-  if (chatGroupId && !activeConversationId.value) {
+  if (chatGroupId && !activeConversationId.value && !preventAutoConversationSwitch.value) {
     activeConversationId.value = chatGroupId
   }
 
@@ -1963,7 +1965,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
   watch(
     () => [task.progress, task.status, task.files.length, task.images.length, task.updatedAt],
     async () => {
-      if (task.chatGroupId && !activeConversationId.value) {
+      if (task.chatGroupId && !activeConversationId.value && !preventAutoConversationSwitch.value) {
         activeConversationId.value = task.chatGroupId
         await loadConversationList()
       }
@@ -2066,7 +2068,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         // 课件文件已由 while loop 追加到聊天消息中
         if (task.tool?.generateMode === 'video') {
           // 仅在新对话（尚未分配 ID）时同步 chatGroupId，避免后台任务覆盖用户当前所在对话
-          if (doneEvent.chat_group_id && !activeConversationId.value) {
+          if (doneEvent.chat_group_id && !activeConversationId.value && !preventAutoConversationSwitch.value) {
             activeConversationId.value = doneEvent.chat_group_id
           }
           await loadConversationList()
@@ -2146,6 +2148,9 @@ const sendMessage = async () => {
   const text = inputValue.value.trim()
 
   if (!text || loading.value) return
+
+  // 用户已主动发送消息，允许后台任务正常设置 activeConversationId
+  preventAutoConversationSwitch.value = false
 
   showAddMenu.value = false
   const activeTool = selectedResourceTool.value
@@ -2260,7 +2265,7 @@ const sendMessage = async () => {
       onDone: async data => {
         const chatGroupId = data?.chat_group_id || activeConversationId.value
 
-        if (chatGroupId && !activeConversationId.value) {
+        if (chatGroupId && !activeConversationId.value && !preventAutoConversationSwitch.value) {
           activeConversationId.value = chatGroupId
         }
 
@@ -2408,6 +2413,7 @@ const createNewChat = () => {
   // 清除活跃任务引用，避免旧对话的生成任务泄漏到新对话
   window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
   activeConversationId.value = null
+  preventAutoConversationSwitch.value = true
   inputValue.value = ''
   selectedResourceTool.value = null
   messages.value = []
