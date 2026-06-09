@@ -103,8 +103,8 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
   }
 }
 
-export function getGeneratedResources() {
-  return request.get('/resource/list')
+export function getGeneratedResources(params = {}) {
+  return request.get('/resource/list', { params })
 }
 
 export function getGeneratedResource(resourceId) {
@@ -113,6 +113,10 @@ export function getGeneratedResource(resourceId) {
 
 export function deleteGeneratedResource(resourceId) {
   return request.delete(`/resource/${resourceId}`)
+}
+
+export function publishGeneratedResource(resourceId, visibility = 'public') {
+  return request.post(`/resource/${resourceId}/visibility`, { visibility })
 }
 
 export function getResourceAnnotations(sourceId, sourceType = 'generated') {

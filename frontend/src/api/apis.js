@@ -63,6 +63,7 @@ export {
   getResourceGenerationTask,
   getResourceGenerationTasks,
   likeResource,
+  publishGeneratedResource,
   streamResourceGeneration,
   unfavoriteResource,
   unlikeResource,
@@ -88,7 +89,8 @@ export {
   generateImage,
   getGeneratedImage,
   getGeneratedImages,
-  getImageTaskStatus
+  getImageTaskStatus,
+  publishGeneratedImage
 } from './image'
 
 export {
