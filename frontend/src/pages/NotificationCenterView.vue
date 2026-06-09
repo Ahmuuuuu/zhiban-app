@@ -50,7 +50,7 @@
         v-for="item in items"
         :key="item.id"
         class="msg-card"
-        :class="{ unread: !item.is_read }"
+        :class="{ unread: !item.is_read, read: item.is_read }"
         @click="handleClick(item)"
       >
         <span class="msg-dot" :class="item.type"></span>
@@ -58,7 +58,12 @@
         <div class="msg-body">
           <div class="msg-top">
             <strong>{{ item.title }}</strong>
-            <time>{{ formatTime(item.created_at) }}</time>
+            <div class="msg-meta">
+              <span class="read-state" :class="{ unread: !item.is_read }">
+                {{ item.is_read ? '已读' : '未读' }}
+              </span>
+              <time>{{ formatTime(item.created_at) }}</time>
+            </div>
           </div>
           <p>{{ item.content }}</p>
           <span class="msg-tag">{{ typeLabel(item.type) }}</span>
@@ -163,7 +168,10 @@ const loadList = async () => {
   try {
     const res = await getNotifications(page.value, pageSize)
     const data = res?.data || res || {}
-    items.value = data.items || []
+    items.value = (data.items || []).map(item => ({
+      ...item,
+      is_read: Boolean(item.is_read ?? item.isRead ?? false)
+    }))
     total.value = data.total || 0
     unreadCount.value = data.unread_count ?? 0
   } catch {
@@ -228,19 +236,27 @@ onMounted(() => {
 <style scoped>
 .notification-page {
   min-height: 100vh;
-  padding: 32px clamp(18px, 4vw, 70px) 48px;
+  padding: 0 clamp(18px, 4vw, 70px) 48px;
   color: #143761;
   font-family: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 /* ---- header ---- */
 .page-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 36px;
+  margin: 0 calc(clamp(18px, 4vw, 70px) * -1) 24px;
+  padding: 24px clamp(18px, 4vw, 70px) 18px;
   flex-wrap: wrap;
+  background: rgba(245, 250, 255, 0.9);
+  border-bottom: 1px solid rgba(181, 205, 220, 0.38);
+  box-shadow: 0 10px 24px rgba(20, 55, 97, 0.06);
+  backdrop-filter: blur(16px);
 }
 
 .header-title-row {
@@ -327,6 +343,7 @@ onMounted(() => {
 }
 
 .msg-card {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 14px;
@@ -346,9 +363,35 @@ onMounted(() => {
 }
 
 .msg-card.unread {
-  border-color: rgba(20, 55, 97, 0.18);
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 4px 16px rgba(20, 55, 97, 0.06);
+  border-color: rgba(69, 133, 255, 0.38);
+  background: rgba(246, 250, 255, 0.94);
+  box-shadow: 0 10px 24px rgba(69, 133, 255, 0.1);
+}
+
+.msg-card.read {
+  background: rgba(255, 255, 255, 0.46);
+  border-color: rgba(181, 205, 220, 0.36);
+}
+
+.msg-card.read .msg-top strong,
+.msg-card.read .msg-body p {
+  color: #7690a7;
+}
+
+.msg-card.read .msg-dot {
+  background: #cfdce8;
+  opacity: 0.75;
+}
+
+.msg-card.unread::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 4px;
+  border-radius: 0 999px 999px 0;
+  background: #4f8cff;
 }
 
 .msg-dot {
@@ -388,10 +431,35 @@ onMounted(() => {
   color: #143761;
 }
 
+.msg-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.read-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(139, 164, 188, 0.13);
+  color: #8ba4bc;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.read-state.unread {
+  background: rgba(79, 140, 255, 0.14);
+  color: #2f6fe4;
+}
+
 .msg-top time {
   font-size: 12px;
   color: #8ba4bc;
-  flex-shrink: 0;
 }
 
 .msg-body p {
@@ -497,16 +565,24 @@ onMounted(() => {
 
 @media (max-width: 640px) {
   .notification-page {
-    padding: 20px 16px 40px;
+    padding: 0 16px 40px;
   }
 
   .page-header {
     flex-direction: column;
     gap: 14px;
+    margin: 0 -16px 18px;
+    padding: 18px 16px 14px;
   }
 
   .page-header h1 {
     font-size: 22px;
+  }
+
+  .msg-top {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
   }
 }
 </style>
