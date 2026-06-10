@@ -15,20 +15,18 @@ HF_ENDPOINT = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
 if HF_ENDPOINT:
     os.environ.setdefault("HF_ENDPOINT", HF_ENDPOINT)
 
-import numpy as np
-from sentence_transformers import SentenceTransformer
 from tortoise.expressions import Q
 
 from backend.src.models.knowledgemodel import KnowledgeVector
 
-# BGE 模型本地缓存路径 — 第一次会自动下载到这里，后续离线加载
+# BGE 模型本地缓存路径 — 第一次使用时才加载，避免 import 时拖慢启动
 MODEL_DIR = str(Path(__file__).parent.parent / "ai_core" / "knowledge_base" / "bge_model")
 _embed_model = None
 _embed_lock = asyncio.Lock()
 
 
 async def _get_embed_model_async():
-    """异步加载 BGE 模型（避免阻塞事件循环）"""
+    """异步加载 BGE 模型（首次使用时才 import sentence_transformers，避免拖慢启动）"""
     global _embed_model
     if _embed_model is not None:
         return _embed_model
@@ -36,6 +34,7 @@ async def _get_embed_model_async():
     async with _embed_lock:
         if _embed_model is not None:
             return _embed_model
+        from sentence_transformers import SentenceTransformer
         local_path = Path(MODEL_DIR)
         if local_path.exists() and any(local_path.iterdir()):
             _embed_model = await asyncio.to_thread(SentenceTransformer, str(local_path))
@@ -45,8 +44,9 @@ async def _get_embed_model_async():
         return _embed_model
 
 
-async def _encode_async(text: str) -> np.ndarray:
+async def _encode_async(text: str):
     """异步编码文本为向量（在线程池中执行）"""
+    import numpy as np
     model = await _get_embed_model_async()
     return await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
 
@@ -59,6 +59,7 @@ async def search(query: str, top_k: int = 5, user_id: int = None, category: str 
     - category: 限定分类，如 "exercise" / "textbook"
     """
     try:
+        import numpy as np
         query_vec = await _encode_async(query)
 
         if user_id:
