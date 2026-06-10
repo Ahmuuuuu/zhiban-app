@@ -82,6 +82,49 @@
         </article>
       </section>
 
+      <section v-if="pathVideo" class="path-video-section">
+        <header>
+          <div>
+            <span>Path Video</span>
+            <h2>路径教学视频</h2>
+          </div>
+          <button
+            class="path-video-gen-btn"
+            type="button"
+            :disabled="pathVideoLoading"
+            @click="fetchOrGeneratePathVideo"
+          >
+            {{ pathVideoLoading ? '生成中...' : '重新生成' }}
+          </button>
+        </header>
+        <div class="path-video-cover">
+          <MonitorPlay :size="40" />
+          <strong>路径教学视频 — {{ pathState?.goal || '' }}</strong>
+          <span>动态课件 — 覆盖全部 {{ visibleNodes.length }} 个学习节点</span>
+          <button class="html-open-btn" type="button" @click="openPathVideo">
+            打开课件
+          </button>
+        </div>
+      </section>
+      <section v-else-if="pathState?.pathId" class="path-video-section path-video-placeholder">
+        <header>
+          <span>Path Video</span>
+          <h2>路径教学视频</h2>
+        </header>
+        <div class="path-video-empty">
+          <MonitorPlay :size="24" />
+          <span>暂无路径总结视频</span>
+          <button
+            class="path-video-gen-btn"
+            type="button"
+            :disabled="pathVideoLoading"
+            @click="fetchOrGeneratePathVideo"
+          >
+            {{ pathVideoLoading ? '生成中...' : '生成路径视频' }}
+          </button>
+        </div>
+      </section>
+
       <section class="path-layout">
         <div class="path-track" :style="{ '--progress': `${progressPercent}%` }">
           <article
@@ -121,7 +164,7 @@
                   <template v-else-if="node._resources?.length">
                     <div class="branch-resource-flow">
                       <article
-                        v-for="(resource, resourceIndex) in node._resources.filter(r => !isExerciseResource(r))"
+                        v-for="(resource, resourceIndex) in node._resources.filter(r => !isExerciseResource(r) && !isDynamicLessonResource(r))"
                         :key="resource.id"
                         class="branch-resource-card"
                         @click="previewNodeResource(resource)"
@@ -319,7 +362,7 @@
 
                 <template v-else-if="nodeResources.length > 0 || nodeQuizData">
                   <div
-                    v-for="resource in nodeResources.filter(r => !isExerciseResource(r))"
+                    v-for="resource in nodeResources.filter(r => !isExerciseResource(r) && !isDynamicLessonResource(r))"
                     :key="resource.id"
                     class="resource-item"
                   >
@@ -504,6 +547,7 @@ import {
   generatePathNodeResources, generatePathNodeResourcesStream, generatePathNodeQuiz, downloadWithToken, exportEditedPptx, getGeneratedResource, getResourceAnnotations, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl,
   updateResourceAnnotation
 } from '../api/apis'
+import { getPathVideo, generatePathVideo } from '../api/learningPath'
 import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
@@ -549,6 +593,8 @@ const pathStatsLoading = ref(false)
 const pathStatsError = ref('')
 const selectedPathStats = ref(null)
 const pathStatsRequestId = ref(0)
+const pathVideo = ref(null)
+const pathVideoLoading = ref(false)
 let heartbeatTimer = null
 const announcedGenerationRunIds = new Set()
 const {
@@ -1754,10 +1800,62 @@ const setPathState = state => {
   if (nextPathId !== previousPathId || !selectedPathStats.value) {
     loadSelectedPathStats(nextPathId)
   }
+  if (nextPathId !== previousPathId || !pathVideo.value) {
+    fetchPathVideo(nextPathId)
+  }
   scrollToCurrentNode()
 }
 
 const delay = ms => new Promise(resolve => window.setTimeout(resolve, ms))
+
+const fetchPathVideo = async pathId => {
+  pathVideoLoading.value = true
+  try {
+    const result = await getPathVideo(pathId)
+    pathVideo.value = result?.data?.data || result?.data || null
+  } catch {
+    pathVideo.value = null
+  } finally {
+    pathVideoLoading.value = false
+  }
+}
+
+const fetchOrGeneratePathVideo = async () => {
+  const pathId = pathState.value?.pathId
+  if (!pathId || pathVideoLoading.value) return
+  pathVideoLoading.value = true
+  try {
+    // 先检测是否已有视频
+    const existing = await getPathVideo(pathId)
+    const video = existing?.data?.data || existing?.data || null
+    if (video) {
+      pathVideo.value = video
+      return
+    }
+    // 没有才生成
+    const result = await generatePathVideo(pathId)
+    pathVideo.value = result?.data?.data || result?.data || null
+  } catch (err) {
+    console.warn('[StudyPath] generate path video failed:', err)
+    await fetchPathVideo(pathId)
+  } finally {
+    pathVideoLoading.value = false
+  }
+}
+
+const openPathVideo = () => {
+  if (!pathVideo.value) return
+  const url = pathVideo.value.file_url || pathVideo.value.previewUrl || ''
+  router.push({
+    name: 'presentationPlayer',
+    query: {
+      url,
+      title: pathVideo.value.title || '路径教学视频',
+      id: pathVideo.value.presentation_id || pathVideo.value.presentationId || '',
+      from: 'path'
+    }
+  })
+}
 
 const recoverGeneratedPathFromCurrent = async () => {
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -2773,6 +2871,76 @@ onBeforeUnmount(() => {
   color: #163f8f;
   font-size: 17px;
   line-height: 1.35;
+}
+
+.path-video-section {
+  margin-top: 16px;
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  background: rgba(250, 250, 250, 0.78);
+  box-shadow: 0 14px 34px rgba(22, 63, 143, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(135%);
+  border-radius: 22px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.path-video-section header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.path-video-section header span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.path-video-section header h2 {
+  color: #163f8f;
+  font-size: 17px;
+  margin: 4px 0 0;
+}
+
+.path-video-cover {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: #5f8fc3;
+  text-align: center;
+}
+
+.path-video-cover strong {
+  color: #163f8f;
+  font-size: 18px;
+}
+
+.path-video-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  color: #7a9cc6;
+  font-size: 14px;
+}
+
+.path-video-gen-btn {
+  margin-left: auto;
+  padding: 6px 14px;
+  border: 1px solid #163f8f;
+  border-radius: 10px;
+  background: #163f8f;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.path-video-gen-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .path-layout {
@@ -4458,6 +4626,7 @@ onBeforeUnmount(() => {
   }
 
   .path-summary,
+  .path-video-section,
   .path-layout {
     grid-template-columns: 1fr;
   }

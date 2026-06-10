@@ -40,6 +40,7 @@ class ResourceState(TypedDict):
     user_id: str
     topic: str
     resource_types: list[str]
+    chat_group_id: NotRequired[int]
     portrait_context: str
     kb_context: str
     learning_guidance: str
@@ -135,11 +136,11 @@ PPT_SECTION_COUNT_BY_DEPTH = {
 }
 
 # 文档并行生成参数
-DOC_DEFAULT_SECTIONS = 4     # 默认 4 章节，与 PPT 错开
+DOC_DEFAULT_SECTIONS = 10    # 默认 10 章节，与 PPT 对齐
 DOC_SECTION_COUNT_BY_DEPTH = {
-    "overview": 2,
-    "standard": 4,
-    "deep": 8,
+    "overview": 5,
+    "standard": 10,
+    "deep": 15,
 }
 
 
@@ -558,10 +559,11 @@ async def executor_node(state: ResourceState) -> dict:
     ppt_section_count = PPT_SECTION_COUNT_BY_DEPTH.get(depth, PPT_DEFAULT_SECTIONS)
     doc_section_count = DOC_SECTION_COUNT_BY_DEPTH.get(depth, DOC_DEFAULT_SECTIONS)
 
-    # PPT / 文档 → 异步章节并行；其余 → 线程池
+    # PPT / 文档 / 图片 → 异步；其余 → 线程池
     has_ppt = "ppt" in resource_types
     has_doc = "document" in resource_types or "case" in resource_types or "reading" in resource_types
-    thread_types = [rt for rt in resource_types if rt not in ("ppt", "document", "case", "reading")]
+    has_image = "image" in resource_types
+    thread_types = [rt for rt in resource_types if rt not in ("ppt", "document", "case", "reading", "image")]
 
     # 非 PPT/文档 类型线程池并行
     prompts = {
@@ -629,18 +631,44 @@ async def executor_node(state: ResourceState) -> dict:
             user_id=user_id_int,
         )
 
+    async def _run_image():
+        if not has_image:
+            return None
+        img_prompt_text = build_resource_prompt(
+            "image", topic, portrait=portrait, kb=kb, guidance=guidance,
+            feedback=feedback, user_notes=user_notes,
+            custom_prompts=custom_prompts, focus_guidance=focus_guidance,
+        )
+        try:
+            response = await llm.ainvoke(img_prompt_text, priority=llm_priority, user_id=user_id_int, pool="thread")
+            image_prompt = response.content.strip()[:900]
+        except Exception:
+            logger.exception("[Executor] 图片 prompt 生成失败")
+            return "image:error", {"prompt": "", "url": ""}
+
+        try:
+            from backend.src.service.image_service import ImageService
+            images = await ImageService.generate(image_prompt, str(user_id_int), aspect_ratio="16:9", img_count=2, save_history=False, chat_group_id=int(state.get("chat_group_id", 0)))
+            if images and len(images) > 0:
+                return "image:image", {"prompt": image_prompt, "url": images[0].get("url", "")}
+            return "image:image", {"prompt": image_prompt, "url": ""}
+        except Exception as e:
+            logger.exception(f"[Executor] 图片生成失败: {e}")
+            return "image:image", {"prompt": image_prompt, "url": ""}
+
     ppt_coro = _run_ppt()
     doc_coro = _run_doc()
+    image_coro = _run_image()
 
     if thread_types:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             other_futures = asyncio.gather(
                 *[loop.run_in_executor(pool, gen_one_sync, rt) for rt in thread_types]
             )
-            ppt_content, doc_content, other_results = await asyncio.gather(ppt_coro, doc_coro, other_futures)
+            ppt_content, doc_content, image_result, other_results = await asyncio.gather(ppt_coro, doc_coro, image_coro, other_futures)
     else:
         other_results = []
-        ppt_content, doc_content = await asyncio.gather(ppt_coro, doc_coro)
+        ppt_content, doc_content, image_result = await asyncio.gather(ppt_coro, doc_coro, image_coro)
 
     logger.info("[Executor] 全部生成完成 并行总耗时=%.2fs types=%s", time.perf_counter() - t_gen_start, resource_types)
 
@@ -650,6 +678,13 @@ async def executor_node(state: ResourceState) -> dict:
 
     generated = {}
     file_urls = {}
+    # 异步图片结果
+    if image_result:
+        rt, content = image_result
+        actual_rt = rt.replace("image:", "")
+        generated[actual_rt] = content.get("prompt", "")
+        if content.get("url"):
+            file_urls[actual_rt] = content["url"]
     for rt, content in other_results:
         if rt.startswith("image:"):
             actual_rt = rt.replace("image:", "")

@@ -271,6 +271,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         "user_id": str(user_id),
         "topic": topic,
         "resource_types": resource_types,
+        "chat_group_id": chat_group_id,
         "portrait_context": portrait_context,
         "kb_context": kb_context,
         "learning_guidance": learning_guidance,

@@ -2,10 +2,14 @@
 
 import json
 import logging
+import time as _time
 from backend.src.models.usermodel import User
 from backend.src.models.portraitmodel import User_picture
 
 logger = logging.getLogger(__name__)
+
+_last_extraction: dict[int, float] = {}
+_EXTRACTION_INTERVAL = 60  # 60 秒内不重复提取
 
 # ═══════════════════════════════════════
 #  维度与标签映射（原 portrait_utils）
@@ -511,3 +515,95 @@ async def build_learning_guidance(user_id: int) -> str:
         lines.append("- 内容拆分为小块，降低单次学习时长")
 
     return "\n".join(lines)
+
+
+async def extract_portrait_from_chat(user_id: int, chat_group_id: int) -> None:
+    """每次对话后异步调用，从最近聊天记录中提取画像特征"""
+    now = _time.time()
+    elapsed = now - _last_extraction.get(user_id, 0)
+    if elapsed < _EXTRACTION_INTERVAL:
+        logger.debug(f"画像提取冷却中 user_id={user_id} 距上次={elapsed:.0f}s")
+        return
+    _last_extraction[user_id] = now
+
+    try:
+        from backend.src.models.chat_history_model import ChatHistory
+        from backend.src.ai_core.llm_config import llm
+        from backend.src.utils.prompt_loader import load_prompt, fill_prompt
+        from backend.src.utils.json_parser import parse_llm_json
+
+        user = await User.filter(id=user_id).first()
+        if not user:
+            return
+
+        # 确保画像存在
+        picture = await user.picture
+        if not picture:
+            picture = await User_picture.create()
+            user.picture = picture
+            await user.save()
+
+        # 取最近 10 条消息
+        records = await ChatHistory.filter(
+            user_id=user_id, chat_group_id=chat_group_id
+        ).order_by("-created_at").limit(10).all()
+
+        if len(records) < 2:
+            logger.debug(f"画像提取跳过：消息数不足 user_id={user_id} records={len(records)}")
+            return
+
+        messages = []
+        for r in reversed(records):
+            if r.req:
+                messages.append(f"用户：{r.req}")
+            if r.res:
+                res_short = r.res[:200]
+                messages.append(f"AI：{res_short}")
+
+        recent_text = "\n".join(messages)
+
+        # 已有画像
+        traits = parse_traits(picture.traits)
+        existing = {}
+        for key in TRAIT_KEYS:
+            entry = traits.get(key)
+            if isinstance(entry, dict) and entry.get("confidence", 0) >= 0.95:
+                existing[key] = f"{entry['value']}（置信度已满，勿覆盖）"
+            elif isinstance(entry, dict) and entry.get("value"):
+                existing[key] = entry["value"]
+        existing_text = json.dumps(existing, ensure_ascii=False) if existing else "暂无"
+
+        template = load_prompt("portrait/extract")
+        prompt = fill_prompt(template, existing_portrait=existing_text, recent_messages=recent_text)
+
+        response = await llm.ainvoke(prompt)
+        result = parse_llm_json(response.content.strip())
+
+        if not result or not isinstance(result, dict):
+            logger.info(f"画像提取无结果 user_id={user_id} result={str(response.content)[:200]}")
+            return
+
+        updated = False
+        for key in TRAIT_KEYS:
+            value = result.get(key)
+            if not value or not isinstance(value, str) or len(value) > 80:
+                continue
+            entry = traits.get(key) if isinstance(traits.get(key), dict) else None
+            if entry and entry.get("confidence", 0) >= 0.95:
+                continue
+            traits[key] = build_trait_entry(value, "agent_inferred", entry)
+            updated = True
+
+        if updated:
+            picture.traits = dump_traits(traits)
+            await picture.save()
+            logger.info(f"画像提取成功 user_id={user_id} 更新维度={[k for k in result if k in TRAIT_KEYS]}")
+
+            # 自动刷新画像总结
+            try:
+                await PortraitChatHistory_Service.regenerate_portrait(user_id)
+            except Exception:
+                logger.exception(f"画像总结刷新失败 user_id={user_id}")
+
+    except Exception:
+        logger.exception(f"画像提取失败 user_id={user_id}")

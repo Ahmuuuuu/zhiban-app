@@ -228,7 +228,7 @@ async def _generate_audio_impl(text: str, output_path: str, voice: str, rate: st
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     try:
-        _tts_timeout = 90
+        _tts_timeout = 120
         communicate = edge_tts.Communicate(text, voice, rate=rate)
 
         if not capture_words:

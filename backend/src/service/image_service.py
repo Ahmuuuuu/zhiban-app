@@ -18,6 +18,58 @@ import httpx
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 from backend.src.models.image_model import GeneratedImage
+
+_REFINE_PROMPT = """你是一个专业的 AI 绘画提示词工程师。将用户描述精炼成高质量图片提示词。
+
+精炼规则：
+1. 补充光线来源与方向、构图方式、艺术风格、色彩调性、材质质感等视觉细节
+2. 具象场景加"照片级真实感，高细节，8K"
+3. 绘画风格指定具体风格如"吉卜力风格/水墨画/油画/赛博朋克/写实摄影/扁平插画"
+4. 输出 80-150 字中文，必须包含：主体描述 + 环境背景 + 光线色彩 + 艺术风格 + 画质关键词
+5. 只输出画面描述，不含"生成""制作""帮我画"等指令性文字
+
+用户描述：{raw}"""
+
+_MIN_PROMPT_LEN = 80
+
+_BAD_PATTERNS = ["帮我", "生成一张", "画一张", "画个", "请生成", "请画", "生成图片", "配图"]
+
+
+async def _ensure_prompt_quality(prompt: str) -> str:
+    """确保图片提示词质量满足星火最低要求，所有路径统一入口"""
+    prompt = prompt.strip()
+
+    # 合格 → 直接放行
+    if len(prompt) >= _MIN_PROMPT_LEN and not any(p in prompt for p in _BAD_PATTERNS):
+        return prompt
+
+    # 明显是 LLM 偷懒没精炼 → 直接用模板，不调 LLM，零延迟
+    if len(prompt) < 30 or any(p in prompt for p in _BAD_PATTERNS):
+        _logger.warning("图片 prompt 质量差(len=%d)，使用模板兜底: %s", len(prompt), prompt[:60])
+        topic = prompt
+        for pat in _BAD_PATTERNS:
+            topic = topic.replace(pat, "")
+        topic = topic.strip().lstrip("：:，,。. ").strip() or prompt
+        return (
+            f"教育科普插图，教学示意图风格，{topic}，高清晰度，"
+            "色彩鲜明，构图清晰，适合学习使用，详细展示相关知识点和结构，"
+            "学术配图，照片级真实感，高细节，8K分辨率，专业灯光，电影级构图"
+        )
+
+    # 偏短但无坏词 → LLM 精炼（罕见情况，值得花 1-2s）
+    _logger.info("图片 prompt 偏短(len=%d)，LLM 精炼: %s", len(prompt), prompt[:60])
+    try:
+        from backend.src.ai_core.llm_config import llm
+        resp = await llm.ainvoke(_REFINE_PROMPT.format(raw=prompt), pool="thread")
+        refined = resp.content.strip()
+        if refined and len(refined) >= _MIN_PROMPT_LEN:
+            return refined
+    except Exception:
+        _logger.exception("图片 prompt 精炼异常")
+
+    fallback = f"{prompt}，照片级真实感，高细节，8K分辨率，专业灯光，电影级构图"
+    _logger.info("使用兜底 prompt: %s", fallback[:80])
+    return fallback
 from backend.src.models.notification_model import Notification
 from backend.src.utils.chat_utils import allocate_chat_group_id
 
@@ -105,7 +157,10 @@ class ImageService:
             raise RuntimeError("用户不存在")
 
         chat_group_id = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
-        _logger.info("submit() user_id=%d chat_group_id=%d prompt=%s", user_id, chat_group_id, prompt[:60])
+        _logger.info(f"submit user_id={user_id} chat_group_id={chat_group_id}")
+        debug_log = SAVE_DIR.parent.parent / "image_debug.log"
+        with open(debug_log, "a", encoding="utf-8") as f:
+            f.write(f"[submit发送星火] prompt: {prompt}\n")
 
         prompt_json = json.dumps({
             "image": [],
@@ -116,7 +171,7 @@ class ImageService:
         })
         text_base64 = base64.b64encode(prompt_json.encode()).decode()
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=30.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=60.0)) as client:
             create_body = {
                 "header": {
                     "app_id": app_id, "status": 3,
@@ -138,10 +193,13 @@ class ImageService:
                 headers={"Content-Type": "application/json"},
             )
             if resp.status_code != 200:
+                _logger.error(f"submit 创建任务 HTTP {resp.status_code}: {resp.text[:500]}")
                 raise RuntimeError(f"创建任务失败 (HTTP {resp.status_code}): {resp.text[:300]}")
             data = resp.json()
+            _logger.info(f"submit 响应: {json.dumps(data, ensure_ascii=False)[:1000]}")
             header = data.get("header", {})
             if header.get("code") != 0:
+                _logger.error(f"submit 失败 code={header.get('code')} msg={header.get('message')} 完整响应: {json.dumps(data, ensure_ascii=False)[:1000]}")
                 raise RuntimeError(f"创建任务失败: {header.get('message')} (code={header.get('code')})")
             task_id = header.get("task_id")
             if not task_id:
@@ -172,7 +230,7 @@ class ImageService:
         app_id, api_key, api_secret = _load_env()
 
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
                 query_body = {"header": {"app_id": app_id, "task_id": task_id}}
                 resp = await client.post(
                     _make_auth_url(QUERY_PATH, api_key, api_secret),
@@ -184,6 +242,7 @@ class ImageService:
                     return dict(info)
 
                 qdata = resp.json()
+                _logger.info(f"task_id={task_id} 查询完整响应: {json.dumps(qdata, ensure_ascii=False)[:2000]}")
                 qheader = qdata.get("header", {})
                 code = qheader.get("code", 0)
                 if code != 0:
@@ -192,7 +251,13 @@ class ImageService:
                     return _task_status[task_id]
 
                 task_status_code = qheader.get("task_status", "")
+                if task_status_code == "5":
+                    _task_status[task_id] = {**info, "status": "failed",
+                        "error": f"图片生成失败 (task_status=5): {qheader.get('message', '未知错误')}"}
+                    _logger.error(f"task_id={task_id} 任务失败 task_status=5 msg={qheader.get('message')}")
+                    return _task_status[task_id]
                 if task_status_code != "4":
+                    _logger.info(f"task_id={task_id} 仍在处理中 task_status={task_status_code}")
                     return dict(info)
 
                 _logger.info(f"task_id={task_id} 任务完成，开始下载")
@@ -219,12 +284,20 @@ class ImageService:
                     _task_status[task_id] = {**info, "status": "failed", "error": "图片结果解码失败"}
                     return _task_status[task_id]
                 items = json.loads(decoded_raw)
-                _logger.info(f"task_id={task_id} 解码得到 {len(items)} 个 item, 首个 keys={list(items[0].keys()) if items else 'EMPTY'} raw[:300]={decoded_raw[:300]}")
+                _logger.info(f"task_id={task_id} 解码得到 {len(items)} 个 item, 全部 raw={decoded_raw}")
                 images = []
+                all_empty = True
                 for item in items:
                     img_url = item.get("image_wm") or item.get("image")
+                    # 子任务 task_status: 3=成功, 1-2=排队/处理中, 0/4=失败
+                    sub_status = item.get("task_status", -1)
+                    sub_completion = item.get("task_completion", 0)
+                    _logger.info(f"task_id={task_id} sub_task_id={item.get('sub_task_id')} "
+                                 f"task_status={sub_status} task_completion={sub_completion} "
+                                 f"image={item.get('image', '')[:80]} image_wm={item.get('image_wm', '')[:80]}")
                     if not img_url:
                         continue
+                    all_empty = False
                     img_resp = await client.get(img_url)
                     if img_resp.status_code != 200:
                         _logger.warning(f"下载图片失败 HTTP {img_resp.status_code}: {img_url[:100]}")
@@ -253,9 +326,10 @@ class ImageService:
                         await _save_image_history(info, images)
                     _task_status[task_id] = {**info, "status": "done", "images": images}
                     _logger.info(f"task_id={task_id} 完成 {len(images)} 张图片")
-                else:
-                    _task_status[task_id] = {**info, "status": "failed", "error": "图片下载失败，请重试"}
-                    _logger.error(f"task_id={task_id} 所有图片下载均失败")
+                elif all_empty:
+                    _task_status[task_id] = {**info, "status": "failed",
+                        "error": "图片生成失败，请检查讯飞星火控制台：额度是否已用尽或内容是否被审核拦截"}
+                    _logger.error(f"task_id={task_id} 图片 URL 为空（疑似额度用尽或审核拦截），全部响应已打印")
                 return _task_status[task_id]
 
         except Exception as e:
@@ -267,10 +341,11 @@ class ImageService:
     async def generate(prompt: str, user_id: str, aspect_ratio: str = "1:1", img_count: int = 1, chat_group_id: int = 0, save_history: bool = True) -> list[dict]:
         """同步生成（供 tool 使用，阻塞等待结果）。
         save_history=False 时跳过聊天记录写入（资源整合流程已有统一记录）。"""
+        prompt = await _ensure_prompt_quality(prompt)
         result = await ImageService.submit(prompt, int(user_id), aspect_ratio, img_count, chat_group_id=chat_group_id)
         task_id = result["task_id"]
 
-        for _ in range(30):
+        for _ in range(60):
             await asyncio.sleep(2)
             status = await ImageService.poll_once(task_id, save_history=save_history)
             if status["status"] == "done":
@@ -278,4 +353,4 @@ class ImageService:
             if status["status"] == "failed":
                 raise RuntimeError(status.get("error", "图片生成失败"))
 
-        raise TimeoutError("图片生成超时")
+        raise TimeoutError("图片生成超时（已等待120秒）")

@@ -188,7 +188,7 @@ class PathService:
                 knowledge_tags=json.dumps(nd.get("knowledge_tags", []), ensure_ascii=False),
                 order_index=nd.get("order_index", len(nodes) + 1),
                 prerequisites=json.dumps(nd.get("prerequisites", []), ensure_ascii=False),
-                resource_types=json.dumps(nd.get("resource_types", ["document", "ppt", "mindmap", "video"]), ensure_ascii=False),
+                resource_types=json.dumps(nd.get("resource_types", ["document", "ppt", "mindmap"]), ensure_ascii=False),
                 quiz_config=json.dumps(nd.get("quiz_config", {"count": 5, "threshold": 0.7}), ensure_ascii=False),
             )
             created_nodes.append(node)
@@ -249,6 +249,9 @@ class PathService:
                 "session_id": session_id,
                 "quiz_count": len(questions),
             }
+
+        # 后台异步生成路径视频，不阻塞返回
+        asyncio.create_task(_generate_path_video_background(path.id, user_id))
 
         return {
             "path_id": path.id,
@@ -355,6 +358,9 @@ class PathService:
             except Exception:
                 logger.exception("自动生成首节点资源失败 path_id=%s node_id=%s", path_id, first_node.id)
 
+        # 后台异步生成路径视频
+        asyncio.create_task(_generate_path_video_background(path_id, user_id))
+
         return {"path_id": path_id, "progress": created, "first_node_resources": resources}
 
     @staticmethod
@@ -444,15 +450,13 @@ class PathService:
 
     @staticmethod
     async def _check_existing_resources(user_id: int, topic: str, resource_types: list[str] | None = None):
-        """查已有资源 → (已有记录列表, 缺失类型列表)
-        node 配置中的 "video" 映射到 DB 中的 "html" 资源类型。"""
+        """查已有资源 → (已有记录列表, 缺失类型列表)"""
         if resource_types is None:
-            resource_types = ["document", "ppt", "mindmap", "video"]
+            resource_types = ["document", "ppt", "mindmap"]
         existing_records = []
         missing_types = []
         for rt in resource_types:
-            db_type = "html" if rt == "video" else rt
-            r = await GeneratedResource.filter(user_id=user_id, topic=topic, resource_type=db_type).first()
+            r = await GeneratedResource.filter(user_id=user_id, topic=topic, resource_type=rt).first()
             if r:
                 existing_records.append(r)
             else:
@@ -484,19 +488,11 @@ class PathService:
             return
 
         topic = node.topic
-        # 每个节点固定一套资源：文档 + PPT + 思维导图 + 视频（PPT 衍生），不受 LLM 输出波动影响
-        node_resource_types = ["document", "ppt", "mindmap", "video"]
+        node_resource_types = ["document", "ppt", "mindmap"]
         existing_records, missing_types = await PathService._check_existing_resources(user_id, topic, node_resource_types)
 
         for r in existing_records:
-            pres_id = 0
-            if r.resource_type == "html" and r.content:
-                try:
-                    c = json.loads(r.content)
-                    pres_id = c.get("presentation_id", 0)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            yield _resource_sse(r, presentation_id=pres_id)
+            yield _resource_sse(r)
 
         if not missing_types:
             all_ids = [r.id for r in existing_records]
@@ -504,8 +500,7 @@ class PathService:
             yield _sse_done(all_ids)
             return
 
-        # video/html 不由 LLM 生成，exercise 由测验独立处理
-        gen_types = [t for t in missing_types if t not in ("video", "exercise")]
+        gen_types = [t for t in missing_types if t != "exercise"]
         if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
             gen_types.insert(0, "ppt")
 
@@ -513,7 +508,6 @@ class PathService:
             yield f"data: {json.dumps({'type': 'status', 'msg': f'开始生成 {len(gen_types)} 种资源...'}, ensure_ascii=False)}\n\n"
 
         generated_ids = []
-        ppt_id = None
         try:
             if gen_types:
                 from backend.src.service.resource_service import ResourceService
@@ -525,46 +519,15 @@ class PathService:
                     if event_str.startswith("data:") and "[DONE]" not in event_str:
                         try:
                             data = json.loads(event_str[5:].strip())
-                            # 从 file 事件中提前收集类型信息（done 事件到达前也能拿到 ppt_id）
-                            if data.get("type") == "file":
-                                ft = data.get("file_type", "")
-                                if ft == "ppt":
-                                    ppt_id = data.get("resource_id", 0) or ppt_id
                             if data.get("done"):
                                 for r in data.get("resources", []):
                                     rid = r.get("resource_id")
                                     if rid:
                                         generated_ids.append(rid)
-                                        if r.get("file_type") == "ppt":
-                                            ppt_id = rid
                         except (json.JSONDecodeError, KeyError):
                             pass
 
-            # 循环结束后立即更新进度，后续 PPT→HTML 阶段断开也不丢资源
             all_ids = [r.id for r in existing_records] + generated_ids
-            await PathService._update_progress_resource_ids(progress, all_ids)
-
-            # PPT → 生成 HTML 动态课件
-            html_result = None
-            target_ppt_id = ppt_id
-            if not target_ppt_id:
-                ppt_from_existing = next((r for r in existing_records if r.resource_type == "ppt"), None)
-                if ppt_from_existing:
-                    target_ppt_id = ppt_from_existing.id
-
-            if target_ppt_id:
-                ppt_record = await GeneratedResource.filter(id=target_ppt_id).first()
-                if ppt_record:
-                    try:
-                        html_result = await _create_video_html(topic, user_id, ppt_record)
-                    except Exception:
-                        logger.exception("动态课件生成失败 topic=%s ppt_id=%s", topic, target_ppt_id)
-                    if html_result:
-                        all_ids.append(html_result["html_id"])
-                        html_record = await GeneratedResource.filter(id=html_result["html_id"]).first()
-                        if html_record:
-                            yield _resource_sse(html_record, presentation_id=html_result["presentation_id"])
-
             await PathService._update_progress_resource_ids(progress, all_ids)
             yield _sse_done(all_ids)
         except Exception:
@@ -584,11 +547,10 @@ class PathService:
             raise ValueError("未加入该路径")
 
         topic = node.topic
-        # 每个节点固定一套资源：文档 + PPT + 思维导图 + 视频（PPT 衍生），不受 LLM 输出波动影响
-        node_resource_types = ["document", "ppt", "mindmap", "video"]
+        node_resource_types = ["document", "ppt", "mindmap"]
         existing_records, missing_types = await PathService._check_existing_resources(user_id, topic, node_resource_types)
 
-        gen_types = [t for t in missing_types if t not in ("video", "exercise")]
+        gen_types = [t for t in missing_types if t != "exercise"]
         if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
             gen_types.insert(0, "ppt")
 
@@ -607,14 +569,6 @@ class PathService:
                 logger.exception("ResourceService.generate_and_save 失败 topic=%s types=%s", topic, gen_types)
 
         all_ids = [r.id for r in existing_records] + generated_ids
-
-        # PPT → 后台生成 HTML 动态课件，不阻塞返回
-        ppt_record = await GeneratedResource.filter(
-            id__in=all_ids, user_id=user_id, resource_type="ppt"
-        ).first()
-        if ppt_record:
-            asyncio.create_task(_create_video_html_and_update_progress(topic, user_id, ppt_record, progress))
-
         await PathService._update_progress_resource_ids(progress, all_ids)
 
         resources = []
@@ -1104,9 +1058,121 @@ class PathService:
             "order_index": node.order_index,
         }
 
-    # ── 内部辅助 ──
+    # ── 路径视频 ──
 
     @staticmethod
+    async def generate_path_video(path_id: int, user_id: int) -> dict:
+        """为整条学习路径生成一个综合视频课件"""
+        path = await LearningPath.filter(id=path_id).prefetch_related("nodes").first()
+        if not path:
+            raise ValueError("路径不存在")
+
+        nodes = sorted(path.nodes, key=lambda n: n.order_index)
+        if not nodes:
+            raise ValueError("路径无节点")
+
+        node_outline = " → ".join(n.topic for n in nodes)
+        video_topic = f"{path.subject} 学习路径（{node_outline}）"
+
+        # 已有有效的 HTML 课件 → 直接复用
+        existing_html = await GeneratedResource.filter(
+            user_id=user_id, topic=video_topic, resource_type="html"
+        ).first()
+        if existing_html:
+            from pathlib import Path as _Path
+            file_url = existing_html.file_url or ""
+            _html_path = _Path(__file__).parent.parent.parent / "static" / "presentations" / (file_url.split("/")[-1] if file_url else "")
+            if _html_path.exists() and "template-version:visual-v6" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
+                content = {}
+                try:
+                    content = json.loads(existing_html.content or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                return {
+                    "path_id": path_id,
+                    "html_id": existing_html.id,
+                    "file_url": file_url,
+                    "presentation_id": content.get("presentation_id", 0),
+                    "topic": video_topic,
+                    "reused": True,
+                }
+
+        logger.info(f"生成路径视频 path_id={path_id} subject={path.subject} nodes={len(nodes)}")
+
+        # 删除旧资源，强制重新生成
+        for rt in ("ppt", "html"):
+            old = await GeneratedResource.filter(
+                user_id=user_id, topic=video_topic, resource_type=rt
+            ).first()
+            if old:
+                await old.delete()
+
+        saved = await ResourceService.generate_and_save(
+            topic=video_topic,
+            user_id=user_id,
+            resource_types=["ppt"],
+            ppt_prompt_key="ppt_video",
+            skip_review=True,
+        )
+        ppt_id = None
+        for r in saved:
+            rid = r.get("resource_id") or r.get("id")
+            rt = r.get("resource_type") or r.get("file_type") or ""
+            if "ppt" in rt:
+                ppt_id = rid
+                break
+
+        if not ppt_id:
+            raise RuntimeError("路径 PPT 生成失败")
+
+        ppt_record = await GeneratedResource.filter(id=ppt_id).first()
+        if not ppt_record:
+            raise RuntimeError("PPT 记录未找到")
+
+        html_result = await _create_video_html(video_topic, user_id, ppt_record)
+        if not html_result:
+            raise RuntimeError("路径视频课件生成失败")
+
+        return {
+            "path_id": path_id,
+            "html_id": html_result["html_id"],
+            "file_url": html_result["file_url"],
+            "presentation_id": html_result["presentation_id"],
+            "topic": video_topic,
+            "reused": False,
+        }
+
+    @staticmethod
+    async def get_path_video(path_id: int, user_id: int) -> dict | None:
+        """获取路径已生成的视频课件（如有）"""
+        path = await LearningPath.filter(id=path_id).prefetch_related("nodes").first()
+        if not path:
+            return None
+        nodes = sorted(path.nodes, key=lambda n: n.order_index)
+        node_outline = " → ".join(n.topic for n in nodes) if nodes else ""
+        video_topic = f"{path.subject} 学习路径（{node_outline}）" if node_outline else f"{path.subject}（完整路径总结）"
+        existing = await GeneratedResource.filter(
+            user_id=user_id, topic=video_topic, resource_type="html"
+        ).first()
+        if not existing:
+            return None
+        pres_id = 0
+        if existing.content:
+            try:
+                c = json.loads(existing.content)
+                pres_id = c.get("presentation_id", 0)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return {
+            "path_id": path_id,
+            "html_id": existing.id,
+            "file_url": existing.file_url,
+            "presentation_id": pres_id,
+            "topic": video_topic,
+        }
+
+    # ── 内部辅助 ──
+
     @staticmethod
     async def _pre_generate_node(path_id: int, node_id: int, user_id: int):
         try:
@@ -1115,9 +1181,7 @@ class PathService:
                 PathService.generate_node_quiz(path_id, node_id, user_id, pre_generate=True),
             )
         except Exception:
-            logger.exception("预生成节点资源/检测题失败 path_id=%s node_id=%s", path_id, node_id)
-
-    @staticmethod
+            logger.exception("预生成节点资源/检测题失败 path_id=%s node_id=%s", path_id, node_id)    @staticmethod
     async def _unlock_next_node(path_id: int, current_order: int, user_id: int):
         """解锁下一顺序节点并预生成下两个节点的资源"""
         next_node = await PathNode.filter(path_id=path_id, order_index=current_order + 1).first()
@@ -1497,7 +1561,7 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
     from backend.src.service.presentation_service import generate as generate_presentation
     from backend.src.models.resource_model import GeneratedResource
 
-    # 已有 HTML GeneratedResource 且是视频模板 → 复用；否则删旧重建
+    # 已有 HTML GeneratedResource 且是交互模板 → 复用；否则删旧重建
     existing_html = await GeneratedResource.filter(
         user_id=user_id, topic=topic, resource_type="html"
     ).first()
@@ -1508,13 +1572,11 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
             content = {}
         pres_id = content.get("presentation_id", 0)
         file_url = existing_html.file_url or ""
-        # 检查是否视频模板，不是则清掉旧记录重建
         from pathlib import Path as _Path
         _html_path = _Path(__file__).parent.parent.parent / "static" / "presentations" / (file_url.split("/")[-1] if file_url else "")
-        if _html_path.exists() and "template-version:video-v3" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
+        if _html_path.exists() and "template-version:visual-v6" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
             return {"html_id": existing_html.id, "presentation_id": pres_id, "file_url": file_url}
-        # 旧模板 → 删记录和文件，重新生成
-        logger.info("旧 HTML 非视频模板，重建 video-mode html_id=%s", existing_html.id)
+        logger.info("旧 HTML 非交互模板，重建 presentation html_id=%s", existing_html.id)
         if _html_path.exists():
             _html_path.unlink()
         await existing_html.delete()
@@ -1523,8 +1585,7 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
     if not user:
         return None
 
-    # 调用已有的 presentation 生成逻辑（骨架 + 后台补音频 + Presentation 记录），视频模式使用简洁模板
-    pres = await generate_presentation(topic, user_id, video_mode=True)
+    pres = await generate_presentation(topic, user_id, video_mode=False)
     if not pres or "error" in pres:
         logger.error("课件生成失败 topic=%s error=%s", topic, pres.get("error") if pres else "unknown")
         return None
@@ -1540,6 +1601,14 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
     )
     logger.info("动态课件已创建 html_id=%s presentation_id=%s", html.id, pres["id"])
     return {"html_id": html.id, "presentation_id": pres["id"], "file_url": pres["file_url"]}
+
+
+async def _generate_path_video_background(path_id: int, user_id: int):
+    """后台异步生成路径视频，失败不影响主流程"""
+    try:
+        await PathService.generate_path_video(path_id, user_id)
+    except Exception:
+        logger.exception("后台路径视频生成失败 path_id=%s", path_id)
 
 
 def _safe_topic_filename(topic: str) -> str:

@@ -467,8 +467,8 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     if portrait_intro:
         chapters.insert(0, portrait_intro)
         from types import SimpleNamespace as _SN
-        intro_text = portrait_intro["slides"][0].get("intro_text", "")
-        intro_resource = _SN(id=0, content=intro_text, resource_type="document")
+        intro_raw = portrait_intro.pop("_raw_text", "")
+        intro_resource = _SN(id=0, content=intro_raw, resource_type="document")
         audio_tasks.insert(0, {"chapter_idx": 0, "resource": intro_resource})
         for t in audio_tasks[1:]:
             t["chapter_idx"] += 1
@@ -947,48 +947,65 @@ async def _build_portrait_intro(topic: str, user) -> dict | None:
     if not intro_text or len(intro_text) < 10:
         return None
 
-    content_html = _md_to_html(intro_text)
-    estimated_dur = int(len(intro_text) / 4 * 1000)
+    from backend.src.utils.tts_utils import parse_text_sections
+    sections = parse_text_sections(intro_text)
+    slides = []
+    for sec in sections:
+        slides.append({
+            "title": sec.get("title") or topic,
+            "content_html": _md_to_html(sec.get("text", "")),
+            "audio_url": None,
+            "duration_ms": sec.get("duration_ms", 5000),
+            "word_timestamps": [],
+        })
 
+    total_dur = sum(s.get("duration_ms", 0) for s in slides)
     return {
         "type": "intro",
-        "title": f"学习引入",
-        "slides": [{
-            "title": topic,
-            "intro_text": intro_text,
-            "content_html": content_html,
-            "audio_url": None,
-            "duration_ms": estimated_dur,
-            "word_timestamps": [],
-        }],
-        "total_duration_ms": estimated_dur,
+        "title": "学习引入",
+        "slides": slides,
+        "total_duration_ms": total_dur,
         "is_audio_ready": False,
+        "_raw_text": intro_text,
     }
 
 
 def _build_intro_skeleton(record, max_slides: int = 8) -> dict:
+    from backend.src.utils.tts_utils import parse_text_sections
     content = record.content or ""
+
+    # 先按标题切分，有标题时保留原始 markdown 给 HTML 渲染
     raw_parts = re.split(r"\n(?=## )", content.strip())
     if len(raw_parts) <= 1:
         raw_parts = re.split(r"\n(?=# )", content.strip())
 
     slides = []
-    for part in raw_parts[:max_slides]:
-        part = part.strip()
-        if not part:
-            continue
-        html = _md_to_html(part)
-        lines = part.split("\n")
-        title = lines[0].lstrip("#").strip()
-        text_len = len(part)
-        estimated_dur = int(text_len / 4 * 1000)
-        slides.append({
-            "title": title,
-            "content_html": html,
-            "audio_url": None,
-            "duration_ms": estimated_dur,
-            "word_timestamps": [],
-        })
+    if len(raw_parts) > 1:
+        # 有标题 → 和 parse_text_sections 一致，保留原始 markdown
+        for part in raw_parts[:max_slides]:
+            part = part.strip()
+            if not part:
+                continue
+            lines = part.split("\n")
+            title = lines[0].lstrip("#").strip()
+            slides.append({
+                "title": title,
+                "content_html": _md_to_html(part),
+                "audio_url": None,
+                "duration_ms": int(len(part) / 4 * 1000),
+                "word_timestamps": [],
+            })
+    else:
+        # 无标题 → 用 parse_text_sections 确保 slide 数 = TTS 分段数
+        sections = parse_text_sections(content)
+        for sec in sections[:max_slides]:
+            slides.append({
+                "title": sec.get("title") or record.topic,
+                "content_html": _md_to_html(sec.get("text", "")),
+                "audio_url": None,
+                "duration_ms": sec.get("duration_ms", 5000),
+                "word_timestamps": [],
+            })
 
     total_dur = sum(s.get("duration_ms", 0) for s in slides)
     return {

@@ -118,6 +118,27 @@ async def submit_node_quiz(
     return {"code": 200, "msg": "success", "data": result}
 
 
+@router.post("/{path_id}/video")
+async def generate_path_video(path_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """为整条学习路径生成一个综合视频课件"""
+    try:
+        result = await PathService.generate_path_video(path_id, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.get("/{path_id}/video")
+async def get_path_video(path_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """获取路径已有的视频课件"""
+    result = await PathService.get_path_video(path_id, user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="该路径暂无视频课件")
+    return {"code": 200, "msg": "success", "data": result}
+
+
 @router.post("/regenerate")
 async def regenerate_path(data: RegeneratePathRequest, user_id: int = Depends(get_user_id_from_token)):
     """基于最新画像重建路径"""

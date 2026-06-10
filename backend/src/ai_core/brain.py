@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import weakref
@@ -109,7 +110,7 @@ class Brain:
             url = config["url"]
             for k, v in kwargs.items():
                 url = url.replace(f"{{{{{k}}}}}", str(v))
-            timeout = httpx.Timeout(15.0)
+            timeout = httpx.Timeout(30.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 method = config.get("method", "GET").upper()
                 resp = await client.request(method, url)
@@ -226,13 +227,15 @@ class Brain:
         return response["output"]
 
     async def stream(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = ""):
-        """逐 token 流式输出 — 包含工具调用事件"""
+        """逐 token 流式输出 — 包含工具调用事件，工具执行期间自动心跳保活"""
         await self._ensure_action_tools()
 
         full_response = ""
+        tool_running = False
 
-        try:
-            async for event in self._raw_executor.astream_events(
+        async def _stream_events(version: str):
+            nonlocal tool_running
+            agen = self._raw_executor.astream_events(
                 {
                     "input": message,
                     "history": list(self._history),
@@ -241,15 +244,29 @@ class Brain:
                     "path_context": path_context,
                     "portrait_context": portrait_context,
                 },
-                version="v2",
-            ):
+                version=version,
+            )
+            while True:
+                try:
+                    event = await asyncio.wait_for(agen.__anext__(), timeout=30 if tool_running else None)
+                except asyncio.TimeoutError:
+                    yield {"type": "keepalive"}
+                    continue
+                except StopAsyncIteration:
+                    break
+                yield event
+
+        try:
+            async for event in _stream_events("v2"):
                 kind = event.get("event", "")
 
                 if kind == "on_tool_start":
+                    tool_running = True
                     tool_name = event.get("name", "")
                     yield {"role": "tool", "type": "tool_start", "tool": tool_name}
 
                 elif kind == "on_tool_end":
+                    tool_running = False
                     tool_name = event.get("name", "")
                     tool_output = event.get("data", {}).get("output", "")
                     if isinstance(tool_output, str) and len(tool_output) > 500:
@@ -264,24 +281,16 @@ class Brain:
                             full_response += content
                             yield {"role": "assistant", "type": "chunk", "content": content}
         except (TypeError, NotImplementedError):
-            async for event in self._raw_executor.astream_events(
-                {
-                    "input": message,
-                    "history": list(self._history),
-                    "current_user_id": str(self.user_id),
-                    "resource_context": resource_context,
-                    "path_context": path_context,
-                    "portrait_context": portrait_context,
-                },
-                version="v1",
-            ):
+            async for event in _stream_events("v1"):
                 kind = event.get("event", "")
 
                 if kind == "on_tool_start":
+                    tool_running = True
                     tool_name = event.get("name", "")
                     yield {"role": "tool", "type": "tool_start", "tool": tool_name}
 
                 elif kind == "on_tool_end":
+                    tool_running = False
                     tool_name = event.get("name", "")
                     tool_output = event.get("data", {}).get("output", "")
                     if isinstance(tool_output, str) and len(tool_output) > 500:
