@@ -264,6 +264,8 @@ async def generate_ppt_parallel(
         is_portrait_section = has_portrait and idx == 0
 
         if is_portrait_section:
+            base_prompt = ""
+            context = ""
             # 画像学习引入：从学生视角出发，建立学习连接
             # 注意：不能用 ppt.yaml 模板，它的学术标题/6要点等要求与温暖引入冲突
             portrait_context_block = ""
@@ -299,6 +301,7 @@ async def generate_ppt_parallel(
             )
             prompt_with_context = base_prompt + context
 
+        _original_prompt = prompt_with_context
         t0 = time.perf_counter()
         for attempt in range(2):
             try:
@@ -344,7 +347,7 @@ async def generate_ppt_parallel(
 
                 logger.info("[PPT-Section] idx=%d section=%s 审核未通过 score=%d attempt=%d feedback=%s",
                             idx, section_title, score, attempt + 1, review_feedback[:120])
-                prompt_with_context = base_prompt + context + f"\n\n【审核未通过，必须修改】\n{review_feedback}\n请根据以上反馈重新生成。"
+                prompt_with_context = _original_prompt + f"\n\n【审核未通过，必须修改】\n{review_feedback}\n请根据以上反馈重新生成。"
             except Exception:
                 logger.exception("[PPT-Section] idx=%d section=%s 审核异常，跳过", idx, section_title)
                 _push_section(idx, content)
