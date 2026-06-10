@@ -106,7 +106,7 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
 
             while True:
                 try:
-                    msg = await asyncio.wait_for(q.get(), timeout=30)
+                    msg = await asyncio.wait_for(q.get(), timeout=60)
                     yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
                     if msg.get("status") in ("ready", "failed"):
                         return

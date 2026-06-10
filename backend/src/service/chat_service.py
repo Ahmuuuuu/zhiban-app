@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections import OrderedDict
@@ -5,6 +6,7 @@ from collections import OrderedDict
 from backend.src.ai_core.brain import Brain
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
+from backend.src.service.portrait_service import extract_portrait_from_chat
 from backend.src.utils.chat_utils import allocate_chat_group_id
 
 logger = logging.getLogger(__name__)
@@ -122,6 +124,12 @@ def invalidate_portrait_cache(user_id: int):
     _portrait_cache.pop(user_id, None)
 
 
+async def _extract_portrait_and_refresh(user_id: int, chat_group_id: int):
+    """后台提取画像并刷新缓存"""
+    await extract_portrait_from_chat(user_id, chat_group_id)
+    invalidate_portrait_cache(user_id)
+
+
 def _get_or_create_chat(user_id: int, chat_group_id: int) -> Brain:
     instance_key = f"brain_{user_id}_{chat_group_id}"
     if instance_key not in _chat_instances:
@@ -141,13 +149,16 @@ class ChatService:
         if not user:
             return None, "未查找到用户"
         chat_group_id = await allocate_chat_group_id(user_id)
+        message = await ChatHistory.create(
+            user_id=user_id, chat_group_id=chat_group_id, req=user_req, res="",
+        )
         bot = _get_or_create_chat(user_id, chat_group_id)
         path_context = await _build_path_context(user_id)
         portrait_context = await _build_portrait_context(user_id)
         res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context)
-        message = await ChatHistory.create(
-            user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=res,
-        )
+        message.res = res
+        await message.save()
+        asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
         return message, "新对话保存成功"
 
     @staticmethod
@@ -155,13 +166,16 @@ class ChatService:
         user = await User.filter(id=user_id).first()
         if not user:
             return None, "未查找到用户"
+        message = await ChatHistory.create(
+            user_id=user_id, chat_group_id=chat_group_id, req=user_req, res="",
+        )
         bot = _get_or_create_chat(user_id, chat_group_id)
         path_context = await _build_path_context(user_id)
         portrait_context = await _build_portrait_context(user_id)
         res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context)
-        message = await ChatHistory.create(
-            user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=res,
-        )
+        message.res = res
+        await message.save()
+        asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
         return message, "问答保存成功"
 
     # ── 流式 ──
@@ -172,6 +186,12 @@ class ChatService:
         bot = _get_or_create_chat(user_id, chat_group_id)
         path_context = await _build_path_context(user_id)
         portrait_context = await _build_portrait_context(user_id)
+
+        # 先写用户消息到历史，确保工具调用时能查到当前消息
+        record = await ChatHistory.create(
+            user_id=user_id, chat_group_id=chat_group_id, req=user_req, res="",
+        )
+
         full_response = ""
         async for chunk in bot.stream(user_req, path_context=path_context, portrait_context=portrait_context):
             if isinstance(chunk, dict):
@@ -182,9 +202,9 @@ class ChatService:
                 full_response += chunk
                 yield f"data: {json.dumps({'role': 'assistant', 'type': 'chunk', 'content': chunk}, ensure_ascii=False)}\n\n"
 
-        await ChatHistory.create(
-            user_id=user_id, chat_group_id=chat_group_id, req=user_req, res=full_response,
-        )
+        record.res = full_response
+        await record.save()
+        asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
         yield f"data: {json.dumps({'role': 'system', 'type': 'done', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 

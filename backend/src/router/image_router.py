@@ -27,9 +27,11 @@ async def generate_image(
     data: GenerateImageRequest = Body(...),
 ):
     """提交图片生成任务到讯飞 HiDream，立即返回 task_id，后台异步轮询"""
+    from backend.src.service.image_service import _ensure_prompt_quality
     try:
+        prompt = await _ensure_prompt_quality(data.prompt)
         result = await ImageService.submit(
-            prompt=data.prompt,
+            prompt=prompt,
             user_id=user_id,
             aspect_ratio=data.aspect_ratio,
             img_count=data.img_count,

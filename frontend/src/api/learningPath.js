@@ -127,3 +127,14 @@ export function generatePathNodeQuiz(pathId, nodeId) {
     method: 'post'
   })
 }
+
+export function getPathVideo(pathId) {
+  return request.get(`/path/${pathId}/video`)
+}
+
+export function generatePathVideo(pathId) {
+  return request({
+    url: `/path/${pathId}/video`,
+    method: 'post'
+  })
+}

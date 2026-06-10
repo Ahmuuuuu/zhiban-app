@@ -22,7 +22,7 @@ _raw_llm = ChatOpenAI(
 # 每用户每池并发上限
 _PER_USER = {
     "ppt": 10,
-    "document": 5,
+    "document": 10,
     "path": 4,
     "leader": 2,
     "reviewer": 2,

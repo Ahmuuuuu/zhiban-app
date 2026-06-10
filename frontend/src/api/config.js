@@ -8,6 +8,9 @@ export const resolveApiUrl = path => {
   if (!path) return ''
   if (/^https?:\/\//i.test(path)) return path
 
+  // /static/ 路径保持相对，走 Vite proxy（开发）或同源访问（生产），避免局域网跨端口拦截
+  if (/^\/static\//.test(path)) return path
+
   return new URL(String(path).replace(/^\//, ''), API_BASE_URL).toString()
 }
 

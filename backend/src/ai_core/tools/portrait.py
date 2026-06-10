@@ -53,6 +53,8 @@ async def update_portrait(user_id: str, field: str, value: str, source: str = "u
                 return f"learning_goal 值无效，可选：{', '.join(sorted(VALID_LEARNING_GOAL))}"
             setattr(picture, field, value)
             await picture.save()
+            from backend.src.service.chat_service import invalidate_portrait_cache
+            invalidate_portrait_cache(user_id_int)
             return f"画像字段 '{field}' 已更新为 '{value}'（来源：{source}）"
 
         # traits JSON 维度
@@ -63,6 +65,8 @@ async def update_portrait(user_id: str, field: str, value: str, source: str = "u
         traits[field] = build_trait_entry(value, source, existing)
         picture.traits = dump_traits(traits)
         await picture.save()
+        from backend.src.service.chat_service import invalidate_portrait_cache
+        invalidate_portrait_cache(user_id_int)
         entry = traits[field]
         return f"维度 '{field}' 已更新：{value}，置信度 {entry['confidence']}（来源：{source}）"
     except Exception as e:
