@@ -14,6 +14,7 @@
         <router-link to="/resources" class="nav-pill" :class="{ active: isResourceSection }">资源中心</router-link>
         <router-link to="/learning-path" class="nav-pill">学习路径</router-link>
         <router-link to="/learning-situation" class="nav-pill">学习情况</router-link>
+        <router-link v-if="isAdmin" to="/admin" class="nav-pill">管理后台</router-link>
       </nav>
 
       <section v-if="audioVisible" class="audio-control" aria-label="音频播放控制">
@@ -55,15 +56,19 @@ import { Bell, Pause, Play, Square } from 'lucide-vue-next'
 import UserAccountButton from './UserAccountButton.vue'
 import { getUnreadNotificationCount } from '../api/apis'
 import { useResourceNarration } from '../composables/useResourceNarration'
+import { currentUserRole, isAdminRole } from '../utils/auth'
 
 const unreadCount = ref(0)
 const route = useRoute()
+const userRole = ref(currentUserRole())
 let pollTimer = null
 const { narrationState, toggleCurrentAudio, stopCurrentAudio } = useResourceNarration()
 
 const isResourceSection = computed(() => {
   return route.path === '/resources' || route.path === '/learning-resources'
 })
+
+const isAdmin = computed(() => isAdminRole(userRole.value))
 
 const audioVisible = computed(() => {
   return Boolean(narrationState.value.resourceId && (narrationState.value.sections.length || narrationState.value.loading))
@@ -107,6 +112,7 @@ const fetchUnread = async () => {
 }
 
 const handleLogin = () => {
+  userRole.value = currentUserRole()
   window.dispatchEvent(new CustomEvent('zhiban:user-logged-in'))
 }
 
@@ -122,16 +128,23 @@ const handleNotifUpdate = () => {
 }
 
 const handleUserLoggedIn = () => {
+  userRole.value = currentUserRole()
   // Refresh unread count shortly after login
   setTimeout(fetchUnread, 1000)
 }
 
+const handleUserLoggedOut = () => {
+  userRole.value = ''
+}
+
 onMounted(() => {
+  userRole.value = currentUserRole()
   fetchUnread()
   pollTimer = setInterval(fetchUnread, 30_000)
   window.addEventListener('zhiban:notification-read', handleNotifRead)
   window.addEventListener('zhiban:notification-update', handleNotifUpdate)
   window.addEventListener('zhiban:user-logged-in', handleUserLoggedIn)
+  window.addEventListener('zhiban:user-logged-out', handleUserLoggedOut)
 })
 
 onBeforeUnmount(() => {
@@ -139,6 +152,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('zhiban:notification-read', handleNotifRead)
   window.removeEventListener('zhiban:notification-update', handleNotifUpdate)
   window.removeEventListener('zhiban:user-logged-in', handleUserLoggedIn)
+  window.removeEventListener('zhiban:user-logged-out', handleUserLoggedOut)
 })
 </script>
 

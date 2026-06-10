@@ -128,18 +128,25 @@ export async function executeGeneration(
           return
         }
 
+        console.error('[executeGeneration] 未获取到 taskId，submitRes 完整内容:', JSON.stringify(submitRes))
         callbacks.onError?.('图片生成任务提交失败，请稍后重试。')
         return
       }
 
-      for (let i = 0; i < 30; i++) {
-        await new Promise(resolve => setTimeout(resolve, 2000))
-        const statusRes: any = await getImageTaskStatus(taskId)
-        const taskInfo = unwrapResponseData(statusRes)
-        if (!taskInfo) {
-          console.warn('[executeGeneration] 图片任务状态查询返回空，第', i + 1, '次')
+      const MAX_POLLS = 30
+      const POLL_INTERVAL = 2000
+
+      for (let i = 0; i < MAX_POLLS; i++) {
+        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL))
+        let statusRes: any
+        try {
+          statusRes = await getImageTaskStatus(taskId)
+        } catch (pollErr: any) {
+          console.error(`[executeGeneration] 轮询第 ${i + 1} 次请求失败:`, pollErr?.response?.status, pollErr?.response?.data || pollErr?.message)
           continue
         }
+        const taskInfo = unwrapResponseData(statusRes)
+        if (!taskInfo) continue
 
         const status = String(taskInfo.status || '').toLowerCase()
 
@@ -168,9 +175,10 @@ export async function executeGeneration(
           return
         }
 
-        callbacks.onProgress?.(`正在生成图片 ${Math.round(((i + 1) / 30) * 100)}%...`)
+        callbacks.onProgress?.(`正在生成图片 ${Math.round(((i + 1) / MAX_POLLS) * 100)}%...`)
       }
 
+      console.error('[executeGeneration] 图片生成超时，90 次轮询后仍未完成')
       callbacks.onError?.('图片生成超时，请稍后重试。')
     } catch (err: any) {
       console.error('[executeGeneration] 图片生成异常:', err?.response?.data || err?.message || err)

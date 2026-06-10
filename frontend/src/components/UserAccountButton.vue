@@ -28,6 +28,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getUserProfile, normalizeAvatarUrl } from '../api/apis'
+import { isAdminRole } from '../utils/auth'
 import LoginView from './LoginView.vue'
 
 const props = defineProps({
@@ -61,6 +62,7 @@ const accountMeta = computed(() => {
 
   if (userRole.value === 'teacher') return '教师'
   if (userRole.value === 'student') return '学生'
+  if (isAdminRole(userRole.value)) return '管理员'
   return '学生'
 })
 const avatarText = computed(() => {
@@ -111,6 +113,11 @@ const handleClick = async () => {
     return
   }
 
+  if (isAdminRole(userRole.value)) {
+    await router.push('/admin')
+    return
+  }
+
   await router.push('/profile')
 }
 
@@ -118,6 +125,9 @@ const handleLoginSuccess = async () => {
   showLogin.value = false
   await loadAccountInfo()
   emit('login')
+  if (isAdminRole(userRole.value)) {
+    await router.push('/admin')
+  }
 }
 
 const handleAvatarUpdated = event => {

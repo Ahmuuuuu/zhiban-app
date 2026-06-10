@@ -12,6 +12,8 @@ import MyProfile from '../pages/MyAccount/MyProfile.vue'
 import QuizRunnerView from '../pages/QuizRunnerView.vue'
 import PresentationPlayerView from '../pages/PresentationPlayerView.vue'
 import NotificationCenterView from '../pages/NotificationCenterView.vue'
+import AdminDashboard from '../pages/AdminDashboard.vue'
+import { isCurrentUserAdmin } from '../utils/auth'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -105,8 +107,22 @@ const router = createRouter({
       path: '/notifications',
       name: 'notifications',
       component: NotificationCenterView
+    },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: AdminDashboard,
+      meta: { requiresAdmin: true }
     }
   ]
+})
+
+router.beforeEach((to, from, next) => {
+  if (to.meta?.requiresAdmin && !isCurrentUserAdmin()) {
+    next('/profile')
+    return
+  }
+  next()
 })
 
 export default router

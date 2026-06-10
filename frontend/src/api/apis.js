@@ -96,6 +96,18 @@ export {
 } from './image'
 
 export {
+  approvePublicResourceApplication,
+  deleteAdminResource,
+  getAdminKnowledgeBase,
+  getAdminPendingResources,
+  getAdminResources,
+  getAdminUsers,
+  importAdminBaseResource,
+  rejectPublicResourceApplication,
+  updateAdminResource
+} from './admin'
+
+export {
   deleteAgentSkill,
   getAgentSkill,
   getAgentSkills,
