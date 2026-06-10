@@ -13,6 +13,7 @@ from backend.src.service.skill_service import SkillService
 from backend.src.schemas.resource import GenerateResourceRequest
 from backend.src.schemas.skill import UpsertSkillRequest
 from backend.src.utils.jwt import get_user_id_from_token, JWT_KEY, ALGORITHM
+from backend.src.utils.admin_check import is_admin
 from jose import jwt, JWTError
 
 router = APIRouter(prefix = "/resource", tags = ["学习资源生成"])
@@ -24,7 +25,7 @@ class ExportPptxRequest(BaseModel):
 
 
 class ResourceVisibilityRequest(BaseModel):
-    visibility: str = Field(default="public", pattern="^(public|private)$")
+    visibility: str = Field(default="public", pattern="^(public|private|pending|rejected)$")
 
 
 def _clean_bullet_text(value: str) -> str:
@@ -217,10 +218,14 @@ async def update_resource_visibility(
     user_id: int = Depends(get_user_id_from_token),
 ):
     try:
-        record = await ResourceService.publish_resource(resource_id, user_id, data.visibility)
+        target_visibility = data.visibility
+        if target_visibility == "public" and not await is_admin(user_id):
+            target_visibility = "pending"
+        record = await ResourceService.publish_resource(resource_id, user_id, target_visibility)
         if record is None:
             return {"code": 404, "msg": "资源不存在或无权操作"}
-        return {"code": 200, "msg": "success", "data": record}
+        msg = "公开申请已提交，等待管理员审核" if target_visibility == "pending" else "success"
+        return {"code": 200, "msg": msg, "data": record}
     except HTTPException:
         raise
     except Exception:
