@@ -136,9 +136,14 @@ export async function executeGeneration(
         await new Promise(resolve => setTimeout(resolve, 2000))
         const statusRes: any = await getImageTaskStatus(taskId)
         const taskInfo = unwrapResponseData(statusRes)
-        if (!taskInfo) continue
+        if (!taskInfo) {
+          console.warn('[executeGeneration] 图片任务状态查询返回空，第', i + 1, '次')
+          continue
+        }
 
-        if (taskInfo.status === 'done') {
+        const status = String(taskInfo.status || '').toLowerCase()
+
+        if (status === 'done' || status === 'success' || status === 'completed') {
           const images = normalizeImageRecords(taskInfo)
           if (images.length) {
             images.forEach((image: unknown) => callbacks.onImage?.(image))
@@ -149,12 +154,12 @@ export async function executeGeneration(
           return
         }
 
-        if (['download_failed', 'download_error'].includes(String(taskInfo.status))) {
+        if (['download_failed', 'download_error'].includes(status)) {
           callbacks.onError?.(taskInfo.error || '图片没有下载成功，请稍后重试。')
           return
         }
 
-        if (taskInfo.status === 'failed') {
+        if (status === 'failed' || status === 'error') {
           if (/下载|download/i.test(String(taskInfo.error || ''))) {
             callbacks.onError?.(taskInfo.error || '图片没有下载成功，请稍后重试。')
           } else {
@@ -167,8 +172,9 @@ export async function executeGeneration(
       }
 
       callbacks.onError?.('图片生成超时，请稍后重试。')
-    } catch {
-      callbacks.onError?.('图片生成失败，请稍后再试。')
+    } catch (err: any) {
+      console.error('[executeGeneration] 图片生成异常:', err?.response?.data || err?.message || err)
+      callbacks.onError?.(err?.response?.data?.detail || err?.message || '图片生成失败，请稍后再试。')
     }
     return
   }
