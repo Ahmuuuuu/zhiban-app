@@ -130,6 +130,12 @@ const goBack = () => {
 }
 
 const normalizeNotificationTarget = item => {
+  // 生成资源类通知：优先跳转到生成资源的对话界面，而非资源中心
+  const chatGroupId = item?.chat_group_id || item?.chatGroupId
+  if (chatGroupId) {
+    return `/chat?chat_group_id=${chatGroupId}`
+  }
+
   const rawUrl = String(item?.target_url || item?.targetUrl || '').trim()
   if (!rawUrl) return ''
 
