@@ -211,11 +211,15 @@ const saveLoginUser = (result) => {
   }
 
   if (user?.id) {
-    localStorage.setItem('token', String(user.id))
+    localStorage.setItem('user_id', String(user.id))
   }
 
-  if (user?.id) {
-    localStorage.setItem('user_id', String(user.id))
+  if (user?.username) {
+    localStorage.setItem('username', user.username)
+  }
+
+  if (user?.role || user?.identity) {
+    localStorage.setItem('role', user.role || user.identity)
   }
 }
 

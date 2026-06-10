@@ -190,6 +190,33 @@ export function deleteGeneratedResource(resourceId: number | string): Promise<un
 
 export function publishGeneratedResource(resourceId: number | string, visibility?: 'public' | 'private' | string): Promise<unknown>;
 
+export function getAdminUsers(): Promise<unknown>;
+
+export function getAdminKnowledgeBase(): Promise<unknown>;
+
+export function getAdminPendingResources(params?: Record<string, unknown>): Promise<unknown>;
+
+export function getAdminResources(params?: Record<string, unknown>): Promise<unknown>;
+
+export function approvePublicResourceApplication(
+  applicationId: number | string,
+  data?: Record<string, unknown>,
+): Promise<unknown>;
+
+export function rejectPublicResourceApplication(
+  applicationId: number | string,
+  data?: Record<string, unknown>,
+): Promise<unknown>;
+
+export function updateAdminResource(
+  resourceId: number | string,
+  data?: Record<string, unknown>,
+): Promise<unknown>;
+
+export function deleteAdminResource(resourceId: number | string): Promise<unknown>;
+
+export function importAdminBaseResource(data: FormData | Record<string, unknown>): Promise<unknown>;
+
 export function generateExamQuestions(data: {
   topic: string;
   count?: number;
