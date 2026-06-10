@@ -321,6 +321,7 @@ async def _resource_to_dict(record: GeneratedResource, current_user_id: int | No
         "download_url": f"/resource/{record.id}/download",
         "review_passed": record.review_passed,
         "created_at": str(record.created_at),
+        "updated_at": str(record.updated_at),
         "view_count": record.view_count,
         "download_count": record.download_count,
         "like_count": record.like_count,
@@ -739,8 +740,103 @@ class ResourceService:
         return result
 
     @staticmethod
+    async def admin_list_resources(visibility: str | None = None, include_content: bool = False) -> list[dict]:
+        query = GeneratedResource.all()
+        if visibility:
+            query = query.filter(visibility=visibility)
+        records = await query.order_by("-updated_at", "-created_at").all()
+        return [await _resource_to_dict(r, None, include_content=include_content) for r in records]
+
+    @staticmethod
+    async def admin_update_resource(resource_id: int, data: dict) -> dict | None:
+        record = await GeneratedResource.filter(id=resource_id).first()
+        if not record:
+            return None
+
+        title = data.get("title") or data.get("topic")
+        resource_type = data.get("resource_type") or data.get("resourceType")
+        content = data.get("content")
+        visibility = data.get("visibility")
+        cover_url = data.get("cover_url") or data.get("coverUrl")
+        file_url = data.get("file_url") or data.get("fileUrl")
+
+        update_fields = ["updated_at"]
+        if title is not None:
+            record.topic = str(title).strip() or record.topic
+            update_fields.append("topic")
+        if resource_type is not None:
+            record.resource_type = str(resource_type).strip() or record.resource_type
+            update_fields.append("resource_type")
+        if content is not None:
+            record.content = str(content)
+            update_fields.append("content")
+        if visibility is not None:
+            value = str(visibility).strip()
+            if value in ("public", "private", "pending", "rejected"):
+                record.visibility = value
+                update_fields.append("visibility")
+        if cover_url is not None:
+            record.cover_url = str(cover_url).strip() or None
+            update_fields.append("cover_url")
+        if file_url is not None:
+            record.file_url = str(file_url).strip() or None
+            update_fields.append("file_url")
+
+        await record.save(update_fields=list(dict.fromkeys(update_fields)))
+        return await _resource_to_dict(record, None, include_content=True)
+
+    @staticmethod
+    async def admin_delete_resource(resource_id: int) -> bool:
+        record = await GeneratedResource.filter(id=resource_id).first()
+        if not record:
+            return False
+        await record.delete()
+        return True
+
+    @staticmethod
+    async def admin_approve_resource(resource_id: int) -> dict | None:
+        return await ResourceService.admin_update_resource(resource_id, {"visibility": "public"})
+
+    @staticmethod
+    async def admin_reject_resource(resource_id: int) -> dict | None:
+        return await ResourceService.admin_update_resource(resource_id, {"visibility": "rejected"})
+
+    @staticmethod
+    async def admin_import_base_resource(admin_id: int, data: dict) -> dict | None:
+        user = await User.filter(id=admin_id).first()
+        if not user:
+            return None
+
+        title = str(data.get("title") or data.get("topic") or "基础资源").strip()
+        resource_type = str(data.get("resource_type") or data.get("resourceType") or "document").strip() or "document"
+        content = str(data.get("content") or data.get("preview") or "").strip()
+        file_url = str(data.get("file_url") or data.get("fileUrl") or "").strip() or None
+        cover_url = str(data.get("cover_url") or data.get("coverUrl") or "").strip() or None
+
+        if not content:
+            content = f"{title}\n\n该资源由管理员导入。"
+
+        record = await GeneratedResource.create(
+            topic=title,
+            resource_type=resource_type,
+            content=content,
+            review_passed=True,
+            retry_count=0,
+            visibility="public",
+            file_url=file_url,
+            cover_url=cover_url,
+            user=user,
+        )
+        if not record.cover_url:
+            cover = build_cover_url(resource_type, file_url, record.id)
+            if cover:
+                record.cover_url = cover
+                await record.save(update_fields=["cover_url", "updated_at"])
+        return await _resource_to_dict(record, admin_id, include_content=True)
+
+    @staticmethod
     async def publish_resource(resource_id: int, user_id: int, visibility: str = "public") -> dict | None:
-        if visibility not in ("public", "private"):
+        if visibility not in ("public", "private", "pending", "rejected"):
             visibility = "private"
         record = await GeneratedResource.filter(id=resource_id, user_id=user_id).first()
         if not record:

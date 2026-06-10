@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends, Body, Request
 
 from backend.src.service.admin_service import AdminService
+from backend.src.service.resource_service import ResourceService
 from backend.src.schemas.admin import ResetPasswordRequest, DeleteUserRequest
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.utils.admin_check import is_admin
@@ -12,6 +13,185 @@ async def _require_admin(user_id : int = Depends(get_user_id_from_token)) -> int
     if not await is_admin(user_id):
         raise HTTPException(403, "需要管理员权限")
     return user_id
+
+
+@router.get("/resources")
+async def list_resources(
+    visibility: str | None = None,
+    admin_id: int = Depends(_require_admin),
+):
+    try:
+        records = await ResourceService.admin_list_resources(visibility=visibility)
+        return {"code": 200, "msg": "success", "data": records}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.get("/resource/list")
+async def list_resources_alias(
+    visibility: str | None = None,
+    admin_id: int = Depends(_require_admin),
+):
+    return await list_resources(visibility, admin_id)
+
+
+@router.get("/resources/pending")
+async def list_pending_resources(admin_id: int = Depends(_require_admin)):
+    try:
+        records = await ResourceService.admin_list_resources(visibility="pending", include_content=True)
+        return {"code": 200, "msg": "success", "data": records}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.get("/resource/pending")
+async def list_pending_resources_alias(admin_id: int = Depends(_require_admin)):
+    return await list_pending_resources(admin_id)
+
+
+@router.post("/resources/applications/{resource_id}/approve")
+async def approve_resource_application(resource_id: int, admin_id: int = Depends(_require_admin)):
+    try:
+        record = await ResourceService.admin_approve_resource(resource_id)
+        if record is None:
+            return {"code": 404, "msg": "资源不存在"}
+        return {"code": 200, "msg": "success", "data": record}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.post("/resource-applications/{resource_id}/approve")
+async def approve_resource_application_alias(resource_id: int, admin_id: int = Depends(_require_admin)):
+    return await approve_resource_application(resource_id, admin_id)
+
+
+@router.post("/resources/{resource_id}/approve")
+async def approve_resource_alias(resource_id: int, admin_id: int = Depends(_require_admin)):
+    return await approve_resource_application(resource_id, admin_id)
+
+
+@router.post("/resource/{resource_id}/approve")
+async def approve_resource_short_alias(resource_id: int, admin_id: int = Depends(_require_admin)):
+    return await approve_resource_application(resource_id, admin_id)
+
+
+@router.post("/resources/applications/{resource_id}/reject")
+async def reject_resource_application(resource_id: int, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    try:
+        record = await ResourceService.admin_reject_resource(resource_id)
+        if record is None:
+            return {"code": 404, "msg": "资源不存在"}
+        reason = data.get("reason") if isinstance(data, dict) else ""
+        return {"code": 200, "msg": reason or "success", "data": record}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.post("/resource-applications/{resource_id}/reject")
+async def reject_resource_application_alias(resource_id: int, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    return await reject_resource_application(resource_id, data, admin_id)
+
+
+@router.post("/resources/{resource_id}/reject")
+async def reject_resource_alias(resource_id: int, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    return await reject_resource_application(resource_id, data, admin_id)
+
+
+@router.post("/resource/{resource_id}/reject")
+async def reject_resource_short_alias(resource_id: int, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    return await reject_resource_application(resource_id, data, admin_id)
+
+
+@router.put("/resources/{resource_id}")
+async def update_resource(resource_id: int, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    try:
+        record = await ResourceService.admin_update_resource(resource_id, data)
+        if record is None:
+            return {"code": 404, "msg": "资源不存在"}
+        return {"code": 200, "msg": "success", "data": record}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.patch("/resources/{resource_id}")
+async def patch_resource(resource_id: int, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    return await update_resource(resource_id, data, admin_id)
+
+
+@router.put("/resource/{resource_id}")
+async def update_resource_alias(resource_id: int, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    return await update_resource(resource_id, data, admin_id)
+
+
+@router.patch("/resource/{resource_id}")
+async def patch_resource_alias(resource_id: int, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    return await update_resource(resource_id, data, admin_id)
+
+
+@router.delete("/resources/{resource_id}")
+async def delete_resource(resource_id: int, admin_id: int = Depends(_require_admin)):
+    try:
+        ok = await ResourceService.admin_delete_resource(resource_id)
+        if not ok:
+            return {"code": 404, "msg": "资源不存在"}
+        return {"code": 200, "msg": "删除成功"}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.delete("/resource/{resource_id}")
+async def delete_resource_alias(resource_id: int, admin_id: int = Depends(_require_admin)):
+    return await delete_resource(resource_id, admin_id)
+
+
+async def _read_import_payload(request: Request) -> dict:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        payload = dict(form)
+        upload = form.get("file")
+        if upload is not None and hasattr(upload, "read"):
+            raw = await upload.read()
+            payload["filename"] = getattr(upload, "filename", "")
+            if not payload.get("content"):
+                payload["content"] = raw.decode("utf-8", errors="ignore")
+        return payload
+    try:
+        body = await request.json()
+        return body if isinstance(body, dict) else {}
+    except Exception:
+        return {}
+
+
+@router.post("/resources/import")
+async def import_base_resource(request: Request, admin_id: int = Depends(_require_admin)):
+    try:
+        payload = await _read_import_payload(request)
+        record = await ResourceService.admin_import_base_resource(admin_id, payload)
+        if record is None:
+            return {"code": 404, "msg": "管理员不存在"}
+        return {"code": 200, "msg": "success", "data": record}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "服务器错误")
+
+
+@router.post("/resource/import")
+async def import_base_resource_alias(request: Request, admin_id: int = Depends(_require_admin)):
+    return await import_base_resource(request, admin_id)
 
 
 @router.get("/users")
