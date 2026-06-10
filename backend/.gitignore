@@ -10,12 +10,10 @@ dist/
 .pytest_cache/
 
 # ── 环境变量（含 API KEY、数据库密码） ──
-.env
 
 # ── 虚拟环境 ──
 venv/
 .venv/
-env/
 
 # ── IDE ──
 .idea/
