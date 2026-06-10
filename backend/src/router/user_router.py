@@ -14,7 +14,7 @@ async def create(data : Create_User):
                 "code" : 200,
                 "msg" : "success",
                 "data" : {
-                    "id" : create_access_token(user.id),
+                    "id" : create_access_token(user.id, user.role or "user"),
                     "username" : user.username
                 }
             }
@@ -42,7 +42,10 @@ async def login(data : Login_User):
                 "code" : 200,
                 "msg" : msg,
                 "data" : {
-                    "id" : create_access_token(user.id)
+                    "id" : user.id,
+                    "token" : create_access_token(user.id, user.role or "user"),
+                    "username" : user.username,
+                    "role" : user.role or "user",
                 }
             }
     except HTTPException:
@@ -69,7 +72,7 @@ async def register_by_email(data: RegisterByEmail = Body(...)):
         return {
             "code": 200,
             "msg": msg,
-            "data": {"id": create_access_token(user.id), "username": user.username},
+            "data": {"id": create_access_token(user.id, user.role or "user"), "username": user.username},
         }
     except HTTPException:
         raise HTTPException(500, "服务器错误")
@@ -84,7 +87,12 @@ async def login_by_email(data: LoginByEmail = Body(...)):
         return {
             "code": 200,
             "msg": msg,
-            "data": {"id": create_access_token(user.id)},
+            "data": {
+                "id": user.id,
+                "token": create_access_token(user.id, user.role or "user"),
+                "username": user.username,
+                "role": user.role or "user",
+            },
         }
     except HTTPException:
         raise HTTPException(500, "服务器错误")
@@ -104,7 +112,7 @@ async def read(user_id : int = Depends(get_user_id_from_token)):
                 "code" : 200,
                 "msg" : msg,
                 "data" : {
-                    "id" : create_access_token(user.id),
+                    "id" : create_access_token(user.id, user.role or "user"),
                     "username" : user.username,
                     "university" : user.university,
                     "grade" : user.grade,
@@ -132,7 +140,7 @@ async def update_information(user_id : int = Depends(get_user_id_from_token), da
                 "code" : 200,
                 "msg" : msg,
                 "data" : {
-                    "id" : create_access_token(user.id)
+                    "id" : create_access_token(user.id, user.role or "user")
                 }
             }
     except HTTPException:
@@ -154,7 +162,7 @@ async def update_password(user_id : int = Depends(get_user_id_from_token), data 
                 "code" : 200,
                 "msg" : msg,
                 "data" : {
-                    "id" : create_access_token(user.id)
+                    "id" : create_access_token(user.id, user.role or "user")
                 }
             }
     except HTTPException:
@@ -207,7 +215,7 @@ async def delete(user_id : int = Depends(get_user_id_from_token), data : Delete_
                 "code" : 200,
                 "msg" : msg,
                 "data" : {
-                    "id" : create_access_token(user.id)
+                    "id" : create_access_token(user.id, user.role or "user")
                 }
             }
     except HTTPException:
