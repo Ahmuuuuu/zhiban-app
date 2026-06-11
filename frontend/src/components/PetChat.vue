@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { deleteConversation, getConversationList, getConversationMessages, resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
@@ -53,6 +53,68 @@ type StreamChatMessageFn = (
   handlers?: StreamChatHandlers,
 ) => Promise<void>;
 
+
+// ── 答题上下文（由 QuizRunnerView 通过 zhiban-quiz-context 事件推送）──
+const quizContext = ref(null)
+
+const quizContextLabel = computed(() => {
+  const ctx = quizContext.value
+  if (!ctx || ctx.finished) return null
+  const typeLabel = ctx.question?.type === 'multiple' ? '多选题' : ctx.question?.type === 'choice' ? '选择题' : '简答题'
+  return `${ctx.quizTitle} · 第${ctx.currentIndex + 1}/${ctx.totalQuestions}题 · ${typeLabel}`
+})
+
+const buildContextPrefix = () => {
+  const ctx = quizContext.value
+  if (!ctx || ctx.finished) return ''
+  const typeLabel = ctx.question?.type === 'multiple' ? '多选题' : ctx.question?.type === 'choice' ? '选择题' : '简答题'
+  let prefix = `【当前答题上下文】
+用户在做试卷《${ctx.quizTitle}》
+进度：第 ${ctx.currentIndex + 1}/${ctx.totalQuestions} 题（${typeLabel}）
+题目：${ctx.question?.stem || ''}`
+  if (ctx.question?.options?.length) {
+    prefix += `\n选项：${ctx.question.options.map(o => `${o.key}. ${o.text}`).join('；')}`
+  }
+  if (ctx.isChecked) {
+    prefix += `\n用户已作答：${ctx.userAnswer || '未作答'}`
+    prefix += `\n判题结果：${ctx.isCorrect ? '✓ 正确' : '✗ 错误'}`
+    if (!ctx.isCorrect && ctx.correctAnswer) {
+      prefix += `\n正确答案：${ctx.correctAnswer}`
+    }
+    if (ctx.explanation) {
+      prefix += `\n题目解析：${ctx.explanation}`
+    }
+  } else {
+    prefix += `\n用户尚未作答`
+  }
+  return prefix
+}
+
+const clearQuizContext = () => {
+  quizContext.value = null
+}
+
+const handleQuizContext = (event) => {
+  quizContext.value = event.detail
+}
+
+// ── 快捷提问建议（根据上下文动态生成）──
+const quickSuggestions = computed(() => {
+  const ctx = quizContext.value
+  if (!ctx || ctx.finished) return []
+  const suggestions = []
+  if (!ctx.isChecked) {
+    suggestions.push({ label: '给我一点提示', text: '这道题我不太会，能给我一点提示吗？不要直接告诉我答案。' })
+    suggestions.push({ label: '解释相关知识点', text: '这道题考的是哪个知识点？能给我讲解一下吗？' })
+  } else if (!ctx.isCorrect) {
+    suggestions.push({ label: '讲解正确思路', text: '这道题我做错了，能给我讲解一下正确的解题思路吗？' })
+    suggestions.push({ label: '类似题目再练', text: '能给我出一道类似的题再练练吗？' })
+  } else {
+    suggestions.push({ label: '深入讲解', text: '这道题我做对了，但能给我深入讲解一下背后的知识点吗？' })
+    suggestions.push({ label: '下一题难度升级', text: '能给我出一道更难的同类型题目吗？' })
+  }
+  return suggestions
+})
 
 const PET_HISTORY_KEY = "zhiban_pet_chat_groups";
 const chatExpanded = ref(false);
@@ -440,6 +502,9 @@ const sendPetMessage = async () => {
   const text = chatInput.value.trim();
   if (!text || chatLoading.value) return;
 
+  const contextPrefix = buildContextPrefix()
+  const aiMessage = contextPrefix ? `${contextPrefix}\n\n用户问题：${text}` : text
+
   const assistantMessage: PetChatMessage = {
     id: `assistant-${Date.now()}`,
     role: "assistant",
@@ -458,7 +523,7 @@ const sendPetMessage = async () => {
   try {
     const detectedTool = detectGenerationIntent(text);
     if (detectedTool?.generateMode) {
-      await executeGeneration(text, detectedTool, petChatGroupId.value, {
+      await executeGeneration(aiMessage, detectedTool, petChatGroupId.value, {
         onProgress: (msg) => {
           assistantMessage.content = msg;
         },
@@ -531,7 +596,7 @@ const sendPetMessage = async () => {
 
     let receivedChunk = false;
     await sendStreamChatMessage(
-      { user_req: text, chat_group_id: petChatGroupId.value },
+      { user_req: aiMessage, chat_group_id: petChatGroupId.value },
       {
         onChunk: async (chunk: string) => {
           if (!receivedChunk) {
@@ -633,6 +698,14 @@ watch(
   },
   { immediate: true },
 );
+
+onMounted(() => {
+  window.addEventListener("zhiban-quiz-context", handleQuizContext)
+})
+
+onUnmounted(() => {
+  window.removeEventListener("zhiban-quiz-context", handleQuizContext)
+})
 </script>
 
 <template>
@@ -693,6 +766,25 @@ watch(
         </template>
       </aside>
     </Transition>
+
+    <div v-if="quizContextLabel" class="pet-chat__quiz-context">
+      <span class="pet-chat__quiz-context-icon">📝</span>
+      <span>{{ quizContextLabel }}</span>
+      <button type="button" class="pet-chat__quiz-context-clear" title="清除答题上下文" @click="clearQuizContext">×</button>
+    </div>
+
+    <div v-if="quickSuggestions.length" class="pet-chat__quick-suggestions">
+      <button
+        v-for="suggestion in quickSuggestions"
+        :key="suggestion.label"
+        type="button"
+        class="pet-chat__quick-chip"
+        :disabled="chatLoading"
+        @click="chatInput = suggestion.text"
+      >
+        {{ suggestion.label }}
+      </button>
+    </div>
 
     <div ref="messagesRef" class="pet-chat__messages">
       <div
@@ -1113,6 +1205,93 @@ watch(
 .pet-chat__save-resource:disabled {
   opacity: 0.62;
   cursor: not-allowed;
+}
+
+.pet-chat__quiz-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(22, 63, 143, 0.06);
+  color: #163f8f;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.pet-chat__quiz-context-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
+}
+
+.pet-chat__quiz-context-clear {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(22, 63, 143, 0.12);
+  color: #163f8f;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pet-chat__quiz-context-clear:hover {
+  background: rgba(178, 65, 65, 0.18);
+  color: #b24141;
+}
+
+.pet-chat__quick-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.pet-chat__quick-chip {
+  min-height: 28px;
+  padding: 4px 12px;
+  border: 1px solid rgba(22, 63, 143, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #163f8f;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.18s ease;
+}
+
+.pet-chat__quick-chip:hover:not(:disabled) {
+  border-color: #163f8f;
+  background: rgba(22, 63, 143, 0.08);
+}
+
+.pet-chat__quick-chip:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.pet-chat--expanded .pet-chat__quiz-context,
+.pet-chat--expanded .pet-chat__quick-suggestions {
+  width: min(100%, 1080px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.pet-chat--expanded .pet-chat__quiz-context {
+  font-size: 14px;
+}
+
+.pet-chat--expanded .pet-chat__quick-chip {
+  font-size: 13px;
+  min-height: 32px;
 }
 
 .pet-chat__error {

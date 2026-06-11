@@ -83,7 +83,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { submitExamAnswer, completeLearningPathNode } from '../api/apis'
 import { getQuizSet, recordQuizAttempt } from '../utils/quizBank'
@@ -104,6 +104,62 @@ const nodeId = ref(route.query.nodeId || '')
 const routeSessionId = ref(String(route.query.sessionId || ''))
 const routePathId = ref(route.query.pathId || '')
 
+// ── 桌宠上下文：将当前答题状态广播给 StudyPet/PetChat ──
+const buildQuizContext = () => {
+  if (!quiz.value || !questions.value.length || finished.value) return null
+  const q = currentQuestion.value
+  if (!q?.id) return null
+  return {
+    quizId: String(route.params.quizId || ''),
+    quizTitle: quiz.value?.title || '做题',
+    currentIndex: currentIndex.value,
+    totalQuestions: questions.value.length,
+    question: {
+      id: q.id,
+      stem: q.stem,
+      type: q.multi ? 'multiple' : q.options?.length ? 'choice' : 'short',
+      options: q.options || [],
+    },
+    userAnswer: answers.value[q.id] ? normalizeAnswer(answers.value[q.id]) : null,
+    isChecked: !!checked.value[q.id],
+    isCorrect: checked.value[q.id] ? (results.value[q.id]?.is_correct ?? false) : null,
+    correctAnswer: checked.value[q.id] ? (results.value[q.id]?.correct_answer ?? null) : null,
+    explanation: checked.value[q.id] ? (results.value[q.id]?.analysis ?? null) : null,
+    finished: false,
+    score: null,
+  }
+}
+
+const buildFinishedContext = () => {
+  if (!quiz.value || !questions.value.length || !finished.value) return null
+  return {
+    quizId: String(route.params.quizId || ''),
+    quizTitle: quiz.value?.title || '做题',
+    currentIndex: 0,
+    totalQuestions: questions.value.length,
+    question: null,
+    userAnswer: null,
+    isChecked: false,
+    isCorrect: null,
+    correctAnswer: null,
+    explanation: null,
+    finished: true,
+    score: { correct: score.value, total: questions.value.length, percent: Number(percentScore.value) },
+  }
+}
+
+const dispatchQuizContext = () => {
+  const ctx = buildQuizContext() || buildFinishedContext()
+  window.dispatchEvent(new CustomEvent('zhiban-quiz-context', { detail: ctx }))
+}
+
+const petNoticeShown = ref(new Set())
+const showPetNotice = (key, message, duration) => {
+  if (petNoticeShown.value.has(key)) return
+  petNoticeShown.value.add(key)
+  window.dispatchEvent(new CustomEvent('zhiban-pet-notice', { detail: { message, duration } }))
+}
+
 const backLink = computed(() => {
   if (fromPage.value === 'path') {
     const query = {}
@@ -120,6 +176,15 @@ onMounted(() => {
   questions.value = session?.questions || []
   runSessionId.value = routeSessionId.value || session?.sessionId || session?.session_id || `quiz-${id}-${Date.now()}`
   loading.value = false
+  dispatchQuizContext()
+})
+
+onUnmounted(() => {
+  window.dispatchEvent(new CustomEvent('zhiban-quiz-context', { detail: null }))
+})
+
+watch(currentIndex, () => {
+  dispatchQuizContext()
 })
 
 const currentQuestion = computed(() => questions.value[currentIndex.value] || {})
@@ -212,6 +277,10 @@ const checkCurrent = async () => {
       if (data?.session_summary) {
         sessionSummary.value = data.session_summary
       }
+      dispatchQuizContext()
+      if (!results.value[question.id].is_correct) {
+        showPetNotice(`wrong-${question.id}`, '这道题做错了，点我可以问解题思路哦', 6000)
+      }
       return
     } catch (error) {
       const detail = error?.response?.data?.detail || error?.message || error
@@ -224,6 +293,10 @@ const checkCurrent = async () => {
     is_correct: isLocallyCorrect(question, userAnswer) || (!normalizeAnswer(question.answer) && Boolean(userAnswer)),
     correct_answer: question.answer,
     analysis: question.explanation || ''
+  }
+  dispatchQuizContext()
+  if (!results.value[question.id].is_correct) {
+    showPetNotice(`wrong-${question.id}`, '这道题做错了，点我可以问解题思路哦', 6000)
   }
 }
 
@@ -263,6 +336,8 @@ const goNext = async () => {
 
   if (currentIndex.value >= questions.value.length - 1) {
     finished.value = true
+    dispatchQuizContext()
+    showPetNotice(`finish-${quiz.value?.id}`, `交卷啦！${score.value}/${questions.value.length} 题正确，得分 ${percentScore.value} 分`, 7000)
     // 诊断：打印当前 results 和 score 状态
     console.log('[QuizRunner] 交卷前 results:', JSON.parse(JSON.stringify(results.value)))
     console.log('[QuizRunner] 交卷前 score:', score.value, 'percentScore:', percentScore.value)
