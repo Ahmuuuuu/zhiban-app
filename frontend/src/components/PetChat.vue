@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { deleteConversation, getConversationList, getConversationMessages, resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
+import { useSpeechRecognition } from "../composables/useSpeechRecognition";
 import { looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
 import { saveGeneratedResourceRef } from "../utils/savedResources";
 
@@ -115,6 +116,35 @@ const quickSuggestions = computed(() => {
   }
   return suggestions
 })
+
+// ── 语音输入 ──
+const { listening: voiceListening, error: voiceError, interim: voiceInterim, supported: voiceSupported, start: voiceStart, stop: voiceStop } = useSpeechRecognition("zh-CN")
+
+// 实时同步语音 interim 到输入框
+watch(voiceInterim, (val) => {
+  if (voiceListening.value && val) {
+    chatInput.value = val
+  }
+})
+
+const startVoice = async () => {
+  console.log("[语音] 点击麦克风, listening:", voiceListening.value, "supported:", voiceSupported)
+  if (voiceListening.value) {
+    voiceStop()
+    chatInput.value = voiceInterim.value || chatInput.value
+    return
+  }
+  try {
+    const text = await voiceStart()
+    console.log("[语音] 识别完成:", text)
+    chatInput.value = text || chatInput.value
+  } catch (e: any) {
+    console.warn("[语音] 识别取消/失败:", e?.message || e)
+    if (voiceInterim.value) {
+      chatInput.value = voiceInterim.value
+    }
+  }
+}
 
 const PET_HISTORY_KEY = "zhiban_pet_chat_groups";
 const chatExpanded = ref(false);
@@ -832,15 +862,29 @@ onUnmounted(() => {
     </div>
 
     <p v-if="chatError" class="pet-chat__error">{{ chatError }}</p>
+    <p v-if="voiceError" class="pet-chat__voice-error">{{ voiceError }}</p>
 
     <form ref="chatFormRef" class="pet-chat__form" @submit.prevent="sendPetMessage">
       <textarea
         v-model="chatInput"
         rows="1"
-        placeholder="问我一个问题..."
+        :placeholder="voiceListening ? '正在聆听...' : '问我一个问题...'"
         :disabled="chatLoading"
         @keydown.enter="handleChatEnter"
       />
+      <button
+        v-if="voiceSupported"
+        type="button"
+        class="pet-chat__mic-btn"
+        :class="{ recording: voiceListening }"
+        :disabled="chatLoading"
+        :aria-label="voiceListening ? '停止录音' : '语音输入'"
+        :title="voiceListening ? '停止录音' : '语音输入'"
+        @click="startVoice"
+      >
+        <span v-if="voiceListening" class="pet-chat__mic-pulse"></span>
+        <span class="pet-chat__mic-icon">{{ voiceListening ? '⏹' : '🎤' }}</span>
+      </button>
       <button type="submit" :disabled="!chatInput.trim() || chatLoading">发送</button>
     </form>
   </section>
@@ -1276,6 +1320,76 @@ onUnmounted(() => {
 .pet-chat__quick-chip:disabled {
   opacity: 0.48;
   cursor: not-allowed;
+}
+
+.pet-chat__voice-error {
+  margin: -4px 0 10px;
+  color: #c2410c;
+  font-size: 12px;
+}
+
+.pet-chat__mic-btn {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(201, 220, 233, 0.84);
+  border-radius: 50%;
+  background: #ffffff;
+  color: #163f8f;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.pet-chat__mic-btn:hover:not(:disabled) {
+  border-color: #5f8fc3;
+  background: rgba(95, 143, 195, 0.08);
+}
+
+.pet-chat__mic-btn.recording {
+  border-color: #c2410c;
+  background: rgba(194, 65, 12, 0.08);
+  color: #c2410c;
+}
+
+.pet-chat__mic-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.pet-chat__mic-icon {
+  position: relative;
+  z-index: 1;
+}
+
+.pet-chat__mic-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid #c2410c;
+  opacity: 0.6;
+  animation: pet-mic-pulse 1.2s ease-out infinite;
+}
+
+@keyframes pet-mic-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.pet-chat--expanded .pet-chat__mic-btn {
+  width: 52px;
+  height: 52px;
+  font-size: 18px;
 }
 
 .pet-chat--expanded .pet-chat__quiz-context,

@@ -113,11 +113,6 @@ const handleClick = async () => {
     return
   }
 
-  if (isAdminRole(userRole.value)) {
-    await router.push('/admin')
-    return
-  }
-
   await router.push('/profile')
 }
 
@@ -125,9 +120,6 @@ const handleLoginSuccess = async () => {
   showLogin.value = false
   await loadAccountInfo()
   emit('login')
-  if (isAdminRole(userRole.value)) {
-    await router.push('/admin')
-  }
 }
 
 const handleAvatarUpdated = event => {

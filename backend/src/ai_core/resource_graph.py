@@ -3,7 +3,7 @@ LangGraph 多智能体编排 — 学习资源生成
 LeaderAgent → [ExecutorAgent × N 线程并行] → ReviewerAgent
 """
 import asyncio
-import concurrent.futures
+
 import json
 import logging
 import time
@@ -562,13 +562,12 @@ async def executor_node(state: ResourceState) -> dict:
     ppt_section_count = PPT_SECTION_COUNT_BY_DEPTH.get(depth, PPT_DEFAULT_SECTIONS)
     doc_section_count = DOC_SECTION_COUNT_BY_DEPTH.get(depth, DOC_DEFAULT_SECTIONS)
 
-    # PPT / 文档 / 图片 → 异步；其余 → 线程池
+    # PPT / 文档 / 图片 / 其余 → 全部 asyncio 并行
     has_ppt = "ppt" in resource_types
     has_doc = "document" in resource_types or "case" in resource_types or "reading" in resource_types
     has_image = "image" in resource_types
     thread_types = [rt for rt in resource_types if rt not in ("ppt", "document", "case", "reading", "image")]
 
-    # 非 PPT/文档 类型线程池并行
     prompts = {
         rt: build_resource_prompt(
             rt, topic, portrait=portrait, kb=kb, guidance=guidance,
@@ -583,17 +582,13 @@ async def executor_node(state: ResourceState) -> dict:
 
     user_id = state.get("user_id", "0")
     user_id_int = int(user_id)
-    max_workers = min(len(thread_types), 5)
     llm_priority = state.get("llm_priority", "high")
 
-    def gen_one_sync(rt: str) -> tuple[str, str]:
+    async def gen_one_async(rt: str) -> tuple[str, str]:
         t_start = time.perf_counter()
         try:
-            if rt == "image":
-                result = _generate_image_sync(prompts[rt], user_id, user_id_int, llm_priority)
-            else:
-                response = llm.invoke(prompts[rt], priority=llm_priority, user_id=user_id_int, pool="thread")
-                result = rt, response.content
+            response = await llm.ainvoke(prompts[rt], priority=llm_priority, user_id=user_id_int, pool="thread")
+            result = rt, response.content
             elapsed = time.perf_counter() - t_start
             logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
             return result
@@ -603,9 +598,6 @@ async def executor_node(state: ResourceState) -> dict:
             return rt, f"[生成失败: {e}]"
 
     t_gen_start = time.perf_counter()
-
-    # PPT / 文档 / 其余 全部并行执行
-    loop = asyncio.get_running_loop()
 
     async def _run_ppt():
         if not has_ppt:
@@ -663,15 +655,8 @@ async def executor_node(state: ResourceState) -> dict:
     doc_coro = _run_doc()
     image_coro = _run_image()
 
-    if thread_types:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            other_futures = asyncio.gather(
-                *[loop.run_in_executor(pool, gen_one_sync, rt) for rt in thread_types]
-            )
-            ppt_content, doc_content, image_result, other_results = await asyncio.gather(ppt_coro, doc_coro, image_coro, other_futures)
-    else:
-        other_results = []
-        ppt_content, doc_content, image_result = await asyncio.gather(ppt_coro, doc_coro, image_coro)
+    other_coros = [gen_one_async(rt) for rt in thread_types]
+    ppt_content, doc_content, image_result, *other_results = await asyncio.gather(ppt_coro, doc_coro, image_coro, *other_coros)
 
     logger.info("[Executor] 全部生成完成 并行总耗时=%.2fs types=%s", time.perf_counter() - t_gen_start, resource_types)
 
@@ -707,27 +692,6 @@ async def executor_node(state: ResourceState) -> dict:
         "retry_count": retry,
         "review_feedback": "",
     }
-
-
-def _generate_image_sync(prompt_text: str, user_id: str, user_id_int: int = 0, llm_priority: str = "high") -> tuple[str, dict]:
-    """两阶段图片生成：LLM 产出 prompt → ImageService 生图（线程内）"""
-    try:
-        response = llm.invoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="thread")
-        image_prompt = response.content.strip()
-    except Exception as e:
-        logger.exception("图片 prompt 生成失败")
-        return ("image:error", {"prompt": "", "url": ""})
-
-    try:
-        from backend.src.service.image_service import ImageService
-        image_prompt = image_prompt[:900]
-        images = asyncio.run(ImageService.generate(image_prompt, user_id, aspect_ratio="16:9", img_count=2, save_history=False))
-        if images and len(images) > 0:
-            return ("image:image", {"prompt": image_prompt, "url": images[0].get("url", "")})
-    except Exception as e:
-        logger.exception(f"图片生成失败: {e}")
-
-    return ("image:image", {"prompt": image_prompt, "url": ""})
 
 
 def _parse_review_response(raw: str) -> dict:
