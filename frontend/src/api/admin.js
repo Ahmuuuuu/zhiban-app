@@ -10,12 +10,23 @@ export function getAdminKnowledgeBase() {
 }
 
 export function getAdminPendingResources(params = {}) {
-  return requestFirstAvailable([
-    () => request.get('/admin/resources/pending', { params }),
-    () => request.get('/admin/resource/pending', { params }),
-    () => request.get('/admin/resource-applications', { params }),
-    () => request.get('/admin/public-resource-applications', { params })
-  ])
+  return Promise.allSettled([
+    requestFirstAvailable([
+      () => request.get('/admin/resources/pending', { params }),
+      () => request.get('/admin/resource/pending', { params }),
+      () => request.get('/admin/resource-applications', { params }),
+      () => request.get('/admin/public-resource-applications', { params })
+    ]),
+    request.get('/admin/knowledge_base/pending', { params })
+  ]).then(results => {
+    const data = results.flatMap((item, index) => {
+      if (item.status !== 'fulfilled') return []
+      const raw = item.value?.data || item.value || {}
+      const list = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : []
+      return list.map(record => index === 1 ? { ...record, source: 'knowledge_base' } : record)
+    })
+    return { code: 200, msg: 'success', data }
+  })
 }
 
 export function getAdminResources(params = {}) {
@@ -27,6 +38,9 @@ export function getAdminResources(params = {}) {
 }
 
 export function approvePublicResourceApplication(applicationId, data = {}) {
+  if (String(applicationId).startsWith('kb:')) {
+    return request.post(`/admin/knowledge_base/${encodeURIComponent(String(applicationId).slice(3))}/approve`, data)
+  }
   return requestFirstAvailable([
     () => request.post(`/admin/resources/applications/${applicationId}/approve`, data),
     () => request.post(`/admin/resource-applications/${applicationId}/approve`, data),
@@ -36,6 +50,9 @@ export function approvePublicResourceApplication(applicationId, data = {}) {
 }
 
 export function rejectPublicResourceApplication(applicationId, data = {}) {
+  if (String(applicationId).startsWith('kb:')) {
+    return request.post(`/admin/knowledge_base/${encodeURIComponent(String(applicationId).slice(3))}/reject`, data)
+  }
   return requestFirstAvailable([
     () => request.post(`/admin/resources/applications/${applicationId}/reject`, data),
     () => request.post(`/admin/resource-applications/${applicationId}/reject`, data),

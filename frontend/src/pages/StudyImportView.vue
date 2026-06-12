@@ -327,7 +327,12 @@ const submitMaterial = async () => {
       throw new Error(res.msg || '资料导入失败')
     }
 
-    setStatus('学习资料已提交，等待后端处理。', 'success')
+    setStatus(
+      visibility.value === 'public'
+        ? '资料公开申请已提交，管理员通过后会展示到资源中心。'
+        : '学习资料已导入，仅自己可见。',
+      'success'
+    )
   } catch (error) {
     setStatus(
       error?.response?.data?.detail ||

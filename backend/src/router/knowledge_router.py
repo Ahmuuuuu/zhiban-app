@@ -39,8 +39,12 @@ async def upload_document(
     - cover: 可选封面图，存到 /static/covers/
     """
     tmp_path = None
+    requested_visibility = visibility
     try:
         # ── 公开上传需管理员 ──
+        if visibility == "public" and not await is_admin(user_id):
+            visibility = "pending"
+
         if visibility == "public":
             if not await is_admin(user_id):
                 return {

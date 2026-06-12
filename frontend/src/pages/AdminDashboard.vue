@@ -344,8 +344,14 @@ const typeLabels = {
 }
 
 const normalizeResource = item => {
-  const id = String(item.application_id || item.applicationId || item.resource_id || item.resourceId || item.id || item.doc_id || '')
-  const resourceType = item.resource_type || item.resourceType || item.file_type || item.fileType || item.type || 'resource'
+  const isKnowledgeBase = item.source === 'knowledge_base'
+  const knowledgeDocId = Array.isArray(item.doc_ids) ? item.doc_ids[0] : item.doc_id
+  const id = isKnowledgeBase
+    ? `kb:${knowledgeDocId || item.title || ''}`
+    : String(item.application_id || item.applicationId || item.resource_id || item.resourceId || item.id || item.doc_id || '')
+  const resourceType = isKnowledgeBase
+    ? item.category || 'reference'
+    : item.resource_type || item.resourceType || item.file_type || item.fileType || item.type || 'resource'
   const title = item.title || item.topic || item.name || item.filename || '未命名资源'
   const content = item.content || item.preview || item.preview_content || item.description || ''
   return {
@@ -357,7 +363,7 @@ const normalizeResource = item => {
     resourceType,
     typeLabel: typeLabels[resourceType] || resourceType,
     visibility: item.visibility || item.status || 'pending',
-    ownerName: item.owner_name || item.ownerName || item.username || item.user_name || item.author || '',
+    ownerName: item.owner_name || item.ownerName || item.username || item.user_name || item.uploader_id || item.author || '',
     createdAt: item.created_at || item.createdAt || item.apply_time || item.applyTime || '',
     updatedAt: item.updated_at || item.updatedAt || ''
   }

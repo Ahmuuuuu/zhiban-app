@@ -205,6 +205,7 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
             groups[base] = {
                 "title": base,
                 "category": r.get("category", "knowledge_point"),
+                "doc_ids": [],
                 "chunks": 0,
                 "total_chars": 0,
                 "preview": r["content"][:200],
@@ -213,6 +214,7 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
                 "cover_url": r.get("cover_url"),
                 "created_at": str(r["created_at"]),
             }
+        groups[base]["doc_ids"].append(r["doc_id"])
         groups[base]["chunks"] += 1
         groups[base]["total_chars"] += len(r["content"])
         if str(r["created_at"]) < groups[base]["created_at"]:

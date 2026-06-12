@@ -235,12 +235,14 @@ const displayValue = value => String(value || '').trim() || '请完善个人信�
 const normalizeProfile = result => result?.data || result?.user || result || {}
 
 const dispatchAvatarUpdated = avatar => {
+  const avatarVersion = String(Date.now())
+  localStorage.setItem('zhiban_avatar_version', avatarVersion)
   if (avatar) {
     localStorage.setItem('avatar', avatar)
   } else {
     localStorage.removeItem('avatar')
   }
-  window.dispatchEvent(new CustomEvent('zhiban:user-avatar-updated', { detail: { avatar } }))
+  window.dispatchEvent(new CustomEvent('zhiban:user-avatar-updated', { detail: { avatar, avatarVersion } }))
 }
 
 const syncForm = () => {
