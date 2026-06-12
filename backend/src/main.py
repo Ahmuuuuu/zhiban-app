@@ -102,9 +102,8 @@ async def startup():
     # 清理未完成的生成任务
     from backend.src.service.resource_service import ResourceService
     await ResourceService.init_tasks()
-    # 预加载 BGE 模型，避免首次知识库操作时等待下载/加载
-    from backend.src.utils.knowledge_base import _get_embed_model_async
-    await _get_embed_model_async()
+    from backend.src.utils.knowledge_base import init_embed_model
+    await init_embed_model()
     # 启动定时任务（周报 + AI 建议）
     from backend.src.utils.scheduler import start
     start()

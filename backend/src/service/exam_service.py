@@ -265,9 +265,15 @@ class ExamService:
                             filtered, user, difficulty, node_id=node_id
                         )
                         yield f"data: {json.dumps({'type': 'progress', 'msg': f'已保存 {len(saved_questions)} 道题目'}, ensure_ascii=False)}\n\n"
+                        # 将后端 question_id 写入 resource.content，后续前端能获取
+                        for idx_q, q in enumerate(filtered):
+                            if idx_q < len(saved_questions):
+                                q["question_id"] = saved_questions[idx_q]["question_id"]
+                        r.content = json.dumps(filtered, ensure_ascii=False)
+                        await r.save()
                 break
 
-        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'quiz_config': {'count': count, 'threshold': 0.7}, 'question_count': len(saved_questions)}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'questions': saved_questions, 'quiz_config': {'count': count, 'threshold': 0.7}, 'question_count': len(saved_questions)}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     @staticmethod

@@ -432,11 +432,15 @@ class ResourceService:
                             if question_quality:
                                 questions = [q for idx, q in enumerate(questions) if question_quality.get(idx, True)]
                             if questions:
-                                sid, _ = await ExamService._save_questions(questions, user, "medium")
+                                sid, saved_questions = await ExamService._save_questions(questions, user, exam_difficulty)
                                 if sid:
                                     await GeneratedResource.filter(id=item["resource_id"]).update(session_id=sid)
                                     saved[i]["session_id"] = sid
                                     saved[i]["question_count"] = len(questions)
+                                    for idx_q, q in enumerate(questions):
+                                        if idx_q < len(saved_questions):
+                                            q["question_id"] = saved_questions[idx_q]["question_id"]
+                                    saved[i]["content"] = json.dumps(questions, ensure_ascii=False)
                 except Exception:
                     logger.exception("exercise 题目解析/存库失败 resource_id=%s", item.get("resource_id"))
 
