@@ -384,7 +384,7 @@ import { upsertQuizSet } from '../utils/quizBank'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
-import { getExplicitResourceCoverUrl, getResourceCoverUrl } from '../utils/resourceCover'
+import { getResourceCoverUrl } from '../utils/resourceCover'
 
 const route = useRoute()
 const router = useRouter()
@@ -455,11 +455,10 @@ const normalizeOwnerFields = item => {
 }
 
 const attachResourceCover = (resource, rawItem = {}) => {
-  const explicitCover = getExplicitResourceCoverUrl({ ...resource, ...rawItem })
-  const shouldUseVideoFrame = !explicitCover && isVideoResource(resource) && resource.previewUrl
+  const shouldUseVideoFrame = isVideoResource(resource) && resource.previewUrl
   return {
     ...resource,
-    coverUrl: explicitCover || getResourceCoverUrl({ ...resource, ...rawItem }),
+    coverUrl: getResourceCoverUrl({ ...resource, ...rawItem }),
     coverType: shouldUseVideoFrame ? 'video' : 'image'
   }
 }

@@ -553,7 +553,7 @@ import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
-import { getExplicitResourceCoverUrl, getResourceCoverUrl } from '../utils/resourceCover'
+import { getResourceCoverUrl } from '../utils/resourceCover'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 const route = useRoute()
@@ -1641,10 +1641,9 @@ const normalizeNodeResources = (resources, node = null) =>
       downloadCount: normalizeNumber(r.download_count ?? r.downloadCount ?? usage?.downloadCount),
       lastViewedAt: r.last_viewed_at || r.lastViewedAt || usage?.lastViewedAt || '',
     }
-    const explicitCover = getExplicitResourceCoverUrl({ ...resource, ...r })
     return {
       ...resource,
-      coverUrl: explicitCover || getResourceCoverUrl({ ...resource, ...r })
+      coverUrl: getResourceCoverUrl({ ...resource, ...r })
     }
   })
 

@@ -105,7 +105,7 @@ const normalizeDetail = (detail, ref) => {
 
   return {
     ...resource,
-    coverUrl: resource.coverUrl || getResourceCoverUrl(resource)
+    coverUrl: getResourceCoverUrl(resource)
   }
 }
 

@@ -113,11 +113,6 @@ const handleClick = async () => {
     return
   }
 
-  if (isAdminRole(userRole.value)) {
-    await router.push('/admin')
-    return
-  }
-
   await router.push('/profile')
 }
 
