@@ -3,8 +3,10 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { deleteConversation, getConversationList, getConversationMessages, resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
+import { useVoiceInput } from "../composables/useVoiceInput";
 import { looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
 import { saveGeneratedResourceRef } from "../utils/savedResources";
+import { Mic } from "lucide-vue-next";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -128,6 +130,25 @@ const historyOpen = ref(false);
 const historyLoading = ref(false);
 const petHistory = ref<PetHistoryItem[]>([]);
 const deletingHistoryId = ref("");
+const appendVoiceText = (text: string) => {
+  const current = chatInput.value.trimEnd();
+  chatInput.value = current ? `${current}\n${text}` : text;
+};
+const {
+  isRecording: isVoiceRecording,
+  isTranscribing: isVoiceTranscribing,
+  stopVoiceInput,
+  toggleVoiceInput,
+} = useVoiceInput({
+  onText: appendVoiceText,
+  onError: (message) => {
+    chatError.value = message;
+  },
+});
+const voiceButtonTitle = computed(() => {
+  if (isVoiceTranscribing.value) return "正在识别语音";
+  return isVoiceRecording.value ? "停止录音" : "语音输入";
+});
 
 const petMessages = ref<PetChatMessage[]>([
   {
@@ -500,7 +521,7 @@ const savePetQuizToResources = async (message: PetChatMessage) => {
 // 鈹€鈹€鈹€ Send 鈹€鈹€鈹€
 const sendPetMessage = async () => {
   const text = chatInput.value.trim();
-  if (!text || chatLoading.value) return;
+  if (!text || chatLoading.value || isVoiceTranscribing.value) return;
 
   const contextPrefix = buildContextPrefix()
   const aiMessage = contextPrefix ? `${contextPrefix}\n\n用户问题：${text}` : text
@@ -671,6 +692,7 @@ const sendPetMessage = async () => {
 };
 
 const closeChat = () => {
+  stopVoiceInput();
   emit("update:modelValue", false);
   emit("update:expanded", false);
   chatExpanded.value = false;
@@ -704,6 +726,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopVoiceInput()
   window.removeEventListener("zhiban-quiz-context", handleQuizContext)
 })
 </script>
@@ -841,7 +864,18 @@ onUnmounted(() => {
         :disabled="chatLoading"
         @keydown.enter="handleChatEnter"
       />
-      <button type="submit" :disabled="!chatInput.trim() || chatLoading">发送</button>
+      <button
+        type="button"
+        class="pet-chat__voice"
+        :class="{ recording: isVoiceRecording, transcribing: isVoiceTranscribing }"
+        :title="voiceButtonTitle"
+        :aria-label="voiceButtonTitle"
+        :disabled="chatLoading || isVoiceTranscribing"
+        @click="toggleVoiceInput"
+      >
+        <Mic :size="18" stroke-width="1.8" />
+      </button>
+      <button type="submit" :disabled="!chatInput.trim() || chatLoading || isVoiceTranscribing">发送</button>
     </form>
   </section>
 </template>
@@ -1367,10 +1401,37 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+.pet-chat__form .pet-chat__voice {
+  width: 42px;
+  min-width: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(232, 242, 250, 0.92);
+  color: #163f8f;
+}
+
+.pet-chat__form .pet-chat__voice.recording {
+  background: rgba(254, 226, 226, 0.96);
+  color: #dc2626;
+  animation: pet-voice-pulse 1s ease-in-out infinite;
+}
+
+.pet-chat__form .pet-chat__voice.transcribing {
+  background: rgba(232, 242, 250, 0.98);
+  color: #5f8fc3;
+}
+
 .pet-chat--expanded .pet-chat__form button {
   height: 52px;
   min-width: 76px;
   font-size: 14px;
+}
+
+.pet-chat--expanded .pet-chat__form .pet-chat__voice {
+  width: 52px;
+  min-width: 52px;
 }
 
 .pet-chat__form button:disabled {
@@ -1412,6 +1473,16 @@ onUnmounted(() => {
     opacity: 1;
     transform: translateY(0) scale(1);
     filter: blur(0);
+  }
+}
+
+@keyframes pet-voice-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(220, 38, 38, 0);
   }
 }
 

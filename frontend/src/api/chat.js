@@ -1,5 +1,5 @@
 import request from './request'
-import { API_BASE_URL, parseStreamEvent } from './config'
+import { API_BASE_URL, parseStreamEvent, requestFirstAvailable } from './config'
 
 export function sendChatMessage(data) {
   if (data.chat_group_id) {
@@ -36,6 +36,27 @@ export function deleteConversation(chatGroupId) {
       chat_group_id: chatGroupId
     }
   })
+}
+
+export function transcribeVoiceInput(audioBlob) {
+  const filename = audioBlob?.type?.includes('mp4') ? 'voice.mp4' : 'voice.webm'
+  const buildFormData = () => {
+    const file = new File([audioBlob], filename, { type: audioBlob?.type || 'audio/webm' })
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('audio', file)
+    return formData
+  }
+
+  return requestFirstAvailable([
+    () => request.post('/ai_chat/voice_input', buildFormData()),
+    () => request.post('/ai_chat/voice-input', buildFormData()),
+    () => request.post('/ai_chat/transcribe', buildFormData()),
+    () => request.post('/ai_chat/speech_to_text', buildFormData()),
+    () => request.post('/voice/transcribe', buildFormData()),
+    () => request.post('/speech/transcribe', buildFormData()),
+    () => request.post('/audio/transcribe', buildFormData())
+  ])
 }
 
 export async function streamChatMessage(data, { onChunk, onDone, onError, onFile, onStreamStart, onStreamSlide } = {}) {

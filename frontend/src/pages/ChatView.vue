@@ -307,7 +307,14 @@
       </div>
 
       <div class="right-tools">
-        <button class="voice-btn" type="button" title="语音输入">
+        <button
+          class="voice-btn"
+          :class="{ recording: isVoiceRecording, transcribing: isVoiceTranscribing }"
+          type="button"
+          :title="voiceButtonTitle"
+          :disabled="loading || isVoiceTranscribing"
+          @click="toggleVoiceInput"
+        >
           <Mic :size="20" stroke-width="1.8" />
         </button>
         <button
@@ -320,6 +327,7 @@
         </button>
       </div>
     </div>
+    <p v-if="voiceStatusText" class="voice-status" :class="{ error: Boolean(voiceError) }">{{ voiceStatusText }}</p>
   </div>
 </footer>
     </main>
@@ -405,7 +413,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onMounted, watch } from 'vue'
+import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   deleteConversation,
@@ -426,6 +434,7 @@ import {
 } from '../api/apis'
 import { detectGenerationIntent } from '../composables/useResourceGeneration'
 import { useGenerationTaskQueue } from '../composables/useGenerationTaskQueue'
+import { useVoiceInput } from '../composables/useVoiceInput'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
@@ -611,6 +620,27 @@ const preventAutoConversationSwitch = ref(false)
 const historyLoading = ref(false)
 const deletingConversationId = ref('')
 const loading = ref(false)
+const appendVoiceText = (text: string) => {
+  const current = inputValue.value.trimEnd()
+  inputValue.value = current ? `${current}\n${text}` : text
+}
+const {
+  isRecording: isVoiceRecording,
+  isTranscribing: isVoiceTranscribing,
+  voiceError,
+  stopVoiceInput,
+  toggleVoiceInput
+} = useVoiceInput({ onText: appendVoiceText })
+const voiceButtonTitle = computed(() => {
+  if (isVoiceTranscribing.value) return '正在识别语音'
+  return isVoiceRecording.value ? '停止录音' : '语音输入'
+})
+const voiceStatusText = computed(() => {
+  if (voiceError.value) return voiceError.value
+  if (isVoiceTranscribing.value) return '正在识别语音...'
+  if (isVoiceRecording.value) return '正在录音，点击麦克风结束'
+  return ''
+})
 const chatContentRef = ref(null)
 const userScrolledUp = ref(false)
 const SCROLL_THRESHOLD = 80
@@ -2664,6 +2694,10 @@ onMounted(async () => {
   restoreGenerationTasksInChat()
 })
 
+onUnmounted(() => {
+  stopVoiceInput()
+})
+
 watch(
   () => route.fullPath,
   () => {
@@ -3604,9 +3638,47 @@ textarea::placeholder {
   box-shadow: 0 10px 22px rgba(22, 63, 143, 0.16);
 }
 
+.voice-btn.recording {
+  border-color: rgba(220, 38, 38, 0.34);
+  background: rgba(254, 226, 226, 0.92);
+  color: #dc2626;
+  animation: voice-pulse 1s ease-in-out infinite;
+}
+
+.voice-btn.transcribing {
+  border-color: rgba(95, 143, 195, 0.3);
+  background: rgba(232, 242, 250, 0.94);
+  color: var(--primary);
+}
+
 .send-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.voice-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.voice-status {
+  margin: 8px 20px 0;
+  color: rgba(22, 63, 143, 0.62);
+  font-size: 12px;
+}
+
+.voice-status.error {
+  color: #c2410c;
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(220, 38, 38, 0);
+  }
 }
 
 .markdown-body :deep(p) {
