@@ -27,7 +27,8 @@ export {
   getConversationList,
   getConversationMessages,
   sendChatMessage,
-  streamChatMessage
+  streamChatMessage,
+  transcribeVoiceInput
 } from './chat'
 
 export {

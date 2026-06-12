@@ -35,6 +35,8 @@ export function getConversationMessages(chatGroupId: number | string): Promise<u
 
 export function deleteConversation(chatGroupId: number | string): Promise<unknown>;
 
+export function transcribeVoiceInput(audioBlob: Blob): Promise<unknown>;
+
 export function streamChatMessage(
   data: {
     user_req: string;
