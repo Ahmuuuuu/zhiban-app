@@ -5,6 +5,12 @@ from backend.src.service.resource_service import ResourceService
 from backend.src.schemas.admin import ResetPasswordRequest, DeleteUserRequest
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.utils.admin_check import is_admin
+from backend.src.models.knowledgemodel import KnowledgeVector
+from backend.src.utils.knowledge_base import list_grouped
+
+
+def _knowledge_base_title_prefix(title: str) -> str:
+    return str(title or "").split(" (")[0].split("锛堢")[0].strip()
 
 router = APIRouter(prefix = "/admin", tags = ["管理员"])
 
@@ -239,6 +245,47 @@ async def reset_password(
         raise
     except Exception :
         raise HTTPException(500, "服务器错误")
+
+
+@router.get("/knowledge_base/pending")
+async def admin_pending_knowledge_base(admin_id: int = Depends(_require_admin)):
+    try:
+        records = await list_grouped(visibility="pending")
+        return {"code": 200, "msg": "success", "data": records}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "server error")
+
+
+@router.post("/knowledge_base/{doc_id}/approve")
+async def approve_knowledge_base_application(doc_id: str, admin_id: int = Depends(_require_admin)):
+    try:
+        record = await KnowledgeVector.filter(doc_id=doc_id, visibility="pending").first()
+        if not record:
+            return {"code": 404, "msg": "not found"}
+        title_prefix = _knowledge_base_title_prefix(record.title)
+        await KnowledgeVector.filter(title__startswith=title_prefix, user_id=record.user_id, visibility="pending").update(visibility="public")
+        return {"code": 200, "msg": "success", "data": {"doc_id": doc_id, "visibility": "public"}}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "server error")
+
+
+@router.post("/knowledge_base/{doc_id}/reject")
+async def reject_knowledge_base_application(doc_id: str, admin_id: int = Depends(_require_admin)):
+    try:
+        record = await KnowledgeVector.filter(doc_id=doc_id, visibility="pending").first()
+        if not record:
+            return {"code": 404, "msg": "not found"}
+        title_prefix = _knowledge_base_title_prefix(record.title)
+        await KnowledgeVector.filter(title__startswith=title_prefix, user_id=record.user_id, visibility="pending").update(visibility="rejected")
+        return {"code": 200, "msg": "success", "data": {"doc_id": doc_id, "visibility": "rejected"}}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "server error")
 
 
 @router.get("/knowledge_base")

@@ -15,8 +15,24 @@ export const resolveApiUrl = path => {
 }
 
 export const normalizeAvatarUrl = avatar => {
-  if (!avatar) return ''
-  return resolveApiUrl(avatar)
+  const raw = String(avatar || '').trim()
+  if (!raw) return ''
+  if (/^(data:|blob:)/i.test(raw)) return raw
+
+  try {
+    const url = /^https?:\/\//i.test(raw)
+      ? new URL(raw)
+      : new URL(raw.replace(/^\//, ''), API_BASE_URL)
+
+    if (/\/static\/avatars\//.test(url.pathname) && !url.searchParams.has('v')) {
+      const version = localStorage.getItem('zhiban_avatar_version')
+      if (version) url.searchParams.set('v', version)
+    }
+
+    return url.toString()
+  } catch {
+    return resolveApiUrl(raw)
+  }
 }
 
 export const parseStreamEvent = eventText => {
