@@ -97,12 +97,15 @@
             {{ pathVideoLoading ? '生成中...' : '重新生成' }}
           </button>
         </header>
-        <div class="path-video-cover">
-          <MonitorPlay :size="40" />
-          <strong>路径教学视频 — {{ pathState?.goal || '' }}</strong>
-          <span>动态课件 — 覆盖全部 {{ visibleNodes.length }} 个学习节点</span>
-          <button class="html-open-btn" type="button" @click="openPathVideo">
-            打开课件
+        <div class="path-video-cover" @click="openPathVideo">
+          <img
+            v-if="pathVideoCoverUrl"
+            :src="pathVideoCoverUrl"
+            :alt="'路径教学视频 — ' + (pathState?.goal || '')"
+            class="path-video-cover-img"
+          />
+          <button class="cover-play-btn" type="button" aria-label="播放课件">
+            <MonitorPlay :size="28" />
           </button>
         </div>
       </section>
@@ -595,6 +598,19 @@ const selectedPathStats = ref(null)
 const pathStatsRequestId = ref(0)
 const pathVideo = ref(null)
 const pathVideoLoading = ref(false)
+const pathVideoCoverUrl = computed(() => {
+  const video = pathVideo.value
+  if (!video) return ''
+  const data = {
+    ...video,
+    title: video.topic || `路径教学视频 — ${pathState.value?.goal || ''}`,
+    type: 'video',
+    sourceId: video.presentation_id || video.presentationId || '',
+    doc_id: video.html_id || video.presentation_id || video.presentationId || '',
+  }
+  const explicitCover = getExplicitResourceCoverUrl(data)
+  return explicitCover || getResourceCoverUrl(data)
+})
 let heartbeatTimer = null
 const announcedGenerationRunIds = new Set()
 const {
@@ -2880,9 +2896,9 @@ onBeforeUnmount(() => {
   box-shadow: 0 14px 34px rgba(22, 63, 143, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(14px) saturate(135%);
   border-radius: 22px;
-  padding: 16px;
+  padding: 12px 16px;
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .path-video-section header {
@@ -2904,17 +2920,48 @@ onBeforeUnmount(() => {
 }
 
 .path-video-cover {
-  display: grid;
-  place-items: center;
-  gap: 12px;
-  padding: 40px 20px;
-  color: #5f8fc3;
-  text-align: center;
+  position: relative;
+  cursor: pointer;
+  border-radius: 14px;
+  overflow: hidden;
+  max-width: 220px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.path-video-cover strong {
-  color: #163f8f;
-  font-size: 18px;
+.path-video-cover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(22, 63, 143, 0.18);
+}
+
+.path-video-cover-img {
+  width: 100%;
+  aspect-ratio: 520 / 280;
+  display: block;
+  object-fit: cover;
+}
+
+.cover-play-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  z-index: 1;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.path-video-cover:hover .cover-play-btn {
+  transform: translate(-50%, -50%) scale(1.1);
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .path-video-empty {

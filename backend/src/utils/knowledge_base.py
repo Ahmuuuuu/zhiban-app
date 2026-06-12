@@ -17,38 +17,27 @@ if HF_ENDPOINT:
 
 from tortoise.expressions import Q
 
+from sentence_transformers import SentenceTransformer
+
 from backend.src.models.knowledgemodel import KnowledgeVector
 
-# BGE 模型本地缓存路径 — 第一次使用时才加载，避免 import 时拖慢启动
 MODEL_DIR = str(Path(__file__).parent.parent / "ai_core" / "knowledge_base" / "bge_model")
 _embed_model = None
-_embed_lock = asyncio.Lock()
 
 
-async def _get_embed_model_async():
-    """异步加载 BGE 模型（首次使用时才 import sentence_transformers，避免拖慢启动）"""
+async def init_embed_model():
+    """服务启动时预加载 BGE 模型（通过线程池，不阻塞事件循环）"""
     global _embed_model
-    if _embed_model is not None:
-        return _embed_model
-
-    async with _embed_lock:
-        if _embed_model is not None:
-            return _embed_model
-        from sentence_transformers import SentenceTransformer
-        local_path = Path(MODEL_DIR)
-        if local_path.exists() and any(local_path.iterdir()):
-            _embed_model = await asyncio.to_thread(SentenceTransformer, str(local_path))
-        else:
-            _embed_model = await asyncio.to_thread(SentenceTransformer, "BAAI/bge-small-zh-v1.5")
-            await asyncio.to_thread(_embed_model.save, str(local_path))
-        return _embed_model
+    local_path = Path(MODEL_DIR)
+    if local_path.exists() and any(local_path.iterdir()):
+        _embed_model = await asyncio.to_thread(SentenceTransformer, str(local_path))
+    else:
+        _embed_model = await asyncio.to_thread(SentenceTransformer, "BAAI/bge-small-zh-v1.5")
+        await asyncio.to_thread(_embed_model.save, str(local_path))
 
 
 async def _encode_async(text: str):
-    """异步编码文本为向量（在线程池中执行）"""
-    import numpy as np
-    model = await _get_embed_model_async()
-    return await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
+    return await asyncio.to_thread(_embed_model.encode, text, normalize_embeddings=True)
 
 
 async def search(query: str, top_k: int = 5, user_id: int = None, category: str = None) -> str:

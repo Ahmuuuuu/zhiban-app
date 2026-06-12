@@ -297,28 +297,27 @@ class PortraitRadarService:
             user_id=user_id, is_correct__not_isnull=True
         ).prefetch_related("question").all()
 
-        def _accuracy(questions) -> int:
-            """给定题目列表，算正确率百分比整数"""
-            if not questions:
+        def _accuracy(q_ids: set) -> int:
+            if not q_ids:
                 return 0
-            scored = [(r.is_correct, r.question) for r in records if r.question in questions]
+            scored = [(r.is_correct, r.question_id) for r in records if r.question_id in q_ids]
             if not scored:
                 return 0
             correct = sum(1 for ok, _ in scored if ok)
             return round(correct / len(scored) * 100)
 
-        # 按难度分组
-        easy_qs = [r.question for r in records if r.question and r.question.difficulty == "easy"]
-        medium_qs = [r.question for r in records if r.question and r.question.difficulty == "medium"]
-        hard_qs = [r.question for r in records if r.question and r.question.difficulty == "hard"]
+        # 按难度分组（用 question_id 做比较，避免对象 identity 问题）
+        easy_ids = {r.question_id for r in records if r.question and r.question.difficulty == "easy"}
+        medium_ids = {r.question_id for r in records if r.question and r.question.difficulty == "medium"}
+        hard_ids = {r.question_id for r in records if r.question and r.question.difficulty == "hard"}
 
-        memory = _accuracy(easy_qs)
-        understanding = _accuracy(medium_qs)
-        application = _accuracy(hard_qs)
+        memory = _accuracy(easy_ids)
+        understanding = _accuracy(medium_ids)
+        application = _accuracy(hard_ids)
 
         # 分析 — multi_choice 题型正确率
-        multi_qs = [r.question for r in records if r.question and r.question.question_type == "multi_choice"]
-        analysis = _accuracy(multi_qs)
+        multi_ids = {r.question_id for r in records if r.question and r.question.question_type == "multi_choice"}
+        analysis = _accuracy(multi_ids)
 
         # 广度 — 已覆盖知识标签种类数（50 种 = 100 分）
         mastery_records = await KnowledgeMastery.filter(user_id=user_id).all()

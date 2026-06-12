@@ -176,6 +176,34 @@ const renderDocumentCover = ({ primary, accent, paper, rawTitle, resource }) => 
   `)
 }
 
+const renderVideoCover = ({ primary, accent, paper, rawTitle }) => {
+  const [lineOne, lineTwo = ''] = splitTitleLines(rawTitle).map(escapeXml)
+  return toDataSvg(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="520" height="280" viewBox="0 0 520 280">
+      <defs>
+        <linearGradient id="vidBg" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0%" stop-color="${primary}"/>
+          <stop offset="60%" stop-color="${accent}"/>
+          <stop offset="100%" stop-color="#0f172a"/>
+        </linearGradient>
+        <filter id="vidGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="8" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <rect width="520" height="280" rx="22" fill="url(#vidBg)"/>
+      <circle cx="420" cy="40" r="100" fill="#fff" opacity="0.06"/>
+      <circle cx="100" cy="240" r="80" fill="#fff" opacity="0.04"/>
+      <circle cx="260" cy="140" r="48" fill="#fff" opacity="0.88" filter="url(#vidGlow)"/>
+      <polygon points="252,124 252,156 274,140" fill="${primary}" opacity="0.92"/>
+      <rect x="34" y="36" width="78" height="30" rx="15" fill="#fff" opacity="0.16"/>
+      <text x="73" y="57" text-anchor="middle" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="16" font-weight="900" fill="#fff">视频</text>
+      <text x="34" y="218" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="24" font-weight="900" fill="#fff">${lineOne}</text>
+      <text x="34" y="246" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="16" font-weight="700" fill="rgba(255,255,255,0.62)">${lineTwo}</text>
+    </svg>
+  `)
+}
+
 const renderGenericCover = ({ primary, accent, paper, kind, rawTitle }) => {
   const title = escapeXml(compactTitle(rawTitle))
   const label = escapeXml(typeLabels[kind] || '资源')
@@ -232,6 +260,7 @@ export const getResourceCoverUrl = resource => {
 
   if (kind === 'ppt') return renderPptCover(coverContext)
   if (kind === 'document') return renderDocumentCover(coverContext)
+  if (kind === 'video') return renderVideoCover(coverContext)
 
   return renderGenericCover(coverContext)
 }
