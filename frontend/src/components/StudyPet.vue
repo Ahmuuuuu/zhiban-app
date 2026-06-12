@@ -147,9 +147,17 @@ const handlePetNotice = (event: Event) => {
   showNotice(detail.message || "", detail.duration);
 };
 
+const handleOpenPetChat = (event: Event) => {
+  const detail = (event as CustomEvent<{ expanded?: boolean }>).detail || {};
+  chatOpen.value = true;
+  chatExpanded.value = Boolean(detail.expanded);
+  chatLoading.value = false;
+};
+
 onMounted(() => {
   window.addEventListener("resize", handleResize);
   window.addEventListener("zhiban-pet-notice", handlePetNotice as EventListener);
+  window.addEventListener("zhiban-pet-open-chat", handleOpenPetChat as EventListener);
   startActionDemo();
   nextTick(() => {
     if (!props.floating || !petRef.value) return;
@@ -163,6 +171,7 @@ watch(() => props.autoPlayActions, startActionDemo);
 onUnmounted(() => {
   window.removeEventListener("resize", handleResize);
   window.removeEventListener("zhiban-pet-notice", handlePetNotice as EventListener);
+  window.removeEventListener("zhiban-pet-open-chat", handleOpenPetChat as EventListener);
   if (demoTimer) window.clearInterval(demoTimer);
   if (noticeTimer) window.clearTimeout(noticeTimer);
 });

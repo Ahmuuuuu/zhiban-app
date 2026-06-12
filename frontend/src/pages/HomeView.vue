@@ -18,20 +18,21 @@
         </div>
       </div>
 
-      <router-link
+      <button
         v-for="tile in featureTiles"
-        :key="tile.title"
+        :key="tile.title || tile.className"
         class="feature-tile"
         :class="tile.className"
-        :to="tile.to"
+        type="button"
         :aria-label="tile.title"
+        @click="openFeatureTile(tile)"
       >
         <img :src="tile.image" :alt="tile.title" />
         <span v-if="tile.title" class="tile-copy">
           <strong>{{ tile.title }}</strong>
           <small v-if="tile.subtitle">{{ tile.subtitle }}</small>
         </span>
-      </router-link>
+      </button>
 
       <div class="quick-panel">
         <router-link to="/resources">
@@ -52,56 +53,73 @@
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router'
 import resourceImage from '../assets/pic/a5e56fcc-c654-437a-a2cb-a71a7a5ec871.png'
 import originalPathImage from '../assets/pic/8fa2bb78-91c9-4ac9-991a-00c9c43408dd.png'
 import studyPathImage from '../assets/pic/学习路径.png'
 import createResourceImage from '../assets/pic/资源生成.png'
 import situationImage from '../assets/pic/屏幕截图 2026-05-30 182715.png'
 import petImage from '../assets/pic/24d45e90-dddc-4df5-bb2b-e866c3ed6344.png'
+const router = useRouter()
+
 const featureTiles = [
-  {
-    title: '资源生成',
-    subtitle: '',
-    to: '/study-import',
-    image: resourceImage,
-    className: 'tile-chat',
-  },
   {
     title: '资源中心',
     subtitle: '',
     to: '/resources',
+    image: resourceImage,
+    className: 'tile-chat',
+  },
+  {
+    title: 'AI 对话',
+    subtitle: '',
+    to: '/chat',
     image: createResourceImage,
     className: 'tile-resource',
   },
   {
-    title: '用户画像',
+    title: '学习情况',
     subtitle: '',
-    to: '/profile',
+    to: '/learning-situation',
     image: originalPathImage,
     className: 'tile-path',
   },
   {
-    title: '解答问题',
+    title: 'AI 对话',
     subtitle: '',
-    to: '/learning-situation',
+    to: '/chat',
     image: situationImage,
     className: 'tile-situation',
   },
   {
-    title: '小知陪学',
-    subtitle: '随时唤起学习伙伴',
-    to: '/chat',
+    title: '小知对话',
+    subtitle: '',
+    action: 'pet-chat',
     image: petImage,
     className: 'tile-pet',
   },
   {
-    title: '',
+    title: '学习路径',
     subtitle: '',
-    to: '/profile',
+    to: '/learning-path',
     image: studyPathImage,
     className: 'tile-profile',
   },
 ]
+
+const openPetChat = () => {
+  window.dispatchEvent(new CustomEvent('zhiban-pet-open-chat', { detail: { expanded: true } }))
+}
+
+const openFeatureTile = tile => {
+  if (tile.action === 'pet-chat') {
+    openPetChat()
+    return
+  }
+  if (tile.to) {
+    router.push(tile.to)
+  }
+}
 </script>
 
 <style scoped>
@@ -223,6 +241,7 @@ const featureTiles = [
   width: min(900px, 88vw);
   margin-top: -38px;
   text-align: center;
+  pointer-events: none;
 }
 
 .eyebrow {
@@ -270,6 +289,7 @@ const featureTiles = [
   justify-content: center;
   flex-wrap: wrap;
   gap: 12px;
+  pointer-events: auto;
 }
 
 .primary-action {
@@ -299,13 +319,17 @@ const featureTiles = [
 
 .feature-tile {
   position: absolute;
-  z-index: 1;
+  z-index: 5;
   overflow: hidden;
+  padding: 0;
+  border: 0;
   text-decoration: none;
   color: #143761;
   background: #dcebf2;
   box-shadow: 0 18px 38px rgba(31, 68, 103, 0.13);
   transition: transform 0.22s ease, box-shadow 0.22s ease;
+  cursor: pointer;
+  font: inherit;
 }
 
 .feature-tile:hover {
