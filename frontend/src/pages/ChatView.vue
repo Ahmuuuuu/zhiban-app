@@ -260,6 +260,7 @@
     </div>
   </template>
 </section>
+      <p v-if="voiceError" class="voice-error">{{ voiceError }}</p>
       <footer class="input-area">
   <div class="input-box">
     <button class="add-btn" type="button" title="更多操作" @click.stop="showAddMenu = !showAddMenu">
@@ -284,7 +285,7 @@
     <textarea
       v-model="inputValue"
       rows="1"
-      :placeholder="inputPlaceholder"
+      :placeholder="voiceListening ? '正在聆听...' : inputPlaceholder"
       @keydown.enter="handleEnter"
     ></textarea>
 
@@ -307,7 +308,15 @@
       </div>
 
       <div class="right-tools">
-        <button class="voice-btn" type="button" title="语音输入">
+        <button
+          v-if="voiceSupported"
+          class="voice-btn"
+          :class="{ recording: voiceListening }"
+          type="button"
+          :title="voiceListening ? '停止录音' : '语音输入'"
+          @click="startVoiceInput"
+        >
+          <span v-if="voiceListening" class="voice-pulse"></span>
           <Mic :size="20" stroke-width="1.8" />
         </button>
         <button
@@ -426,6 +435,7 @@ import {
 } from '../api/apis'
 import { detectGenerationIntent } from '../composables/useResourceGeneration'
 import { useGenerationTaskQueue } from '../composables/useGenerationTaskQueue'
+import { useSpeechRecognition } from '../composables/useSpeechRecognition'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
@@ -604,6 +614,30 @@ const startNewConversation = () => {
 }
 
 const inputValue = ref('')
+
+// ── 语音输入 ──
+const { listening: voiceListening, error: voiceError, interim: voiceInterim, supported: voiceSupported, start: voiceStart, stop: voiceStop } = useSpeechRecognition("zh-CN")
+
+watch(voiceInterim, (val) => {
+  if (voiceListening.value && val) {
+    inputValue.value = val
+  }
+})
+
+const startVoiceInput = async () => {
+  if (voiceListening.value) {
+    voiceStop()
+    inputValue.value = voiceInterim.value || inputValue.value
+    return
+  }
+  try {
+    const text = await voiceStart()
+    if (text) inputValue.value = text
+  } catch {
+    if (voiceInterim.value) inputValue.value = voiceInterim.value
+  }
+}
+
 const recentChats = ref([])
 const activeConversationId = ref(null)
 // 防止后台 task watch 在用户新建对话后重新设置 activeConversationId
@@ -2822,6 +2856,36 @@ watch(
   transform: translateY(-1px);
   border-color: rgba(95, 143, 195, 0.55);
   background: rgba(201, 220, 233, 0.58);
+}
+
+.voice-btn.recording {
+  position: relative;
+  border-color: #c2410c;
+  background: rgba(194, 65, 12, 0.08);
+  color: #c2410c;
+}
+
+.voice-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid #c2410c;
+  opacity: 0.6;
+  animation: voice-pulse 1.2s ease-out infinite;
+}
+
+@keyframes voice-pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+.voice-error {
+  margin: 0 auto 8px;
+  max-width: 820px;
+  color: #c2410c;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
 }
 
 .round-icon-btn:focus-visible,
