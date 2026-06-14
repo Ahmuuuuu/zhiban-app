@@ -269,8 +269,10 @@ async def approve_knowledge_base_application(doc_id: str, admin_id: int = Depend
         return {"code": 200, "msg": "success", "data": {"doc_id": doc_id, "visibility": "public"}}
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(500, "server error")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("approve_knowledge_base_application 失败 doc_id=%s", doc_id)
+        raise HTTPException(500, f"server error: {e}")
 
 
 @router.post("/knowledge_base/{doc_id}/reject")
