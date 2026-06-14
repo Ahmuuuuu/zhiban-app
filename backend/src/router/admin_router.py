@@ -265,7 +265,15 @@ async def approve_knowledge_base_application(doc_id: str, admin_id: int = Depend
         if not record:
             return {"code": 404, "msg": "not found"}
         title_prefix = _knowledge_base_title_prefix(record.title)
-        await KnowledgeVector.filter(title__startswith=title_prefix, user_id=record.user_id, visibility="pending").update(visibility="public")
+
+        # 逐个更新，避免 Tortoise ORM filter+update 在部分后端的兼容问题
+        matched = await KnowledgeVector.filter(
+            title__startswith=title_prefix, user_id=record.user_id, visibility="pending"
+        ).all()
+        for r in matched:
+            r.visibility = "public"
+            await r.save()
+
         return {"code": 200, "msg": "success", "data": {"doc_id": doc_id, "visibility": "public"}}
     except HTTPException:
         raise
@@ -282,12 +290,67 @@ async def reject_knowledge_base_application(doc_id: str, admin_id: int = Depends
         if not record:
             return {"code": 404, "msg": "not found"}
         title_prefix = _knowledge_base_title_prefix(record.title)
-        await KnowledgeVector.filter(title__startswith=title_prefix, user_id=record.user_id, visibility="pending").update(visibility="rejected")
+
+        matched = await KnowledgeVector.filter(
+            title__startswith=title_prefix, user_id=record.user_id, visibility="pending"
+        ).all()
+        for r in matched:
+            r.visibility = "rejected"
+            await r.save()
+
         return {"code": 200, "msg": "success", "data": {"doc_id": doc_id, "visibility": "rejected"}}
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(500, "server error")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("reject_knowledge_base_application 失败 doc_id=%s", doc_id)
+        raise HTTPException(500, f"server error: {e}")
+
+
+@router.put("/knowledge_base/{doc_id}")
+async def update_knowledge_base(doc_id: str, data: dict = Body(default_factory=dict), admin_id: int = Depends(_require_admin)):
+    """管理员更新知识库条目"""
+    try:
+        record = await KnowledgeVector.filter(doc_id=doc_id).first()
+        if not record:
+            return {"code": 404, "msg": "not found"}
+
+        if "title" in data:
+            record.title = data["title"]
+        if "content" in data:
+            record.content = data["content"]
+        if "visibility" in data:
+            record.visibility = data["visibility"]
+        if "category" in data or "resource_type" in data:
+            cat = data.get("category") or data.get("resource_type")
+            if cat in ("knowledge_point", "exercise", "textbook", "note", "case_study", "reference", "video"):
+                record.category = cat
+
+        await record.save()
+        return {"code": 200, "msg": "success", "data": {"doc_id": doc_id}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("update_knowledge_base 失败 doc_id=%s", doc_id)
+        raise HTTPException(500, f"server error: {e}")
+
+
+@router.delete("/knowledge_base/{doc_id}")
+async def delete_knowledge_base(doc_id: str, admin_id: int = Depends(_require_admin)):
+    """管理员删除知识库条目"""
+    try:
+        record = await KnowledgeVector.filter(doc_id=doc_id).first()
+        if not record:
+            return {"code": 404, "msg": "not found"}
+        await record.delete()
+        return {"code": 200, "msg": "删除成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("delete_knowledge_base 失败 doc_id=%s", doc_id)
+        raise HTTPException(500, f"server error: {e}")
 
 
 @router.get("/knowledge_base")

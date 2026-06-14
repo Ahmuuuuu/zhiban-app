@@ -62,6 +62,10 @@ export function rejectPublicResourceApplication(applicationId, data = {}) {
 }
 
 export function updateAdminResource(resourceId, data = {}) {
+  if (String(resourceId).startsWith('kb:')) {
+    const docId = String(resourceId).slice(3)
+    return request.put(`/admin/knowledge_base/${encodeURIComponent(docId)}`, data)
+  }
   return requestFirstAvailable([
     () => request.put(`/admin/resources/${resourceId}`, data),
     () => request.patch(`/admin/resources/${resourceId}`, data),
@@ -71,6 +75,10 @@ export function updateAdminResource(resourceId, data = {}) {
 }
 
 export function deleteAdminResource(resourceId) {
+  if (String(resourceId).startsWith('kb:')) {
+    const docId = String(resourceId).slice(3)
+    return request.delete(`/admin/knowledge_base/${encodeURIComponent(docId)}`)
+  }
   return requestFirstAvailable([
     () => request.delete(`/admin/resources/${resourceId}`),
     () => request.delete(`/admin/resource/${resourceId}`),
