@@ -236,7 +236,7 @@ import {
 } from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
 import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
-import PresentationPreview from '../components/presentation/PresentationPreview.vue'
+import PresentationPreview from '../components/ppt_video/PresentationPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 import { getResourceCoverUrl } from '../utils/resourceCover'
 
