@@ -53,7 +53,6 @@
           <article v-for="item in 9" :key="item" class="resource-card skeleton-card">
             <span></span>
             <strong></strong>
-            <p></p>
           </article>
         </template>
 
@@ -65,17 +64,6 @@
             :class="{ selected: selectedResource?.doc_id === resource.doc_id }"
             @click="openResource(resource)"
           >
-            <div class="card-top">
-              <span class="type-mark">
-                <FileImage v-if="resource.type === 'image'" :size="18" />
-                <Presentation v-else-if="isPptResource(resource)" :size="18" />
-                <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
-                <Video v-else-if="isVideoResource(resource)" :size="18" />
-                <FileText v-else :size="18" />
-              </span>
-              <span class="visibility">{{ resource.categoryLabel || '公开资源' }}</span>
-            </div>
-
             <div class="resource-cover">
               <video
                 v-if="resource.coverType === 'video'"
@@ -89,14 +77,6 @@
             </div>
 
             <h2>{{ resource.title || '未命名资源' }}</h2>
-            <p>{{ getResourceExcerpt(resource) }}</p>
-
-            <footer>
-              <span>{{ formatDate(resource.created_at) }}</span>
-              <span v-if="resource.type === 'image'">图片</span>
-              <span v-else-if="isVideoResource(resource)">视频</span>
-              <span v-else>{{ getWordCount(resource.content) }} 字</span>
-            </footer>
             <div class="resource-card-actions" @click.stop>
               <button
                 class="reaction-btn"
@@ -1261,11 +1241,10 @@ onBeforeUnmount(() => {
   color: #163f8f;
   font-size: 18px;
   line-height: 1.35;
-  word-break: break-word;
-  display: -webkit-box;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .resource-card p {
@@ -1319,8 +1298,7 @@ onBeforeUnmount(() => {
 }
 
 .skeleton-card span,
-.skeleton-card strong,
-.skeleton-card p {
+.skeleton-card strong {
   display: block;
   border-radius: 8px;
   background: linear-gradient(90deg, #c9dce9, #fafafa, #c9dce9);
@@ -1329,18 +1307,14 @@ onBeforeUnmount(() => {
 }
 
 .skeleton-card span {
-  width: 40px;
-  height: 34px;
+  width: 100%;
+  height: 250px;
+  border-radius: 16px;
 }
 
 .skeleton-card strong {
   width: 70%;
   height: 22px;
-}
-
-.skeleton-card p {
-  width: 100%;
-  height: 16px;
 }
 
 .resource-list::-webkit-scrollbar {
@@ -1914,20 +1888,20 @@ onBeforeUnmount(() => {
   min-height: 0;
   max-height: none;
   height: 330px;
-  padding: 14px 15px 16px;
+  padding: 14px 15px 15px;
   border-radius: 24px;
   background:
     linear-gradient(135deg, rgba(250, 250, 250, 0.92), rgba(237, 249, 252, 0.84)),
     #fafafa;
   cursor: pointer;
   position: relative;
-  gap: 8px;
+  gap: 12px;
   overflow: hidden;
 }
 
 .resource-cover {
-  height: auto;
-  aspect-ratio: 13 / 7;
+  height: 252px;
+  aspect-ratio: auto;
   border-radius: 16px;
   overflow: hidden;
   background: #e9eff3;
@@ -2002,10 +1976,13 @@ onBeforeUnmount(() => {
 }
 
 .resource-card h2 {
-  margin: 2px 0 0;
+  margin: 0;
   font-size: 16px;
-  line-height: 1.28;
-  -webkit-line-clamp: 2;
+  line-height: 1.3;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
   flex-shrink: 0;
 }
 
@@ -2033,10 +2010,22 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 6px;
   min-height: 30px;
-  width: 100%;
-  position: relative;
+  max-width: calc(100% - 30px);
+  position: absolute;
+  top: 22px;
+  right: 22px;
   z-index: 2;
-  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.resource-card:hover .resource-card-actions,
+.resource-card:focus-within .resource-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .reaction-btn {

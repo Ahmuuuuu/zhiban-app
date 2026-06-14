@@ -119,6 +119,7 @@
               <span>{{ message.questionCount || 0 }} 道题，已放入题库</span>
             </div>
           </div>
+          <button class="quiz-action" type="button" @click="openQuizPreview(message.quizId)">预览题目</button>
           <router-link class="quiz-action" :to="`/question-bank/${message.quizId}`">开始练习</router-link>
           <button
             v-if="message.sourceId"
@@ -386,6 +387,47 @@
     </Teleport>
 
     <Teleport to="body">
+      <section v-if="quizPreview.visible" class="quiz-preview-dialog" @click.self="closeQuizPreview">
+        <article class="quiz-preview-dialog__panel">
+          <header class="quiz-preview-dialog__header">
+            <div>
+              <span>题目预览</span>
+              <h2>{{ quizPreview.title }}</h2>
+            </div>
+            <button type="button" aria-label="关闭题目预览" @click="closeQuizPreview">
+              <X :size="20" />
+            </button>
+          </header>
+          <div class="quiz-preview-dialog__body">
+            <article
+              v-for="(question, index) in quizPreview.questions"
+              :key="question.id || index"
+              class="quiz-preview-question"
+            >
+              <div class="quiz-preview-question__stem">
+                <strong>{{ index + 1 }}</strong>
+                <p>{{ question.stem }}</p>
+              </div>
+              <ul v-if="question.options?.length" class="quiz-preview-options">
+                <li v-for="option in question.options" :key="option.key">
+                  <b>{{ option.key }}</b>
+                  <span>{{ option.text }}</span>
+                </li>
+              </ul>
+              <div class="quiz-preview-answer">
+                <span>答案：{{ question.answer || '待作答' }}</span>
+                <small v-if="question.explanation">{{ question.explanation }}</small>
+              </div>
+            </article>
+          </div>
+          <footer class="quiz-preview-dialog__actions">
+            <router-link class="quiz-action" :to="`/question-bank/${quizPreview.quizId}`">开始练习</router-link>
+          </footer>
+        </article>
+      </section>
+    </Teleport>
+
+    <Teleport to="body">
       <section v-if="saveDialog.visible" class="save-dialog" @click.self="closeSaveDialog">
         <article class="save-dialog__panel">
           <h2>保存生成资源</h2>
@@ -454,7 +496,7 @@ import {
   Video
 } from 'lucide-vue-next'
 import petHeroImage from '../assets/pic/zhiban-pet-base.png'
-import { looksLikeQuizContent, upsertQuizSet } from '../utils/quizBank'
+import { getQuizSet, looksLikeQuizContent, upsertQuizSet } from '../utils/quizBank'
 import { saveGeneratedResourceRef } from '../utils/savedResources'
 import { renderMath } from '../utils/renderMath'
 import 'katex/dist/katex.min.css'
@@ -656,6 +698,12 @@ const saveDialog = ref({
   visible: false,
   visibility: 'private',
   message: null
+})
+const quizPreview = ref({
+  visible: false,
+  quizId: '',
+  title: '',
+  questions: []
 })
 
 const getResponseData = (res) => res?.data ?? res ?? {}
@@ -1786,6 +1834,27 @@ const saveGeneratedQuizToResources = message => {
 const closeSaveDialog = () => {
   saveDialog.value.visible = false
   saveDialog.value.message = null
+}
+
+const openQuizPreview = quizId => {
+  const quiz = getQuizSet(quizId)
+  if (!quiz) {
+    window.alert('题目暂时无法预览，请重新生成或刷新题库。')
+    return
+  }
+  quizPreview.value = {
+    visible: true,
+    quizId: quiz.id,
+    title: quiz.title || 'AI 生成题目',
+    questions: quiz.questions || []
+  }
+}
+
+const closeQuizPreview = () => {
+  quizPreview.value.visible = false
+  quizPreview.value.quizId = ''
+  quizPreview.value.title = ''
+  quizPreview.value.questions = []
 }
 
 const confirmSaveGeneratedResource = async () => {
@@ -4053,6 +4122,144 @@ textarea::placeholder {
 .save-dialog__actions .primary {
   background: var(--primary);
   color: #123b86
+}
+
+.quiz-preview-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 3100;
+  padding: clamp(18px, 4vw, 52px);
+  background: rgba(22, 63, 143, 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  display: grid;
+  place-items: center;
+}
+
+.quiz-preview-dialog__panel {
+  width: min(900px, 100%);
+  max-height: min(780px, calc(100vh - 48px));
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 24px;
+  background: rgba(250, 250, 250, 0.96);
+  box-shadow: 0 26px 80px rgba(22, 63, 143, 0.18);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.quiz-preview-dialog__header,
+.quiz-preview-dialog__actions {
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.quiz-preview-dialog__header {
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+}
+
+.quiz-preview-dialog__header span {
+  color: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quiz-preview-dialog__header h2 {
+  margin: 4px 0 0;
+  color: var(--primary);
+  font-size: 22px;
+}
+
+.quiz-preview-dialog__header button {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(201, 220, 233, 0.58);
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.quiz-preview-dialog__body {
+  min-height: 0;
+  padding: 18px 22px;
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+}
+
+.quiz-preview-question {
+  padding: 16px;
+  border: 1px solid rgba(201, 220, 233, 0.86);
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.quiz-preview-question__stem {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.quiz-preview-question__stem strong {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.quiz-preview-question__stem p {
+  margin: 3px 0 0;
+  color: var(--primary);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.quiz-preview-options {
+  margin: 12px 0 0 40px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+
+.quiz-preview-options li {
+  display: flex;
+  gap: 8px;
+  color: #31557f;
+}
+
+.quiz-preview-answer {
+  margin: 12px 0 0 40px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(201, 220, 233, 0.42);
+  color: var(--primary);
+  display: grid;
+  gap: 4px;
+  font-weight: 800;
+}
+
+.quiz-preview-answer small {
+  color: var(--primary-soft);
+  line-height: 1.6;
+  font-weight: 700;
+}
+
+.quiz-preview-dialog__actions {
+  border-top: 1px solid rgba(201, 220, 233, 0.72);
+  justify-content: flex-end;
 }
 
 .markdown-body :deep(table) {

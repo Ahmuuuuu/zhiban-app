@@ -4,7 +4,7 @@ import { deleteConversation, getConversationList, getConversationMessages, resol
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
 import { useVoiceInput } from "../composables/useVoiceInput";
-import { looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
+import { getQuizSet, looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
 import { saveGeneratedResourceRef } from "../utils/savedResources";
 import { Mic } from "lucide-vue-next";
 
@@ -130,6 +130,12 @@ const historyOpen = ref(false);
 const historyLoading = ref(false);
 const petHistory = ref<PetHistoryItem[]>([]);
 const deletingHistoryId = ref("");
+const quizPreview = ref({
+  visible: false,
+  quizId: "",
+  title: "",
+  questions: [] as any[],
+});
 const appendVoiceText = (text: string) => {
   const current = chatInput.value.trimEnd();
   chatInput.value = current ? `${current}\n${text}` : text;
@@ -456,6 +462,30 @@ const openPetQuiz = (quizId?: string) => {
   if (!quizId) return;
   emit("update:modelValue", false);
   router.push(`/question-bank/${quizId}`);
+};
+
+const openPetQuizPreview = (quizId?: string) => {
+  if (!quizId) return;
+  const quiz = getQuizSet(quizId);
+  if (!quiz) {
+    window.alert("题目暂时无法预览，请重新生成或刷新题库。");
+    return;
+  }
+  quizPreview.value = {
+    visible: true,
+    quizId: quiz.id,
+    title: quiz.title || "AI 生成题目",
+    questions: quiz.questions || [],
+  };
+};
+
+const closePetQuizPreview = () => {
+  quizPreview.value = {
+    visible: false,
+    quizId: "",
+    title: "",
+    questions: [],
+  };
 };
 
 const getPetCenterSaveLabel = (message: PetChatMessage) => {
@@ -838,6 +868,14 @@ onUnmounted(() => {
           v-if="message.role === 'assistant' && message.quizId"
           type="button"
           class="pet-chat__save-resource"
+          @click="openPetQuizPreview(message.quizId)"
+        >
+          预览题目
+        </button>
+        <button
+          v-if="message.role === 'assistant' && message.quizId"
+          type="button"
+          class="pet-chat__save-resource"
           @click="openPetQuiz(message.quizId)"
         >
           开始练习
@@ -877,6 +915,45 @@ onUnmounted(() => {
       </button>
       <button type="submit" :disabled="!chatInput.trim() || chatLoading || isVoiceTranscribing">发送</button>
     </form>
+
+    <Teleport to="body">
+      <section v-if="quizPreview.visible" class="pet-quiz-preview" @click.self="closePetQuizPreview">
+        <article class="pet-quiz-preview__panel">
+          <header class="pet-quiz-preview__header">
+            <div>
+              <span>题目预览</span>
+              <h2>{{ quizPreview.title }}</h2>
+            </div>
+            <button type="button" aria-label="关闭题目预览" @click="closePetQuizPreview">×</button>
+          </header>
+          <div class="pet-quiz-preview__body">
+            <article
+              v-for="(question, index) in quizPreview.questions"
+              :key="question.id || index"
+              class="pet-quiz-preview__question"
+            >
+              <div class="pet-quiz-preview__stem">
+                <strong>{{ index + 1 }}</strong>
+                <p>{{ question.stem }}</p>
+              </div>
+              <ul v-if="question.options?.length" class="pet-quiz-preview__options">
+                <li v-for="option in question.options" :key="option.key">
+                  <b>{{ option.key }}</b>
+                  <span>{{ option.text }}</span>
+                </li>
+              </ul>
+              <div class="pet-quiz-preview__answer">
+                <span>答案：{{ question.answer || '待作答' }}</span>
+                <small v-if="question.explanation">{{ question.explanation }}</small>
+              </div>
+            </article>
+          </div>
+          <footer class="pet-quiz-preview__actions">
+            <button type="button" @click="openPetQuiz(quizPreview.quizId)">开始练习</button>
+          </footer>
+        </article>
+      </section>
+    </Teleport>
   </section>
 </template>
 
@@ -1239,6 +1316,154 @@ onUnmounted(() => {
 .pet-chat__save-resource:disabled {
   opacity: 0.62;
   cursor: not-allowed;
+}
+
+.pet-quiz-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  padding: clamp(18px, 4vw, 52px);
+  background: rgba(22, 63, 143, 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  display: grid;
+  place-items: center;
+}
+
+.pet-quiz-preview__panel {
+  width: min(860px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 24px;
+  background: rgba(250, 250, 250, 0.96);
+  box-shadow: 0 26px 80px rgba(22, 63, 143, 0.18);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.pet-quiz-preview__header,
+.pet-quiz-preview__actions {
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.pet-quiz-preview__header {
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+}
+
+.pet-quiz-preview__header span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pet-quiz-preview__header h2 {
+  margin: 4px 0 0;
+  color: #163f8f;
+  font-size: 22px;
+}
+
+.pet-quiz-preview__header button,
+.pet-quiz-preview__actions button {
+  border: 0;
+  border-radius: 999px;
+  background: #163f8f;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pet-quiz-preview__header button {
+  width: 38px;
+  height: 38px;
+  background: rgba(201, 220, 233, 0.58);
+  color: #163f8f;
+}
+
+.pet-quiz-preview__actions {
+  border-top: 1px solid rgba(201, 220, 233, 0.72);
+  justify-content: flex-end;
+}
+
+.pet-quiz-preview__actions button {
+  min-height: 38px;
+  padding: 0 16px;
+}
+
+.pet-quiz-preview__body {
+  min-height: 0;
+  padding: 18px 22px;
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+}
+
+.pet-quiz-preview__question {
+  padding: 16px;
+  border: 1px solid rgba(201, 220, 233, 0.86);
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.pet-quiz-preview__stem {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.pet-quiz-preview__stem strong {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #163f8f;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pet-quiz-preview__stem p {
+  margin: 3px 0 0;
+  color: #163f8f;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.pet-quiz-preview__options {
+  margin: 12px 0 0 40px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+
+.pet-quiz-preview__options li {
+  display: flex;
+  gap: 8px;
+  color: #31557f;
+}
+
+.pet-quiz-preview__answer {
+  margin: 12px 0 0 40px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(201, 220, 233, 0.42);
+  color: #163f8f;
+  display: grid;
+  gap: 4px;
+  font-weight: 800;
+}
+
+.pet-quiz-preview__answer small {
+  color: #5f8fc3;
+  line-height: 1.6;
+  font-weight: 700;
 }
 
 .pet-chat__quiz-context {
