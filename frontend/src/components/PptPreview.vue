@@ -11,6 +11,7 @@
       :annotation-tool="annotationTool"
       :highlight-colors="highlightColors"
       v-model:active-highlight-color="activeHighlightColor"
+      v-model:style-source="styleSource"
       :can-undo="canUndo"
       :can-redo="canRedo"
       @previous="activeIndex -= 1"
@@ -28,6 +29,7 @@
       :annotatable="annotatable"
       :annotation-tool="annotationTool"
       :active-highlight-color="activeHighlightColor"
+      :style-source="styleSource"
       :annotations="currentSlideAnnotations"
       :slide-index="activeIndex"
       @update-field="updateSlideField"
@@ -122,6 +124,7 @@ const activeIndex = ref(0)
 const editing = ref(false)
 const annotationTool = ref('')
 const activeHighlightColor = ref('#ffe159')
+const styleSource = ref('builtin')
 const localSlides = ref([])
 const undoStack = ref([])
 const redoStack = ref([])
@@ -399,6 +402,7 @@ const publishSlides = () => {
 
 const currentExportSlides = () => localSlides.value.map(slide => ({
   ...slide,
+  style_source: styleSource.value,
   content: slide.text,
   speaker_notes: slide.notes
 }))
