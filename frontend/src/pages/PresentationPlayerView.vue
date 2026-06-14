@@ -3,7 +3,7 @@
     <header class="player-topbar">
       <button type="button" @pointerdown.prevent.stop="goBack" @click.prevent.stop="goBack">返回</button>
       <div>
-        <span>Dynamic Lesson</span>
+        <span>{{ returnFrom === 'path' ? '路径视频' : 'Dynamic Lesson' }}</span>
         <h1>{{ title }}</h1>
       </div>
       <span class="player-status" :class="presentationStatus">{{ statusText }}</span>
