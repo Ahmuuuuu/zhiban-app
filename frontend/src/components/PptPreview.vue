@@ -1,61 +1,25 @@
 <template>
   <section v-if="localSlides.length" class="ppt-preview">
-    <div class="ppt-toolbar">
-      <div class="ppt-toolbar__title">
-        <span>{{ activeIndex + 1 }} / {{ localSlides.length }}</span>
-        <strong>{{ title || 'PPT Preview' }}</strong>
-      </div>
-
-      <div class="ppt-toolbar__actions">
-        <button class="nav-btn" type="button" :disabled="activeIndex <= 0" title="上一页" @click="activeIndex -= 1">
-          &#x25C0;
-        </button>
-        <button class="nav-btn" type="button" :disabled="activeIndex >= localSlides.length - 1" title="下一页" @click="activeIndex += 1">
-          &#x25B6;
-        </button>
-        <button
-          v-if="annotatable"
-          class="highlight-toggle"
-          type="button"
-          :class="{ active: annotationTool === 'highlight' }"
-          @click="toggleAnnotationTool('highlight')"
-        >
-          &#x8367;&#x5149;&#x7B14;
-        </button>
-        <button
-          v-if="annotatable"
-          class="note-toggle"
-          type="button"
-          :class="{ active: annotationTool === 'note' }"
-          @click="toggleAnnotationTool('note')"
-        >
-          &#x6CE8;&#x91CA;
-        </button>
-        <div v-if="annotatable && annotationTool === 'highlight'" class="highlight-palette" aria-label="highlight colors">
-          <button
-            v-for="color in highlightColors"
-            :key="color.value"
-            type="button"
-            :class="{ active: activeHighlightColor === color.value }"
-            :title="color.label"
-            :style="{ backgroundColor: color.value }"
-            @click="activeHighlightColor = color.value"
-          ></button>
-        </div>
-        <button v-if="editable" class="edit-toggle" type="button" @click="editing = !editing">
-          {{ editing ? '&#x5B8C;&#x6210;&#x7F16;&#x8F91;' : '&#x7F16;&#x8F91;&#x5185;&#x5BB9;' }}
-        </button>
-        <button v-if="editable && editing" class="history-btn" type="button" :disabled="!canUndo" @click="undoEdit">
-          &#x4E0A;&#x4E00;&#x6B65;
-        </button>
-        <button v-if="editable && editing" class="history-btn" type="button" :disabled="!canRedo" @click="redoEdit">
-          &#x4E0B;&#x4E00;&#x6B65;
-        </button>
-        <button v-if="editable" class="export-btn" type="button" :disabled="exporting" @click="emitExport">
-          {{ exporting ? '&#x5BFC;&#x51FA;&#x4E2D;...' : '&#x5BFC;&#x51FA; PPTX' }}
-        </button>
-      </div>
-    </div>
+    <PresentationToolbar
+      :current-index="activeIndex"
+      :total="localSlides.length"
+      :title="title"
+      :editable="editable"
+      v-model:editing="editing"
+      :exporting="exporting"
+      :annotatable="annotatable"
+      :annotation-tool="annotationTool"
+      :highlight-colors="highlightColors"
+      v-model:active-highlight-color="activeHighlightColor"
+      :can-undo="canUndo"
+      :can-redo="canRedo"
+      @previous="activeIndex -= 1"
+      @next="activeIndex += 1"
+      @toggle-tool="toggleAnnotationTool"
+      @undo="undoEdit"
+      @redo="redoEdit"
+      @export="emitExport"
+    />
 
     <article
       class="ppt-slide"
@@ -229,6 +193,7 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
+import PresentationToolbar from './presentation/PresentationToolbar.vue'
 import { renderMath } from '../utils/renderMath'
 import 'katex/dist/katex.min.css'
 
