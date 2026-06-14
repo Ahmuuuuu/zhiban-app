@@ -327,12 +327,38 @@ const submitMaterial = async () => {
       throw new Error(res.msg || '资料导入失败')
     }
 
-    setStatus(
-      visibility.value === 'public'
-        ? '资料公开申请已提交，管理员通过后会展示到资源中心。'
-        : '学习资料已导入，仅自己可见。',
-      'success'
-    )
+    const detail = res?.data || {}
+    const ingested = Number(detail.ingested) || 0
+    const skipped = Number(detail.skipped) || 0
+    const total = Number(detail.total_chunks) || 0
+    const failed = total - ingested - skipped
+
+    let message = ''
+    let type = 'success'
+
+    if (total === 0) {
+      message = '文件处理后没有可入库的内容，请检查文件内容是否为空或过短（需 ≥50 字）。'
+      type = 'error'
+    } else if (failed > 0 && ingested === 0) {
+      message = `入库失败：共 ${total} 段全部处理失败，请检查服务器日志。`
+      type = 'error'
+    } else if (failed > 0) {
+      message = `部分入库：${ingested} 段成功，${failed} 段失败，${skipped} 段跳过（共 ${total} 段）。`
+      type = 'error'
+    } else if (ingested === 0) {
+      message = `全部跳过：${skipped} 段均因内容重复或过短被跳过（＜50字）。`
+      type = 'error'
+    } else if (isVideoFile(selectedFile.value)) {
+      message = '视频已上传成功，可在资源中心查看。'
+    } else {
+      message = `入库成功：${ingested} 段已入库${skipped > 0 ? `，${skipped} 段跳过` : ''}。`
+    }
+
+    if (visibility.value === 'public' && type === 'success') {
+      message = '资料公开申请已提交，管理员通过后会展示到资源中心。'
+    }
+
+    setStatus(message, type)
   } catch (error) {
     setStatus(
       error?.response?.data?.detail ||
