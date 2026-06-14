@@ -135,7 +135,7 @@ async def get_path_video(path_id: int, user_id: int = Depends(get_user_id_from_t
     """获取路径已有的视频课件"""
     result = await PathService.get_path_video(path_id, user_id)
     if not result:
-        raise HTTPException(status_code=404, detail="该路径暂无视频课件")
+        return {"code": 200, "msg": "success", "data": None}
     return {"code": 200, "msg": "success", "data": result}
 
 
