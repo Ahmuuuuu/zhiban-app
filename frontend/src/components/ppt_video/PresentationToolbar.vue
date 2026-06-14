@@ -62,6 +62,13 @@
       <button v-if="editable && editing" class="history-btn" type="button" :disabled="!canRedo" @click="$emit('redo')">
         下一步
       </button>
+      <label class="style-source-select">
+        <span>风格</span>
+        <select :value="styleSource" @change="$emit('update:styleSource', $event.target.value)">
+          <option value="builtin">内置风格</option>
+          <option value="custom">我的素材</option>
+        </select>
+      </label>
       <button v-if="editable" class="export-btn" type="button" :disabled="exporting" @click="$emit('export')">
         {{ exporting ? '导出中...' : '导出 PPTX' }}
       </button>
@@ -118,6 +125,10 @@ defineProps({
   canRedo: {
     type: Boolean,
     default: false
+  },
+  styleSource: {
+    type: String,
+    default: 'builtin'
   }
 })
 
@@ -126,6 +137,7 @@ defineEmits([
   'next',
   'toggle-tool',
   'update:activeHighlightColor',
+  'update:styleSource',
   'update:editing',
   'undo',
   'redo',
@@ -192,6 +204,29 @@ defineEmits([
 .nav-btn:disabled {
   opacity: 0.42;
   cursor: not-allowed;
+}
+
+.style-source-select {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 8px;
+  background: rgba(250, 250, 250, 0.88);
+  color: #163f8f;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.style-source-select select {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+  cursor: pointer;
 }
 
 .edit-toggle {

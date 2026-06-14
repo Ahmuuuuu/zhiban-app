@@ -12,12 +12,19 @@
     ]"
     :style="slideVisualStyle(slide)"
   >
+    <template v-if="styleSource === 'custom'">
+      <img v-if="customAssets.tape" class="custom-decoration custom-decoration--tape" :src="customAssets.tape" alt="" />
+      <img v-if="customAssets.pin" class="custom-decoration custom-decoration--pin" :src="customAssets.pin" alt="" />
+      <img v-if="customAssets.clip" class="custom-decoration custom-decoration--clip" :src="customAssets.clip" alt="" />
+      <img v-if="customAssets.highlight" class="custom-decoration custom-decoration--highlight" :src="customAssets.highlight" alt="" />
+    </template>
+
     <div v-if="!editing" class="ppt-slide__kicker">
       <span>{{ layoutLabel(slide.layout) }}</span>
       <small>{{ visualLabel(slide.visual) }}</small>
     </div>
     <div
-      v-if="!editing && slide.layout !== 'concept_visual'"
+      v-if="!editing && styleSource === 'builtin' && slide.layout !== 'concept_visual'"
       class="ppt-slide__art"
       :style="visualImageStyle(slide)"
     ></div>
@@ -54,10 +61,13 @@
               <span v-else v-html="renderMath(segment.text)"></span>
             </template>
           </div>
-          <aside class="visual-panel">
+          <aside v-if="styleSource === 'builtin'" class="visual-panel">
             <div class="visual-panel__image" :style="visualImageStyle(slide)"></div>
             <strong>{{ slide.visual?.query || slide.title }}</strong>
             <p>{{ slide.visual?.caption || firstBlockText }}</p>
+          </aside>
+          <aside v-else-if="customAssets.subjectImage" class="custom-subject-panel">
+            <img :src="customAssets.subjectImage" :alt="customAssets.subject || slide.title" />
           </aside>
         </div>
 
@@ -103,6 +113,13 @@
       </div>
     </div>
 
+    <img
+      v-if="styleSource === 'custom' && slide.layout !== 'concept_visual' && customAssets.subjectImage"
+      class="custom-subject-image"
+      :src="customAssets.subjectImage"
+      :alt="customAssets.subject || slide.title"
+    />
+
     <aside class="ppt-slide__notes">
       <span>讲稿</span>
       <textarea
@@ -121,6 +138,7 @@ import PptSlideComparison from './PptSlideComparison.vue'
 import PptSlideContentCards from './PptSlideContentCards.vue'
 import PptSlideFormula from './PptSlideFormula.vue'
 import PptSlideProcess from './PptSlideProcess.vue'
+import { selectCustomPptAssets } from './pptAssets'
 import { renderMath } from '../../utils/renderMath'
 
 const props = defineProps({
@@ -148,6 +166,10 @@ const props = defineProps({
     type: String,
     default: '#ffe159'
   },
+  styleSource: {
+    type: String,
+    default: 'builtin'
+  },
   annotations: {
     type: Array,
     default: () => []
@@ -160,6 +182,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update-field', 'select-text', 'open-annotation'])
 const contentRef = ref(null)
+const customAssets = computed(() => selectCustomPptAssets(props.slide, props.slideIndex))
 
 const layoutLabels = {
   title_cover: '封面',
@@ -248,6 +271,20 @@ const visualImageStyle = slide => ({
 
 const slideVisualStyle = slide => {
   const [primary, secondary, accent, paper] = slidePalette(slide)
+  if (props.styleSource === 'custom') {
+    const backgroundUrl = slide?.backgroundUrl || slide?.background_url || slide?.assetUrl || slide?.asset_url || customAssets.value.background || ''
+    return {
+      '--slide-primary': primary,
+      '--slide-secondary': secondary,
+      '--slide-accent': accent,
+      '--slide-paper': paper,
+      backgroundColor: paper,
+      backgroundImage: backgroundUrl ? `url("${backgroundUrl}")` : 'none',
+      backgroundSize: 'cover',
+      backgroundPosition: 'center'
+    }
+  }
+
   const bg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720"><defs><linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="${paper}"/><stop offset=".56" stop-color="${paper}"/><stop offset="1" stop-color="${accent}" stop-opacity=".42"/></linearGradient></defs><rect width="1200" height="720" fill="url(#bg)"/><path d="M0 0H1200V95C930 136 716 46 457 92 269 125 123 174 0 136Z" fill="${primary}" opacity=".94"/><path d="M810 0c156 44 262 132 390 92V0Z" fill="${secondary}" opacity=".9"/><circle cx="1030" cy="154" r="118" fill="${accent}" opacity=".24"/><circle cx="930" cy="210" r="76" fill="${secondary}" opacity=".18"/></svg>`
   return {
     '--slide-primary': primary,
@@ -359,3 +396,82 @@ const openAnnotation = annotation => {
   })
 }
 </script>
+
+<style scoped>
+.custom-decoration,
+.custom-subject-image,
+.custom-subject-panel {
+  pointer-events: none;
+  user-select: none;
+}
+
+.custom-decoration {
+  position: absolute;
+  z-index: 2;
+  object-fit: contain;
+}
+
+.custom-decoration--tape {
+  top: 48px;
+  left: 50%;
+  width: clamp(90px, 10vw, 150px);
+  transform: translateX(-50%) rotate(-4deg);
+  opacity: 0.9;
+}
+
+.custom-decoration--pin {
+  top: 76px;
+  left: clamp(42px, 5vw, 72px);
+  width: clamp(28px, 3vw, 44px);
+  transform: rotate(-12deg);
+}
+
+.custom-decoration--clip {
+  top: 84px;
+  right: clamp(48px, 6vw, 88px);
+  width: clamp(34px, 4vw, 58px);
+  transform: rotate(9deg);
+}
+
+.custom-decoration--highlight {
+  left: 50%;
+  bottom: clamp(92px, 11vh, 132px);
+  width: min(48%, 460px);
+  transform: translateX(-50%) rotate(-1deg);
+  opacity: 0.58;
+  z-index: 0;
+}
+
+.custom-subject-image {
+  position: absolute;
+  right: clamp(36px, 5vw, 74px);
+  bottom: clamp(78px, 9vh, 118px);
+  width: clamp(120px, 18vw, 230px);
+  max-height: 32%;
+  object-fit: contain;
+  z-index: 1;
+  opacity: 0.92;
+  filter: drop-shadow(0 14px 24px rgba(22, 63, 143, 0.14));
+}
+
+.custom-subject-panel {
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+
+.custom-subject-panel img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 14px 24px rgba(22, 63, 143, 0.14));
+}
+
+.ppt-slide.layout-concept_visual .custom-subject-panel {
+  padding: clamp(8px, 1.5vw, 18px);
+}
+
+.ppt-slide.layout-concept_visual .custom-decoration--highlight {
+  display: none;
+}
+</style>
