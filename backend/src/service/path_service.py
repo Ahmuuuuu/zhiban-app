@@ -1072,7 +1072,7 @@ class PathService:
             raise ValueError("路径无节点")
 
         node_outline = " → ".join(n.topic for n in nodes)
-        video_topic = f"{path.subject} 学习路径（{node_outline}）"
+        video_topic = f"{path.subject} 学习路径（{node_outline}）"[:255]
 
         # 已有有效的 HTML 课件 → 直接复用
         existing_html = await GeneratedResource.filter(
@@ -1150,7 +1150,7 @@ class PathService:
             return None
         nodes = sorted(path.nodes, key=lambda n: n.order_index)
         node_outline = " → ".join(n.topic for n in nodes) if nodes else ""
-        video_topic = f"{path.subject} 学习路径（{node_outline}）" if node_outline else f"{path.subject}（完整路径总结）"
+        video_topic = (f"{path.subject} 学习路径（{node_outline}）" if node_outline else f"{path.subject}（完整路径总结）")[:255]
         existing = await GeneratedResource.filter(
             user_id=user_id, topic=video_topic, resource_type="html"
         ).first()

@@ -83,46 +83,33 @@
       </section>
 
       <section v-if="pathVideo" class="path-video-section">
-        <header>
-          <div>
-            <span>Path Video</span>
-            <h2>路径教学视频</h2>
-          </div>
-          <button
-            class="path-video-gen-btn"
-            type="button"
-            :disabled="pathVideoLoading"
-            @click="fetchOrGeneratePathVideo"
-          >
-            {{ pathVideoLoading ? '生成中...' : '重新生成' }}
-          </button>
-        </header>
-        <div class="path-video-cover">
-          <MonitorPlay :size="40" />
-          <strong>路径教学视频 — {{ pathState?.goal || '' }}</strong>
-          <span>动态课件 — 覆盖全部 {{ visibleNodes.length }} 个学习节点</span>
-          <button class="html-open-btn" type="button" @click="openPathVideo">
-            打开课件
-          </button>
+        <button class="path-video-play-btn" type="button" @click="openPathVideo">
+          <MonitorPlay :size="22" />
+        </button>
+        <div class="path-video-info">
+          <strong>路径教学视频</strong>
+          <span>{{ visibleNodes.length }} 个节点</span>
         </div>
+        <button
+          class="path-video-gen-btn"
+          type="button"
+          :disabled="pathVideoLoading"
+          @click="fetchOrGeneratePathVideo"
+        >
+          {{ pathVideoLoading ? '生成中...' : '重新生成' }}
+        </button>
       </section>
       <section v-else-if="pathState?.pathId" class="path-video-section path-video-placeholder">
-        <header>
-          <span>Path Video</span>
-          <h2>路径教学视频</h2>
-        </header>
-        <div class="path-video-empty">
-          <MonitorPlay :size="24" />
-          <span>暂无路径总结视频</span>
-          <button
-            class="path-video-gen-btn"
-            type="button"
-            :disabled="pathVideoLoading"
-            @click="fetchOrGeneratePathVideo"
-          >
-            {{ pathVideoLoading ? '生成中...' : '生成路径视频' }}
-          </button>
-        </div>
+        <MonitorPlay :size="18" class="path-video-placeholder-icon" />
+        <span>暂无路径视频</span>
+        <button
+          class="path-video-gen-btn"
+          type="button"
+          :disabled="pathVideoLoading"
+          @click="fetchOrGeneratePathVideo"
+        >
+          {{ pathVideoLoading ? '生成中...' : '生成' }}
+        </button>
       </section>
 
       <section class="path-layout">
@@ -2878,55 +2865,60 @@ onBeforeUnmount(() => {
   background: rgba(250, 250, 250, 0.78);
   box-shadow: 0 14px 34px rgba(22, 63, 143, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(14px) saturate(135%);
-  border-radius: 22px;
-  padding: 16px;
-  display: grid;
-  gap: 12px;
-}
-
-.path-video-section header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.path-video-section header span {
-  color: #5f8fc3;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.path-video-section header h2 {
-  color: #163f8f;
-  font-size: 17px;
-  margin: 4px 0 0;
-}
-
-.path-video-cover {
-  display: grid;
-  place-items: center;
-  gap: 12px;
-  padding: 40px 20px;
-  color: #5f8fc3;
-  text-align: center;
-}
-
-.path-video-cover strong {
-  color: #163f8f;
-  font-size: 18px;
-}
-
-.path-video-empty {
+  border-radius: 12px;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 20px;
-  color: #7a9cc6;
+}
+
+.path-video-play-btn {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: #163f8f;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.path-video-play-btn:hover {
+  transform: scale(1.08);
+}
+
+.path-video-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.path-video-info strong {
+  color: #163f8f;
   font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.path-video-info span {
+  color: #5f8fc3;
+  font-size: 12px;
+}
+
+.path-video-placeholder {
+  color: #7a9cc6;
+  font-size: 13px;
+  gap: 10px;
+}
+.path-video-placeholder-icon {
+  flex-shrink: 0;
+  color: #7a9cc6;
 }
 
 .path-video-gen-btn {
-  margin-left: auto;
   padding: 6px 14px;
   border: 1px solid #163f8f;
   border-radius: 10px;
@@ -2935,6 +2927,8 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .path-video-gen-btn:disabled {
