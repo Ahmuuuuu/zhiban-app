@@ -21,127 +21,19 @@
       @export="emitExport"
     />
 
-    <article
-      class="ppt-slide"
-      :class="[
-        `layout-${currentSlide.layout || 'content_cards'}`,
-        `theme-${currentSlide.theme || 'academic_blue'}`,
-        {
-          editing,
-          'is-dense': currentSlideTextLength > 420,
-          'is-very-dense': currentSlideTextLength > 800
-        }
-      ]"
-      :style="slideVisualStyle(currentSlide)"
-    >
-      <div v-if="!editing" class="ppt-slide__kicker">
-        <span>{{ layoutLabel(currentSlide.layout) }}</span>
-        <small>{{ visualLabel(currentSlide.visual) }}</small>
-      </div>
-      <div
-        v-if="!editing && currentSlide.layout !== 'concept_visual'"
-        class="ppt-slide__art"
-        :style="visualImageStyle(currentSlide)"
-      ></div>
-
-      <div class="ppt-slide__stage">
-        <input
-          v-if="editing"
-          class="slide-title-input"
-          :value="currentSlide.title || title"
-          @input="updateSlideField('title', $event.target.value)"
-        />
-        <h3 v-else>{{ currentSlide.title || title }}</h3>
-
-        <textarea
-          v-if="editing"
-          class="slide-content-input"
-          :value="currentSlide.text"
-          @input="updateSlideField('text', $event.target.value)"
-        ></textarea>
-
-        <div v-else ref="slideContentRef" class="ppt-slide__content" @mouseup="handleTextSelection">
-          <div v-if="currentSlide.layout === 'concept_visual'" class="layout-grid layout-grid--visual">
-            <div class="slide-rich-text">
-              <template v-for="(segment, index) in slideSegments" :key="index">
-                <mark
-                  v-if="segment.annotation"
-                  class="ppt-annotation-mark"
-                  :class="{ 'has-note': isNoteAnnotation(segment.annotation) }"
-                  :data-annotation-id="segment.annotation.id"
-                  :style="{ background: annotationBackground(segment.annotation) }"
-                  @click.stop="openAnnotation(segment.annotation)"
-                  v-html="renderMath(segment.text)"
-                ></mark>
-                <span v-else v-html="renderMath(segment.text)"></span>
-              </template>
-            </div>
-            <aside class="visual-panel">
-              <div class="visual-panel__image" :style="visualImageStyle(currentSlide)"></div>
-              <strong>{{ currentSlide.visual?.query || currentSlide.title }}</strong>
-              <p>{{ currentSlide.visual?.caption || firstBlockText }}</p>
-            </aside>
-          </div>
-
-          <div v-else-if="currentSlide.layout === 'process_steps'" class="process-strip">
-            <article v-for="(block, index) in slideBlocks.slice(0, 5)" :key="index" class="process-step">
-              <b>{{ index + 1 }}</b>
-              <span v-html="renderMath(displayBlockText(block.text, 90))"></span>
-            </article>
-          </div>
-
-          <div v-else-if="currentSlide.layout === 'comparison'" class="comparison-grid">
-            <article class="comparison-card">
-              <b>A</b>
-              <p v-for="(block, index) in slideBlocks.filter((_, i) => i % 2 === 0).slice(0, 4)" :key="index" v-html="renderMath(displayBlockText(block.text, 110))"></p>
-            </article>
-            <article class="comparison-card comparison-card--accent">
-              <b>B</b>
-              <p v-for="(block, index) in slideBlocks.filter((_, i) => i % 2 === 1).slice(0, 4)" :key="index" v-html="renderMath(displayBlockText(block.text, 110))"></p>
-            </article>
-          </div>
-
-          <div v-else-if="currentSlide.layout === 'formula_focus'" class="formula-layout">
-            <div class="formula-box" v-html="renderMath(formulaText)"></div>
-            <div class="formula-points">
-              <p v-for="(block, index) in formulaBlocks" :key="index" v-html="renderMath(displayBlockText(block.text, 120))"></p>
-            </div>
-          </div>
-
-          <div v-else-if="currentSlide.layout === 'content_cards'" class="content-card-grid">
-            <article v-for="(block, index) in slideBlocks.slice(0, 6)" :key="index">
-              <span>{{ index + 1 }}</span>
-              <p v-html="renderMath(displayBlockText(block.text, 105))"></p>
-            </article>
-          </div>
-
-          <template v-else>
-            <template v-for="(segment, index) in slideSegments" :key="index">
-              <mark
-                v-if="segment.annotation"
-                class="ppt-annotation-mark"
-                :class="{ 'has-note': isNoteAnnotation(segment.annotation) }"
-                :data-annotation-id="segment.annotation.id"
-                :style="{ background: annotationBackground(segment.annotation) }"
-                @click.stop="openAnnotation(segment.annotation)"
-                v-html="renderMath(segment.text)"
-              ></mark>
-              <span v-else v-html="renderMath(segment.text)"></span>
-            </template>
-          </template>
-        </div>
-      </div>
-
-      <aside class="ppt-slide__notes">
-        <span>&#x8BB2;&#x7A3F;</span>
-        <textarea
-          v-if="editing"
-          :value="currentSlide.notes"
-          @input="updateSlideField('notes', $event.target.value)"
-        ></textarea>
-        <p v-else>{{ currentSlide.notes || '&#x6682;&#x65E0;&#x8BB2;&#x7A3F;' }}</p>
-      </aside>
-    </article>
+    <PptSlide
+      :slide="currentSlide"
+      :title="title"
+      :editing="editing"
+      :annotatable="annotatable"
+      :annotation-tool="annotationTool"
+      :active-highlight-color="activeHighlightColor"
+      :annotations="currentSlideAnnotations"
+      :slide-index="activeIndex"
+      @update-field="updateSlideField"
+      @select-text="handleTextSelection"
+      @open-annotation="openAnnotation"
+    />
 
     <div class="ppt-controls">
       <div class="ppt-dots">
@@ -193,8 +85,8 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import PresentationToolbar from './presentation/PresentationToolbar.vue'
-import { renderMath } from '../utils/renderMath'
+import PptSlide from './ppt_video/PptSlide.vue'
+import PresentationToolbar from './ppt_video/PresentationToolbar.vue'
 import 'katex/dist/katex.min.css'
 
 const props = defineProps({
@@ -234,7 +126,6 @@ const localSlides = ref([])
 const undoStack = ref([])
 const redoStack = ref([])
 const skipNextSlideSync = ref(false)
-const slideContentRef = ref(null)
 const annotationEditor = reactive({
   visible: false,
   mode: 'create',
@@ -564,44 +455,19 @@ const redoEdit = () => {
   restoreHistoryState(redoStack.value.pop())
 }
 
-const getOffset = (root, targetNode, targetOffset) => {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  let offset = 0
-  let node = walker.nextNode()
-  while (node) {
-    if (node === targetNode) return offset + targetOffset
-    offset += node.textContent?.length || 0
-    node = walker.nextNode()
-  }
-  return offset
-}
-
 const closeAnnotationEditor = () => {
   annotationEditor.visible = false
 }
 
-const handleTextSelection = () => {
-  if (!props.annotatable || !annotationTool.value || editing.value || !slideContentRef.value) return
-  const selection = window.getSelection()
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
-
-  const range = selection.getRangeAt(0)
-  if (!slideContentRef.value.contains(range.commonAncestorContainer)) return
-
-  const selectedText = selection.toString().trim()
-  if (!selectedText) return
-
-  const start = getOffset(slideContentRef.value, range.startContainer, range.startOffset)
-  const end = getOffset(slideContentRef.value, range.endContainer, range.endOffset)
-  const rect = range.getBoundingClientRect()
-
-  const position = {
-      kind: 'ppt',
-      slideIndex: activeIndex.value,
-      start: Math.min(start, end),
-      end: Math.max(start, end),
-      tool: annotationTool.value,
-      color: activeHighlightColor.value
+const handleTextSelection = ({ selectedText, rect, position }) => {
+  if (!props.annotatable || !annotationTool.value || editing.value || !selectedText || !position) return
+  const normalizedPosition = {
+    ...position,
+    start: Math.min(Number(position.start), Number(position.end)),
+    end: Math.max(Number(position.start), Number(position.end)),
+    slideIndex: activeIndex.value,
+    tool: annotationTool.value,
+    color: activeHighlightColor.value
   }
 
   if (annotationTool.value === 'highlight') {
@@ -609,9 +475,9 @@ const handleTextSelection = () => {
       selected_text: selectedText,
       note: '',
       note_text: '',
-      position
+      position: normalizedPosition
     })
-    selection.removeAllRanges()
+    window.getSelection()?.removeAllRanges()
     return
   }
 
@@ -623,13 +489,13 @@ const handleTextSelection = () => {
     y: rect.bottom + window.scrollY + 8,
     selectedText,
     note: '',
-    position
+    position: normalizedPosition
   })
 }
 
-const openAnnotation = annotation => {
-  const el = slideContentRef.value?.querySelector(`[data-annotation-id="${CSS.escape(String(annotation.id))}"]`)
-  const rect = el?.getBoundingClientRect()
+const openAnnotation = payload => {
+  const annotation = payload?.annotation || payload
+  const rect = payload?.rect
   Object.assign(annotationEditor, {
     visible: true,
     mode: 'edit',
@@ -701,7 +567,7 @@ watch(
 )
 </script>
 
-<style scoped>
+<style>
 .ppt-preview {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
