@@ -231,91 +231,20 @@
             </button>
           </div>
 
-            <div
-              class="resource-fullscreen__content"
-              :class="{
-                'resource-fullscreen__content--media': isPresentationResource(selectedResource) || isVideoResource(selectedResource),
-                'resource-fullscreen__content--ppt': isPptResource(selectedResource)
-              }"
-            >
-            <template v-if="selectedResource.type === 'image' && selectedResource.previewUrl">
-              <img
-                class="preview-image"
-                :src="selectedResource.previewUrl"
-                :alt="selectedResource.title"
-                @error="handleImageError"
-              />
-            </template>
-            <template v-else-if="isPresentationResource(selectedResource)">
-              <iframe
-                v-if="selectedResource.previewUrl"
-                class="preview-iframe"
-                :src="selectedResource.previewUrl"
-                frameborder="0"
-                allowfullscreen
-              ></iframe>
-              <p v-else>课件加载中，请稍后...</p>
-            </template>
-            <template v-else-if="isVideoResource(selectedResource)">
-              <video
-                v-if="selectedResource.previewUrl"
-                class="preview-video"
-                :src="selectedResource.previewUrl"
-                controls
-                autoplay
-                playsinline
-              >
-                您的浏览器不支持视频播放
-              </video>
-              <p v-else>{{ selectedResource.content || '暂无视频内容' }}</p>
-            </template>
-            <template v-else-if="isMindmapResource(selectedResource)">
-              <MindmapPreview
-                :content="selectedResource.fullContent || selectedResource.content"
-                :title="selectedResource.title"
-              />
-              <div class="resource-fullscreen__actions">
-                <button
-                  v-if="selectedResource.downloadUrl"
-                  class="file-download-btn"
-                  type="button"
-                  @click="downloadResource(selectedResource)"
-                >
-                  下载思维导图文件
-                </button>
-              </div>
-            </template>
-            <template v-else-if="isPptResource(selectedResource)">
-              <PptPreview
-                v-if="selectedResource.slides?.length"
-                v-model:slides="selectedResource.slides"
-                :title="selectedResource.title"
-                :editable="canEditResource(selectedResource)"
-                @export-pptx="exportResourcePptx(selectedResource, $event)"
-              />
-              <div v-else-if="selectedResource.previewUrl" class="file-preview-wrap">
-                <img
-                  class="preview-image"
-                  :src="selectedResource.previewUrl"
-                  :alt="selectedResource.title"
-                  @error="handleImageError"
-                />
-              </div>
-              <div v-else class="file-placeholder-block">
-                <Presentation v-if="isPptResource(selectedResource)" :size="48" />
-                <GitBranch v-else :size="48" />
-                <p>{{ selectedResource.title || (isPptResource(selectedResource) ? 'PPT 文件' : '思维导图') }}</p>
-                <button
-                  v-if="selectedResource.downloadUrl"
-                  class="file-download-btn"
-                  type="button"
-                  @click="downloadResource(selectedResource)"
-                >
-                  下载{{ isPptResource(selectedResource) ? ' PPT 文件' : '思维导图' }}
-                </button>
-              </div>
-            </template>
-            <p v-else>{{ selectedResource.content || '暂无内容可展示' }}</p>
+          <div
+            class="resource-fullscreen__content"
+            :class="{
+              'resource-fullscreen__content--media': isPresentationResource(selectedResource) || isVideoResource(selectedResource),
+              'resource-fullscreen__content--ppt': isPptResource(selectedResource)
+            }"
+          >
+            <PresentationPreview
+              :resource="selectedResource"
+              :editable="canEditResource(selectedResource)"
+              @download="downloadResource"
+              @export-pptx="exportResourcePptx(selectedResource, $event)"
+              @image-error="handleImageError"
+            />
           </div>
         </article>
       </section>
@@ -361,8 +290,7 @@ import {
 } from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
 
-import MindmapPreview from '../components/MindmapPreview.vue'
-import PptPreview from '../components/PptPreview.vue'
+import PresentationPreview from '../components/presentation/PresentationPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 import { getResourceCoverUrl } from '../utils/resourceCover'
 

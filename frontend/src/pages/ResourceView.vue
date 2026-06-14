@@ -172,78 +172,19 @@
             class="resource-fullscreen__content"
             :class="{ 'resource-fullscreen__content--ppt': isPptResource(selectedResource) }"
           >
-            <template v-if="selectedResource.type === 'image' && selectedResource.previewUrl">
-              <img
-                class="preview-image"
-                :src="selectedResource.previewUrl"
-                :alt="selectedResource.title"
-                @error="handleImageError"
-              />
-            </template>
-            <template v-else-if="isVideoResource(selectedResource)">
-              <video
-                v-if="selectedResource.previewUrl"
-                class="preview-video"
-                :src="selectedResource.previewUrl"
-                controls
-                autoplay
-                playsinline
-              >
-                您的浏览器不支持视频播放
-              </video>
-              <p v-else>{{ selectedResource.content || '暂无视频内容' }}</p>
-            </template>
-            <template v-else-if="isMindmapResource(selectedResource)">
-              <MindmapPreview
-                :content="selectedResource.fullContent || selectedResource.content"
-                :title="selectedResource.title"
-              />
-              <div class="resource-fullscreen__actions">
-                <button
-                  v-if="selectedResource.downloadUrl"
-                  class="file-download-btn"
-                  type="button"
-                  @click="downloadResource(selectedResource)"
-                >
-                  下载思维导图
-                </button>
-              </div>
-            </template>
-            <template v-else-if="isPptResource(selectedResource)">
-              <PptPreview
-                v-if="selectedResource.slides?.length"
-                v-model:slides="selectedResource.slides"
-                :title="selectedResource.title"
-                :editable="true"
-                :annotatable="true"
-                :annotations="selectedResource.annotations || []"
-                @create-note="createAnnotation(selectedResource, $event)"
-                @update-note="(id, payload) => updateAnnotation(selectedResource, id, payload)"
-                @delete-note="deleteAnnotation(selectedResource, $event)"
-                @export-pptx="exportResourcePptx(selectedResource, $event)"
-              />
-              <div v-else-if="selectedResource.previewUrl" class="file-preview-wrap">
-                <img
-                  class="preview-image"
-                  :src="selectedResource.previewUrl"
-                  :alt="selectedResource.title"
-                  @error="handleImageError"
-                />
-              </div>
-              <div v-else class="file-placeholder-block">
-                <Presentation v-if="isPptResource(selectedResource)" :size="48" />
-                <GitBranch v-else :size="48" />
-                <p>{{ selectedResource.title || (isPptResource(selectedResource) ? 'PPT 文件' : '思维导图') }}</p>
-                <button
-                  v-if="selectedResource.downloadUrl"
-                  class="file-download-btn"
-                  type="button"
-                  @click="downloadResource(selectedResource)"
-                >
-                  下载{{ isPptResource(selectedResource) ? ' PPT 文件' : '思维导图' }}
-                </button>
-              </div>
-            </template>
+            <PresentationPreview
+              v-if="canUsePresentationPreview(selectedResource)"
+              :resource="selectedResource"
+              :editable="true"
+              :annotatable="true"
+              :annotations="selectedResource.annotations || []"
+              @download="downloadResource"
+              @image-error="handleImageError"
+              @create-note="createAnnotation(selectedResource, $event)"
+              @update-note="(id, payload) => updateAnnotation(selectedResource, id, payload)"
+              @delete-note="deleteAnnotation(selectedResource, $event)"
+              @export-pptx="exportResourcePptx(selectedResource, $event)"
+            />
             <AnnotatedTextPreview
               v-else
               :content="selectedResource.content || '暂无正文内容'"
@@ -295,8 +236,7 @@ import {
 } from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
 import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
-import MindmapPreview from '../components/MindmapPreview.vue'
-import PptPreview from '../components/PptPreview.vue'
+import PresentationPreview from '../components/presentation/PresentationPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 import { getResourceCoverUrl } from '../utils/resourceCover'
 
@@ -635,6 +575,13 @@ const isVideoResource = resource => {
   return resource?.category === 'video' ||
     typeCat.includes('video') ||
     /\.(mp4|webm|ogg|mov|avi|mkv|flv|wmv)($|\s|\?)/i.test(filename)
+}
+
+const canUsePresentationPreview = resource => {
+  return resource?.type === 'image' ||
+    isVideoResource(resource) ||
+    isMindmapResource(resource) ||
+    isPptResource(resource)
 }
 
 const getResourceKind = resource => {
