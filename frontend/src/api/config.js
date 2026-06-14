@@ -11,6 +11,9 @@ export const resolveApiUrl = path => {
   // /static/ 路径保持相对，走 Vite proxy（开发）或同源访问（生产），避免局域网跨端口拦截
   if (/^\/static\//.test(path)) return path
 
+  // baseURL 为空时走相对路径，由 nginx/Vite proxy 转发
+  if (!/^https?:\/\//i.test(API_BASE_URL)) return path.startsWith('/') ? path : `/${path}`
+
   return new URL(String(path).replace(/^\//, ''), API_BASE_URL).toString()
 }
 
@@ -45,7 +48,7 @@ export const parseStreamEvent = eventText => {
 
 export async function downloadWithToken(url, filename = 'download') {
   const token = localStorage.getItem('token')
-  const targetUrl = new URL(resolveApiUrl(url))
+  const targetUrl = new URL(resolveApiUrl(url), window.location.origin)
   if (token && !targetUrl.searchParams.has('token')) {
     targetUrl.searchParams.set('token', token)
   }
