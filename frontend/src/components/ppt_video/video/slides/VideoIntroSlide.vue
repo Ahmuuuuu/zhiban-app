@@ -113,8 +113,8 @@ const metrics = computed(() => [
   max-width: 780px;
   margin: 0;
   color: var(--video-muted);
-  font-size: clamp(17px, 1.45vw, 24px);
-  line-height: 1.65;
+  font-size: clamp(14px, 1.18vw, 22px);
+  line-height: 1.52;
 }
 
 .profile-metrics {

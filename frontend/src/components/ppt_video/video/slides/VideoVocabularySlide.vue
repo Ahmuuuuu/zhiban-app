@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-vocabulary-slide"
-    :class="`layout-${layoutSeed}`"
+    :class="[`layout-${layoutSeed}`, { 'is-dense': vocabCards.length > 6 }]"
   >
     <div class="video-vocabulary-slide__header">
       <span>{{ slide.chapterTitle }}</span>
@@ -55,13 +55,13 @@ const vocabCards = computed(() => {
   items.forEach(item => {
     const text = String(item || '')
     const pairs = text.match(/[A-Za-z][A-Za-z-]{2,}(?:\s*\([^)]{1,18}\)|（[^）]{1,18}）)?/g) || []
-    pairs.slice(0, 3).forEach(pair => {
+    pairs.forEach(pair => {
       const word = pair.replace(/[（(].*$/, '').trim()
       const meaning = pair.match(/[（(]([^）)]+)[）)]/)?.[1] || '重点词汇'
       cards.push({ word, meaning })
     })
   })
-  return cards.length ? cards.slice(0, 6) : [{ word: props.slide.title, meaning: '核心表达' }]
+  return cards.length ? cards : [{ word: props.slide.title, meaning: props.slide.summary || '核心表达' }]
 })
 
 const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary || '')
@@ -146,12 +146,8 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   max-width: 720px;
   margin: 0;
   color: var(--video-muted);
-  font-size: clamp(15px, 1.2vw, 19px);
-  line-height: 1.7;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  font-size: clamp(13px, 1.02vw, 18px);
+  line-height: 1.55;
 }
 
 .vocab-deck {
@@ -160,6 +156,11 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   align-content: start;
+}
+
+.video-vocabulary-slide.is-dense .vocab-deck {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .video-vocabulary-slide.layout-3 .vocab-deck {
@@ -183,6 +184,12 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   box-shadow: 0 18px 42px var(--video-shadow);
   animation: vocab-card 0.62s ease both;
   animation-delay: calc(var(--delay) * 0.08s);
+}
+
+.video-vocabulary-slide.is-dense .vocab-deck article {
+  min-height: 72px;
+  padding: 11px;
+  gap: 5px;
 }
 
 .video-vocabulary-slide.layout-1 .vocab-deck article {
@@ -212,20 +219,26 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   text-align: center;
 }
 
+.video-vocabulary-slide.layout-3.is-dense .vocab-deck article {
+  aspect-ratio: auto;
+  border-radius: 18px;
+}
+
 .video-vocabulary-slide.layout-4 .vocab-deck article {
   border-radius: 6px;
   clip-path: polygon(0 0, 92% 0, 100% 18%, 100% 100%, 0 100%);
 }
 
 .vocab-deck b {
-  font-size: clamp(21px, 2vw, 32px);
+  font-size: clamp(17px, 1.55vw, 28px);
   line-height: 1;
   color: var(--video-accent, currentColor);
 }
 
 .vocab-deck span {
   color: var(--video-muted);
-  font-size: 14px;
+  font-size: clamp(11px, 0.84vw, 14px);
+  line-height: 1.28;
 }
 
 .scene-board {
@@ -264,8 +277,8 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 .scene-board p {
   margin: 0;
   color: var(--video-text);
-  font-size: clamp(22px, 2.4vw, 34px);
-  line-height: 1.4;
+  font-size: clamp(15px, 1.45vw, 28px);
+  line-height: 1.42;
 }
 
 .scene-board div {

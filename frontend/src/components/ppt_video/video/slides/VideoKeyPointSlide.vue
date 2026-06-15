@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-keypoint-slide"
-    :class="`layout-${layoutSeed}`"
+    :class="[`layout-${layoutSeed}`, { 'is-dense': displayItems.length > 4 }]"
   >
     <div class="video-keypoint-slide__hero">
       <span>{{ slide.chapterTitle }}</span>
@@ -58,7 +58,7 @@ const props = defineProps({
 
 const displayItems = computed(() => {
   const items = Array.isArray(props.slide.items) ? props.slide.items : []
-  return items.length ? items.slice(0, 3) : [props.slide.summary].filter(Boolean)
+  return items.length ? items : [props.slide.summary].filter(Boolean)
 })
 
 const terms = computed(() => getSlideTerms(props.slide))
@@ -166,12 +166,8 @@ const terms = computed(() => getSlideTerms(props.slide))
   max-width: 720px;
   margin: 0;
   color: var(--video-muted);
-  font-size: clamp(15px, 1.2vw, 19px);
-  line-height: 1.7;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
+  font-size: clamp(13px, 1.05vw, 18px);
+  line-height: 1.58;
 }
 
 .video-keypoint-slide__cards {
@@ -179,11 +175,18 @@ const terms = computed(() => getSlideTerms(props.slide))
   display: grid;
   grid-template-columns: 1fr;
   gap: 14px;
+  min-height: 0;
+  align-content: center;
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__cards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .video-keypoint-slide__cards article {
   min-height: 0;
-  padding: 16px 18px;
+  padding: 14px 16px;
   border: 1px solid var(--video-card-border);
   border-radius: 8px;
   background:
@@ -197,6 +200,12 @@ const terms = computed(() => getSlideTerms(props.slide))
   box-shadow: 0 18px 42px var(--video-shadow);
   animation: card-pop 0.52s ease both;
   animation-delay: calc(var(--delay) * 0.09s + 0.12s);
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__cards article {
+  padding: 11px 12px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
 }
 
 .video-keypoint-slide.layout-1 .video-keypoint-slide__cards article {
@@ -223,6 +232,15 @@ const terms = computed(() => getSlideTerms(props.slide))
   text-align: center;
 }
 
+.video-keypoint-slide.layout-4.is-dense .video-keypoint-slide__cards article {
+  min-height: 0;
+  aspect-ratio: auto;
+  border-radius: 18px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  place-items: start;
+  text-align: left;
+}
+
 .video-keypoint-slide__cards article.featured {
   background: var(--video-card-strong);
 }
@@ -237,6 +255,12 @@ const terms = computed(() => getSlideTerms(props.slide))
   place-items: center;
 }
 
+.video-keypoint-slide.is-dense .video-keypoint-slide__cards b {
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
+
 .video-keypoint-slide.layout-4 .video-keypoint-slide__cards b {
   width: 42px;
   height: 42px;
@@ -244,12 +268,13 @@ const terms = computed(() => getSlideTerms(props.slide))
 
 .video-keypoint-slide__cards span {
   color: var(--video-muted);
-  font-size: clamp(15px, 1.18vw, 20px);
-  line-height: 1.48;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  font-size: clamp(12px, 0.94vw, 17px);
+  line-height: 1.36;
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__cards span {
+  font-size: clamp(11px, 0.82vw, 14px);
+  line-height: 1.28;
 }
 
 .video-keypoint-slide__visual {
