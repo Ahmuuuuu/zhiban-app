@@ -11,7 +11,7 @@ from backend.src.models.notification_model import Notification, UserNotification
 router = APIRouter(prefix="/notification", tags=["消息通知"])
 
 
-async def _visible_qs(user_id: int):
+def _visible_qs(user_id: int):
     """用户可见的通知：is_active 且 (全员广播 或 定向给自己)"""
     return Notification.filter(
         Q(target_user_id__isnull=True) | Q(target_user_id=user_id),
@@ -25,7 +25,7 @@ async def list_notifications(
     page: int = Query(1, ge=1, alias="page"),
     size: int = Query(20, ge=1, le=100, alias="size"),
 ):
-    qs = await _visible_qs(user_id)
+    qs = _visible_qs(user_id)
     total = await qs.count()
 
     # 未读 = 可见总数 - 已读条数
@@ -51,12 +51,12 @@ async def list_notifications(
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         })
 
-    return {"items": items, "total": total, "unread_count": unread_count}
+    return {"code": 200, "msg": "success", "data": {"items": items, "total": total, "unread_count": unread_count}}
 
 
 @router.get("/unread-count")
 async def unread_count(user_id: int = Depends(get_user_id_from_token)):
-    visible_ids = await (await _visible_qs(user_id)).values_list("id", flat=True)
+    visible_ids = await _visible_qs(user_id).values_list("id", flat=True)
     if not visible_ids:
         return {"unread_count": 0}
     read_count = await UserNotification.filter(
@@ -68,11 +68,10 @@ async def unread_count(user_id: int = Depends(get_user_id_from_token)):
 @router.post("/{notification_id}/read")
 async def mark_read(notification_id: int, user_id: int = Depends(get_user_id_from_token)):
     # 确保通知存在且对用户可见
-    visible = await (await _visible_qs(user_id)).filter(id=notification_id).exists()
+    visible = await _visible_qs(user_id).filter(id=notification_id).exists()
     if not visible:
         raise HTTPException(404, "消息不存在")
 
-    from tortoise.transactions import in_transaction
     _, created = await UserNotification.update_or_create(
         user_id=user_id,
         notification_id=notification_id,
@@ -83,7 +82,7 @@ async def mark_read(notification_id: int, user_id: int = Depends(get_user_id_fro
 
 @router.post("/read-all")
 async def mark_all_read(user_id: int = Depends(get_user_id_from_token)):
-    visible_ids = await (await _visible_qs(user_id)).values_list("id", flat=True)
+    visible_ids = await _visible_qs(user_id).values_list("id", flat=True)
     count = 0
     for nid in visible_ids:
         _, created = await UserNotification.update_or_create(
