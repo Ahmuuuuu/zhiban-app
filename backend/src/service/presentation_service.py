@@ -182,15 +182,15 @@ async def _generate_questions_from_content(topic: str, portrait_context: str, do
     )
 
     try:
-        resp = await llm.ainvoke(prompt)
+        resp = await asyncio.wait_for(llm.ainvoke(prompt), timeout=8)
         raw = resp.content.strip()
         if raw.startswith("```"):
             raw = re.sub(r"^```\w*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw)
         questions_data = json.loads(raw)
         return questions_data.get("questions", [])
-    except json.JSONDecodeError:
-        logger.warning("AI 问题 JSON 解析失败，降级为默认问题 raw=%s", raw[:200])
+    except (asyncio.TimeoutError, json.JSONDecodeError):
+        logger.warning("AI 问题生成超时或解析失败，降级为默认问题")
         return _default_questions(doc, ppt_data)
     except Exception:
         logger.exception("AI 问题生成失败")
@@ -206,15 +206,15 @@ async def _generate_questions_from_topic(topic: str, portrait_context: str) -> l
     )
 
     try:
-        resp = await llm.ainvoke(prompt)
+        resp = await asyncio.wait_for(llm.ainvoke(prompt), timeout=8)
         raw = resp.content.strip()
         if raw.startswith("```"):
             raw = re.sub(r"^```\w*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw)
         questions_data = json.loads(raw)
         return questions_data.get("questions", [])
-    except json.JSONDecodeError:
-        logger.warning("AI 问题（话题模式）JSON 解析失败 raw=%s", raw[:200])
+    except (asyncio.TimeoutError, json.JSONDecodeError):
+        logger.warning("AI 问题（话题模式）生成超时或解析失败")
         return []
     except Exception:
         logger.exception("AI 问题（话题模式）生成失败")

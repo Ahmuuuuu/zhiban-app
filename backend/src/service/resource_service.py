@@ -19,7 +19,7 @@ from backend.src.models.agent_skill_model import AgentSkill
 from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 from backend.src.models.notification_model import Notification
-from backend.src.utils.database import init_db
+
 from backend.src.utils.json_parser import parse_llm_json
 from backend.src.utils.mindmap import parse_mindmap_text
 
@@ -169,7 +169,6 @@ async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str
 
 async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high") -> dict:
     t0 = time.perf_counter()
-    await init_db()
     chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
     t_init = time.perf_counter()
 
@@ -238,7 +237,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
 
     t_total = time.perf_counter() - t0
     logger.info(
-        "_make_state 耗时 total=%.2fs init_db=%.2fs gather=%.2fs portrait=%.2fs topic=%s types=%s",
+        "_make_state 耗时 total=%.2fs chat=%.2fs gather=%.2fs portrait=%.2fs topic=%s types=%s",
         t_total, t_init - t0, t_gather - t_init, t_portrait - t_gather, topic, resource_types,
     )
 
@@ -326,37 +325,40 @@ async def _resource_to_dict(record: GeneratedResource, current_user_id: int | No
 
 async def _save_resources(topic: str, user_id: int, generated: dict, review_passed: bool, retry_count: int,
                           file_urls: dict | None = None) -> list[dict]:
-    """存库并返回记录列表"""
+    """存库并返回记录列表（事务包裹，一条失败则全部回滚）"""
+    from tortoise.transactions import in_transaction
+
     user = await User.filter(id=user_id).first()
     if not user:
         return []
     file_urls = file_urls or {}
-    saved = []
-    for rt, content in generated.items():
-        record = await GeneratedResource.create(
-            topic=topic,
-            resource_type=rt,
-            content=content,
-            review_passed=review_passed,
-            retry_count=retry_count,
-            file_url=file_urls.get(rt),
-            user=user,
-        )
-        # 设置封面
-        cover_url = build_cover_url(rt, file_urls.get(rt), record.id)
-        if cover_url:
-            await GeneratedResource.filter(id=record.id).update(cover_url=cover_url)
-        saved.append({
-            "resource_id": record.id,
-            "topic": record.topic,
-            "resource_type": record.resource_type,
-            "content": record.content,
-            "review_passed": record.review_passed,
-            "retry_count": record.retry_count,
-            "file_url": record.file_url,
-            "cover_url": cover_url,
-            "visibility": record.visibility or "private",
-        })
+    saved: list[dict] = []
+
+    async with in_transaction():
+        for rt, content in generated.items():
+            record = await GeneratedResource.create(
+                topic=topic,
+                resource_type=rt,
+                content=content,
+                review_passed=review_passed,
+                retry_count=retry_count,
+                file_url=file_urls.get(rt),
+                user=user,
+            )
+            cover_url = build_cover_url(rt, file_urls.get(rt), record.id)
+            if cover_url:
+                await GeneratedResource.filter(id=record.id).update(cover_url=cover_url)
+            saved.append({
+                "resource_id": record.id,
+                "topic": record.topic,
+                "resource_type": record.resource_type,
+                "content": record.content,
+                "review_passed": record.review_passed,
+                "retry_count": record.retry_count,
+                "file_url": record.file_url,
+                "cover_url": cover_url,
+                "visibility": record.visibility or "private",
+            })
     return saved
 
 

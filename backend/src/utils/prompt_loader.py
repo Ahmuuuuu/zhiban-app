@@ -23,4 +23,7 @@ def load_prompt(name: str) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Prompt 文件不存在: {path}")
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)["system"]
+        data = yaml.safe_load(f)
+        if not isinstance(data, dict) or "system" not in data:
+            raise KeyError(f"Prompt 文件缺少 system 字段: {path}")
+        return data["system"]

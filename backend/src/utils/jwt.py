@@ -53,6 +53,10 @@ def get_user_id_from_token(authorization: str | None = Header(None, alias="Autho
         raise HTTPException(401, "token 无效或已过期")
 
 
-def get_admin_user_id(user_id: int = Depends(get_user_id_from_token)) -> int:
-    """管理员校验依赖：先通过 get_user_id_from_token 获取 user_id，再校验 role"""
+async def get_admin_user_id(user_id: int = Depends(get_user_id_from_token)) -> int:
+    """管理员校验依赖：先通过 get_user_id_from_token 获取 user_id，再校验 role=admin"""
+    from backend.src.models.usermodel import User
+    user = await User.filter(id=user_id).first()
+    if not user or getattr(user, 'role', '') != 'admin':
+        raise HTTPException(403, "需要管理员权限")
     return user_id
