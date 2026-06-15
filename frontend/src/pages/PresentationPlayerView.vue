@@ -1,18 +1,105 @@
 <template>
   <main class="presentation-player">
     <header class="player-topbar">
-      <button type="button" @pointerdown.prevent.stop="goBack" @click.prevent.stop="goBack">返回</button>
+      <button type="button" @click="goBack">返回</button>
       <div>
-        <span>{{ returnFrom === 'path' ? '路径视频' : 'Dynamic Lesson' }}</span>
+        <span>{{ returnFrom === 'path' ? '学习路径视频' : 'AI 学习视频' }}</span>
         <h1>{{ title }}</h1>
       </div>
-      <span class="player-status" :class="presentationStatus">{{ statusText }}</span>
-      <a v-if="presentationUrl" :href="presentationUrl" target="_blank" rel="noopener noreferrer">新窗口打开</a>
+      <VideoStatusBadge
+        :is-playing="isPlaying"
+        :has-started="hasStarted"
+        :has-source="Boolean(activeSlide)"
+      />
+      <a v-if="presentationUrl" :href="presentationUrl" target="_blank" rel="noopener noreferrer">打开原始课件</a>
     </header>
 
     <section class="player-stage">
+      <template v-if="activeSlide">
+        <VideoAmbientBackground
+          :background-url="videoBackgroundUrl"
+          :active="isPlaying"
+        />
+
+        <div class="lesson-slide">
+          <VideoStageInfo
+            :chapter-count="slides.length"
+            :duration-label="durationLabel"
+          />
+
+          <div class="lesson-slide__content" :class="`is-${activeSlide.layout}`">
+            <section class="lesson-hero">
+              <span class="lesson-slide__kicker">{{ activeSlide.chapterTitle }}</span>
+              <h2>{{ activeSlide.title }}</h2>
+              <p>{{ activeSlide.summary }}</p>
+            </section>
+
+            <section v-if="activeSlide.items.length" class="lesson-card-wall">
+              <article
+                v-for="(item, index) in activeSlide.items.slice(0, 3)"
+                :key="index"
+                :class="{ featured: index === 0 }"
+              >
+                <b>{{ index + 1 }}</b>
+                <span v-html="renderMath(item)"></span>
+              </article>
+            </section>
+
+            <section class="lesson-visual-board">
+              <div v-if="activeSlide.formulas.length" class="lesson-formula-stack">
+                <div
+                  v-for="formula in activeSlide.formulas"
+                  :key="formula"
+                  class="lesson-formula"
+                  v-html="renderMath(formula)"
+                ></div>
+              </div>
+              <div v-else class="lesson-orbit">
+                <span
+                  v-for="dot in 6"
+                  :key="dot"
+                  :style="{ '--dot': dot }"
+                ></span>
+              </div>
+              <div class="lesson-term-cloud">
+                <b v-for="term in visualTerms" :key="term">{{ term }}</b>
+              </div>
+            </section>
+
+            <p v-if="!activeSlide.items.length" class="lesson-slide__empty">暂无本页内容</p>
+          </div>
+
+          <VideoWaveform v-if="!hasStarted || isPlaying" :active="isPlaying" />
+
+          <div class="lesson-controls">
+            <button type="button" :disabled="activeIndex <= 0" @click="prevSlide">上一页</button>
+            <button type="button" class="primary" @click="togglePlay">
+              {{ isPlaying ? '暂停' : '播放' }}
+            </button>
+            <button type="button" :disabled="activeIndex >= slides.length - 1" @click="nextSlide">下一页</button>
+          </div>
+
+          <VideoGlowProgress
+            class="lesson-progress"
+            :current-time="currentTime"
+            :duration="duration"
+          />
+        </div>
+
+        <audio
+          ref="audioRef"
+          :src="activeAudioUrl"
+          preload="metadata"
+          @loadedmetadata="syncAudioTime"
+          @timeupdate="syncAudioTime"
+          @play="handleAudioPlay"
+          @pause="isPlaying = false"
+          @ended="handleAudioEnded"
+        ></audio>
+      </template>
+
       <iframe
-        v-if="presentationUrl"
+        v-else-if="presentationUrl"
         ref="frameRef"
         class="lesson-frame"
         :src="lessonHtml ? undefined : frameUrl"
@@ -21,15 +108,17 @@
         allow="autoplay; fullscreen"
         @load="handleFrameLoad"
       ></iframe>
-      <div v-else class="empty-state">没有找到课件地址</div>
+
+      <div v-else class="empty-state">没有找到课件数据</div>
+
       <div v-if="presentationStatus === 'generating'" class="loading-mask">
-        正在等后端写入完整课件...
+        正在等待后端写入完整课件...
       </div>
 
-      <aside class="teacher-pet" :class="{ speaking: isSpeaking }" aria-label="小知讲师">
+      <aside class="teacher-pet" :class="{ speaking: isPlaying }" aria-label="小知讲师">
         <div class="teacher-pet__bubble">
           <strong>小知讲师</strong>
-          <span>{{ isSpeaking ? '正在讲解' : '小知待命' }}</span>
+          <span>{{ isPlaying ? '正在讲解' : '小知待命' }}</span>
         </div>
         <div class="teacher-pet__body">
           <img :src="petImage" alt="" draggable="false" />
@@ -41,19 +130,33 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getPresentation, resolveApiUrl } from '../api/apis'
+import VideoAmbientBackground from '../components/ppt_video/video/VideoAmbientBackground.vue'
+import VideoGlowProgress from '../components/ppt_video/video/VideoGlowProgress.vue'
+import VideoStageInfo from '../components/ppt_video/video/VideoStageInfo.vue'
+import VideoStatusBadge from '../components/ppt_video/video/VideoStatusBadge.vue'
+import VideoWaveform from '../components/ppt_video/video/VideoWaveform.vue'
+import { selectVideoBackground } from '../components/ppt_video/video/videoAssets'
+import { renderMath } from '../utils/renderMath'
+import 'katex/dist/katex.min.css'
 import petImage from '../assets/pic/zhiban-pet-base.png'
 
 const route = useRoute()
 const router = useRouter()
 const frameRef = ref(null)
-const isSpeaking = ref(false)
+const audioRef = ref(null)
 const activePresentationUrl = ref(resolveApiUrl(String(route.query.url || '')))
 const frameVersion = ref(Date.now())
 const presentationStatus = ref('loading')
 const lessonHtml = ref('')
+const presentationChapters = ref([])
+const activeIndex = ref(0)
+const currentTime = ref(0)
+const duration = ref(0)
+const hasStarted = ref(false)
+const isPlaying = ref(false)
 let audioPollTimer = 0
 let presentationPollTimer = 0
 let returning = false
@@ -65,31 +168,156 @@ const chatGroupId = computed(() => {
 })
 const returnFrom = computed(() => String(route.query.from || '').trim())
 const presentationUrl = computed(() => activePresentationUrl.value)
-const frameUrl = computed(() => {
-  if (!activePresentationUrl.value) return ''
-  const joiner = activePresentationUrl.value.includes('?') ? '&' : '?'
-  return `${activePresentationUrl.value}${joiner}v=${frameVersion.value}`
-})
-const title = computed(() => String(route.query.title || '动态课件'))
-const statusText = computed(() => {
-  if (presentationStatus.value === 'ready') return '已完成'
-  if (presentationStatus.value === 'failed') return '生成失败'
-  if (presentationStatus.value === 'generating') return '生成中'
-  return presentationId.value ? '检查中' : '预览'
+const title = computed(() => String(route.query.title || slides.value[0]?.title || 'AI 学习视频'))
+
+const appendFrameVersion = url => {
+  if (!url) return ''
+  try {
+    const parsed = new URL(url, window.location.origin)
+    parsed.searchParams.set('_t', String(frameVersion.value))
+    return parsed.toString()
+  } catch {
+    const joiner = String(url).includes('?') ? '&' : '?'
+    return `${url}${joiner}_t=${frameVersion.value}`
+  }
+}
+
+const frameUrl = computed(() => appendFrameVersion(activePresentationUrl.value))
+
+const unwrapData = result => result?.data?.data ?? result?.data ?? result ?? {}
+
+const plainText = value => String(value || '')
+  .replace(/<!--[\s\S]*?-->/g, ' ')
+  .replace(/<[^>]+>/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim()
+
+const formulaPattern = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g
+
+const extractFormulas = value => {
+  const text = String(value || '')
+  return (text.match(formulaPattern) || [])
+    .map(item => item.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+}
+
+const withoutFormulas = value => String(value || '').replace(formulaPattern, ' ')
+
+const splitContentText = value => plainText(value)
+  .split(/[。；;]\s*|\n+|，(?=.{8,})/g)
+  .map(item => item.trim())
+  .filter(item => item.length >= 4)
+
+const slideItems = slide => {
+  const blocks = Array.isArray(slide?.blocks)
+    ? slide.blocks.map(block => typeof block === 'string' ? block : block?.text)
+    : []
+  const bullets = Array.isArray(slide?.bullets) ? slide.bullets : []
+  const text = plainText(withoutFormulas(slide?.text || ''))
+  const splitText = text ? text.split(/[。；;]\s*|\n+/).filter(Boolean) : []
+  const htmlText = splitContentText(withoutFormulas(slide?.content_html || ''))
+  return [...blocks, ...bullets, ...splitText, ...htmlText].map(plainText).filter(Boolean).slice(0, 6)
+}
+
+const slideFormulas = slide => [
+  ...extractFormulas(slide?.formula || ''),
+  ...extractFormulas(slide?.text || ''),
+  ...extractFormulas(slide?.content_html || ''),
+  ...extractFormulas((slide?.bullets || []).join('\n'))
+].filter((item, index, array) => array.indexOf(item) === index).slice(0, 3)
+
+const slides = computed(() => {
+  const flattened = []
+  presentationChapters.value.forEach((chapter, chapterIndex) => {
+    const chapterTitle = chapter.title || `章节 ${chapterIndex + 1}`
+    if (Array.isArray(chapter.slides) && chapter.slides.length) {
+      chapter.slides.forEach((slide, slideIndex) => {
+        const html = slide.content_html || ''
+        const items = slideItems(slide)
+        const formulas = slideFormulas(slide)
+        const summary = plainText(withoutFormulas(html || items.join('。') || slide.text || chapterTitle))
+        flattened.push({
+          id: `slide-${chapterIndex}-${slideIndex}`,
+          index: flattened.length,
+          chapterTitle,
+          title: slide.title || chapterTitle,
+          layout: slide.layout || 'content',
+          html,
+          items,
+          formulas,
+          summary: summary.length > 120 ? `${summary.slice(0, 119)}...` : summary,
+          audioUrl: resolveApiUrl(slide.audio_url || slide.audioUrl || '')
+        })
+      })
+      return
+    }
+
+    const html = chapter.content_html || ''
+    const formulas = extractFormulas(html)
+    flattened.push({
+      id: `slide-${chapterIndex}-0`,
+      index: flattened.length,
+      chapterTitle,
+      title: chapterTitle,
+      layout: chapter.type || 'content',
+      html,
+      items: [],
+      formulas,
+      summary: plainText(withoutFormulas(html || chapterTitle)),
+      audioUrl: ''
+    })
+  })
+  return flattened
 })
 
+const activeSlide = computed(() => slides.value[activeIndex.value] || null)
+const activeAudioUrl = computed(() => activeSlide.value?.audioUrl || '')
+const videoBackgroundUrl = computed(() => selectVideoBackground({
+  title: title.value,
+  content: activeSlide.value?.summary || ''
+}))
+
+const chapterNav = computed(() => slides.value.map(slide => ({
+  id: slide.id,
+  index: slide.index,
+  title: slide.title
+})))
+
+const visualTerms = computed(() => {
+  const text = [
+    activeSlide.value?.title,
+    ...(activeSlide.value?.items || [])
+  ].join(' ')
+  const english = text.match(/[A-Za-z][A-Za-z\s&-]{2,}/g) || []
+  const chinese = text.match(/[\u4e00-\u9fa5]{2,6}/g) || []
+  return [...english, ...chinese]
+    .map(item => item.trim().replace(/[，。；：、,.]/g, ''))
+    .filter(Boolean)
+    .filter((item, index, array) => array.indexOf(item) === index)
+    .slice(0, 8)
+})
+
+const formatTime = seconds => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '00:00'
+  const total = Math.floor(seconds)
+  const minutes = Math.floor(total / 60)
+  const rest = total % 60
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
+}
+
+const durationLabel = computed(() => formatTime(duration.value))
+
 const stopLessonMedia = () => {
+  audioRef.value?.pause?.()
   try {
     const win = frameRef.value?.contentWindow
     const doc = frameRef.value?.contentDocument || win?.document
     if (win?.currentAudio) win.currentAudio.pause?.()
     if (typeof win?.pauseAudio === 'function') win.pauseAudio()
-    Array.from(doc?.querySelectorAll('audio, video') || []).forEach(media => {
-      media.pause?.()
-    })
-  } catch {
-    // Cross-origin fallback: srcdoc lessons are controllable, remote iframes may not be.
-  }
+    Array.from(doc?.querySelectorAll('audio, video') || []).forEach(media => media.pause?.())
+  } catch {}
+  isPlaying.value = false
 }
 
 const goBack = () => {
@@ -116,35 +344,16 @@ const getBackendBase = url => {
 
 const prepareLessonHtml = (html, url) => {
   const baseTag = `<base href="${getBackendBase(url)}">`
-  const bridgeScript = `
-<script>
-(function () {
-  function notify() {
-    try {
-      window.parent.postMessage({
-        type: 'zhiban:presentation-speaking',
-        speaking: Boolean(window.isPlaying || (window.currentAudio && !window.currentAudio.paused && !window.currentAudio.ended))
-      }, '*');
-    } catch (e) {}
-  }
-  setInterval(notify, 160);
-  document.addEventListener('click', function () { setTimeout(notify, 0); }, true);
-})();
-<\/script>`
-
   if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, match => `${match}${baseTag}${bridgeScript}`)
+    return html.replace(/<head[^>]*>/i, match => `${match}${baseTag}`)
   }
-
-  return `${baseTag}${bridgeScript}${html}`
+  return `${baseTag}${html}`
 }
 
 const loadLessonHtml = async () => {
-  if (!activePresentationUrl.value) return
-
+  if (!activePresentationUrl.value || slides.value.length) return
   try {
-    const joiner = activePresentationUrl.value.includes('?') ? '&' : '?'
-    const response = await fetch(`${activePresentationUrl.value}${joiner}v=${frameVersion.value}`)
+    const response = await fetch(appendFrameVersion(activePresentationUrl.value))
     if (!response.ok) throw new Error(`HTML load failed: ${response.status}`)
     const html = await response.text()
     lessonHtml.value = prepareLessonHtml(html, activePresentationUrl.value)
@@ -154,74 +363,106 @@ const loadLessonHtml = async () => {
   }
 }
 
-const detectSpeaking = () => {
-  try {
-    const win = frameRef.value?.contentWindow
-    const doc = frameRef.value?.contentDocument || win?.document
-    const currentAudio = win?.currentAudio
-    const audios = Array.from(doc?.querySelectorAll('audio') || [])
-    const windowAudioPlaying = Boolean(
-      win?.isPlaying ||
-      (currentAudio && !currentAudio.paused && !currentAudio.ended)
-    )
-    const domAudioPlaying = audios.some(audio => !audio.paused && !audio.ended)
-    isSpeaking.value = windowAudioPlaying || domAudioPlaying
-  } catch {
-    isSpeaking.value = false
+const syncAudioTime = () => {
+  if (!audioRef.value) return
+  currentTime.value = audioRef.value.currentTime || 0
+  duration.value = Number.isFinite(audioRef.value.duration) ? audioRef.value.duration : 0
+}
+
+const handleAudioPlay = () => {
+  hasStarted.value = true
+  isPlaying.value = true
+}
+
+const handleAudioEnded = () => {
+  isPlaying.value = false
+  syncAudioTime()
+  if (activeIndex.value < slides.value.length - 1) nextSlide(true)
+}
+
+const togglePlay = async () => {
+  hasStarted.value = true
+  if (!audioRef.value || !activeAudioUrl.value) {
+    isPlaying.value = !isPlaying.value
+    return
   }
+  if (isPlaying.value) {
+    audioRef.value.pause()
+    return
+  }
+  try {
+    await audioRef.value.play()
+  } catch (error) {
+    console.warn('[PresentationPlayer] audio play failed:', error)
+  }
+}
+
+const setSlide = async index => {
+  stopLessonMedia()
+  activeIndex.value = Math.min(Math.max(index, 0), slides.value.length - 1)
+  currentTime.value = 0
+  duration.value = 0
+  await nextTick()
+  syncAudioTime()
+}
+
+const prevSlide = () => setSlide(activeIndex.value - 1)
+const nextSlide = autoplay => {
+  setSlide(activeIndex.value + 1).then(() => {
+    if (autoplay && activeAudioUrl.value) togglePlay()
+  })
+}
+
+const selectNavSlide = chapter => {
+  const index = slides.value.findIndex(slide => slide.id === chapter.id)
+  if (index >= 0) setSlide(index)
 }
 
 const handleFrameLoad = () => {
   window.clearInterval(audioPollTimer)
-  detectSpeaking()
-  audioPollTimer = window.setInterval(detectSpeaking, 180)
+  audioPollTimer = window.setInterval(() => {}, 180)
 }
-
-const handleLessonMessage = event => {
-  if (event?.data?.type !== 'zhiban:presentation-speaking') return
-  isSpeaking.value = Boolean(event.data.speaking)
-}
-
-const unwrapData = result => result?.data?.data ?? result?.data ?? result ?? {}
 
 const refreshPresentationStatus = async () => {
   if (!presentationId.value) {
     presentationStatus.value = activePresentationUrl.value ? 'ready' : 'failed'
+    loadLessonHtml()
     return
   }
 
   try {
     const data = unwrapData(await getPresentation(presentationId.value))
-    const nextStatus = data.status || (activePresentationUrl.value ? 'ready' : 'generating')
-    presentationStatus.value = nextStatus
+    presentationStatus.value = data.status || 'ready'
     if (data.file_url || data.fileUrl) {
       activePresentationUrl.value = resolveApiUrl(data.file_url || data.fileUrl)
     }
-    if (nextStatus === 'ready' || nextStatus === 'failed') {
-      frameVersion.value = Date.now()
-      if (nextStatus === 'ready') {
-        loadLessonHtml()
-      }
+    if (Array.isArray(data.chapters)) {
+      presentationChapters.value = data.chapters
+      lessonHtml.value = ''
     }
-    // 只要还有章节音频未就绪，就继续轮询刷新 HTML
-    const chapters = Array.isArray(data.chapters) ? data.chapters : []
-    const allAudioReady = chapters.length > 0 && chapters.every(ch => ch.is_audio_ready)
-    if (nextStatus === 'failed' || (nextStatus === 'ready' && allAudioReady)) {
+    const allAudioReady = data.chapters?.length && data.chapters.every(ch => ch.is_audio_ready)
+    if (presentationStatus.value === 'failed' || (presentationStatus.value === 'ready' && allAudioReady)) {
       window.clearInterval(presentationPollTimer)
       presentationPollTimer = 0
     }
   } catch (error) {
     console.warn('[PresentationPlayer] status check failed:', error)
-    if (activePresentationUrl.value) {
-      presentationStatus.value = 'ready'
-    } else {
-      presentationStatus.value = 'failed'
-    }
+    presentationStatus.value = activePresentationUrl.value ? 'ready' : 'failed'
+    loadLessonHtml()
   }
 }
 
+watch(activeAudioUrl, () => {
+  currentTime.value = 0
+  duration.value = 0
+  nextTick(syncAudioTime)
+})
+
+watch(slides, nextSlides => {
+  if (activeIndex.value >= nextSlides.length) activeIndex.value = 0
+})
+
 onMounted(() => {
-  window.addEventListener('message', handleLessonMessage)
   refreshPresentationStatus()
   loadLessonHtml()
   if (presentationId.value) {
@@ -230,7 +471,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('message', handleLessonMessage)
+  stopLessonMedia()
   window.clearInterval(audioPollTimer)
   window.clearInterval(presentationPollTimer)
 })
@@ -252,7 +493,7 @@ onBeforeUnmount(() => {
   padding: 10px 14px;
   border: 1px solid rgba(22, 63, 143, 0.14);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 14px 34px rgba(22, 63, 143, 0.08);
   display: flex;
   align-items: center;
@@ -294,29 +535,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.player-status {
-  min-height: 30px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: rgba(237, 249, 252, 0.82);
-  color: #5f8fc3;
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 900;
-  white-space: nowrap;
-}
-
-.player-status.ready {
-  background: rgba(221, 248, 232, 0.9);
-  color: #2f7d57;
-}
-
-.player-status.failed {
-  background: rgba(255, 230, 230, 0.92);
-  color: #b24141;
-}
-
 .player-stage {
   position: relative;
   min-height: 0;
@@ -325,16 +543,341 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: #081733;
   box-shadow: 0 18px 44px rgba(22, 63, 143, 0.14);
+  display: block;
+  padding: 16px;
+}
+
+.lesson-slide {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(8, 18, 32, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.lesson-slide__content {
+  position: absolute;
+  z-index: 2;
+  inset: 82px 54px 104px;
+  color: #fff;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
+  grid-template-rows: minmax(0, 0.72fr) minmax(160px, 0.9fr);
+  grid-template-areas:
+    "hero visual"
+    "cards visual";
+  gap: 22px 28px;
+  align-items: stretch;
+}
+
+.lesson-hero {
+  grid-area: hero;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  gap: 14px;
+}
+
+.lesson-slide__kicker {
+  width: fit-content;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  display: inline-flex;
+  align-items: center;
+  color: rgba(215, 242, 246, 0.92);
+  font-size: 12px;
+  font-weight: 900;
+  backdrop-filter: blur(10px);
+}
+
+.lesson-slide h2 {
+  max-width: 760px;
+  margin: 0;
+  font-size: clamp(30px, 3.8vw, 56px);
+  line-height: 1.12;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.34);
+}
+
+.lesson-slide h2::after {
+  content: "";
+  display: block;
+  width: min(520px, 70%);
+  height: 4px;
+  margin-top: 20px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ffd166, #5bc9bc, transparent);
+}
+
+.lesson-hero p {
+  max-width: 720px;
+  margin: 0;
+  color: rgba(235, 246, 255, 0.76);
+  font-size: clamp(15px, 1.2vw, 19px);
+  line-height: 1.7;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.lesson-card-wall {
+  grid-area: cards;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  align-content: stretch;
+}
+
+.lesson-card-wall article {
+  min-height: 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(220, 240, 255, 0.18);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05));
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16);
+}
+
+.lesson-card-wall article.featured {
+  grid-column: auto;
+  min-height: 0;
+  background:
+    radial-gradient(circle at 88% 22%, rgba(255, 209, 102, 0.18), transparent 36%),
+    linear-gradient(135deg, rgba(91, 201, 188, 0.18), rgba(255, 255, 255, 0.07));
+}
+
+.lesson-card-wall b {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffd166, #5bc9bc);
+  color: #12223a;
+  display: grid;
+  place-items: center;
+}
+
+.lesson-card-wall span,
+.lesson-slide__empty {
+  color: rgba(235, 246, 255, 0.86);
+  font-size: clamp(15px, 1.18vw, 20px);
+  line-height: 1.48;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.lesson-card-wall article.featured span {
+  font-size: clamp(17px, 1.38vw, 22px);
+}
+
+.lesson-visual-board {
+  grid-area: visual;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(220, 240, 255, 0.18);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 209, 102, 0.16), transparent 32%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.045));
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(14px);
+}
+
+.lesson-orbit {
+  position: absolute;
+  left: 50%;
+  top: 43%;
+  width: min(260px, 62%);
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+}
+
+.lesson-orbit::before,
+.lesson-orbit::after {
+  content: "";
+  position: absolute;
+  inset: 14%;
+  border: 1px solid rgba(91, 201, 188, 0.28);
+  border-radius: inherit;
+}
+
+.lesson-orbit::after {
+  inset: 31%;
+  border-color: rgba(255, 209, 102, 0.34);
+}
+
+.lesson-orbit span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffd166, #5bc9bc);
+  transform:
+    rotate(calc(var(--dot) * 60deg))
+    translateX(118px)
+    rotate(calc(var(--dot) * -60deg));
+  box-shadow: 0 0 24px rgba(91, 201, 188, 0.32);
+}
+
+.lesson-term-cloud {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.lesson-term-cloud b {
+  max-width: 100%;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.13);
+  color: rgba(240, 250, 255, 0.9);
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.lesson-formula-stack {
+  position: absolute;
+  inset: 28px;
+  display: grid;
+  align-content: center;
+  gap: 16px;
+}
+
+.lesson-formula {
+  min-height: 72px;
+  padding: 18px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(5, 16, 30, 0.32);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  font-size: clamp(20px, 2vw, 32px);
+}
+
+.lesson-formula :deep(.katex-display) {
+  margin: 0;
+}
+
+.lesson-formula :deep(.katex) {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 1em;
+}
+
+.lesson-controls {
+  position: absolute;
+  z-index: 4;
+  left: 34px;
+  bottom: 54px;
+  display: flex;
+  gap: 10px;
+}
+
+.lesson-controls button {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-weight: 900;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+
+.lesson-controls button.primary {
+  background: linear-gradient(135deg, #2f7de1, #5bc9bc);
+}
+
+.lesson-controls button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.lesson-progress {
+  position: absolute;
+  z-index: 4;
+  left: 34px;
+  right: 34px;
+  bottom: 18px;
+}
+
+.lesson-side {
+  display: none;
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px;
+  border-radius: 8px;
+  background: rgba(250, 250, 250, 0.9);
+  border: 1px solid rgba(201, 220, 233, 0.7);
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.lesson-side h3 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.lesson-side > p {
+  margin: 0;
+  color: rgba(31, 51, 86, 0.72);
+  line-height: 1.7;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
 }
 
 .lesson-frame {
+  grid-column: 1 / -1;
   width: 100%;
   height: 100%;
   border: 0;
   background: #fff;
 }
 
+.empty-state,
+.loading-mask {
+  position: relative;
+  z-index: 3;
+}
+
 .empty-state {
+  grid-column: 1 / -1;
   height: 100%;
   display: grid;
   place-items: center;
@@ -346,7 +889,6 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 50%;
   top: 18px;
-  z-index: 4;
   min-height: 38px;
   padding: 0 16px;
   border: 1px solid rgba(201, 220, 233, 0.82);
@@ -363,10 +905,10 @@ onBeforeUnmount(() => {
 
 .teacher-pet {
   position: absolute;
-  right: clamp(16px, 3vw, 34px);
-  bottom: clamp(16px, 3vw, 34px);
+  right: clamp(24px, 4vw, 54px);
+  bottom: clamp(18px, 3vw, 34px);
   z-index: 5;
-  width: clamp(130px, 15vw, 210px);
+  width: clamp(104px, 11vw, 170px);
   pointer-events: none;
   filter: drop-shadow(0 18px 26px rgba(0, 0, 0, 0.24));
 }
@@ -421,32 +963,12 @@ onBeforeUnmount(() => {
   width: 14%;
   height: 7%;
   border-radius: 999px;
-  background:
-    radial-gradient(circle at 52% 42%, rgba(245, 252, 255, 0.46), rgba(228, 246, 255, 0.32) 52%, rgba(208, 237, 252, 0.08) 76%, transparent);
-  filter: blur(0.35px);
+  background: radial-gradient(circle at 52% 42%, rgba(245, 252, 255, 0.46), rgba(228, 246, 255, 0.32) 52%, transparent);
   transform: translate(-50%, -50%);
-  opacity: 1;
-}
-
-.teacher-pet__mouth::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 52%;
-  width: 28%;
-  height: 24%;
-  border: 1.5px solid rgba(48, 147, 214, 0.62);
-  border-radius: 999px;
-  background: rgba(57, 157, 220, 0.16);
-  transform: translate(-50%, -50%) scaleY(0.52);
 }
 
 .teacher-pet.speaking .teacher-pet__mouth {
   animation: mouth-patch-talk 0.52s ease-in-out infinite;
-}
-
-.teacher-pet.speaking .teacher-pet__mouth::after {
-  animation: mouth-talk 0.52s ease-in-out infinite;
 }
 
 @keyframes teacher-idle {
@@ -459,14 +981,37 @@ onBeforeUnmount(() => {
   50% { transform: translateY(-6px) rotate(1.4deg); }
 }
 
-@keyframes mouth-talk {
-  0%, 100% { transform: translate(-50%, -50%) scale(0.86, 0.48); }
-  50% { transform: translate(-50%, -50%) scale(1, 1.12); }
-}
-
 @keyframes mouth-patch-talk {
   0%, 100% { transform: translate(-50%, -50%) scaleY(1); }
-  50% { transform: translate(-50%, -50%) scaleY(1.06); }
+  50% { transform: translate(-50%, -50%) scaleY(1.08); }
 }
 
+@media (max-width: 980px) {
+  .lesson-slide__content {
+    inset: 72px 24px 104px;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(160px, 1fr);
+    grid-template-areas:
+      "hero"
+      "cards"
+      "visual";
+  }
+
+  .lesson-card-wall {
+    grid-template-columns: 1fr;
+  }
+
+  .lesson-card-wall article.featured {
+    grid-column: auto;
+  }
+
+  .lesson-visual-board {
+    min-height: 160px;
+  }
+
+  .teacher-pet {
+    right: 18px;
+    width: 96px;
+  }
+}
 </style>

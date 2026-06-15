@@ -6,6 +6,8 @@
       `theme-${slide.theme || 'academic_blue'}`,
       {
         editing,
+        'custom-slide': styleSource === 'custom',
+        'has-custom-subject': styleSource === 'custom' && Boolean(customAssets.subjectImage),
         'is-dense': slideTextLength > 420,
         'is-very-dense': slideTextLength > 800
       }
@@ -14,8 +16,7 @@
   >
     <template v-if="styleSource === 'custom'">
       <img v-if="customAssets.tape" class="custom-decoration custom-decoration--tape" :src="customAssets.tape" alt="" />
-      <img v-if="customAssets.pin" class="custom-decoration custom-decoration--pin" :src="customAssets.pin" alt="" />
-      <img v-if="customAssets.clip" class="custom-decoration custom-decoration--clip" :src="customAssets.clip" alt="" />
+      <img v-if="cornerDecoration" class="custom-decoration custom-decoration--corner" :src="cornerDecoration" alt="" />
       <img v-if="customAssets.highlight" class="custom-decoration custom-decoration--highlight" :src="customAssets.highlight" alt="" />
     </template>
 
@@ -183,6 +184,7 @@ const props = defineProps({
 const emit = defineEmits(['update-field', 'select-text', 'open-annotation'])
 const contentRef = ref(null)
 const customAssets = computed(() => selectCustomPptAssets(props.slide, props.slideIndex))
+const cornerDecoration = computed(() => customAssets.value.pin || customAssets.value.clip || customAssets.value.note || '')
 
 const layoutLabels = {
   title_cover: '封面',
@@ -405,66 +407,81 @@ const openAnnotation = annotation => {
   user-select: none;
 }
 
+.ppt-slide.custom-slide::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(255, 255, 255, 0.18);
+  pointer-events: none;
+}
+
 .custom-decoration {
   position: absolute;
-  z-index: 2;
+  z-index: 1;
   object-fit: contain;
 }
 
 .custom-decoration--tape {
-  top: 48px;
+  top: clamp(30px, 4.2vh, 48px);
   left: 50%;
-  width: clamp(90px, 10vw, 150px);
-  transform: translateX(-50%) rotate(-4deg);
-  opacity: 0.9;
+  width: clamp(92px, 9vw, 138px);
+  transform: translateX(-50%) rotate(-3deg);
+  opacity: 0.78;
 }
 
-.custom-decoration--pin {
-  top: 76px;
-  left: clamp(42px, 5vw, 72px);
-  width: clamp(28px, 3vw, 44px);
-  transform: rotate(-12deg);
-}
-
-.custom-decoration--clip {
-  top: 84px;
-  right: clamp(48px, 6vw, 88px);
-  width: clamp(34px, 4vw, 58px);
-  transform: rotate(9deg);
+.custom-decoration--corner {
+  top: clamp(58px, 7vh, 86px);
+  right: clamp(48px, 6vw, 78px);
+  width: clamp(28px, 3.4vw, 48px);
+  transform: rotate(7deg);
+  opacity: 0.78;
 }
 
 .custom-decoration--highlight {
-  left: 50%;
-  bottom: clamp(92px, 11vh, 132px);
-  width: min(48%, 460px);
-  transform: translateX(-50%) rotate(-1deg);
-  opacity: 0.58;
+  left: clamp(78px, 9vw, 128px);
+  top: clamp(146px, 18vh, 182px);
+  width: min(32%, 320px);
+  transform: rotate(-1deg);
+  opacity: 0.22;
   z-index: 0;
 }
 
 .custom-subject-image {
   position: absolute;
-  right: clamp(36px, 5vw, 74px);
-  bottom: clamp(78px, 9vh, 118px);
-  width: clamp(120px, 18vw, 230px);
-  max-height: 32%;
+  right: clamp(42px, 5vw, 74px);
+  bottom: clamp(72px, 9vh, 112px);
+  width: clamp(96px, 13vw, 172px);
+  max-height: 26%;
   object-fit: contain;
   z-index: 1;
-  opacity: 0.92;
-  filter: drop-shadow(0 14px 24px rgba(22, 63, 143, 0.14));
+  opacity: 0.68;
+  filter: drop-shadow(0 12px 20px rgba(22, 63, 143, 0.12));
+}
+
+.ppt-slide.custom-slide .ppt-slide__stage,
+.ppt-slide.custom-slide .ppt-slide__notes,
+.ppt-slide.custom-slide .ppt-slide__kicker {
+  z-index: 2;
+}
+
+.ppt-slide.custom-slide.has-custom-subject:not(.layout-concept_visual) .ppt-slide__content {
+  width: min(84%, 940px);
 }
 
 .custom-subject-panel {
   min-height: 0;
   display: grid;
   place-items: center;
+  padding: clamp(8px, 1.4vw, 18px);
 }
 
 .custom-subject-panel img {
-  max-width: 100%;
-  max-height: 100%;
+  max-width: min(100%, 260px);
+  max-height: 82%;
   object-fit: contain;
-  filter: drop-shadow(0 14px 24px rgba(22, 63, 143, 0.14));
+  opacity: 0.88;
+  filter: drop-shadow(0 12px 22px rgba(22, 63, 143, 0.14));
 }
 
 .ppt-slide.layout-concept_visual .custom-subject-panel {
@@ -473,5 +490,11 @@ const openAnnotation = annotation => {
 
 .ppt-slide.layout-concept_visual .custom-decoration--highlight {
   display: none;
+}
+
+.ppt-slide.is-dense .custom-subject-image,
+.ppt-slide.is-very-dense .custom-subject-image {
+  opacity: 0.32;
+  width: clamp(78px, 10vw, 132px);
 }
 </style>

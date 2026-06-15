@@ -21,6 +21,8 @@
     <VideoPreview
       v-else-if="isVideo"
       :src="resource.previewUrl"
+      :title="resource.title"
+      :content="resource.content"
       :fallback-text="resource.content || '暂无视频内容'"
     />
 
@@ -87,7 +89,7 @@ import { Presentation } from 'lucide-vue-next'
 import MindmapPreview from '../MindmapPreview.vue'
 import PptDeckPreview from './PptDeckPreview.vue'
 import ResourceMediaFrame from './ResourceMediaFrame.vue'
-import VideoPreview from './VideoPreview.vue'
+import VideoPreview from './video/VideoPreview.vue'
 
 const props = defineProps({
   resource: {

@@ -9,8 +9,6 @@ export const resolveApiUrl = path => {
   if (/^https?:\/\//i.test(path)) return path
 
   // /static/ 路径保持相对，走 Vite proxy（开发）或同源访问（生产），避免局域网跨端口拦截
-  if (/^\/static\//.test(path)) return path
-
   // baseURL 为空时走相对路径，由 nginx/Vite proxy 转发
   if (!/^https?:\/\//i.test(API_BASE_URL)) return path.startsWith('/') ? path : `/${path}`
 
