@@ -12,9 +12,12 @@
         :has-source="Boolean(activeSlide)"
       />
       <a v-if="presentationUrl" :href="presentationUrl" target="_blank" rel="noopener noreferrer">打开原始课件</a>
+      <select class="theme-select" :value="activeTheme" @change="setTheme($event.target.value)">
+        <option v-for="(t, key) in videoThemes" :key="key" :value="key">{{ t.label }}</option>
+      </select>
     </header>
 
-    <section class="player-stage">
+    <section class="player-stage" :style="themeStyles">
       <template v-if="activeSlide">
         <VideoAmbientBackground
           :background-url="videoBackgroundUrl"
@@ -32,6 +35,15 @@
               <span class="lesson-slide__kicker">{{ activeSlide.chapterTitle }}</span>
               <h2>{{ activeSlide.title }}</h2>
               <p>{{ activeSlide.summary }}</p>
+
+              <div v-if="timedWords.length" class="lesson-karaoke">
+                <span
+                  v-for="(word, wi) in timedWords"
+                  :key="wi"
+                  class="karaoke-word"
+                  :class="{ 'is-done': word.isDone, 'is-current': word.isCurrent }"
+                >{{ word.text }}</span>
+              </div>
             </section>
 
             <section v-if="activeSlide.items.length" class="lesson-card-wall">
@@ -109,7 +121,7 @@
         @load="handleFrameLoad"
       ></iframe>
 
-      <div v-else class="empty-state">没有找到课件数据</div>
+      <div v-else-if="presentationStatus === 'failed'" class="empty-state">课件生成失败</div>
 
       <div v-if="presentationStatus === 'generating'" class="loading-mask">
         正在等待后端写入完整课件...
@@ -160,6 +172,59 @@ const isPlaying = ref(false)
 let audioPollTimer = 0
 let presentationPollTimer = 0
 let returning = false
+
+const videoThemes = {
+  dark_cinematic: {
+    label: '暗夜影院',
+    bg: '#081733',
+    accent: '#5bc9bc',
+    highlight: '#ffd166',
+    text: '#ffffff',
+    muted: 'rgba(235, 246, 255, 0.76)',
+    cardBg: 'rgba(255,255,255,0.12)',
+    border: 'rgba(255,255,255,0.14)'
+  },
+  light_academic: {
+    label: '明亮学术',
+    bg: '#f0f4f8',
+    accent: '#2f7de1',
+    highlight: '#e63946',
+    text: '#1a2a3a',
+    muted: 'rgba(26, 42, 58, 0.68)',
+    cardBg: 'rgba(255,255,255,0.9)',
+    border: 'rgba(22, 63, 143, 0.16)'
+  },
+  nature: {
+    label: '自然绿意',
+    bg: '#0d2818',
+    accent: '#34d399',
+    highlight: '#fbbf24',
+    text: '#ecfdf5',
+    muted: 'rgba(236, 253, 245, 0.72)',
+    cardBg: 'rgba(255,255,255,0.08)',
+    border: 'rgba(255,255,255,0.12)'
+  }
+}
+
+const activeTheme = ref(localStorage.getItem('zhiban-video-theme') || 'dark_cinematic')
+
+const themeStyles = computed(() => {
+  const t = videoThemes[activeTheme.value] || videoThemes.dark_cinematic
+  return {
+    '--player-bg': t.bg,
+    '--player-accent': t.accent,
+    '--player-highlight': t.highlight,
+    '--player-text': t.text,
+    '--player-muted': t.muted,
+    '--player-card-bg': t.cardBg,
+    '--player-border': t.border
+  }
+})
+
+const setTheme = theme => {
+  activeTheme.value = theme
+  localStorage.setItem('zhiban-video-theme', theme)
+}
 
 const presentationId = computed(() => String(route.query.id || '').trim())
 const chatGroupId = computed(() => {
@@ -247,7 +312,9 @@ const slides = computed(() => {
           items,
           formulas,
           summary: summary.length > 120 ? `${summary.slice(0, 119)}...` : summary,
-          audioUrl: resolveApiUrl(slide.audio_url || slide.audioUrl || '')
+          audioUrl: resolveApiUrl(slide.audio_url || slide.audioUrl || ''),
+          wordTimestamps: slide.word_timestamps || [],
+          slideDurationMs: slide.duration_ms || 0
         })
       })
       return
@@ -296,6 +363,30 @@ const visualTerms = computed(() => {
     .filter(Boolean)
     .filter((item, index, array) => array.indexOf(item) === index)
     .slice(0, 8)
+})
+
+const activeWordIndex = computed(() => {
+  const wts = activeSlide.value?.wordTimestamps
+  if (!wts || !wts.length) return -1
+  const ms = currentTime.value * 1000
+  let lo = 0, hi = wts.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (wts[mid].offset_ms <= ms) lo = mid + 1
+    else hi = mid
+  }
+  return lo - 1
+})
+
+const timedWords = computed(() => {
+  const wts = activeSlide.value?.wordTimestamps
+  if (!wts || !wts.length) return []
+  const currentIdx = activeWordIndex.value
+  return wts.map((wt, i) => ({
+    text: wt.text,
+    isDone: i <= currentIdx,
+    isCurrent: i === currentIdx + 1
+  }))
 })
 
 const formatTime = seconds => {
@@ -541,7 +632,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid rgba(22, 63, 143, 0.14);
   border-radius: 8px;
-  background: #081733;
+  background: var(--player-bg, #081733);
   box-shadow: 0 18px 44px rgba(22, 63, 143, 0.14);
   display: block;
   padding: 16px;
@@ -554,15 +645,15 @@ onBeforeUnmount(() => {
   min-height: 0;
   border-radius: 8px;
   overflow: hidden;
-  background: rgba(8, 18, 32, 0.58);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--player-bg, #081733) 58%, transparent);
+  box-shadow: inset 0 0 0 1px var(--player-border, rgba(255, 255, 255, 0.08));
 }
 
 .lesson-slide__content {
   position: absolute;
   z-index: 2;
   inset: 82px 54px 104px;
-  color: #fff;
+  color: var(--player-text, #fff);
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
   grid-template-rows: minmax(0, 0.72fr) minmax(160px, 0.9fr);
@@ -612,13 +703,13 @@ onBeforeUnmount(() => {
   height: 4px;
   margin-top: 20px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #ffd166, #5bc9bc, transparent);
+  background: linear-gradient(90deg, var(--player-highlight, #ffd166), var(--player-accent, #5bc9bc), transparent);
 }
 
 .lesson-hero p {
   max-width: 720px;
   margin: 0;
-  color: rgba(235, 246, 255, 0.76);
+  color: var(--player-muted, rgba(235, 246, 255, 0.76));
   font-size: clamp(15px, 1.2vw, 19px);
   line-height: 1.7;
   display: -webkit-box;
@@ -639,9 +730,9 @@ onBeforeUnmount(() => {
 .lesson-card-wall article {
   min-height: 0;
   padding: 16px 18px;
-  border: 1px solid rgba(220, 240, 255, 0.18);
+  border: 1px solid var(--player-border, rgba(220, 240, 255, 0.18));
   border-radius: 8px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05));
+  background: linear-gradient(135deg, var(--player-card-bg, rgba(255, 255, 255, 0.12)), rgba(255, 255, 255, 0.05));
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 12px;
@@ -654,15 +745,15 @@ onBeforeUnmount(() => {
   grid-column: auto;
   min-height: 0;
   background:
-    radial-gradient(circle at 88% 22%, rgba(255, 209, 102, 0.18), transparent 36%),
-    linear-gradient(135deg, rgba(91, 201, 188, 0.18), rgba(255, 255, 255, 0.07));
+    radial-gradient(circle at 88% 22%, var(--player-highlight, rgba(255, 209, 102, 0.18)), transparent 36%),
+    linear-gradient(135deg, color-mix(in srgb, var(--player-accent, #5bc9bc) 18%, transparent), rgba(255, 255, 255, 0.07));
 }
 
 .lesson-card-wall b {
   width: 36px;
   height: 36px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #ffd166, #5bc9bc);
+  background: linear-gradient(135deg, var(--player-highlight, #ffd166), var(--player-accent, #5bc9bc));
   color: #12223a;
   display: grid;
   place-items: center;
@@ -670,7 +761,7 @@ onBeforeUnmount(() => {
 
 .lesson-card-wall span,
 .lesson-slide__empty {
-  color: rgba(235, 246, 255, 0.86);
+  color: var(--player-muted, rgba(235, 246, 255, 0.86));
   font-size: clamp(15px, 1.18vw, 20px);
   line-height: 1.48;
   display: -webkit-box;
@@ -688,11 +779,11 @@ onBeforeUnmount(() => {
   position: relative;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgba(220, 240, 255, 0.18);
+  border: 1px solid var(--player-border, rgba(220, 240, 255, 0.18));
   border-radius: 8px;
   background:
-    radial-gradient(circle at 50% 42%, rgba(255, 209, 102, 0.16), transparent 32%),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.045));
+    radial-gradient(circle at 50% 42%, var(--player-highlight, rgba(255, 209, 102, 0.16)), transparent 32%),
+    linear-gradient(145deg, var(--player-card-bg, rgba(255, 255, 255, 0.11)), rgba(255, 255, 255, 0.045));
   box-shadow: 0 20px 52px rgba(0, 0, 0, 0.18);
   backdrop-filter: blur(14px);
 }
@@ -719,7 +810,7 @@ onBeforeUnmount(() => {
 
 .lesson-orbit::after {
   inset: 31%;
-  border-color: rgba(255, 209, 102, 0.34);
+  border-color: color-mix(in srgb, var(--player-highlight, #ffd166) 34%, transparent);
 }
 
 .lesson-orbit span {
@@ -729,7 +820,7 @@ onBeforeUnmount(() => {
   width: 12px;
   height: 12px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #ffd166, #5bc9bc);
+  background: linear-gradient(135deg, var(--player-highlight, #ffd166), var(--player-accent, #5bc9bc));
   transform:
     rotate(calc(var(--dot) * 60deg))
     translateX(118px)
@@ -815,7 +906,7 @@ onBeforeUnmount(() => {
 }
 
 .lesson-controls button.primary {
-  background: linear-gradient(135deg, #2f7de1, #5bc9bc);
+  background: linear-gradient(135deg, #2f7de1, var(--player-accent, #5bc9bc));
 }
 
 .lesson-controls button:disabled {
@@ -979,6 +1070,48 @@ onBeforeUnmount(() => {
 @keyframes teacher-talk {
   0%, 100% { transform: translateY(0) rotate(-1deg); }
   50% { transform: translateY(-6px) rotate(1.4deg); }
+}
+
+.theme-select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 8px;
+  background: #fff;
+  color: #163f8f;
+  font: inherit;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.lesson-karaoke {
+  max-width: 720px;
+  max-height: 4.8em;
+  margin-top: 6px;
+  font-size: clamp(17px, 1.4vw, 22px);
+  line-height: 1.6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.3em;
+  overflow: hidden;
+}
+
+.karaoke-word {
+  display: inline;
+  opacity: 0.32;
+  transition: opacity 0.12s ease, color 0.18s ease, text-shadow 0.18s ease;
+}
+
+.karaoke-word.is-done {
+  opacity: 1;
+  color: var(--player-text, #fff);
+}
+
+.karaoke-word.is-current {
+  opacity: 1;
+  color: var(--player-highlight, #ffd166);
+  text-shadow: 0 0 14px color-mix(in srgb, var(--player-highlight, #ffd166) 70%, transparent);
 }
 
 @keyframes mouth-patch-talk {

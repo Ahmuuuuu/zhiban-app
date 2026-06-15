@@ -16,13 +16,18 @@ const subjectModules = import.meta.glob('../../assets/ppt_video/ppt/subjects/**/
   import: 'default'
 })
 
+const splitPath = p => p.split(/[/\\]/)
+
 const toAssetList = modules => Object.entries(modules)
-  .map(([path, url]) => ({
-    path,
-    url,
-    name: decodeURIComponent(path.split('/').pop() || ''),
-    group: decodeURIComponent(path.split('/').slice(-2, -1)[0] || '')
-  }))
+  .map(([path, url]) => {
+    const segments = splitPath(path)
+    return {
+      path,
+      url,
+      name: decodeURIComponent(segments.pop() || ''),
+      group: decodeURIComponent(segments.pop() || '')
+    }
+  })
   .sort((a, b) => a.path.localeCompare(b.path, 'zh-Hans-CN'))
 
 const backgrounds = toAssetList(backgroundModules)
@@ -84,9 +89,24 @@ const subjectRules = [
   }
 ]
 
+const themeSubjectFallback = {
+  science_green: '生物',
+  graphite: '计算机',
+  warm_case: '历史'
+}
+
 const inferSubject = slide => {
   const text = `${slide?.title || ''}\n${slide?.text || ''}\n${slide?.content || ''}`.toLowerCase()
-  return subjectRules.find(item => includesAny(text, item.words))?.key || ''
+  const regexMatch = subjectRules.find(item => includesAny(text, item.words))
+  if (regexMatch) return regexMatch.key
+
+  const visual = (slide?.visual?.query || slide?.visual_hint || '').toLowerCase()
+  if (visual) {
+    const visualMatch = subjectRules.find(item => includesAny(visual, item.words))
+    if (visualMatch) return visualMatch.key
+  }
+
+  return themeSubjectFallback[slide?.theme] || ''
 }
 
 const decorationWords = {

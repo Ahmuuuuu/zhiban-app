@@ -149,31 +149,6 @@ def _resource_history_response(resources: list[dict]) -> str:
     }, ensure_ascii=False)
 
 
-async def _find_cached_resources(topic: str, user_id: int, resource_types: list[str]) -> list[dict] | None:
-    """同主题同类型已生成过 → 直接返回缓存，避免重复跑 graph（不限时间和审核状态，学习路径资源 skip_review 后 review_passed=False）"""
-    existing = await GeneratedResource.filter(
-        user_id=user_id,
-        topic=topic,
-        resource_type__in=resource_types,
-    ).order_by("-created_at").all()
-
-    if not existing:
-        return None
-
-    logger.info("命中缓存资源 user=%s topic=%s types=%s count=%d", user_id, topic, resource_types, len(existing))
-    return [
-        {
-            "resource_id": r.id,
-            "topic": r.topic,
-            "resource_type": r.resource_type,
-            "content": _format_mindmap_content(r.content) if r.resource_type == "mindmap" else r.content,
-            "review_passed": r.review_passed,
-            "retry_count": r.retry_count,
-            "cached": True,
-        }
-        for r in existing
-    ]
-
 
 async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str, resources: list[dict]) -> None:
     if not chat_group_id or chat_group_id <= 0:
@@ -392,13 +367,6 @@ class ResourceService:
         import time as _time
         _t_total = _time.perf_counter()
         chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
-        # ── 去重：近期已生成过同主题同类型资源 → 直接返回缓存 ──
-        if topic:
-            cached = await _find_cached_resources(topic, user_id, resource_types)
-            if cached:
-                if chat_group_id > 0:
-                    await _save_generation_to_history(user_id, chat_group_id, topic, cached)
-                return cached
 
         initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority, skip_review=skip_review)
         topic = initial_state["topic"]
@@ -467,35 +435,6 @@ class ResourceService:
                 except Exception:
                     logger.exception("SSE 思维导图 JSON 转换失败")
             return f"data: {json.dumps({'type': 'file', 'file_type': rt, 'filename': filename, 'content': event_content, 'resource_id': resource_id, 'download_url': download_url}, ensure_ascii=False)}\n\n"
-
-        # ── 去重：近期已生成过 → 直接推送缓存结果 ──
-        if topic:
-            cached = await _find_cached_resources(topic, user_id, resource_types)
-            if cached:
-                async def _replay_cache():
-                    for r in cached:
-                        rt = r["resource_type"]
-                        content = r["content"]
-                        if isinstance(content, dict):
-                            content = json.dumps(content, ensure_ascii=False)
-                        yield _make_file_event(r["topic"], rt, content, resource_id=r["resource_id"], download_url=f"/resource/{r['resource_id']}/download")
-                        yield f"data: {json.dumps({'resources': [rt], 'review_passed': True}, ensure_ascii=False)}\n\n"
-                    done_data = {
-                        "done": True,
-                        "chat_group_id": chat_group_id,
-                        "resources": [
-                            {"resource_id": r["resource_id"], "file_type": r["resource_type"],
-                             "topic": r["topic"], "download_url": f"/resource/{r['resource_id']}/download"}
-                            for r in cached
-                        ],
-                    }
-                    yield f"data: {json.dumps(done_data, ensure_ascii=False)}\n\n"
-                    yield "data: [DONE]\n\n"
-                if chat_group_id > 0:
-                    await _save_generation_to_history(user_id, chat_group_id, topic, cached)
-                async for item in _replay_cache():
-                    yield item
-                return
 
         user = await User.filter(id=user_id).first()
 
@@ -674,7 +613,7 @@ class ResourceService:
                     for i, s in enumerate(slides_data)
                 ]
             except Exception:
-                pass
+                logger.warning("PPT 幻灯片元数据解析失败 resource_id=%s", resource_id)
 
         # 附带旁白数据（如有）
         try:
@@ -690,7 +629,7 @@ class ResourceService:
                         "created_at": str(narration.created_at),
                     }
         except Exception:
-            pass  # 旁白查询失败不影响主流程
+            logger.warning("旁白查询失败 resource_id=%s", resource_id)
 
         return result
 
@@ -979,6 +918,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         task.progress = 5
         task.progress_msg = "正在初始化…"
         await task.save()
+        _t_init = _time.perf_counter()
         await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 5, "progress_msg": "正在初始化…"})
 
         # 构建 graph 初始状态
@@ -996,15 +936,16 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         final_file_urls: dict = {}
         yielded_types: set[str] = set()
         total_types = len(resource_types)
+        _t_per_type: dict[str, float] = {}
+        _t_stream_start = _time.perf_counter()
 
         task.progress = 10
         task.progress_msg = "AI 规划中…"
         await task.save()
-        await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 10, "progress_msg": "AI 规划中…"})
+        await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 10, "progress_msg": "AI 规划中…", "elapsed_ms": int((_time.perf_counter() - _t_init) * 1000)})
 
         async for mode, chunk in resource_graph.astream(initial_state, stream_mode=["values", "custom"]):
             if mode == "custom":
-                # PPT 逐页流式事件直接转发到任务 SSE
                 await _notify_task_sse(task_id, chunk)
                 continue
 
@@ -1016,14 +957,17 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
                         yielded_types.add(rt)
                         done = len(yielded_types)
                         pct = 20 + int((done / max(total_types, 1)) * 40)
+                        rt_elapsed = int((_time.perf_counter() - _t_stream_start) * 1000)
+                        _t_per_type[rt] = _time.perf_counter()
                         task.progress = min(pct, 85)
-                        task.progress_msg = f"正在生成「{rt}」…"
+                        task.progress_msg = f"「{rt}」生成完毕，耗时 {rt_elapsed / 1000:.1f}s"
                         await task.save()
                         await _notify_task_sse(task_id, {
                             "type": "progress",
                             "resource_type": rt,
                             "progress": task.progress,
                             "progress_msg": task.progress_msg,
+                            "elapsed_ms": rt_elapsed,
                         })
 
             chunk_file_urls = chunk.get("file_urls", {})
@@ -1033,6 +977,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
             final_retry = chunk.get("retry_count", 0)
 
         # 审核阶段
+        _t_review = _time.perf_counter()
         task.progress = 70
         task.progress_msg = "AI 审核中…"
         await task.save()
@@ -1075,12 +1020,15 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         type_names = [type_labels.get(r["resource_type"], r["resource_type"]) for r in saved]
         gen_title = await _generate_resource_title(task.topic, type_names)
 
+        total_ms = int((_time.perf_counter() - _t_total) * 1000)
         await _notify_task_sse(task_id, {
             "type": "done",
             "status": "success",
             "progress": 100,
             "title": gen_title,
             "result": result_data,
+            "elapsed_ms": total_ms,
+            "progress_msg": f"全部生成完毕，总耗时 {total_ms / 1000:.1f}s",
         })
         await _notify_task_sse(task_id, {"type": "__close__"})
 
