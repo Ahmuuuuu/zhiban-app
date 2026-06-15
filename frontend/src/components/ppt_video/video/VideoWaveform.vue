@@ -40,8 +40,8 @@ const bars = Array.from({ length: 28 }, (_, index) => index + 1)
   max-width: 9px;
   height: calc(8px + (var(--bar) % 7) * 5px);
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(108, 213, 228, 0.72));
-  box-shadow: 0 0 18px rgba(108, 213, 228, 0.22);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 18px rgba(31, 99, 214, 0.2);
   transform-origin: center bottom;
   animation: waveform-idle 2.8s ease-in-out infinite;
   animation-delay: calc(var(--bar) * -0.08s);

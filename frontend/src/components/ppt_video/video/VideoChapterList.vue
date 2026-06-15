@@ -76,7 +76,7 @@ defineEmits(['select'])
   left: 15px;
   width: 2px;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(47, 125, 225, 0.24), rgba(91, 201, 188, 0.08));
+  background: rgba(31, 99, 214, 0.18);
 }
 
 .video-chapter {
@@ -140,11 +140,11 @@ defineEmits(['select'])
 
 .video-chapter.active {
   border-color: rgba(47, 125, 225, 0.56);
-  background: linear-gradient(135deg, rgba(47, 125, 225, 0.14), rgba(91, 201, 188, 0.12));
+  background: rgba(239, 246, 255, 0.96);
 }
 
 .video-chapter.active .video-chapter__marker {
-  background: linear-gradient(135deg, #2f7de1, #5bc9bc);
+  background: #1f63d6;
   border-color: transparent;
   color: #ffffff;
 }

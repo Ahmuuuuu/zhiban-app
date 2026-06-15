@@ -253,6 +253,14 @@
           {{ message.content }}
         </div>
 
+        <div
+          v-if="message.thinkingProcess"
+          class="thinking-process"
+        >
+          <span>思考过程</span>
+          <p>{{ message.thinkingProcess }}</p>
+        </div>
+
         <div class="message-time">
           {{ message.time }}
           <span v-if="message.role === 'user'"> ✓✓</span>
@@ -2211,6 +2219,29 @@ const handleGenerationDone = async eventData => {
   window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
 }
 
+const formatThinkingProcess = value => {
+  const raw = Array.isArray(value)
+    ? value.join('\n')
+    : String(value || '')
+  return raw
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const getTaskThinkingProcess = task => {
+  return formatThinkingProcess(
+    task.thinkingProcess ||
+    task.thinking ||
+    task.thought ||
+    task.reasoning ||
+    task.reasoningContent ||
+    task.process ||
+    task.log ||
+    task.logs
+  )
+}
+
 const attachGenerationTaskToMessage = (task, messageId) => {
   if (!task?.id || boundGenerationTaskMessages.get(task.id) === messageId) return
   boundGenerationTaskMessages.set(task.id, messageId)
@@ -2220,7 +2251,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
   let doneHandled = false
 
   watch(
-    () => [task.progress, task.status, task.files.length, task.images.length, task.updatedAt],
+    () => [task.progress, task.thinkingProcess, task.status, task.files.length, task.images.length, task.updatedAt],
     async () => {
       // 任务是否属于当前显示的对话：chatGroupId 未分配或未匹配时视为外来任务
       const taskChatId = task.chatGroupId
@@ -2236,14 +2267,13 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         const target = messages.value.find(item => item.id === messageId)
 
         if (target) {
+          target.thinkingProcess = getTaskThinkingProcess(task)
           if (task.status === 'failed') {
             target.content = task.error || '资源生成失败，请稍后再试。'
           } else {
-            let text = task.progress || '正在生成资源...'
-            if (task.images.length > 0 || task.files.length > 0) {
-              text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim()
-            }
-            target.content = text
+            target.content = task.files.length || task.images.length
+              ? '资源已生成，可以在下方查看。'
+              : '正在生成资源...'
           }
           target.time = getNowTime()
         }
@@ -2395,6 +2425,7 @@ const addGenerationTaskMessage = task => {
       type: 'text',
       generationTaskId: task.id,
       content: task.status === 'failed' ? task.error : (task.progress || '正在生成资源...'),
+      thinkingProcess: getTaskThinkingProcess(task),
       time: formatTime(task.updatedAt)
     })
   }
@@ -2519,6 +2550,14 @@ const sendMessage = async () => {
           }
           scrollToBottom()
         }
+      },
+      onThinking: async message => {
+        if (!target) return
+        const thinking = formatThinkingProcess(message)
+        if (!thinking) return
+        target.thinkingProcess = thinking
+        target.time = getNowTime()
+        await scrollToBottom()
       },
       onFile: async fileData => {
         if (target && !hasReceivedChunk) {
@@ -3315,6 +3354,31 @@ watch(
   margin-top: 6px;
   color: rgba(22, 63, 143, 0.68);
   font-size: 12px;
+}
+
+.thinking-process {
+  max-width: 92%;
+  margin: 6px 0 0 2px;
+  color: rgba(31, 51, 86, 0.52);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.thinking-process span {
+  display: block;
+  margin-bottom: 2px;
+  color: rgba(95, 143, 195, 0.86);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.thinking-process p {
+  margin: 0;
+  white-space: pre-line;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
 }
 
 .user .message-time {

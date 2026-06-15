@@ -13,6 +13,7 @@ import QuizRunnerView from '../pages/QuizRunnerView.vue'
 import PresentationPlayerView from '../pages/PresentationPlayerView.vue'
 import NotificationCenterView from '../pages/NotificationCenterView.vue'
 import AdminDashboard from '../pages/AdminDashboard.vue'
+import VideoComponentLab from '../pages/VideoComponentLab.vue'
 import { isCurrentUserAdmin } from '../utils/auth'
 
 const router = createRouter({
@@ -37,6 +38,11 @@ const router = createRouter({
       path: '/presentation-player',
       name: 'presentationPlayer',
       component: PresentationPlayerView
+    },
+    {
+      path: '/video-components',
+      name: 'videoComponents',
+      component: VideoComponentLab
     },
     {
       path: '/question-bank',

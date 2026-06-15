@@ -1,7 +1,7 @@
 import request from './request'
 import { API_BASE_URL, parseStreamEvent, requestFirstAvailable, resolveApiUrl } from './config'
 
-export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide } = {}) {
+export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide, onThinking } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
   const token = localStorage.getItem('token')
 
@@ -77,6 +77,21 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
 
         if (eventData.type === 'stream_slide') {
           onStreamSlide?.(eventData)
+          continue
+        }
+
+        const thinking =
+          eventData.thinking ||
+          eventData.thought ||
+          eventData.reasoning ||
+          eventData.reasoning_content ||
+          eventData.reasoningContent ||
+          eventData.process ||
+          eventData.thought_process ||
+          eventData.thoughtProcess
+
+        if (thinking || eventData.type === 'thinking' || eventData.event === 'thinking') {
+          onThinking?.(thinking || eventData.content || '')
           continue
         }
 
@@ -204,6 +219,64 @@ export function getResourceGenerationTask(taskId) {
 
 export function getResourceGenerationTasks() {
   return request.get('/resource/generate/tasks')
+}
+
+export async function streamResourceGenerationTask(taskId, { onEvent, onDone, onError } = {}) {
+  const token = localStorage.getItem('token')
+  const url = `${API_BASE_URL}resource/generate/task/${encodeURIComponent(taskId)}/stream`
+  const response = await fetch(url, {
+    headers: {
+      ...(token ? { token } : {})
+    }
+  })
+
+  if (!response.ok || !response.body) {
+    throw new Error(`任务日志订阅失败：${response.status}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done })
+    }
+
+    const events = buffer.split(/\r?\n\r?\n/)
+    buffer = events.pop() || ''
+
+    for (const eventText of events) {
+      const payloads = parseStreamEvent(eventText)
+      for (const payload of payloads) {
+        if (payload === '[DONE]') {
+          onDone?.({})
+          continue
+        }
+
+        let eventData
+        try {
+          eventData = JSON.parse(payload)
+        } catch {
+          continue
+        }
+
+        if (eventData.error && eventData.status !== 'failed') {
+          onError?.(eventData.error)
+          continue
+        }
+
+        onEvent?.(eventData)
+
+        if (eventData.done || eventData.type === 'done' || eventData.event === 'done') {
+          onDone?.(eventData)
+        }
+      }
+    }
+
+    if (done) break
+  }
 }
 
 export function likeResource(resourceId) {

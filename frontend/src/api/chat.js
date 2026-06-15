@@ -59,7 +59,7 @@ export function transcribeVoiceInput(audioBlob) {
   ])
 }
 
-export async function streamChatMessage(data, { onChunk, onDone, onError, onFile, onStreamStart, onStreamSlide } = {}) {
+export async function streamChatMessage(data, { onChunk, onDone, onError, onFile, onStreamStart, onStreamSlide, onThinking } = {}) {
   const isExistingConversation = Boolean(data.chat_group_id)
   const url = `${API_BASE_URL}${isExistingConversation ? 'ai_chat/stream_msg_into_history' : 'ai_chat/stream_new_history'}`
   const token = localStorage.getItem('token')
@@ -139,6 +139,21 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
 
         if (eventData.type === 'stream_slide') {
           await onStreamSlide?.(eventData)
+          continue
+        }
+
+        const thinking =
+          eventData.thinking ||
+          eventData.thought ||
+          eventData.reasoning ||
+          eventData.reasoning_content ||
+          eventData.reasoningContent ||
+          eventData.process ||
+          eventData.thought_process ||
+          eventData.thoughtProcess
+
+        if (thinking || eventData.type === 'thinking' || eventData.event === 'thinking') {
+          await onThinking?.(thinking || eventData.content || '')
           continue
         }
 

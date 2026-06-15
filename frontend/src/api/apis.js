@@ -67,6 +67,7 @@ export {
   getResourceGenerationTasks,
   likeResource,
   publishGeneratedResource,
+  streamResourceGenerationTask,
   streamResourceGeneration,
   unfavoriteResource,
   unlikeResource,
