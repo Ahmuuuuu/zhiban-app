@@ -128,7 +128,7 @@ defineProps({
   },
   styleSource: {
     type: String,
-    default: 'builtin'
+    default: 'custom'
   }
 })
 

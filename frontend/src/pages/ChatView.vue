@@ -196,7 +196,7 @@
             <button v-if="isMindmapFile(message)" type="button" @click="openMindmapLargePreview(message)">
               {{ message.mindmapPreviewLoading ? '加载中...' : '预览' }}
             </button>
-            <button v-if="isVideoFile(message) && message.previewUrl" type="button" @click="openPresentationPlayer(message)">打开课件</button>
+            <button v-if="isVideoFile(message) && (message.previewUrl || message.presentation?.id || message.presentationId)" type="button" @click="openPresentationPlayer(message)">打开课件</button>
             <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="isDocumentFile(message) && getFileResourceId(message)" type="button" @click="openDocumentPreview(message)">
               {{ documentPreview.loading && documentPreview.messageId === message.id ? '加载中...' : '预览' }}
@@ -821,10 +821,9 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
       }
       if (!presentation) continue
 
-      if (!presentation.file_url) continue
-      const previewUrl = resolveApiUrl(presentation.file_url)
+      const previewUrl = presentation.file_url ? resolveApiUrl(presentation.file_url) : ''
       const presentationId = String(presentation.id || '')
-      if (existingUrls.has(previewUrl) || (presentationId && existingIds.has(presentationId))) continue
+      if ((previewUrl && existingUrls.has(previewUrl)) || (presentationId && existingIds.has(presentationId))) continue
 
       const rawReq = record.req || record.content || ''
       const reqTopic = normalizePresentationTopic(stripInternalInstructions(rawReq))
@@ -1977,7 +1976,8 @@ const downloadGeneratedFile = async message => {
 }
 
 const openPresentationPlayer = message => {
-  if (!message?.previewUrl) return
+  const pid = message.presentation?.id || message.presentationId || message.presentation_id || message.fileId || ''
+  if (!message?.previewUrl && !pid) return
   const chatGroupId =
     message.chatGroupId ||
     message.chat_group_id ||
@@ -1987,8 +1987,8 @@ const openPresentationPlayer = message => {
   router.push({
     name: 'presentationPlayer',
     query: {
-      url: message.previewUrl,
-      id: message.presentation?.id || message.presentationId || message.presentation_id || message.fileId || '',
+      url: message.previewUrl || '',
+      id: pid,
       title: message.filename || '动态课件',
       chat_group_id: chatGroupId
     }

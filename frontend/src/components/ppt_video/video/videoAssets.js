@@ -3,12 +3,17 @@ const backgroundModules = import.meta.glob('../../../assets/ppt_video/video/back
   import: 'default'
 })
 
+const splitPath = p => p.split(/[/\\]/)
+
 const backgrounds = Object.entries(backgroundModules)
-  .map(([path, url]) => ({
-    path,
-    name: path.split('/').pop() || '',
-    url
-  }))
+  .map(([path, url]) => {
+    const segments = splitPath(path)
+    return {
+      path,
+      name: segments.pop() || '',
+      url
+    }
+  })
   .sort((a, b) => a.path.localeCompare(b.path))
 
 const hashText = text => {

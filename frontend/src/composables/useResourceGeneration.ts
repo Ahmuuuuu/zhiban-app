@@ -250,7 +250,7 @@ export async function executeGeneration(
       }
 
       callbacks.onProgress?.('视频脚本已生成，正在生成动态课件...')
-      const presentationResult: any = await generatePresentation({ topic: text, chat_group_id: Number(chatGroupId || 0) })
+      const presentationResult: any = await generatePresentation({ topic: text, chat_group_id: Number(chatGroupId || 0), video_mode: true })
       const presentation = unwrapResponseData(presentationResult)
       const title = sourceResource?.topic || sourceResource?.title || text || '学习视频'
 
