@@ -159,7 +159,7 @@ const terms = computed(() => getSlideTerms(props.slide))
   height: 4px;
   margin-top: 20px;
   border-radius: 999px;
-  background: var(--video-line);
+  background: linear-gradient(90deg, var(--video-accent, #2f7de1), var(--video-warm, #ffd166));
 }
 
 .video-keypoint-slide__hero p {
@@ -186,7 +186,9 @@ const terms = computed(() => getSlideTerms(props.slide))
   padding: 16px 18px;
   border: 1px solid var(--video-card-border);
   border-radius: 8px;
-  background: var(--video-card-bg);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--video-accent, #2f7de1) 14%, transparent), transparent 52%),
+    var(--video-card-bg);
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 12px;
@@ -195,6 +197,30 @@ const terms = computed(() => getSlideTerms(props.slide))
   box-shadow: 0 18px 42px var(--video-shadow);
   animation: card-pop 0.52s ease both;
   animation-delay: calc(var(--delay) * 0.09s + 0.12s);
+}
+
+.video-keypoint-slide.layout-1 .video-keypoint-slide__cards article {
+  border-radius: 999px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+}
+
+.video-keypoint-slide.layout-2 .video-keypoint-slide__cards article {
+  border-radius: 8px 32px 8px 32px;
+}
+
+.video-keypoint-slide.layout-3 .video-keypoint-slide__cards article {
+  border-radius: 6px;
+  clip-path: polygon(0 0, 96% 0, 100% 22%, 100% 100%, 4% 100%, 0 78%);
+}
+
+.video-keypoint-slide.layout-4 .video-keypoint-slide__cards article {
+  min-height: 126px;
+  border-radius: 50%;
+  aspect-ratio: 1.18;
+  grid-template-columns: 1fr;
+  place-items: center;
+  text-align: center;
 }
 
 .video-keypoint-slide__cards article.featured {
@@ -209,6 +235,11 @@ const terms = computed(() => getSlideTerms(props.slide))
   color: var(--video-number-text);
   display: grid;
   place-items: center;
+}
+
+.video-keypoint-slide.layout-4 .video-keypoint-slide__cards b {
+  width: 42px;
+  height: 42px;
 }
 
 .video-keypoint-slide__cards span {
@@ -234,6 +265,22 @@ const terms = computed(() => getSlideTerms(props.slide))
   animation: panel-in 0.72s ease both;
 }
 
+.video-keypoint-slide.layout-1 .video-keypoint-slide__visual {
+  border-radius: 34px 8px 34px 8px;
+}
+
+.video-keypoint-slide.layout-2 .video-keypoint-slide__visual {
+  border-radius: 999px;
+}
+
+.video-keypoint-slide.layout-3 .video-keypoint-slide__visual {
+  clip-path: polygon(6% 0, 100% 0, 94% 100%, 0 100%);
+}
+
+.video-keypoint-slide.layout-4 .video-keypoint-slide__visual {
+  border-radius: 50%;
+}
+
 .visual-focus {
   position: absolute;
   left: 28px;
@@ -241,7 +288,7 @@ const terms = computed(() => getSlideTerms(props.slide))
   top: 36px;
   height: 46%;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
+  border-radius: inherit;
   background:
     linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.1) 1px, transparent 1px);

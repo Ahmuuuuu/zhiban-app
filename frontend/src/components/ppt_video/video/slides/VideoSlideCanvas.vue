@@ -12,6 +12,7 @@
     <VideoMotionLayer
       :slide="slide"
       :variant="variant"
+      :layout-seed="layoutSeed"
     />
 
     <VideoStageInfo
@@ -87,16 +88,28 @@ const backgroundTone = computed(() => getVideoBackgroundTone(resolvedBackgroundU
 const backgroundStyle = computed(() => getVideoBackgroundStyle(resolvedBackgroundUrl.value))
 const backgroundColorVars = computed(() => {
   const style = backgroundStyle.value || {}
+  const palette = [
+    ['#2f7de1', '#6ec6ff', '#ffd166'],
+    ['#1f8a70', '#6ee7b7', '#f7c948'],
+    ['#8b5cf6', '#f0abfc', '#38bdf8'],
+    ['#ef476f', '#ffafcc', '#4cc9f0'],
+    ['#0f766e', '#99f6e4', '#f97316'],
+    ['#2563eb', '#93c5fd', '#facc15'],
+    ['#7c3aed', '#c4b5fd', '#fb7185']
+  ][layoutSeed.value % 7]
   return {
     ...(style.text ? { '--video-text': style.text } : {}),
     ...(style.muted ? { '--video-muted': style.muted } : {}),
     ...(style.soft ? { '--video-soft': style.soft } : {}),
     ...(style.line ? { '--video-line': style.line } : {}),
     ...(style.numberBg ? { '--video-number-bg': style.numberBg } : {}),
-    ...(style.numberText ? { '--video-number-text': style.numberText } : {})
+    ...(style.numberText ? { '--video-number-text': style.numberText } : {}),
+    '--video-accent': palette[0],
+    '--video-accent-soft': palette[1],
+    '--video-warm': palette[2]
   }
 })
-const layoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
+const layoutSeed = computed(() => Number(props.slide?.index || 0) % 7)
 </script>
 
 <style scoped>
@@ -119,6 +132,9 @@ const layoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
   --video-chip-text: rgba(240, 250, 255, 0.92);
   --video-number-bg: #ffffff;
   --video-number-text: #1f63d6;
+  --video-accent: #2f7de1;
+  --video-accent-soft: #6ec6ff;
+  --video-warm: #ffd166;
   --video-bg-shade: rgba(8, 28, 62, 0.38);
   --video-bg-glow: rgba(255, 255, 255, 0.14);
 }

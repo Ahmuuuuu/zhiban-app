@@ -47,7 +47,15 @@ const componentMap = {
 }
 
 const componentName = computed(() => componentMap[props.variant] || VideoKeyPointSlide)
-const transitionName = computed(() => ['slide-swing', 'slide-rise', 'slide-zoom', 'slide-wipe', 'slide-drift'][props.layoutSeed % 5])
+const transitionName = computed(() => [
+  'slide-swing',
+  'slide-rise',
+  'slide-zoom',
+  'slide-wipe',
+  'slide-drift',
+  'slide-flip',
+  'slide-iris'
+][props.layoutSeed % 7])
 </script>
 
 <style scoped>
@@ -60,7 +68,11 @@ const transitionName = computed(() => ['slide-swing', 'slide-rise', 'slide-zoom'
 .slide-wipe-enter-active,
 .slide-wipe-leave-active,
 .slide-drift-enter-active,
-.slide-drift-leave-active {
+.slide-drift-leave-active,
+.slide-flip-enter-active,
+.slide-flip-leave-active,
+.slide-iris-enter-active,
+.slide-iris-leave-active {
   transition:
     opacity 0.42s ease,
     transform 0.42s ease,
@@ -122,5 +134,29 @@ const transitionName = computed(() => ['slide-swing', 'slide-rise', 'slide-zoom'
   opacity: 0;
   transform: translate(24px, -16px) scale(0.98);
   filter: blur(5px);
+}
+
+.slide-flip-enter-from {
+  opacity: 0;
+  transform: perspective(900px) rotateY(-18deg) translateX(28px);
+  filter: blur(4px);
+}
+
+.slide-flip-leave-to {
+  opacity: 0;
+  transform: perspective(900px) rotateY(18deg) translateX(-28px);
+  filter: blur(4px);
+}
+
+.slide-iris-enter-from {
+  opacity: 0;
+  transform: scale(0.98);
+  clip-path: circle(0% at 50% 50%);
+}
+
+.slide-iris-leave-to {
+  opacity: 0;
+  transform: scale(1.02);
+  clip-path: circle(0% at 50% 50%);
 }
 </style>
