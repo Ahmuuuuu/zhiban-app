@@ -397,6 +397,7 @@ def _trim_content_depth(content: str, depth: str, is_ppt: bool = False) -> str:
         trimmed.append("\n".join(kept_lines))
     return sep.join(trimmed)
 _sse_queues: dict[int, list[asyncio.Queue]] = {}
+_progress_events: dict[int, list[dict]] = {}  # 存储进度事件历史，供迟到 SSE 订阅者回放
 
 
 def _subscribe_sse(presentation_id: int) -> asyncio.Queue:
@@ -411,11 +412,26 @@ def _unsubscribe_sse(presentation_id: int, q: asyncio.Queue):
         queues.remove(q)
     if not queues:
         _sse_queues.pop(presentation_id, None)
+        # 所有订阅者都断开后延迟清理进度历史
+        _progress_events.pop(presentation_id, None)
 
 
 async def _notify_sse(presentation_id: int, data: dict):
     for q in _sse_queues.get(presentation_id, []):
         q.put_nowait(data)
+
+
+def _push_progress(presentation_id: int, step: str, label: str, status: str = "running", elapsed_ms: int | None = None):
+    """同步推送生成进度到 SSE 队列 + 存储事件历史"""
+    event = {"type": "progress", "step": step, "label": label, "status": status, "elapsed_ms": elapsed_ms}
+    _progress_events.setdefault(presentation_id, []).append(event)
+    for q in _sse_queues.get(presentation_id, []):
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.warning("SSE 队列已满 presentation_id=%s", presentation_id)
+        except Exception:
+            logger.exception("SSE 进度推送异常 presentation_id=%s", presentation_id)
 
 
 # ═══════════════════════════════════════════════
@@ -424,17 +440,19 @@ async def _notify_sse(presentation_id: int, data: dict):
 
 async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural",
                   chapters: list[str] | None = None, answers: dict | None = None,
-                  chat_group_id: int = 0, video_mode: bool = False) -> dict:
-    """创建课件记录 + 立即出骨架 + 后台补音频。video_mode=True 使用简洁视频模板"""
+                  chat_group_id: int = 0, video_mode: bool = False,
+                  background: bool = False) -> dict:
+    """创建课件。background=True 立即返回 {id, status:'generating'}，进度走 SSE；background=False 同步等完整结果"""
     import time as _time
-    _t_total = _time.perf_counter()
     from datetime import datetime, timedelta
     from backend.src.models.usermodel import User
+    from backend.src.utils.mindmap import parse_mindmap_text
+
     user = await User.filter(id=user_id).first()
     if not user:
         raise ServiceError("用户不存在")
 
-    # 去重：2 分钟内同话题同模板已创建过课件 → 直接返回已有记录
+    # 去重
     _expected_tag = f"template-version:{VIDEO_TEMPLATE_VERSION}" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
     cutoff = datetime.now() - timedelta(minutes=2)
     existing = await Presentation.filter(
@@ -450,99 +468,172 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
             "template_version": VIDEO_TEMPLATE_VERSION if video_mode else PRESENTATION_TEMPLATE_VERSION,
         }
 
-    doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
-    if not any([doc, mindmap_data, ppt_data]):
-        raise ServiceError(f"话题「{topic}」暂无已生成的资源，请先通过 /resource/generate 生成")
+    # 立即创建记录，拿到 ID 用于 SSE 进度推送
+    record = await Presentation.create(user=user, topic=topic, status="generating")
+    pid = record.id
+    _t_total = _time.perf_counter()
 
-    # 用户作答 → 裁剪内容
-    if answers:
-        doc, mindmap_data, ppt_data = _crop_content_by_answers(doc, mindmap_data, ppt_data, answers)
+    async def _do_generate():
+        nonlocal chat_group_id
+        try:
+            # — 第1步：获取资源 —
+            t0 = _time.perf_counter()
+            _push_progress(pid, "fetch_resources", "正在获取学习资源…", "running")
+            doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
+            if not any([doc, mindmap_data, ppt_data]):
+                raise ServiceError(f"话题「{topic}」暂无已生成的资源，请先通过 /resource/generate 生成")
+            _push_progress(pid, "fetch_resources", "学习资源获取完毕", "done", int((_time.perf_counter() - t0) * 1000))
 
-    # 构建个性化画像引入（最前章节）
-    portrait_intro = await _build_portrait_intro(topic, user)
+            if answers:
+                doc, mindmap_data, ppt_data = _crop_content_by_answers(doc, mindmap_data, ppt_data, answers)
 
-    # 构建骨架章节（立即可看），后台只补音频
-    chapters, audio_tasks = _build_chapter_skeletons(doc, mindmap_data, ppt_data, plain=video_mode)
+            # — 第2步：个性化引入 —
+            t0 = _time.perf_counter()
+            _push_progress(pid, "portrait_intro", "正在生成个性化引入…", "running")
+            portrait_intro = await _build_portrait_intro(topic, user)
+            _push_progress(pid, "portrait_intro", "个性化引入生成完毕", "done", int((_time.perf_counter() - t0) * 1000))
 
-    # 画像引入置顶
-    if portrait_intro:
-        chapters.insert(0, portrait_intro)
-        from types import SimpleNamespace as _SN
-        intro_raw = portrait_intro.pop("_raw_text", "")
-        intro_resource = _SN(id=0, content=intro_raw, resource_type="document")
-        audio_tasks.insert(0, {"chapter_idx": 0, "resource": intro_resource})
-        for t in audio_tasks[1:]:
-            t["chapter_idx"] += 1
+            # — 第3-5步：逐个构建章节骨架 —
+            chapters_list: list[dict] = []
+            audio_tasks: list[dict] = []
 
-    record = await Presentation.create(user=user, topic=topic, status="ready")  # 骨架立即可看，音频后台补充
+            if doc:
+                t0 = _time.perf_counter()
+                _push_progress(pid, "build_intro", "正在构建文档章节…", "running")
+                ch = _build_intro_skeleton(doc)
+                chapters_list.append(ch)
+                audio_tasks.append({"chapter_idx": len(chapters_list) - 1, "resource": doc})
+                _push_progress(pid, "build_intro", "文档章节构建完毕", "done", int((_time.perf_counter() - t0) * 1000))
 
-    PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
-    html = _render_html(topic, chapters, template_path=TEMPLATE_VIDEO_PATH if video_mode else None)
-    filename = f"{_safe_filename(topic)}_{uuid.uuid4().hex[:8]}.html"
-    file_path = PRESENTATION_DIR / filename
-    file_path.write_text(html, encoding="utf-8")
+            if mindmap_data:
+                t0 = _time.perf_counter()
+                _push_progress(pid, "build_mindmap", "正在构建思维导图章节…", "running")
+                parsed = parse_mindmap_text(mindmap_data.content or "")
+                svg = _mindmap_to_svg(parsed)
+                ch = _build_mindmap_skeleton(mindmap_data, svg)
+                chapters_list.append(ch)
+                audio_tasks.append({"chapter_idx": len(chapters_list) - 1, "resource": mindmap_data})
+                _push_progress(pid, "build_mindmap", "思维导图章节构建完毕", "done", int((_time.perf_counter() - t0) * 1000))
 
-    record.file_url = f"/static/presentations/{filename}"
-    record.chapters_json = json.dumps(chapters, ensure_ascii=False)
-    record.total_duration_ms = sum(c.get("total_duration_ms", 0) for c in chapters)
-    await record.save()
+            if ppt_data:
+                t0 = _time.perf_counter()
+                _push_progress(pid, "build_ppt", "正在构建PPT章节…", "running")
+                ch = _build_ppt_skeleton(ppt_data, plain=video_mode)
+                chapters_list.append(ch)
+                audio_tasks.append({"chapter_idx": len(chapters_list) - 1, "resource": ppt_data})
+                _push_progress(pid, "build_ppt", "PPT章节构建完毕", "done", int((_time.perf_counter() - t0) * 1000))
 
-    # 保存到聊天历史 — 新对话自动分配 chat_group_id
-    chat_group_id = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
-    logger.info("generate() user_id=%d chat_group_id=%d topic=%s", user_id, chat_group_id, topic[:60])
-    try:
-        req_text = topic
-        if answers:
-            selected = []
-            for v in answers.values():
-                if isinstance(v, list):
-                    selected.extend(str(x) for x in v)
-                elif v:
-                    selected.append(str(v))
-            if selected:
-                req_text = f"{topic}（已选择：{' / '.join(selected)}）"
-        res_json = json.dumps({
-            "type": "presentation",
+            # 画像引入置顶
+            if portrait_intro:
+                chapters_list.insert(0, portrait_intro)
+                from types import SimpleNamespace as _SN
+                intro_raw = portrait_intro.pop("_raw_text", "")
+                intro_resource = _SN(id=0, content=intro_raw, resource_type="document")
+                audio_tasks.insert(0, {"chapter_idx": 0, "resource": intro_resource})
+                for t in audio_tasks[1:]:
+                    t["chapter_idx"] += 1
+
+            # — 第6步：渲染 HTML —
+            file_url = ""
+            if not video_mode:
+                t0 = _time.perf_counter()
+                _push_progress(pid, "render_html", "正在渲染课件…", "running")
+                PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
+                html = _render_html(topic, chapters_list, template_path=None)
+                filename = f"{_safe_filename(topic)}_{uuid.uuid4().hex[:8]}.html"
+                file_path = PRESENTATION_DIR / filename
+                file_path.write_text(html, encoding="utf-8")
+                file_url = f"/static/presentations/{filename}"
+                _push_progress(pid, "render_html", "课件渲染完毕", "done", int((_time.perf_counter() - t0) * 1000))
+
+            # 更新记录
+            record.chapters_json = json.dumps(chapters_list, ensure_ascii=False)
+            record.total_duration_ms = sum(c.get("total_duration_ms", 0) for c in chapters_list)
+            record.status = "ready"
+            if file_url:
+                record.file_url = file_url
+            await record.save()
+
+            # 保存到聊天历史
+            cgid = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
+            chat_group_id = cgid
+            try:
+                req_text = topic
+                if answers:
+                    selected = []
+                    for v in answers.values():
+                        if isinstance(v, list):
+                            selected.extend(str(x) for x in v)
+                        elif v:
+                            selected.append(str(v))
+                    if selected:
+                        req_text = f"{topic}（已选择：{' / '.join(selected)}）"
+                res_json = json.dumps({
+                    "type": "presentation",
+                    "id": record.id,
+                    "topic": topic,
+                    "file_url": _versioned_presentation_url(record.file_url),
+                    "status": "ready",
+                    "_video_hint": "动态课件已生成，可立即查看",
+                }, ensure_ascii=False)
+                await ChatHistory.create(user=user, chat_group_id=cgid, req=req_text, res=res_json)
+            except Exception:
+                logger.exception("保存课件到聊天历史失败")
+
+            # 推送通知
+            try:
+                await Notification.create(
+                    type="resource",
+                    title="课件已生成",
+                    content=f"「{topic}」课件已生成，共 {len(chapters_list)} 章，可立即查看（音频后台补充中）",
+                    target_url=f"/presentation?id={record.id}",
+                    target_user_id=user_id,
+                )
+            except Exception:
+                logger.exception("课件通知推送失败")
+
+            # 后台补音频
+            asyncio_create_task(_add_audio_to_presentation(record.id, topic, user_id, voice, chapters_list, audio_tasks))
+
+            total_ms = int((_time.perf_counter() - _t_total) * 1000)
+            chapter_names = [c.get("title", "") for c in chapters_list]
+            _push_progress(pid, "done", f"课件生成完毕，共 {len(chapters_list)} 章（{' → '.join(chapter_names)}）", "done", total_ms)
+            await _notify_sse(pid, {
+                "status": "ready",
+                "file_url": _versioned_presentation_url(file_url),
+                "id": record.id,
+                "chapters": len(chapters_list),
+            })
+            logger.info("[课件] 骨架生成完成 topic=%s record=%d chapters=%d 耗时=%.1fs",
+                        topic, record.id, len(chapters_list), _time.perf_counter() - _t_total)
+
+            return {
+                "id": record.id,
+                "file_url": _versioned_presentation_url(file_url),
+                "status": "ready",
+                "template_version": VIDEO_TEMPLATE_VERSION if video_mode else PRESENTATION_TEMPLATE_VERSION,
+                "message": "课件已生成，音频在后台补充中",
+            }
+
+        except Exception as e:
+            logger.exception("课件生成失败")
+            record.status = "failed"
+            record.error_message = str(e)
+            await record.save()
+            _push_progress(pid, "error", str(e), "error")
+            await _notify_sse(pid, {"status": "failed", "error": str(e)})
+            raise
+
+    if background:
+        asyncio_create_task(_do_generate())
+        return {
             "id": record.id,
-            "topic": topic,
-            "file_url": _versioned_presentation_url(record.file_url),
-            "status": "ready",
-            "_video_hint": "动态课件已生成，可立即查看",
-        }, ensure_ascii=False)
-        await ChatHistory.create(
-            user=user,
-            chat_group_id=chat_group_id,
-            req=req_text,
-            res=res_json,
-        )
-    except Exception:
-        logger.exception("保存课件到聊天历史失败")
-
-    # 立即推送通知，用户不用等音频
-    try:
-        await Notification.create(
-            type="resource",
-            title="课件已生成",
-            content=f"「{topic}」课件已生成，共 {len(chapters)} 章，可立即查看（音频后台补充中）",
-            target_url=f"/presentation?id={record.id}",
-            target_user_id=user_id,
-        )
-    except Exception:
-        logger.exception("课件通知推送失败")
-
-    # 骨架已出，后台补音频
-    asyncio_create_task(_add_audio_to_presentation(record.id, topic, user_id, voice, chapters, audio_tasks))
-
-    logger.info("[课件] 骨架生成完成 topic=%s record=%d chapters=%d 耗时=%.1fs（音频后台补充中）",
-                topic, record.id, len(chapters), _time.perf_counter() - _t_total)
-
-    return {
-        "id": record.id,
-        "file_url": _versioned_presentation_url(record.file_url),
-        "status": "ready",  # 骨架已可看，音频后台补充
-        "template_version": VIDEO_TEMPLATE_VERSION if video_mode else PRESENTATION_TEMPLATE_VERSION,
-        "message": "课件已生成，音频在后台补充中",
-    }
+            "status": "generating",
+            "template_version": VIDEO_TEMPLATE_VERSION if video_mode else PRESENTATION_TEMPLATE_VERSION,
+            "message": "课件生成中，请通过 SSE 获取进度",
+        }
+    else:
+        return await _do_generate()
 
 
 async def get_presentation(presentation_id: int, user_id: int) -> dict | None:
@@ -825,23 +916,20 @@ def _real_duration_from_timestamps(word_timestamps: list[dict], fallback_ms: int
 
 
 async def _flush(record, topic: str, chapters: list, status: str, segments: list[dict] | None = None):
-    """更新 HTML 文件 + DB + SSE 通知"""
-    # 检测当前 HTML 是否使用视频模板，保持模板一致
-    _tp = None
-    try:
-        fp = _presentation_file_path(record.file_url)
-        if fp and fp.exists():
-            _head = fp.read_text(encoding="utf-8", errors="ignore")[:200]
+    """更新 HTML 文件（如有）+ DB + SSE 通知"""
+    file_path = _presentation_file_path(record.file_url)
+    if file_path and file_path.exists():
+        # 检测当前 HTML 是否使用视频模板，保持模板一致
+        _tp = None
+        try:
+            _head = file_path.read_text(encoding="utf-8", errors="ignore")[:200]
             if f"template-version:{VIDEO_TEMPLATE_VERSION}" in _head or "template-version:video-v3" in _head or "template-version:video-v2" in _head:
                 _tp = TEMPLATE_VIDEO_PATH
-    except Exception:
-        pass
-    html = _render_html(topic, chapters, segments or [], template_path=_tp)
-    file_path = _presentation_file_path(record.file_url)
-    if file_path is None:
-        return
-    PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(html, encoding="utf-8")
+        except Exception:
+            logger.warning("读取 HTML 模板版本失败，使用默认模板 record=%s", record.id)
+        html = _render_html(topic, chapters, segments or [], template_path=_tp)
+        PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(html, encoding="utf-8")
 
     record = await Presentation.filter(id=record.id).first()
     if not record:
@@ -905,7 +993,7 @@ async def _build_portrait_intro(topic: str, user) -> dict | None:
     try:
         picture = await user.picture
     except Exception:
-        pass
+        logger.warning("获取用户画像失败 user_id=%s", user.id)
     if not picture:
         picture = await User_picture.filter(id=getattr(user, 'picture_id', None) or 0).first()
 
@@ -923,8 +1011,8 @@ async def _build_portrait_intro(topic: str, user) -> dict | None:
             try:
                 tags = json.loads(picture.personality_tags)
                 portrait_parts.append(f"性格：{'、'.join(tags)}")
-            except Exception:
-                pass
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("解析性格标签失败 user_id=%s", user.id)
         if picture.profile_summary:
             portrait_parts.append(f"学习画像：{picture.profile_summary}")
     portrait_text = "；".join(portrait_parts) if portrait_parts else "暂无画像数据"
@@ -1281,7 +1369,7 @@ def _versioned_presentation_url(url: str | None) -> str:
             if f"template-version:{VIDEO_TEMPLATE_VERSION}" in head:
                 tag = VIDEO_TEMPLATE_VERSION
         except Exception:
-            pass
+            logger.warning("读取 HTML 文件失败，使用默认版本号 url=%s", url)
     return f"{base}?v={tag}"
 
 
@@ -1302,6 +1390,7 @@ def _presentation_file_matches_template(url: str | None, expected_tag: str | Non
     try:
         return tag in path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
+        logger.warning("读取 HTML 模板版本失败 url=%s", url)
         return False
 
 
