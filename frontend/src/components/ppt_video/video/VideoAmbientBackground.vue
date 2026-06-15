@@ -56,8 +56,8 @@ const backgroundStyle = computed(() => ({
   position: absolute;
   inset: 0;
   background:
-    rgba(8, 28, 62, 0.34),
-    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.14), transparent 34%);
+    var(--video-bg-shade, rgba(8, 28, 62, 0.34)),
+    radial-gradient(circle at 28% 24%, var(--video-bg-glow, rgba(255, 255, 255, 0.14)), transparent 34%);
 }
 
 .video-ambient__scan {

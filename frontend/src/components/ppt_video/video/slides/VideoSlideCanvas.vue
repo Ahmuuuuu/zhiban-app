@@ -1,5 +1,9 @@
 <template>
-  <div class="video-slide-canvas">
+  <div
+    class="video-slide-canvas"
+    :class="[`is-${backgroundTone}-bg`, `layout-${layoutSeed}`]"
+    :style="backgroundColorVars"
+  >
     <VideoAmbientBackground
       class="video-slide-canvas__background"
       :background-url="resolvedBackgroundUrl"
@@ -18,6 +22,8 @@
     <VideoSlideRenderer
       :slide="slide"
       :variant="variant"
+      :tone="backgroundTone"
+      :layout-seed="layoutSeed"
     />
 
     <VideoWaveform
@@ -26,7 +32,6 @@
       :active="isPlaying"
     />
 
-    <slot name="controls"></slot>
     <slot name="progress"></slot>
   </div>
 </template>
@@ -36,7 +41,7 @@ import { computed } from 'vue'
 import VideoAmbientBackground from '../VideoAmbientBackground.vue'
 import VideoStageInfo from '../VideoStageInfo.vue'
 import VideoWaveform from '../VideoWaveform.vue'
-import { selectVideoBackground } from '../videoAssets'
+import { getVideoBackgroundStyle, getVideoBackgroundTone, selectVideoBackground } from '../videoAssets'
 import VideoMotionLayer from './VideoMotionLayer.vue'
 import VideoSlideRenderer from './VideoSlideRenderer.vue'
 import { classifyVideoSlide } from './videoSlideClassifier'
@@ -78,6 +83,20 @@ const resolvedBackgroundUrl = computed(() => props.backgroundUrl || selectVideoB
   ].join(' ')
 }))
 const showWaveform = computed(() => !props.hasStarted || props.isPlaying)
+const backgroundTone = computed(() => getVideoBackgroundTone(resolvedBackgroundUrl.value))
+const backgroundStyle = computed(() => getVideoBackgroundStyle(resolvedBackgroundUrl.value))
+const backgroundColorVars = computed(() => {
+  const style = backgroundStyle.value || {}
+  return {
+    ...(style.text ? { '--video-text': style.text } : {}),
+    ...(style.muted ? { '--video-muted': style.muted } : {}),
+    ...(style.soft ? { '--video-soft': style.soft } : {}),
+    ...(style.line ? { '--video-line': style.line } : {}),
+    ...(style.numberBg ? { '--video-number-bg': style.numberBg } : {}),
+    ...(style.numberText ? { '--video-number-text': style.numberText } : {})
+  }
+})
+const layoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
 </script>
 
 <style scoped>
@@ -88,6 +107,37 @@ const showWaveform = computed(() => !props.hasStarted || props.isPlaying)
   height: 100%;
   overflow: hidden;
   background: #0e2444;
+  --video-text: #f8fbff;
+  --video-muted: rgba(235, 246, 255, 0.78);
+  --video-soft: rgba(215, 242, 246, 0.92);
+  --video-card-bg: rgba(8, 22, 44, 0.36);
+  --video-card-strong: rgba(8, 22, 44, 0.48);
+  --video-card-border: rgba(220, 240, 255, 0.22);
+  --video-shadow: rgba(0, 0, 0, 0.22);
+  --video-line: rgba(255, 255, 255, 0.78);
+  --video-chip-bg: rgba(255, 255, 255, 0.13);
+  --video-chip-text: rgba(240, 250, 255, 0.92);
+  --video-number-bg: #ffffff;
+  --video-number-text: #1f63d6;
+  --video-bg-shade: rgba(8, 28, 62, 0.38);
+  --video-bg-glow: rgba(255, 255, 255, 0.14);
+}
+
+.video-slide-canvas.is-light-bg {
+  --video-text: #14233a;
+  --video-muted: rgba(25, 43, 68, 0.76);
+  --video-soft: rgba(39, 75, 116, 0.92);
+  --video-card-bg: rgba(255, 255, 255, 0.72);
+  --video-card-strong: rgba(255, 255, 255, 0.84);
+  --video-card-border: rgba(41, 91, 152, 0.16);
+  --video-shadow: rgba(55, 82, 115, 0.12);
+  --video-line: rgba(31, 99, 214, 0.72);
+  --video-chip-bg: rgba(255, 255, 255, 0.82);
+  --video-chip-text: rgba(20, 35, 58, 0.9);
+  --video-number-bg: #1f63d6;
+  --video-number-text: #ffffff;
+  --video-bg-shade: rgba(255, 255, 255, 0.16);
+  --video-bg-glow: rgba(255, 255, 255, 0.26);
 }
 
 .video-slide-canvas__wave {

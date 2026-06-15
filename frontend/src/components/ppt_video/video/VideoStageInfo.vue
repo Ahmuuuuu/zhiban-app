@@ -40,8 +40,8 @@ defineProps({
   padding: 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 999px;
-  background: rgba(7, 18, 32, 0.46);
-  color: rgba(255, 255, 255, 0.92);
+  background: var(--video-card-bg, rgba(7, 18, 32, 0.46));
+  color: var(--video-text, rgba(255, 255, 255, 0.92));
   display: inline-flex;
   align-items: center;
   backdrop-filter: blur(12px);
@@ -51,7 +51,7 @@ defineProps({
 }
 
 .video-stage-info b {
-  color: rgba(215, 242, 246, 0.88);
+  color: var(--video-soft, rgba(215, 242, 246, 0.88));
 }
 
 @media (max-width: 640px) {

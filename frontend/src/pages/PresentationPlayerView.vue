@@ -33,21 +33,15 @@
             :has-started="hasStarted"
             :background-url="videoBackgroundUrl"
           >
-            <template #controls>
-              <div class="lesson-controls">
-                <button type="button" :disabled="activeIndex <= 0" @click="prevSlide">上一页</button>
-                <button type="button" class="primary" @click="togglePlay">
-                  {{ isPlaying ? '暂停' : '播放' }}
-                </button>
-                <button type="button" :disabled="activeIndex >= slides.length - 1" @click="nextSlide">下一页</button>
-              </div>
-            </template>
-
             <template #progress>
               <VideoGlowProgress
                 class="lesson-progress"
-                :current-time="currentTime"
-                :duration="duration"
+                :current-time="globalCurrentTime"
+                :duration="totalDuration"
+                :is-playing="isPlaying"
+                :markers="progressMarkers"
+                @toggle-play="togglePlay"
+                @seek="seekToGlobalTime"
               />
             </template>
           </VideoSlideCanvas>
@@ -82,15 +76,8 @@
         正在等待后端写入完整课件...
       </div>
 
-      <aside class="teacher-pet" :class="{ speaking: isPlaying }" aria-label="小知讲师">
-        <div class="teacher-pet__bubble">
-          <strong>小知讲师</strong>
-          <span>{{ isPlaying ? '正在讲解' : '小知待命' }}</span>
-        </div>
-        <div class="teacher-pet__body">
-          <img :src="petImage" alt="" draggable="false" />
-          <span class="teacher-pet__mouth"></span>
-        </div>
+      <aside v-if="isPlaying" class="teacher-tip" aria-label="小知讲解提示">
+        小知正在为你讲解
       </aside>
     </section>
   </main>
@@ -106,7 +93,6 @@ import VideoStatusBadge from '../components/ppt_video/video/VideoStatusBadge.vue
 import VideoSlideCanvas from '../components/ppt_video/video/slides/VideoSlideCanvas.vue'
 import { selectVideoBackground } from '../components/ppt_video/video/videoAssets'
 import 'katex/dist/katex.min.css'
-import petImage from '../assets/pic/zhiban-pet-base.png'
 
 const route = useRoute()
 const router = useRouter()
@@ -120,9 +106,11 @@ const presentationChapters = ref([])
 const activeIndex = ref(0)
 const currentTime = ref(0)
 const duration = ref(0)
+const knownDurations = ref({})
 const hasStarted = ref(false)
 const isPlaying = ref(false)
 let audioPollTimer = 0
+let silentPlaybackTimer = 0
 let presentationPollTimer = 0
 let returning = false
 
@@ -222,20 +210,28 @@ const extractFormulas = value => {
 
 const withoutFormulas = value => String(value || '').replace(formulaPattern, ' ')
 
-const splitContentText = value => plainText(value)
-  .split(/[。；;]\s*|\n+|，(?=.{8,})/g)
-  .map(item => item.trim())
-  .filter(item => item.length >= 4)
+const normalizeStructuredItems = values => (Array.isArray(values) ? values : [])
+  .map(item => {
+    if (typeof item === 'string') return item
+    return item?.text || item?.content || item?.title || ''
+  })
+  .map(item => plainText(withoutFormulas(item)))
+  .filter(Boolean)
 
 const slideItems = slide => {
-  const blocks = Array.isArray(slide?.blocks)
-    ? slide.blocks.map(block => typeof block === 'string' ? block : block?.text)
-    : []
-  const bullets = Array.isArray(slide?.bullets) ? slide.bullets : []
-  const text = plainText(withoutFormulas(slide?.text || ''))
-  const splitText = text ? text.split(/[。；;]\s*|\n+/).filter(Boolean) : []
-  const htmlText = splitContentText(withoutFormulas(slide?.content_html || ''))
-  return [...blocks, ...bullets, ...splitText, ...htmlText].map(plainText).filter(Boolean).slice(0, 6)
+  const structured = [
+    ...normalizeStructuredItems(slide?.items),
+    ...normalizeStructuredItems(slide?.blocks),
+    ...normalizeStructuredItems(slide?.bullets)
+  ]
+  const unique = structured.filter((item, index, array) => array.indexOf(item) === index)
+  if (unique.length) return unique.slice(0, 6)
+
+  const lineItems = plainText(withoutFormulas(slide?.text || ''))
+    .split(/\n+/)
+    .map(item => item.replace(/^[-*•\d.、\s]+/, '').trim())
+    .filter(item => item.length >= 4)
+  return lineItems.slice(0, 6)
 }
 
 const slideFormulas = slide => [
@@ -254,7 +250,7 @@ const slides = computed(() => {
         const html = slide.content_html || ''
         const items = slideItems(slide)
         const formulas = slideFormulas(slide)
-        const summary = plainText(withoutFormulas(html || items.join('。') || slide.text || chapterTitle))
+        const summary = plainText(withoutFormulas(slide.summary || slide.text || items.join('。') || html || chapterTitle))
         flattened.push({
           id: `slide-${chapterIndex}-${slideIndex}`,
           index: flattened.length,
@@ -297,6 +293,44 @@ const videoBackgroundUrl = computed(() => selectVideoBackground({
   title: title.value,
   content: activeSlide.value?.summary || ''
 }))
+
+const getSlideDuration = slide => {
+  const known = knownDurations.value[slide?.id]
+  if (Number.isFinite(known) && known > 0) return known
+  const declared = Number(slide?.slideDurationMs || 0) / 1000
+  if (Number.isFinite(declared) && declared > 0) return declared
+  const textLength = String(slide?.summary || '').length + (slide?.items || []).join('').length
+  return Math.max(6, Math.min(18, Math.ceil(textLength / 34)))
+}
+
+const timelineSegments = computed(() => {
+  let start = 0
+  return slides.value.map((slide, index) => {
+    const segmentDuration = getSlideDuration(slide)
+    const segment = {
+      id: slide.id,
+      index,
+      title: slide.title,
+      start,
+      duration: segmentDuration,
+      end: start + segmentDuration
+    }
+    start += segmentDuration
+    return segment
+  })
+})
+
+const activeSegment = computed(() => timelineSegments.value[activeIndex.value] || null)
+const totalDuration = computed(() => timelineSegments.value.at(-1)?.end || duration.value || 0)
+const globalCurrentTime = computed(() => (activeSegment.value?.start || 0) + currentTime.value)
+const progressMarkers = computed(() => timelineSegments.value
+  .filter(segment => totalDuration.value > 0 && segment.start > 0)
+  .map(segment => ({
+    id: segment.id,
+    label: segment.title,
+    time: segment.start,
+    percent: (segment.start / totalDuration.value) * 100
+  })))
 
 const chapterNav = computed(() => slides.value.map(slide => ({
   id: slide.id,
@@ -350,9 +384,10 @@ const formatTime = seconds => {
   return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
 }
 
-const durationLabel = computed(() => formatTime(duration.value))
+const durationLabel = computed(() => formatTime(totalDuration.value))
 
 const stopLessonMedia = () => {
+  window.clearInterval(silentPlaybackTimer)
   audioRef.value?.pause?.()
   try {
     const win = frameRef.value?.contentWindow
@@ -410,10 +445,17 @@ const loadLessonHtml = async () => {
 const syncAudioTime = () => {
   if (!audioRef.value) return
   currentTime.value = audioRef.value.currentTime || 0
-  duration.value = Number.isFinite(audioRef.value.duration) ? audioRef.value.duration : 0
+  duration.value = Number.isFinite(audioRef.value.duration) ? audioRef.value.duration : getSlideDuration(activeSlide.value)
+  if (activeSlide.value?.id && Number.isFinite(audioRef.value.duration) && audioRef.value.duration > 0) {
+    knownDurations.value = {
+      ...knownDurations.value,
+      [activeSlide.value.id]: audioRef.value.duration
+    }
+  }
 }
 
 const handleAudioPlay = () => {
+  window.clearInterval(silentPlaybackTimer)
   hasStarted.value = true
   isPlaying.value = true
 }
@@ -428,6 +470,19 @@ const togglePlay = async () => {
   hasStarted.value = true
   if (!audioRef.value || !activeAudioUrl.value) {
     isPlaying.value = !isPlaying.value
+    window.clearInterval(silentPlaybackTimer)
+    if (isPlaying.value) {
+      silentPlaybackTimer = window.setInterval(() => {
+        const nextTime = currentTime.value + 0.25
+        const currentDuration = getSlideDuration(activeSlide.value)
+        if (nextTime >= currentDuration) {
+          currentTime.value = currentDuration
+          handleAudioEnded()
+          return
+        }
+        currentTime.value = nextTime
+      }, 250)
+    }
     return
   }
   if (isPlaying.value) {
@@ -441,20 +496,35 @@ const togglePlay = async () => {
   }
 }
 
-const setSlide = async index => {
+const setSlide = async (index, offset = 0) => {
   stopLessonMedia()
   activeIndex.value = Math.min(Math.max(index, 0), slides.value.length - 1)
-  currentTime.value = 0
-  duration.value = 0
+  currentTime.value = Math.max(0, offset)
+  duration.value = getSlideDuration(activeSlide.value)
   await nextTick()
   syncAudioTime()
+  if (audioRef.value && Number.isFinite(offset) && offset > 0) {
+    audioRef.value.currentTime = Math.min(offset, audioRef.value.duration || getSlideDuration(activeSlide.value))
+    syncAudioTime()
+  }
 }
 
 const prevSlide = () => setSlide(activeIndex.value - 1)
 const nextSlide = autoplay => {
   setSlide(activeIndex.value + 1).then(() => {
-    if (autoplay && activeAudioUrl.value) togglePlay()
+    if (autoplay) togglePlay()
   })
+}
+
+const seekToGlobalTime = async targetTime => {
+  if (!timelineSegments.value.length) return
+  const clamped = Math.min(Math.max(Number(targetTime) || 0, 0), totalDuration.value)
+  const segment = timelineSegments.value.find(item => clamped >= item.start && clamped < item.end)
+    || timelineSegments.value.at(-1)
+  const offset = Math.max(0, clamped - segment.start)
+  const shouldResume = isPlaying.value
+  await setSlide(segment.index, offset)
+  if (shouldResume) togglePlay()
 }
 
 const selectNavSlide = chapter => {
@@ -517,6 +587,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopLessonMedia()
   window.clearInterval(audioPollTimer)
+  window.clearInterval(silentPlaybackTimer)
   window.clearInterval(presentationPollTimer)
 })
 </script>

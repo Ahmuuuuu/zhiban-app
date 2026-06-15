@@ -1,5 +1,8 @@
 <template>
-  <section class="video-formula-slide">
+  <section
+    class="video-formula-slide"
+    :class="`layout-${layoutSeed}`"
+  >
     <div class="formula-main">
       <span>{{ slide.chapterTitle }}</span>
       <h2>{{ slide.title }}</h2>
@@ -32,6 +35,10 @@ const props = defineProps({
   slide: {
     type: Object,
     required: true
+  },
+  layoutSeed: {
+    type: Number,
+    default: 0
   }
 })
 
@@ -46,15 +53,50 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: 28px;
-  color: #fff;
+  color: var(--video-text);
+}
+
+.video-formula-slide.layout-1 {
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+}
+
+.video-formula-slide.layout-1 .formula-main {
+  order: 2;
+}
+
+.video-formula-slide.layout-1 .formula-notes {
+  order: 1;
+}
+
+.video-formula-slide.layout-2 {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 0.74fr) minmax(160px, 0.48fr);
+}
+
+.video-formula-slide.layout-2 .formula-notes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: stretch;
+}
+
+.video-formula-slide.layout-3,
+.video-formula-slide.layout-4 {
+  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1fr);
+}
+
+.video-formula-slide.layout-3 .formula-main {
+  transform-origin: left center;
+}
+
+.video-formula-slide.layout-4 .formula-main {
+  min-height: 0;
 }
 
 .formula-main,
 .formula-notes {
   min-width: 0;
-  border: 1px solid rgba(220, 240, 255, 0.18);
+  border: 1px solid var(--video-card-border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--video-card-bg);
   backdrop-filter: blur(14px);
 }
 
@@ -75,7 +117,7 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   background: rgba(255, 255, 255, 0.12);
   display: inline-flex;
   align-items: center;
-  color: rgba(215, 242, 246, 0.92);
+  color: var(--video-soft);
   font-size: 12px;
   font-weight: 900;
 }
@@ -90,7 +132,7 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   min-height: 104px;
   padding: 22px;
   border-radius: 8px;
-  background: rgba(5, 16, 30, 0.34);
+  background: var(--video-card-strong);
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -118,7 +160,7 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   min-height: 72px;
   padding: 14px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--video-card-strong);
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 10px;
@@ -131,14 +173,14 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   width: 30px;
   height: 30px;
   border-radius: 999px;
-  background: #ffffff;
-  color: #1f63d6;
+  background: var(--video-number-bg);
+  color: var(--video-number-text);
   display: grid;
   place-items: center;
 }
 
 .formula-notes span {
-  color: rgba(235, 246, 255, 0.86);
+  color: var(--video-muted);
   line-height: 1.45;
   font-size: 15px;
 }

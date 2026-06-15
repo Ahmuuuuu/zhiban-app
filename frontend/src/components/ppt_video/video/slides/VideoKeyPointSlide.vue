@@ -1,5 +1,8 @@
 <template>
-  <section class="video-keypoint-slide">
+  <section
+    class="video-keypoint-slide"
+    :class="`layout-${layoutSeed}`"
+  >
     <div class="video-keypoint-slide__hero">
       <span>{{ slide.chapterTitle }}</span>
       <h2>{{ slide.title }}</h2>
@@ -46,6 +49,10 @@ const props = defineProps({
   slide: {
     type: Object,
     required: true
+  },
+  layoutSeed: {
+    type: Number,
+    default: 0
   }
 })
 
@@ -68,7 +75,49 @@ const terms = computed(() => getSlideTerms(props.slide))
     "hero visual"
     "cards visual";
   gap: 22px 28px;
-  color: #fff;
+  color: var(--video-text);
+}
+
+.video-keypoint-slide.layout-1 {
+  grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+  grid-template-areas:
+    "visual hero"
+    "visual cards";
+}
+
+.video-keypoint-slide.layout-2 {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(120px, 0.52fr) minmax(180px, 0.72fr);
+  grid-template-areas:
+    "hero"
+    "visual"
+    "cards";
+}
+
+.video-keypoint-slide.layout-3 {
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas:
+    "hero cards"
+    "visual cards";
+}
+
+.video-keypoint-slide.layout-4 {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "hero hero"
+    "cards visual";
+}
+
+.video-keypoint-slide.layout-3 .video-keypoint-slide__cards {
+  grid-template-columns: 1fr;
+  align-content: center;
+}
+
+.video-keypoint-slide.layout-4 .video-keypoint-slide__cards {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
 }
 
 .video-keypoint-slide__hero {
@@ -89,7 +138,7 @@ const terms = computed(() => getSlideTerms(props.slide))
   background: rgba(255, 255, 255, 0.12);
   display: inline-flex;
   align-items: center;
-  color: rgba(215, 242, 246, 0.92);
+  color: var(--video-soft);
   font-size: 12px;
   font-weight: 900;
   backdrop-filter: blur(10px);
@@ -100,7 +149,7 @@ const terms = computed(() => getSlideTerms(props.slide))
   margin: 0;
   font-size: clamp(30px, 3.8vw, 56px);
   line-height: 1.12;
-  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.34);
+  text-shadow: 0 4px 24px var(--video-shadow);
 }
 
 .video-keypoint-slide h2::after {
@@ -110,13 +159,13 @@ const terms = computed(() => getSlideTerms(props.slide))
   height: 4px;
   margin-top: 20px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--video-line);
 }
 
 .video-keypoint-slide__hero p {
   max-width: 720px;
   margin: 0;
-  color: rgba(235, 246, 255, 0.76);
+  color: var(--video-muted);
   font-size: clamp(15px, 1.2vw, 19px);
   line-height: 1.7;
   display: -webkit-box;
@@ -135,35 +184,35 @@ const terms = computed(() => getSlideTerms(props.slide))
 .video-keypoint-slide__cards article {
   min-height: 0;
   padding: 16px 18px;
-  border: 1px solid rgba(220, 240, 255, 0.18);
+  border: 1px solid var(--video-card-border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--video-card-bg);
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
   backdrop-filter: blur(12px);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 18px 42px var(--video-shadow);
   animation: card-pop 0.52s ease both;
   animation-delay: calc(var(--delay) * 0.09s + 0.12s);
 }
 
 .video-keypoint-slide__cards article.featured {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--video-card-strong);
 }
 
 .video-keypoint-slide__cards b {
   width: 36px;
   height: 36px;
   border-radius: 999px;
-  background: #ffffff;
-  color: #1f63d6;
+  background: var(--video-number-bg);
+  color: var(--video-number-text);
   display: grid;
   place-items: center;
 }
 
 .video-keypoint-slide__cards span {
-  color: rgba(235, 246, 255, 0.86);
+  color: var(--video-muted);
   font-size: clamp(15px, 1.18vw, 20px);
   line-height: 1.48;
   display: -webkit-box;
@@ -177,10 +226,10 @@ const terms = computed(() => getSlideTerms(props.slide))
   position: relative;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgba(220, 240, 255, 0.18);
+  border: 1px solid var(--video-card-border);
   border-radius: 8px;
-  background: rgba(6, 20, 45, 0.32);
-  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.18);
+  background: var(--video-card-bg);
+  box-shadow: 0 20px 52px var(--video-shadow);
   backdrop-filter: blur(14px);
   animation: panel-in 0.72s ease both;
 }
@@ -217,7 +266,7 @@ const terms = computed(() => getSlideTerms(props.slide))
   top: calc(18px + var(--line) * 30px);
   height: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--video-line);
   animation: visual-line 3s ease-in-out infinite;
   animation-delay: calc(var(--line) * -0.28s);
 }
@@ -235,10 +284,10 @@ const terms = computed(() => getSlideTerms(props.slide))
 .term-cloud b {
   min-height: 30px;
   padding: 0 11px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--video-card-border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.13);
-  color: rgba(240, 250, 255, 0.9);
+  background: var(--video-chip-bg);
+  color: var(--video-chip-text);
   display: inline-flex;
   align-items: center;
   font-size: 13px;
