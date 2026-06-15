@@ -25,7 +25,7 @@ const props = defineProps({
 const backgroundStyle = computed(() => ({
   backgroundImage: props.backgroundUrl
     ? `url("${props.backgroundUrl}")`
-    : 'linear-gradient(135deg, #10213d, #1f6f8f 48%, #7bc6d8)'
+    : '#143f73'
 }))
 </script>
 
@@ -56,9 +56,8 @@ const backgroundStyle = computed(() => ({
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(90deg, rgba(6, 18, 32, 0.72), rgba(6, 18, 32, 0.24) 48%, rgba(6, 18, 32, 0.64)),
-    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.18), transparent 34%),
-    radial-gradient(circle at 78% 78%, rgba(111, 204, 221, 0.2), transparent 36%);
+    rgba(8, 28, 62, 0.34),
+    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.14), transparent 34%);
 }
 
 .video-ambient__scan {
@@ -67,7 +66,7 @@ const backgroundStyle = computed(() => ({
   background: linear-gradient(115deg, transparent 22%, rgba(255, 255, 255, 0.14) 44%, transparent 62%);
   transform: translateX(-55%);
   animation: ambient-scan 7s ease-in-out infinite;
-  opacity: 0.48;
+  opacity: 0.32;
 }
 
 .video-ambient.is-active .video-ambient__scan {
