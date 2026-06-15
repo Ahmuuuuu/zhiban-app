@@ -97,16 +97,16 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
         raise HTTPException(status_code=404, detail="课件不存在")
 
     q = _subscribe_sse(presentation_id)
+    # 二次检查：订阅后再查一次，防止在初次检查和订阅之间已完成
+    refreshed = await get_presentation(presentation_id, user_id)
 
     async def event_stream():
         try:
-            # 先发当前状态
-            yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
-            # 回放已存储的进度事件（防止 SSE 订阅晚于进度推送）
+            yield f"data: {json.dumps(refreshed or result, ensure_ascii=False)}\n\n"
             for evt in _progress_events.get(presentation_id, []):
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-            # 如果已完结则不再等待
-            if result["status"] in ("ready", "failed"):
+            current = refreshed or result
+            if current["status"] in ("ready", "failed"):
                 return
 
             while True:
@@ -116,7 +116,6 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
                     if msg.get("status") in ("ready", "failed"):
                         return
                 except asyncio.TimeoutError:
-                    # 超时检查是否已完成（处理竞态：任务在订阅前已完成）
                     current = await get_presentation(presentation_id, user_id)
                     if current and current["status"] in ("ready", "failed"):
                         yield f"data: {json.dumps(current, ensure_ascii=False)}\n\n"

@@ -157,7 +157,7 @@ async def upload_document(
 
     except Exception as e:
         logging.getLogger(__name__).exception("知识库上传失败")
-        raise HTTPException(500, f"上传失败: {type(e).__name__}: {e}")
+        raise HTTPException(500, "上传失败，请稍后重试")
 
     finally:
         if tmp_path and os.path.exists(tmp_path):
