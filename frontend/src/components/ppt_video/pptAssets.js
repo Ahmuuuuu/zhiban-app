@@ -120,16 +120,32 @@ const decorationWords = {
 const byDecoration = type => decorations.filter(item => includesAny(item.name.toLowerCase(), decorationWords[type] || []))
 const bySubject = subject => subjects.filter(item => item.group === subject)
 
+const normalizeSubject = value => {
+  const text = String(value || '').trim().toLowerCase()
+  if (!text) return ''
+  const direct = subjectRules.find(item => item.key.toLowerCase() === text)
+  if (direct) return direct.key
+  const keyword = subjectRules.find(item => includesAny(text, [item.key, ...item.words]))
+  return keyword?.key || ''
+}
+
+const pickSubjectAsset = (list, slide, seed) => {
+  if (!list.length) return null
+  const text = `${slide?.title || ''}\n${slide?.text || ''}\n${slide?.content || ''}`.toLowerCase()
+  const matched = list.find(item => text.includes(item.name.replace(/\.[^.]+$/, '').toLowerCase()))
+  return matched || pick(list, seed)
+}
+
 export const selectCustomPptAssets = (slide, index = 0) => {
   const seed = `${slide?.title || ''}-${slide?.text || slide?.content || ''}-${index}`
-  const subject = inferSubject(slide)
+  const subject = normalizeSubject(slide?.subject || slide?.discipline || slide?.courseSubject) || inferSubject(slide)
   const subjectList = subject ? bySubject(subject) : []
   const background = backgrounds.length ? backgrounds[index % backgrounds.length] : null
 
   return {
     background: background?.url || '',
     subject,
-    subjectImage: pick(subjectList, seed)?.url || '',
+    subjectImage: pickSubjectAsset(subjectList, slide, seed)?.url || '',
     tape: pick(byDecoration('tape'), seed)?.url || '',
     note: pick(byDecoration('note'), seed, 1)?.url || '',
     pin: pick(byDecoration('pin'), seed, 2)?.url || '',

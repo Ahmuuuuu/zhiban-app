@@ -68,6 +68,7 @@ const terms = computed(() => getSlideTerms(props.slide))
 .video-keypoint-slide {
   position: absolute;
   inset: 82px 54px 104px;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
   grid-template-rows: minmax(0, 0.72fr) minmax(160px, 0.9fr);
@@ -76,6 +77,25 @@ const terms = computed(() => getSlideTerms(props.slide))
     "cards visual";
   gap: 22px 28px;
   color: var(--video-text);
+}
+
+.video-keypoint-slide *,
+.video-keypoint-slide *::before,
+.video-keypoint-slide *::after {
+  box-sizing: border-box;
+}
+
+.video-keypoint-slide.is-dense {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "hero"
+    "cards";
+  gap: 18px;
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__visual {
+  display: none;
 }
 
 .video-keypoint-slide.layout-1 {
@@ -122,6 +142,7 @@ const terms = computed(() => getSlideTerms(props.slide))
 
 .video-keypoint-slide__hero {
   grid-area: hero;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: end;
@@ -152,6 +173,11 @@ const terms = computed(() => getSlideTerms(props.slide))
   text-shadow: 0 4px 24px var(--video-shadow);
 }
 
+.video-keypoint-slide.is-dense h2 {
+  max-width: 100%;
+  font-size: clamp(26px, 3vw, 44px);
+}
+
 .video-keypoint-slide h2::after {
   content: "";
   display: block;
@@ -170,8 +196,16 @@ const terms = computed(() => getSlideTerms(props.slide))
   line-height: 1.58;
 }
 
+.video-keypoint-slide.is-dense .video-keypoint-slide__hero p {
+  max-width: 100%;
+  font-size: clamp(12px, 0.94vw, 16px);
+  line-height: 1.45;
+}
+
 .video-keypoint-slide__cards {
   grid-area: cards;
+  min-width: 0;
+  min-height: 0;
   display: grid;
   grid-template-columns: 1fr;
   gap: 14px;
@@ -180,8 +214,9 @@ const terms = computed(() => getSlideTerms(props.slide))
 }
 
 .video-keypoint-slide.is-dense .video-keypoint-slide__cards {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 10px;
+  align-content: start;
 }
 
 .video-keypoint-slide__cards article {
@@ -196,6 +231,7 @@ const terms = computed(() => getSlideTerms(props.slide))
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+  overflow: hidden;
   backdrop-filter: blur(12px);
   box-shadow: 0 18px 42px var(--video-shadow);
   animation: card-pop 0.52s ease both;
@@ -274,7 +310,7 @@ const terms = computed(() => getSlideTerms(props.slide))
 
 .video-keypoint-slide.is-dense .video-keypoint-slide__cards span {
   font-size: clamp(11px, 0.82vw, 14px);
-  line-height: 1.28;
+  line-height: 1.34;
 }
 
 .video-keypoint-slide__visual {

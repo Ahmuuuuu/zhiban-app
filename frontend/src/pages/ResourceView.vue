@@ -55,17 +55,6 @@
             class="resource-card"
             @click="openResource(resource)"
           >
-            <div class="card-top">
-              <span class="type-mark">
-                <FileImage v-if="resource.type === 'image'" :size="18" />
-                <Presentation v-else-if="isPptResource(resource)" :size="18" />
-                <GitBranch v-else-if="isMindmapResource(resource)" :size="18" />
-                <Video v-else-if="isVideoResource(resource)" :size="18" />
-                <FileText v-else :size="18" />
-              </span>
-              <span class="visibility">{{ resource.categoryLabel || '我的资源' }}</span>
-            </div>
-
             <div class="resource-cover">
               <video
                 v-if="resource.coverType === 'video'"
@@ -79,14 +68,6 @@
             </div>
 
             <h2>{{ resource.title || '未命名资源' }}</h2>
-            <p>{{ getResourceExcerpt(resource) }}</p>
-
-            <footer>
-              <span>{{ formatDate(resource.created_at) }}</span>
-              <span v-if="resource.type === 'image'">图片</span>
-              <span v-else-if="isVideoResource(resource)">视频</span>
-              <span v-else>{{ getWordCount(resource.content) }} 字</span>
-            </footer>
             <div class="resource-actions">
               <button
                 v-if="canNarrateResource(resource)"
@@ -206,13 +187,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertCircle,
-  FileImage,
   FileSearch,
-  Presentation,
-  FileText,
-  GitBranch,
   PauseCircle,
-  Video,
   Volume2,
   RefreshCw,
   ChevronLeft,
@@ -1069,7 +1045,7 @@ onMounted(loadResources)
 
 .resource-card {
   height: 276px;
-  padding: 14px 15px 16px;
+  padding: 12px 13px;
   border-radius: 24px;
   background:
     linear-gradient(135deg, rgba(250, 250, 250, 0.92), rgba(237, 249, 252, 0.84)),
@@ -1078,13 +1054,13 @@ onMounted(loadResources)
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
   overflow: hidden;
   transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
 .resource-cover {
-  height: 96px;
+  height: 176px;
   border-radius: 16px;
   overflow: hidden;
   background: rgba(237, 249, 252, 0.76);
@@ -1156,15 +1132,15 @@ onMounted(loadResources)
 }
 
 .resource-card h2 {
-  margin: 2px 0 0;
+  margin: 0;
   color: #163f8f;
   font-size: 16px;
-  line-height: 1.28;
-  word-break: break-word;
-  display: -webkit-box;
+  line-height: 1.3;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  flex-shrink: 0;
 }
 
 .resource-card p {
@@ -1190,9 +1166,12 @@ onMounted(loadResources)
 
 .resource-actions {
   display: flex;
-  flex-wrap: nowrap;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
+  min-height: 28px;
+  margin-top: auto;
 }
 
 .resource-action {

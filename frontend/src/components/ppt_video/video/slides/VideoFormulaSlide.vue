@@ -50,10 +50,23 @@ const notes = computed(() => props.slide.items || [])
 .video-formula-slide {
   position: absolute;
   inset: 82px 54px 104px;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: 28px;
   color: var(--video-text);
+}
+
+.video-formula-slide *,
+.video-formula-slide *::before,
+.video-formula-slide *::after {
+  box-sizing: border-box;
+}
+
+.video-formula-slide.is-dense {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 0.72fr) minmax(0, 1fr);
+  gap: 18px;
 }
 
 .video-formula-slide.layout-1 {
@@ -94,6 +107,7 @@ const notes = computed(() => props.slide.items || [])
 .formula-main,
 .formula-notes {
   min-width: 0;
+  min-height: 0;
   border: 1px solid var(--video-card-border);
   border-radius: 8px;
   background:
@@ -144,6 +158,11 @@ const notes = computed(() => props.slide.items || [])
   animation: formula-in 0.62s ease both;
 }
 
+.video-formula-slide.is-dense .formula-main {
+  padding: 22px;
+  gap: 14px;
+}
+
 .formula-main > span {
   width: fit-content;
   min-height: 30px;
@@ -162,6 +181,10 @@ const notes = computed(() => props.slide.items || [])
   margin: 0;
   font-size: clamp(28px, 3vw, 46px);
   line-height: 1.15;
+}
+
+.video-formula-slide.is-dense .formula-main h2 {
+  font-size: clamp(24px, 2.6vw, 38px);
 }
 
 .formula-box {
@@ -201,12 +224,14 @@ const notes = computed(() => props.slide.items || [])
   display: grid;
   gap: 12px;
   align-content: center;
+  overflow: hidden;
 }
 
 .video-formula-slide.is-dense .formula-notes {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 9px;
   padding: 16px;
+  align-content: start;
 }
 
 .formula-notes article {
@@ -218,6 +243,7 @@ const notes = computed(() => props.slide.items || [])
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
+  overflow: hidden;
   animation: note-in 0.5s ease both;
   animation-delay: calc(var(--delay) * 0.09s);
 }

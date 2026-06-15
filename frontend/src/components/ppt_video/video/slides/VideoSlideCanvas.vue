@@ -17,7 +17,7 @@
     <VideoSubjectAssetLayer
       :slide="slide"
       :variant="variant"
-      :layout-seed="layoutSeed"
+      :layout-seed="contentLayoutSeed"
     />
 
     <VideoStageInfo
@@ -29,7 +29,7 @@
       :slide="slide"
       :variant="variant"
       :tone="backgroundTone"
-      :layout-seed="layoutSeed"
+      :layout-seed="contentLayoutSeed"
     />
 
     <VideoWaveform
@@ -112,6 +112,7 @@ const backgroundColorVars = computed(() => {
   }
 })
 const layoutSeed = computed(() => Number(props.slide?.index || 0) % 7)
+const contentLayoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
 </script>
 
 <style scoped>

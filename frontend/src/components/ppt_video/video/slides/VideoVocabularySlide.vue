@@ -71,6 +71,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 .video-vocabulary-slide {
   position: absolute;
   inset: 82px 54px 104px;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
   grid-template-rows: auto minmax(0, 1fr);
@@ -79,6 +80,25 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
     "deck scene";
   gap: 22px 28px;
   color: var(--video-text);
+}
+
+.video-vocabulary-slide *,
+.video-vocabulary-slide *::before,
+.video-vocabulary-slide *::after {
+  box-sizing: border-box;
+}
+
+.video-vocabulary-slide.is-dense {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "header"
+    "deck";
+  gap: 18px;
+}
+
+.video-vocabulary-slide.is-dense .scene-board {
+  display: none;
 }
 
 .video-vocabulary-slide.layout-1 {
@@ -115,6 +135,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 
 .video-vocabulary-slide__header {
   grid-area: header;
+  min-width: 0;
   display: grid;
   align-content: end;
   gap: 12px;
@@ -142,6 +163,10 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   line-height: 1.12;
 }
 
+.video-vocabulary-slide.is-dense h2 {
+  font-size: clamp(26px, 3vw, 42px);
+}
+
 .video-vocabulary-slide__header p {
   max-width: 720px;
   margin: 0;
@@ -150,8 +175,16 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   line-height: 1.55;
 }
 
+.video-vocabulary-slide.is-dense .video-vocabulary-slide__header p {
+  max-width: 100%;
+  font-size: clamp(12px, 0.94vw, 16px);
+  line-height: 1.45;
+}
+
 .vocab-deck {
   grid-area: deck;
+  min-width: 0;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
@@ -159,8 +192,9 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 }
 
 .video-vocabulary-slide.is-dense .vocab-deck {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 10px;
+  align-content: start;
 }
 
 .video-vocabulary-slide.layout-3 .vocab-deck {
@@ -181,13 +215,14 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
     var(--video-card-bg);
   display: grid;
   gap: 8px;
+  overflow: hidden;
   box-shadow: 0 18px 42px var(--video-shadow);
   animation: vocab-card 0.62s ease both;
   animation-delay: calc(var(--delay) * 0.08s);
 }
 
 .video-vocabulary-slide.is-dense .vocab-deck article {
-  min-height: 72px;
+  min-height: 68px;
   padding: 11px;
   gap: 5px;
 }
