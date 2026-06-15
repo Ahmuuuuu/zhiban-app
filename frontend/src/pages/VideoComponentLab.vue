@@ -100,6 +100,7 @@
               duration-label="02:45"
               is-playing
               has-started
+              :background-url="backgroundUrl"
             >
               <template #progress>
                 <div class="slide-progress">
