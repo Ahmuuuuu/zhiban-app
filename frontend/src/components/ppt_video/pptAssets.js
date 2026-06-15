@@ -104,9 +104,10 @@ export const selectCustomPptAssets = (slide, index = 0) => {
   const seed = `${slide?.title || ''}-${slide?.text || slide?.content || ''}-${index}`
   const subject = inferSubject(slide)
   const subjectList = subject ? bySubject(subject) : []
+  const background = backgrounds.length ? backgrounds[index % backgrounds.length] : null
 
   return {
-    background: pick(backgrounds, seed)?.url || '',
+    background: background?.url || '',
     subject,
     subjectImage: pick(subjectList, seed)?.url || '',
     tape: pick(byDecoration('tape'), seed)?.url || '',

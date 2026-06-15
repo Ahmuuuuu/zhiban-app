@@ -3,110 +3,186 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>{{TITLE}} - 学习课件</title>
+  <title>{{TITLE}} - 学习视频</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; }
     body {
       font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
-      background: #0d1117;
-      color: #e6edf3;
-      padding: 40px 0;
+      background:
+        radial-gradient(circle at 12% 8%, rgba(80, 214, 190, 0.2), transparent 28%),
+        radial-gradient(circle at 88% 18%, rgba(76, 121, 255, 0.24), transparent 30%),
+        linear-gradient(135deg, #08101f 0%, #142944 56%, #10202f 100%);
+      color: #eef6ff;
+      overflow-x: hidden;
     }
     .slides-wrapper {
+      width: 100%;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 40px;
-      padding: 0 40px;
+      gap: 48px;
+      padding: 32px;
     }
     .slide {
-      width: 1280px;
-      min-height: 720px;
-      padding: 60px 80px 50px;
+      width: min(1280px, calc(100vw - 64px));
+      aspect-ratio: 16 / 9;
+      min-height: 620px;
+      padding: 74px 74px 64px;
       display: flex;
       flex-direction: column;
       justify-content: center;
       flex-shrink: 0;
       overflow: hidden;
     }
-    .slide + .slide {
-      border-top: 1px solid #21262d;
-      padding-top: 80px;
-    }
-    .slide h2 {
-      color: #ffffff;
-      font-size: 36px;
-      line-height: 1.3;
-      margin-bottom: 24px;
-    }
-    .slide ul {
-      list-style: none;
-      padding: 0;
-    }
-    .slide ul li {
-      margin-bottom: 8px;
-      font-size: 22px;
-      line-height: 1.6;
-      color: #c9d1d9;
-    }
-    .intro-content { font-size: 24px; line-height: 1.8; color: #c9d1d9; }
-    .intro-content h1, .intro-content h2 { color: #fff; margin-bottom: 18px; font-size: 36px; }
-    .intro-content p { margin-bottom: 12px; }
-    .intro-content ul li { font-size: 22px; margin-bottom: 10px; }
-    #mindmap-container { font-size: 22px; line-height: 1.7; }
-    .katex { font-size: 1.1em; }
-    .katex-display { margin: 0; }
     .video-slide {
       position: relative;
       isolation: isolate;
-      border-radius: 0;
+      border: 1px solid rgba(220, 240, 255, 0.16);
+      border-radius: 8px;
       background:
-        radial-gradient(circle at 88% 18%, rgba(56, 189, 248, 0.24), transparent 24%),
-        linear-gradient(135deg, #101827 0%, #172033 48%, #0f172a 100%);
+        radial-gradient(circle at 76% 22%, rgba(125, 211, 252, 0.22), transparent 28%),
+        radial-gradient(circle at 18% 76%, rgba(91, 201, 188, 0.16), transparent 30%),
+        linear-gradient(135deg, rgba(7, 18, 34, 0.96), rgba(18, 41, 67, 0.94) 52%, rgba(8, 28, 42, 0.98));
+      box-shadow: 0 28px 90px rgba(4, 11, 24, 0.42);
     }
-    .video-slide::before {
+    .video-slide::before,
+    .video-slide::after {
       content: "";
       position: absolute;
-      inset: 34px;
-      border: 1px solid rgba(148, 163, 184, 0.22);
+      pointer-events: none;
       z-index: -1;
     }
+    .video-slide::before {
+      inset: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+      background-size: 54px 54px;
+      mask-image: linear-gradient(90deg, transparent, #000 12%, #000 86%, transparent);
+    }
+    .video-slide::after {
+      width: 420px;
+      height: 420px;
+      right: -140px;
+      top: -130px;
+      border-radius: 999px;
+      border: 1px solid rgba(133, 229, 230, 0.24);
+      box-shadow: 0 0 90px rgba(91, 201, 188, 0.12);
+    }
     .video-slide h2 {
-      max-width: 1120px;
-      font-size: 42px;
-      line-height: 1.18;
-      margin-bottom: 34px;
-      color: #f8fafc;
-      text-shadow: 0 2px 18px rgba(15, 23, 42, 0.5);
+      max-width: 850px;
+      color: #ffffff;
+      font-size: clamp(34px, 4.1vw, 58px);
+      line-height: 1.12;
+      margin-bottom: 30px;
+      letter-spacing: 0;
+      text-shadow: 0 4px 24px rgba(0, 0, 0, 0.34);
+    }
+    .video-slide h2::after {
+      content: "";
+      display: block;
+      width: min(520px, 70%);
+      height: 4px;
+      margin-top: 22px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #ffd166, #5bc9bc, transparent);
+    }
+    .video-slide__meta {
+      position: absolute;
+      left: 48px;
+      right: 48px;
+      top: 38px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      color: rgba(227, 242, 255, 0.82);
+      font-size: 14px;
+      font-weight: 900;
+      pointer-events: none;
+    }
+    .video-slide__meta span,
+    .video-slide__meta b {
+      min-height: 30px;
+      padding: 0 12px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      background: rgba(5, 16, 30, 0.36);
+      display: inline-flex;
+      align-items: center;
+      backdrop-filter: blur(12px);
+    }
+    .video-slide__progress {
+      position: absolute;
+      left: 48px;
+      right: 48px;
+      bottom: 28px;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(220, 240, 255, 0.16);
+      overflow: hidden;
+    }
+    .video-slide__progress i {
+      display: block;
+      height: 100%;
+      width: var(--progress, 38%);
+      border-radius: inherit;
+      background: linear-gradient(90deg, #7aa7ff, #5bc9bc, #ffd166);
+      box-shadow: 0 0 20px rgba(91, 201, 188, 0.28);
+    }
+    .video-slide__wave {
+      position: absolute;
+      right: 60px;
+      bottom: 52px;
+      width: 210px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      opacity: 0.72;
+    }
+    .video-slide__wave i {
+      width: 7px;
+      height: calc(8px + (var(--i) % 7) * 4px);
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(91, 201, 188, 0.72));
+      animation: wave 1.6s ease-in-out infinite;
+      animation-delay: calc(var(--i) * -0.08s);
     }
     [data-narration-block] {
-      transition: transform 220ms ease, border-color 220ms ease, background 220ms ease;
+      transition: transform 220ms ease, border-color 220ms ease, background 220ms ease, box-shadow 220ms ease;
     }
     [data-narration-block].block-current {
       transform: translateY(-3px);
-      border-color: rgba(125, 211, 252, 0.85) !important;
-      background: rgba(14, 165, 233, 0.14) !important;
+      border-color: rgba(255, 209, 102, 0.82) !important;
+      background: rgba(255, 209, 102, 0.12) !important;
+      box-shadow: 0 16px 36px rgba(255, 209, 102, 0.12) !important;
     }
     .video-card-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 22px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
     }
     .video-card-grid article,
     .video-process article,
     .video-compare section,
     .video-compare li,
     .video-points li {
-      border: 1px solid rgba(148, 163, 184, 0.28);
-      background: rgba(15, 23, 42, 0.68);
-      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
-      color: #dbeafe;
+      border: 1px solid rgba(220, 240, 255, 0.18);
+      border-radius: 8px;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.045));
+      box-shadow: 0 18px 46px rgba(2, 8, 20, 0.26);
+      color: #e7f2ff;
+      backdrop-filter: blur(12px);
     }
     .video-card-grid article {
-      min-height: 148px;
-      padding: 22px 22px 20px;
+      min-height: 136px;
+      padding: 20px;
       display: grid;
-      grid-template-columns: 42px 1fr;
+      grid-template-columns: 42px minmax(0, 1fr);
       gap: 14px;
       align-items: start;
     }
@@ -114,99 +190,106 @@
     .video-process b {
       width: 42px;
       height: 42px;
-      border-radius: 50%;
+      border-radius: 999px;
       display: grid;
       place-items: center;
-      color: #0f172a;
-      background: #7dd3fc;
-      font-size: 20px;
+      color: #12223a;
+      background: linear-gradient(135deg, #ffd166, #5bc9bc);
+      font-size: 18px;
+      box-shadow: 0 10px 24px rgba(91, 201, 188, 0.24);
     }
     .video-card-grid span,
-    .video-process span {
-      font-size: 21px;
-      line-height: 1.45;
+    .video-process span,
+    .video-points li,
+    .video-compare li {
+      font-size: clamp(18px, 1.7vw, 23px);
+      line-height: 1.48;
     }
     .video-process {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 20px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
       align-items: stretch;
     }
     .video-process article {
-      min-height: 300px;
-      padding: 28px 20px;
+      min-height: 270px;
+      padding: 24px 18px;
       display: grid;
-      grid-template-rows: 52px 1fr;
-      gap: 22px;
+      grid-template-rows: 48px minmax(0, 1fr);
+      gap: 18px;
     }
     .video-compare {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 28px;
+      gap: 24px;
     }
     .video-compare section {
-      min-height: 390px;
-      padding: 26px 30px;
+      min-height: 340px;
+      padding: 24px;
     }
     .video-compare h3 {
-      width: 54px;
-      height: 54px;
+      width: 52px;
+      height: 52px;
       display: grid;
       place-items: center;
-      margin-bottom: 20px;
-      background: #fbbf24;
-      color: #111827;
-      font-size: 26px;
+      margin-bottom: 18px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #ffd166, #f7a35c);
+      color: #12223a;
+      font-size: 24px;
     }
     .video-points {
       display: grid;
-      gap: 14px;
+      gap: 12px;
     }
     .video-points li,
     .video-compare li {
       list-style: none;
-      padding: 16px 18px;
-      font-size: 21px;
-      line-height: 1.45;
+      padding: 14px 17px;
     }
     .video-split {
       display: grid;
-      grid-template-columns: 1.04fr 0.96fr;
-      gap: 34px;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 28px;
       align-items: stretch;
     }
     .video-visual {
       position: relative;
-      min-height: 390px;
+      min-height: 350px;
       overflow: hidden;
-      border: 1px solid rgba(125, 211, 252, 0.32);
-      background: linear-gradient(145deg, rgba(8, 47, 73, 0.92), rgba(30, 41, 59, 0.88));
+      border: 1px solid rgba(220, 240, 255, 0.2);
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at 48% 42%, rgba(255, 209, 102, 0.18), transparent 30%),
+        linear-gradient(145deg, rgba(15, 47, 73, 0.88), rgba(15, 35, 57, 0.86));
       display: grid;
       place-items: center;
       padding: 34px;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
     }
     .video-visual p {
       position: absolute;
       left: 34px;
       right: 34px;
       bottom: 28px;
-      font-size: 21px;
+      font-size: 20px;
       line-height: 1.35;
-      color: #e0f2fe;
+      color: #e0f7fa;
       text-align: center;
     }
     .visual-ring {
       width: 210px;
       height: 210px;
-      border-radius: 50%;
-      border: 22px solid rgba(125, 211, 252, 0.72);
-      border-right-color: rgba(251, 191, 36, 0.8);
+      border-radius: 999px;
+      border: 18px solid rgba(91, 201, 188, 0.72);
+      border-right-color: rgba(255, 209, 102, 0.9);
+      box-shadow: 0 0 50px rgba(91, 201, 188, 0.16);
     }
     .visual-line {
       position: absolute;
       height: 6px;
       border-radius: 999px;
-      background: rgba(167, 139, 250, 0.72);
+      background: rgba(122, 167, 255, 0.7);
     }
     .visual-line--a { width: 260px; top: 112px; left: 86px; transform: rotate(-12deg); }
     .visual-line--b { width: 220px; bottom: 118px; right: 76px; transform: rotate(16deg); }
@@ -214,37 +297,69 @@
       position: absolute;
       width: 24px;
       height: 24px;
-      border-radius: 50%;
-      background: #fbbf24;
+      border-radius: 999px;
+      background: #ffd166;
+      box-shadow: 0 0 22px rgba(255, 209, 102, 0.32);
     }
     .visual-dot--a { top: 96px; right: 120px; }
-    .visual-dot--b { left: 116px; bottom: 126px; background: #34d399; }
-    .visual-dot--c { right: 170px; bottom: 184px; background: #7dd3fc; }
+    .visual-dot--b { left: 116px; bottom: 126px; background: #5bc9bc; }
+    .visual-dot--c { right: 170px; bottom: 184px; background: #7aa7ff; }
     .video-formula {
       min-height: 170px;
-      margin-bottom: 26px;
-      padding: 38px 44px;
+      margin-bottom: 24px;
+      padding: 34px 42px;
       display: grid;
       place-items: center;
-      border: 1px solid rgba(125, 211, 252, 0.42);
-      background: linear-gradient(135deg, rgba(14, 165, 233, 0.24), rgba(124, 58, 237, 0.22));
+      border: 1px solid rgba(220, 240, 255, 0.22);
+      border-radius: 8px;
+      background: linear-gradient(135deg, rgba(91, 201, 188, 0.18), rgba(122, 167, 255, 0.2));
       color: #ffffff;
-      font-size: 42px;
+      font-size: clamp(30px, 3.3vw, 44px);
       line-height: 1.25;
-      font-weight: 800;
+      font-weight: 900;
       text-align: center;
     }
     .video-slide--intro .intro-content {
-      max-width: 1060px;
+      max-width: 960px;
       display: grid;
-      gap: 14px;
+      gap: 12px;
     }
     .video-slide--intro p {
-      padding: 16px 20px;
-      border-left: 5px solid #7dd3fc;
-      background: rgba(15, 23, 42, 0.54);
-      font-size: 24px;
+      padding: 15px 18px;
+      border: 1px solid rgba(220, 240, 255, 0.18);
+      border-left: 5px solid #ffd166;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.07);
+      font-size: clamp(19px, 1.9vw, 25px);
       line-height: 1.55;
+    }
+    #mindmap-container {
+      min-height: 420px;
+      padding: 24px;
+      border: 1px solid rgba(220, 240, 255, 0.18);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.07);
+    }
+    .katex { font-size: 1.1em; }
+    .katex-display { margin: 0; }
+    @keyframes wave {
+      0%, 100% { transform: scaleY(0.52); opacity: 0.45; }
+      50% { transform: scaleY(1.08); opacity: 0.9; }
+    }
+    @media (max-width: 900px) {
+      .slides-wrapper { padding: 16px; }
+      .slide {
+        width: calc(100vw - 32px);
+        min-height: 560px;
+        padding: 70px 26px 58px;
+      }
+      .video-card-grid,
+      .video-process,
+      .video-compare,
+      .video-split {
+        grid-template-columns: 1fr;
+      }
+      .video-slide__wave { display: none; }
     }
   </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
