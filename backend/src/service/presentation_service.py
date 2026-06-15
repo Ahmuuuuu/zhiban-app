@@ -23,6 +23,7 @@ PRESENTATION_DIR = Path(__file__).parent.parent.parent / "static" / "presentatio
 TEMPLATE_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template.html"
 TEMPLATE_VIDEO_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template_video.html"
 PRESENTATION_TEMPLATE_VERSION = "visual-v6"
+VIDEO_TEMPLATE_VERSION = "video-v4"
 
 
 # ═══════════════════════════════════════════════
@@ -434,7 +435,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
         raise ServiceError("用户不存在")
 
     # 去重：2 分钟内同话题同模板已创建过课件 → 直接返回已有记录
-    _expected_tag = "template-version:video-v3" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
+    _expected_tag = f"template-version:{VIDEO_TEMPLATE_VERSION}" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
     cutoff = datetime.now() - timedelta(minutes=2)
     existing = await Presentation.filter(
         user_id=user_id, topic=topic, created_at__gte=cutoff,
@@ -446,7 +447,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
             "file_url": _versioned_presentation_url(existing.file_url),
             "status": existing.status,
             "cached": True,
-            "template_version": "video" if video_mode else PRESENTATION_TEMPLATE_VERSION,
+            "template_version": VIDEO_TEMPLATE_VERSION if video_mode else PRESENTATION_TEMPLATE_VERSION,
         }
 
     doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
@@ -539,7 +540,7 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
         "id": record.id,
         "file_url": _versioned_presentation_url(record.file_url),
         "status": "ready",  # 骨架已可看，音频后台补充
-        "template_version": PRESENTATION_TEMPLATE_VERSION,
+        "template_version": VIDEO_TEMPLATE_VERSION if video_mode else PRESENTATION_TEMPLATE_VERSION,
         "message": "课件已生成，音频在后台补充中",
     }
 
@@ -831,7 +832,7 @@ async def _flush(record, topic: str, chapters: list, status: str, segments: list
         fp = _presentation_file_path(record.file_url)
         if fp and fp.exists():
             _head = fp.read_text(encoding="utf-8", errors="ignore")[:200]
-            if "template-version:video-v3" in _head or "template-version:video-v2" in _head:
+            if f"template-version:{VIDEO_TEMPLATE_VERSION}" in _head or "template-version:video-v3" in _head or "template-version:video-v2" in _head:
                 _tp = TEMPLATE_VIDEO_PATH
     except Exception:
         pass
@@ -1272,7 +1273,16 @@ def _versioned_presentation_url(url: str | None) -> str:
     if not url:
         return ""
     base = str(url).split("?", 1)[0]
-    return f"{base}?v={PRESENTATION_TEMPLATE_VERSION}"
+    path = _presentation_file_path(url)
+    tag = PRESENTATION_TEMPLATE_VERSION
+    if path and path.exists():
+        try:
+            head = path.read_text(encoding="utf-8", errors="ignore")[:220]
+            if f"template-version:{VIDEO_TEMPLATE_VERSION}" in head:
+                tag = VIDEO_TEMPLATE_VERSION
+        except Exception:
+            pass
+    return f"{base}?v={tag}"
 
 
 def _presentation_file_path(url: str | None) -> Path | None:
@@ -1341,6 +1351,17 @@ def _render_video_slides_html(sections: list[dict]) -> str:
         badge = f"<b>{index}</b>" if index is not None else ""
         return f'<{tag} data-narration-block="{block_id}">{badge}<span>{_escape(text)}</span></{tag}>'
 
+    def stage_chrome(slide_index: int) -> str:
+        progress = min(94, max(12, 18 + slide_index * 9))
+        wave = "".join(f'<i style="--i:{i}"></i>' for i in range(1, 19))
+        return (
+            '<div class="video-slide__meta">'
+            f'<span>AI 课程视频</span><b>第 {slide_index + 1} 页</b>'
+            '</div>'
+            f'<div class="video-slide__wave">{wave}</div>'
+            f'<div class="video-slide__progress"><i style="--progress:{progress}%"></i></div>'
+        )
+
     def render_ppt_slide(sl: dict, slide_index: int) -> str:
         title = safe(sl.get("title") or f"Slide {slide_index + 1}")
         layout = clean(sl.get("layout") or "content_cards")
@@ -1379,7 +1400,7 @@ def _render_video_slides_html(sections: list[dict]) -> str:
             cards = "".join(item_html("article", item, f"ppt-{slide_index}-card-{i}", i + 1) for i, item in enumerate(items[:6]))
             body = f'<div class="video-card-grid">{cards}</div>'
 
-        return f'<div class="slide video-slide video-slide--{_escape(layout)}"><h2 data-narration-block="{title_block}">{title}</h2>{body}</div>'
+        return f'<div class="slide video-slide video-slide--{_escape(layout)}">{stage_chrome(slide_index)}<h2 data-narration-block="{title_block}">{title}</h2>{body}</div>'
 
     parts: list[str] = []
     ppt_index = 0
@@ -1394,10 +1415,10 @@ def _render_video_slides_html(sections: list[dict]) -> str:
                 title = safe(sl.get("title") or sec.get("title"))
                 text = clean(sl.get("intro_text") or sl.get("text") or sl.get("content_html"))
                 paras = "".join(f'<p data-narration-block="intro-{index}-{i}">{_escape(p.strip())}</p>' for i, p in enumerate(_re.split(r"[。；;]\s*", text)) if p.strip())
-                parts.append(f'<div class="slide video-slide video-slide--intro"><h2 data-narration-block="intro-{index}-title">{title}</h2><div class="intro-content">{paras}</div></div>')
+                parts.append(f'<div class="slide video-slide video-slide--intro">{stage_chrome(len(parts))}<h2 data-narration-block="intro-{index}-title">{title}</h2><div class="intro-content">{paras}</div></div>')
         elif sec_type == "mindmap":
             html = sec.get("content_html", "")
-            parts.append(f'<div class="slide video-slide video-slide--mindmap"><h2 data-narration-block="mindmap-title">思维导图</h2><div id="mindmap-container" data-narration-block="mindmap-body">{html}</div></div>')
+            parts.append(f'<div class="slide video-slide video-slide--mindmap">{stage_chrome(len(parts))}<h2 data-narration-block="mindmap-title">思维导图</h2><div id="mindmap-container" data-narration-block="mindmap-body">{html}</div></div>')
     return "\n".join(parts)
 
 
@@ -1414,7 +1435,7 @@ def _render_html(topic: str, sections: list[dict], segments: list[dict] | None =
     html = html.replace("{{TITLE}}", _escape(topic))
     html = html.replace("{{AUDIO_SEGMENTS}}", segments_json)
     html = html.replace("{{SLIDES_HTML}}", slides_html)
-    version_tag = "<!-- template-version:video-v3 -->" if is_video else f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->"
+    version_tag = f"<!-- template-version:{VIDEO_TEMPLATE_VERSION} -->" if is_video else f"<!-- template-version:{PRESENTATION_TEMPLATE_VERSION} -->"
     return f"{version_tag}\n{html}"
 
 
