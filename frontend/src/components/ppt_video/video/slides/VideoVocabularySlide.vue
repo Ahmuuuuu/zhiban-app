@@ -1,5 +1,8 @@
 <template>
-  <section class="video-vocabulary-slide">
+  <section
+    class="video-vocabulary-slide"
+    :class="`layout-${layoutSeed}`"
+  >
     <div class="video-vocabulary-slide__header">
       <span>{{ slide.chapterTitle }}</span>
       <h2>{{ slide.title }}</h2>
@@ -39,6 +42,10 @@ const props = defineProps({
   slide: {
     type: Object,
     required: true
+  },
+  layoutSeed: {
+    type: Number,
+    default: 0
   }
 })
 
@@ -71,7 +78,39 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
     "header scene"
     "deck scene";
   gap: 22px 28px;
-  color: #fff;
+  color: var(--video-text);
+}
+
+.video-vocabulary-slide.layout-1 {
+  grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+  grid-template-areas:
+    "scene header"
+    "scene deck";
+}
+
+.video-vocabulary-slide.layout-2 {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(160px, 0.62fr) minmax(180px, 1fr);
+  grid-template-areas:
+    "header"
+    "scene"
+    "deck";
+}
+
+.video-vocabulary-slide.layout-3 {
+  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas:
+    "header deck"
+    "scene deck";
+}
+
+.video-vocabulary-slide.layout-4 {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "header header"
+    "deck scene";
 }
 
 .video-vocabulary-slide__header {
@@ -92,7 +131,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   background: rgba(255, 255, 255, 0.12);
   display: inline-flex;
   align-items: center;
-  color: rgba(215, 242, 246, 0.92);
+  color: var(--video-soft);
   font-size: 12px;
   font-weight: 900;
 }
@@ -106,7 +145,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 .video-vocabulary-slide__header p {
   max-width: 720px;
   margin: 0;
-  color: rgba(235, 246, 255, 0.76);
+  color: var(--video-muted);
   font-size: clamp(15px, 1.2vw, 19px);
   line-height: 1.7;
   display: -webkit-box;
@@ -123,15 +162,23 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   align-content: start;
 }
 
+.video-vocabulary-slide.layout-3 .vocab-deck {
+  grid-template-columns: 1fr;
+}
+
+.video-vocabulary-slide.layout-4 .vocab-deck {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .vocab-deck article {
   min-height: 98px;
   padding: 17px;
   border-radius: 8px;
-  border: 1px solid rgba(220, 240, 255, 0.18);
-  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--video-card-border);
+  background: var(--video-card-bg);
   display: grid;
   gap: 8px;
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 18px 42px var(--video-shadow);
   animation: vocab-card 0.62s ease both;
   animation-delay: calc(var(--delay) * 0.08s);
 }
@@ -142,7 +189,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 }
 
 .vocab-deck span {
-  color: rgba(235, 246, 255, 0.74);
+  color: var(--video-muted);
   font-size: 14px;
 }
 
@@ -151,9 +198,9 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   position: relative;
   overflow: hidden;
   padding: 28px;
-  border: 1px solid rgba(220, 240, 255, 0.18);
+  border: 1px solid var(--video-card-border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--video-card-bg);
   display: grid;
   align-content: center;
   gap: 18px;
@@ -161,7 +208,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 
 .scene-board p {
   margin: 0;
-  color: rgba(245, 250, 255, 0.88);
+  color: var(--video-text);
   font-size: clamp(22px, 2.4vw, 34px);
   line-height: 1.4;
 }
@@ -180,8 +227,8 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   max-width: 14px;
   height: calc(12px + var(--dot) * 5px);
   border-radius: 999px;
-  background: #ffffff;
-  color: #1f63d6;
+  background: var(--video-number-bg);
+  color: var(--video-number-text);
   animation: vocab-wave 1.2s ease-in-out infinite;
   animation-delay: calc(var(--dot) * -0.1s);
 }

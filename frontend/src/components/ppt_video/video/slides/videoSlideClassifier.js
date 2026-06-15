@@ -11,6 +11,7 @@ const hasVocabularySignal = slide => {
 }
 
 export const classifyVideoSlide = slide => {
+  if (Number(slide?.index || 0) === 0) return 'intro'
   const layout = String(slide?.layout || '').toLowerCase()
   if (hasFormula(slide) || /formula|math|equation/.test(layout)) return 'formula'
   if (/comparison|compare|contrast/.test(layout)) return 'comparison'
