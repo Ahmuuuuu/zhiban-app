@@ -23,7 +23,6 @@ PROMPT_MAP = {
     "document": "resource/document",
     "ppt": "resource/ppt",
     "ppt_video": "resource/ppt_video",
-    "ppt_apply": "resource/ppt_apply",
     "mindmap": "resource/mindmap",
     "exercise": "resource/exam",
     "case": "resource/document",
@@ -127,12 +126,12 @@ def build_resource_prompt(
 
 
 # PPT 并行生成参数
-PPT_PAGES_PER_SECTION = 2    # 每个章节生成 2 页
-PPT_DEFAULT_SECTIONS = 10    # 默认 10 章节（20 页）
+PPT_PAGES_PER_SECTION = 2    # 每个章节最少 2 页，AI 可根据内容自动扩展到 4 页
+PPT_DEFAULT_SECTIONS = 10    # 默认 10 章节（20-40 页）
 PPT_SECTION_COUNT_BY_DEPTH = {
-    "overview": 5,            # 快速概览 → 10 页
-    "standard": 10,           # 标准讲解 → 20 页
-    "deep": 15,              # 逐页详解 → 30 页
+    "overview": 5,            # 快速概览 → 10-20 页
+    "standard": 10,           # 标准讲解 → 20-40 页
+    "deep": 15,              # 逐页详解 → 30-60 页
 }
 
 # 文档并行生成参数
@@ -153,7 +152,7 @@ async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", cou
 学习指导：{guidance}
 
 要求：
-- 固定 {count} 个章节（必须恰好 {count} 个），每个章节生成 {PPT_PAGES_PER_SECTION} 页幻灯片，总共 {total_pages} 页
+- 固定 {count} 个章节（必须恰好 {count} 个），每个章节生成 2-4 页幻灯片，总共约 {total_pages}-{count * 4} 页
 - 章节标题简洁（10 字以内），由浅入深，逻辑连贯，形成完整的课程体系
 - 覆盖主题的：定义概念 → 原理推导 → 方法技巧 → 典型案例 → 应用实践 → 总结回顾
 - 只返回 JSON 字符串数组，不要任何其他文字
@@ -191,7 +190,7 @@ async def generate_ppt_parallel(
     llm_priority: str = "high",
     user_id: int = 0,
 ) -> str:
-    """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2 页），共 2N 页 + 2 页画像学习引入"""
+    """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2-4 页），共 2N-4N 页 + 2 页画像学习引入"""
     _t_total = time.perf_counter()
     # 立即通知前端，避免长时间无反馈
     if stream_writer:
@@ -278,7 +277,7 @@ async def generate_ppt_parallel(
             prompt_with_context = (
                 f"你是一个贴心的学习导师。为课程「{topic}」撰写 2 页学习引入幻灯片。"
                 f"\n\n## 输出格式"
-                f"\n直接输出 PPT Markdown，第一个字符必须是 #。用 --- 分隔两页。每页 4-6 条要点，整页正文不低于 200 字。"
+                f"\n直接输出 PPT Markdown，第一个字符必须是 #。用 --- 分隔两页。每页 4-6 条要点，每条 40-80 字，整页正文不低于 280 字。"
                 f"\n\n## 第1页：为什么这门课对你很重要"
                 f"\n- 用画像中的具体信息（专业、年级等）解释这门课和你的关联"
                 f"\n- 让你感受到'这课是为我准备的'"
@@ -293,8 +292,8 @@ async def generate_ppt_parallel(
             )
         else:
             context = (
-                f"\n\n【课程全景 — 共 {len(sections)} 章 20 页】\n{course_overview}"
-                f"\n\n【你的任务】只负责第 {idx + 1} 章「{section_title}」的恰好 2 页幻灯片。"
+                f"\n\n【课程全景 — 共 {len(sections)} 章，每章 2-4 页】\n{course_overview}"
+                f"\n\n【你的任务】只负责第 {idx + 1} 章「{section_title}」的 2-4 页幻灯片，根据内容多寡自行决定页数。"
                 f"\n- 前一章：{prev_section}（你的内容需自然承接）"
                 f"\n- 后一章：{next_section}（你的内容需为后面做铺垫）"
                 f"\n- 严禁重复其他章节的内容，每章内容独立且有明确边界"

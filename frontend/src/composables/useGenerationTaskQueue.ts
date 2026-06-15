@@ -371,6 +371,7 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
     topic: task.text,
     answers,
     chat_group_id: chatGroupId,
+    video_mode: true,
   })
   const presentation = unwrapResponseData(presentationResult)
   const sourceResource: any = task.files[0]

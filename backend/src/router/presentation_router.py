@@ -16,6 +16,7 @@ from backend.src.service.presentation_service import (
     delete_presentation,
     _subscribe_sse,
     _unsubscribe_sse,
+    _progress_events,
 )
 from backend.src.utils.jwt import get_user_id_from_token
 
@@ -29,6 +30,7 @@ class GenerateRequest(BaseModel):
     chapters: list[str] | None = Field(default=None, description="要生成的章节列表，如 ['intro', 'ppt']，不传则全生成")
     answers: dict | None = Field(default=None, description="用户作答 {question_id: value}，用于裁剪内容")
     chat_group_id: int = Field(default=0, description="聊天组 ID，用于写入聊天历史")
+    video_mode: bool = Field(default=False, description="视频模式：跳过 HTML 文件生成，仅返回结构化数据")
 
 
 class PreviewRequest(BaseModel):
@@ -43,7 +45,7 @@ class QuestionsRequest(BaseModel):
 @router.post("/generate")
 async def generate_presentation(data: GenerateRequest, user_id: int = Depends(get_user_id_from_token)):
     """生成动态 HTML 课件：学科介绍 → 思维导图 → PPT讲解 → EdgeTTS 配音"""
-    result = await generate(data.topic, user_id, voice=data.voice, chapters=data.chapters, answers=data.answers, chat_group_id=data.chat_group_id)
+    result = await generate(data.topic, user_id, voice=data.voice, chapters=data.chapters, answers=data.answers, chat_group_id=data.chat_group_id, video_mode=data.video_mode, background=True)
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -100,6 +102,9 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
         try:
             # 先发当前状态
             yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
+            # 回放已存储的进度事件（防止 SSE 订阅晚于进度推送）
+            for evt in _progress_events.get(presentation_id, []):
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
             # 如果已完结则不再等待
             if result["status"] in ("ready", "failed"):
                 return
@@ -111,6 +116,11 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
                     if msg.get("status") in ("ready", "failed"):
                         return
                 except asyncio.TimeoutError:
+                    # 超时检查是否已完成（处理竞态：任务在订阅前已完成）
+                    current = await get_presentation(presentation_id, user_id)
+                    if current and current["status"] in ("ready", "failed"):
+                        yield f"data: {json.dumps(current, ensure_ascii=False)}\n\n"
+                        return
                     yield f"data: {json.dumps({'status': 'keepalive'}, ensure_ascii=False)}\n\n"
         finally:
             _unsubscribe_sse(presentation_id, q)

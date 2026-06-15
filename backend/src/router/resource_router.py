@@ -168,12 +168,15 @@ async def stream_generation_task(
         try:
             # 先推送当前状态
             task_data = await ResourceService.get_task(task_id, user_id)
-            if task_data:
-                if task_data["status"] in ("success", "failed"):
-                    yield f"data: {json.dumps({'type': 'done', **task_data}, ensure_ascii=False)}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-                yield f"data: {json.dumps({'type': 'status', **task_data}, ensure_ascii=False)}\n\n"
+            if not task_data:
+                yield f"data: {json.dumps({'type': 'error', 'message': '任务不存在或无权访问'}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            if task_data["status"] in ("success", "failed"):
+                yield f"data: {json.dumps({'type': 'done', **task_data}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            yield f"data: {json.dumps({'type': 'status', **task_data}, ensure_ascii=False)}\n\n"
 
             # 持续监听队列
             while True:

@@ -180,6 +180,7 @@ export function generatePresentation(data: {
   chapters?: string[];
   answers?: Record<string, unknown>;
   chat_group_id?: number;
+  video_mode?: boolean;
 }): Promise<unknown>;
 
 export function previewPresentation(data: { topic: string }): Promise<unknown>;
