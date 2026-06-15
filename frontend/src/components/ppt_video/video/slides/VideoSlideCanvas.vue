@@ -14,6 +14,11 @@
       :variant="variant"
       :layout-seed="layoutSeed"
     />
+    <VideoSubjectAssetLayer
+      :slide="slide"
+      :variant="variant"
+      :layout-seed="layoutSeed"
+    />
 
     <VideoStageInfo
       :chapter-count="slideCount"
@@ -45,6 +50,7 @@ import VideoWaveform from '../VideoWaveform.vue'
 import { getVideoBackgroundStyle, getVideoBackgroundTone, selectVideoBackground } from '../videoAssets'
 import VideoMotionLayer from './VideoMotionLayer.vue'
 import VideoSlideRenderer from './VideoSlideRenderer.vue'
+import VideoSubjectAssetLayer from './VideoSubjectAssetLayer.vue'
 import { classifyVideoSlide } from './videoSlideClassifier'
 
 const props = defineProps({
@@ -88,15 +94,6 @@ const backgroundTone = computed(() => getVideoBackgroundTone(resolvedBackgroundU
 const backgroundStyle = computed(() => getVideoBackgroundStyle(resolvedBackgroundUrl.value))
 const backgroundColorVars = computed(() => {
   const style = backgroundStyle.value || {}
-  const palette = [
-    ['#2f7de1', '#6ec6ff', '#ffd166'],
-    ['#1f8a70', '#6ee7b7', '#f7c948'],
-    ['#8b5cf6', '#f0abfc', '#38bdf8'],
-    ['#ef476f', '#ffafcc', '#4cc9f0'],
-    ['#0f766e', '#99f6e4', '#f97316'],
-    ['#2563eb', '#93c5fd', '#facc15'],
-    ['#7c3aed', '#c4b5fd', '#fb7185']
-  ][layoutSeed.value % 7]
   return {
     ...(style.text ? { '--video-text': style.text } : {}),
     ...(style.muted ? { '--video-muted': style.muted } : {}),
@@ -104,9 +101,14 @@ const backgroundColorVars = computed(() => {
     ...(style.line ? { '--video-line': style.line } : {}),
     ...(style.numberBg ? { '--video-number-bg': style.numberBg } : {}),
     ...(style.numberText ? { '--video-number-text': style.numberText } : {}),
-    '--video-accent': palette[0],
-    '--video-accent-soft': palette[1],
-    '--video-warm': palette[2]
+    ...(style.cardBg ? { '--video-card-bg': style.cardBg } : {}),
+    ...(style.cardStrong ? { '--video-card-strong': style.cardStrong } : {}),
+    ...(style.cardBorder ? { '--video-card-border': style.cardBorder } : {}),
+    ...(style.chipBg ? { '--video-chip-bg': style.chipBg } : {}),
+    ...(style.chipText ? { '--video-chip-text': style.chipText } : {}),
+    ...(style.accent ? { '--video-accent': style.accent } : {}),
+    ...(style.accentSoft ? { '--video-accent-soft': style.accentSoft } : {}),
+    ...(style.warm ? { '--video-warm': style.warm } : {})
   }
 })
 const layoutSeed = computed(() => Number(props.slide?.index || 0) % 7)
@@ -162,5 +164,12 @@ const layoutSeed = computed(() => Number(props.slide?.index || 0) % 7)
 
 .video-slide-canvas__background {
   z-index: 0;
+}
+
+.video-slide-canvas :deep(.video-keypoint-slide),
+.video-slide-canvas :deep(.video-vocabulary-slide),
+.video-slide-canvas :deep(.video-formula-slide),
+.video-slide-canvas :deep(.video-intro-slide) {
+  z-index: 2;
 }
 </style>

@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-formula-slide"
-    :class="`layout-${layoutSeed}`"
+    :class="[`layout-${layoutSeed}`, { 'is-dense': notes.length > 4 || formulas.length > 3 }]"
   >
     <div class="formula-main">
       <span>{{ slide.chapterTitle }}</span>
@@ -42,8 +42,8 @@ const props = defineProps({
   }
 })
 
-const formulas = computed(() => props.slide.formulas?.length ? props.slide.formulas.slice(0, 3) : [props.slide.title])
-const notes = computed(() => (props.slide.items || []).slice(0, 4))
+const formulas = computed(() => props.slide.formulas?.length ? props.slide.formulas : [props.slide.title])
+const notes = computed(() => props.slide.items || [])
 </script>
 
 <style scoped>
@@ -165,8 +165,8 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
 }
 
 .formula-box {
-  min-height: 104px;
-  padding: 22px;
+  min-height: 88px;
+  padding: 18px;
   border-radius: 18px;
   background:
     radial-gradient(circle at center, color-mix(in srgb, var(--video-warm, #ffd166) 18%, transparent), transparent 64%),
@@ -175,6 +175,11 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   place-items: center;
   overflow: hidden;
   animation: formula-pulse 2.8s ease-in-out infinite;
+}
+
+.video-formula-slide.is-dense .formula-box {
+  min-height: 64px;
+  padding: 12px;
 }
 
 .video-formula-slide.layout-2 .formula-box,
@@ -188,8 +193,7 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
 
 .formula-box :deep(.katex) {
   max-width: 100%;
-  overflow: hidden;
-  font-size: clamp(24px, 2.7vw, 42px);
+  font-size: clamp(18px, 2.1vw, 36px);
 }
 
 .formula-notes {
@@ -199,9 +203,15 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   align-content: center;
 }
 
+.video-formula-slide.is-dense .formula-notes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 16px;
+}
+
 .formula-notes article {
-  min-height: 72px;
-  padding: 14px;
+  min-height: 64px;
+  padding: 12px;
   border-radius: 8px;
   background: var(--video-card-strong);
   display: grid;
@@ -210,6 +220,12 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   align-items: start;
   animation: note-in 0.5s ease both;
   animation-delay: calc(var(--delay) * 0.09s);
+}
+
+.video-formula-slide.is-dense .formula-notes article {
+  min-height: 0;
+  padding: 10px;
+  grid-template-columns: 26px minmax(0, 1fr);
 }
 
 .formula-notes article:nth-child(2n) {
@@ -230,10 +246,16 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   place-items: center;
 }
 
+.video-formula-slide.is-dense .formula-notes b {
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+}
+
 .formula-notes span {
   color: var(--video-muted);
-  line-height: 1.45;
-  font-size: 15px;
+  line-height: 1.32;
+  font-size: clamp(11px, 0.88vw, 15px);
 }
 
 @keyframes formula-in {

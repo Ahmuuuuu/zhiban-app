@@ -260,7 +260,10 @@ const slides = computed(() => {
           html,
           items,
           formulas,
-          summary: summary.length > 120 ? `${summary.slice(0, 119)}...` : summary,
+          summary,
+          subject: slide.subject || slide.discipline || chapter.subject || chapter.discipline || '',
+          visual: slide.visual || slide.visual_hint || chapter.visual || null,
+          theme: slide.theme || chapter.theme || '',
           audioUrl: resolveApiUrl(slide.audio_url || slide.audioUrl || ''),
           wordTimestamps: slide.word_timestamps || [],
           slideDurationMs: slide.duration_ms || 0
@@ -281,6 +284,9 @@ const slides = computed(() => {
       items: [],
       formulas,
       summary: plainText(withoutFormulas(html || chapterTitle)),
+      subject: chapter.subject || chapter.discipline || '',
+      visual: chapter.visual || null,
+      theme: chapter.theme || '',
       audioUrl: ''
     })
   })
