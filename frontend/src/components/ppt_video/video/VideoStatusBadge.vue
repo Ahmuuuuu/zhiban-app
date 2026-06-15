@@ -42,9 +42,10 @@ const statusClass = computed(() => ({
   width: fit-content;
   min-height: 28px;
   padding: 0 10px;
+  border: 1px solid rgba(47, 125, 225, 0.18);
   border-radius: 999px;
-  background: rgba(201, 220, 233, 0.78);
-  color: #5f8fc3;
+  background: rgba(255, 255, 255, 0.82);
+  color: #1f63d6;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -58,12 +59,13 @@ const statusClass = computed(() => ({
   height: 7px;
   border-radius: 999px;
   background: currentColor;
-  box-shadow: 0 0 0 4px rgba(95, 143, 195, 0.16);
+  box-shadow: 0 0 0 4px rgba(31, 99, 214, 0.12);
 }
 
 .video-status.is-playing {
-  background: rgba(91, 201, 188, 0.18);
-  color: #148b7f;
+  border-color: rgba(31, 99, 214, 0.28);
+  background: #ffffff;
+  color: #1f63d6;
 }
 
 .video-status.is-playing .video-status__dot {
@@ -71,22 +73,25 @@ const statusClass = computed(() => ({
 }
 
 .video-status.is-paused {
-  background: rgba(255, 205, 117, 0.22);
-  color: #a66a14;
+  border-color: rgba(95, 156, 255, 0.24);
+  background: rgba(239, 246, 255, 0.86);
+  color: #1f63d6;
 }
 
 .video-status.is-empty {
-  background: rgba(201, 220, 233, 0.46);
-  color: rgba(95, 143, 195, 0.72);
+  border-color: rgba(201, 220, 233, 0.72);
+  background: rgba(255, 255, 255, 0.56);
+  color: rgba(53, 111, 184, 0.68);
 }
 
 @keyframes status-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 4px rgba(20, 139, 127, 0.16);
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px rgba(31, 99, 214, 0.16);
   }
 
   50% {
-    box-shadow: 0 0 0 8px rgba(20, 139, 127, 0);
+    box-shadow: 0 0 0 8px rgba(31, 99, 214, 0);
   }
 }
 </style>

@@ -52,6 +52,7 @@ export type GenerationCallbacks = {
   onError?: (err: string) => void
   onStreamStart?: (eventData: unknown) => void
   onStreamSlide?: (eventData: unknown) => void
+  onThinking?: (msg: string) => void
 }
 
 const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
@@ -216,6 +217,9 @@ export async function executeGeneration(
               finished.length ? '视频脚本已生成，正在整理内容...' : '正在生成视频脚本...',
             )
           },
+          onThinking: (msg: string) => {
+            callbacks.onThinking?.(msg)
+          },
           onFile: (fileData: any) => {
             generatedResources.push(fileData)
           },
@@ -305,6 +309,9 @@ export async function executeGeneration(
               ? `正在生成学习资源，已完成：${finished.map((item: any) => typeof item === 'string' ? item : item?.file_type || item?.resource_type || 'resource').join(' / ')}`
               : `正在生成 ${resourceTypes.join(' / ')} 学习资源...`,
           )
+        },
+        onThinking: (msg: string) => {
+          callbacks.onThinking?.(msg)
         },
         onFile: (fileData: unknown) => {
           callbacks.onFile?.(fileData)

@@ -22,68 +22,32 @@
         />
 
         <div class="lesson-slide">
-          <VideoStageInfo
-            :chapter-count="slides.length"
+          <VideoSlideCanvas
+            :slide="activeSlide"
+            :slide-count="slides.length"
             :duration-label="durationLabel"
-          />
-
-          <div class="lesson-slide__content" :class="`is-${activeSlide.layout}`">
-            <section class="lesson-hero">
-              <span class="lesson-slide__kicker">{{ activeSlide.chapterTitle }}</span>
-              <h2>{{ activeSlide.title }}</h2>
-              <p>{{ activeSlide.summary }}</p>
-            </section>
-
-            <section v-if="activeSlide.items.length" class="lesson-card-wall">
-              <article
-                v-for="(item, index) in activeSlide.items.slice(0, 3)"
-                :key="index"
-                :class="{ featured: index === 0 }"
-              >
-                <b>{{ index + 1 }}</b>
-                <span v-html="renderMath(item)"></span>
-              </article>
-            </section>
-
-            <section class="lesson-visual-board">
-              <div v-if="activeSlide.formulas.length" class="lesson-formula-stack">
-                <div
-                  v-for="formula in activeSlide.formulas"
-                  :key="formula"
-                  class="lesson-formula"
-                  v-html="renderMath(formula)"
-                ></div>
+            :is-playing="isPlaying"
+            :has-started="hasStarted"
+            :background-url="videoBackgroundUrl"
+          >
+            <template #controls>
+              <div class="lesson-controls">
+                <button type="button" :disabled="activeIndex <= 0" @click="prevSlide">上一页</button>
+                <button type="button" class="primary" @click="togglePlay">
+                  {{ isPlaying ? '暂停' : '播放' }}
+                </button>
+                <button type="button" :disabled="activeIndex >= slides.length - 1" @click="nextSlide">下一页</button>
               </div>
-              <div v-else class="lesson-orbit">
-                <span
-                  v-for="dot in 6"
-                  :key="dot"
-                  :style="{ '--dot': dot }"
-                ></span>
-              </div>
-              <div class="lesson-term-cloud">
-                <b v-for="term in visualTerms" :key="term">{{ term }}</b>
-              </div>
-            </section>
+            </template>
 
-            <p v-if="!activeSlide.items.length" class="lesson-slide__empty">暂无本页内容</p>
-          </div>
-
-          <VideoWaveform v-if="!hasStarted || isPlaying" :active="isPlaying" />
-
-          <div class="lesson-controls">
-            <button type="button" :disabled="activeIndex <= 0" @click="prevSlide">上一页</button>
-            <button type="button" class="primary" @click="togglePlay">
-              {{ isPlaying ? '暂停' : '播放' }}
-            </button>
-            <button type="button" :disabled="activeIndex >= slides.length - 1" @click="nextSlide">下一页</button>
-          </div>
-
-          <VideoGlowProgress
-            class="lesson-progress"
-            :current-time="currentTime"
-            :duration="duration"
-          />
+            <template #progress>
+              <VideoGlowProgress
+                class="lesson-progress"
+                :current-time="currentTime"
+                :duration="duration"
+              />
+            </template>
+          </VideoSlideCanvas>
         </div>
 
         <audio
@@ -135,11 +99,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { getPresentation, resolveApiUrl } from '../api/apis'
 import VideoAmbientBackground from '../components/ppt_video/video/VideoAmbientBackground.vue'
 import VideoGlowProgress from '../components/ppt_video/video/VideoGlowProgress.vue'
-import VideoStageInfo from '../components/ppt_video/video/VideoStageInfo.vue'
 import VideoStatusBadge from '../components/ppt_video/video/VideoStatusBadge.vue'
-import VideoWaveform from '../components/ppt_video/video/VideoWaveform.vue'
+import VideoSlideCanvas from '../components/ppt_video/video/slides/VideoSlideCanvas.vue'
 import { selectVideoBackground } from '../components/ppt_video/video/videoAssets'
-import { renderMath } from '../utils/renderMath'
 import 'katex/dist/katex.min.css'
 import petImage from '../assets/pic/zhiban-pet-base.png'
 
@@ -277,26 +239,6 @@ const videoBackgroundUrl = computed(() => selectVideoBackground({
   title: title.value,
   content: activeSlide.value?.summary || ''
 }))
-
-const chapterNav = computed(() => slides.value.map(slide => ({
-  id: slide.id,
-  index: slide.index,
-  title: slide.title
-})))
-
-const visualTerms = computed(() => {
-  const text = [
-    activeSlide.value?.title,
-    ...(activeSlide.value?.items || [])
-  ].join(' ')
-  const english = text.match(/[A-Za-z][A-Za-z\s&-]{2,}/g) || []
-  const chinese = text.match(/[\u4e00-\u9fa5]{2,6}/g) || []
-  return [...english, ...chinese]
-    .map(item => item.trim().replace(/[，。；：、,.]/g, ''))
-    .filter(Boolean)
-    .filter((item, index, array) => array.indexOf(item) === index)
-    .slice(0, 8)
-})
 
 const formatTime = seconds => {
   if (!Number.isFinite(seconds) || seconds <= 0) return '00:00'

@@ -47,6 +47,9 @@ export function streamChatMessage(
     onDone?: (data?: { chat_group_id?: number | string }) => void;
     onError?: (error: string) => void;
     onFile?: (fileData: unknown) => void;
+    onStreamStart?: (eventData: unknown) => void;
+    onStreamSlide?: (eventData: unknown) => void;
+    onThinking?: (message: string) => void | Promise<void>;
   },
 ): Promise<void>;
 
@@ -85,6 +88,9 @@ export function streamResourceGeneration(
     onDone?: (eventData?: unknown) => void;
     onError?: (error: string) => void;
     onFile?: (eventData: unknown) => void;
+    onStreamStart?: (eventData: unknown) => void;
+    onStreamSlide?: (eventData: unknown) => void;
+    onThinking?: (message: string) => void;
   },
 ): Promise<void>;
 
@@ -148,6 +154,15 @@ export function createResourceGenerationTask(data: {
 export function getResourceGenerationTask(taskId: number | string): Promise<unknown>;
 
 export function getResourceGenerationTasks(): Promise<unknown>;
+
+export function streamResourceGenerationTask(
+  taskId: number | string,
+  handlers?: {
+    onEvent?: (eventData: unknown) => void;
+    onDone?: (eventData?: unknown) => void;
+    onError?: (error: string) => void;
+  },
+): Promise<void>;
 
 export function likeResource(resourceId: number | string): Promise<unknown>;
 

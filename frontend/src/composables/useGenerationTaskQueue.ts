@@ -5,6 +5,7 @@ import {
   getPresentationQuestions,
   getResourceGenerationTask,
   getResourceGenerationTasks,
+  streamResourceGenerationTask,
 } from '../api/apis'
 import { executeGeneration, type ResourceToolConfig } from './useResourceGeneration'
 
@@ -18,6 +19,7 @@ export interface GenerationTask {
   chatGroupId: number | string | null
   status: GenerationTaskStatus
   progress: string
+  thinkingProcess: string
   error: string
   files: unknown[]
   images: unknown[]
@@ -28,6 +30,7 @@ export interface GenerationTask {
 
 const tasks = reactive<GenerationTask[]>([])
 const pollingTaskIds = new Set<string>()
+const streamingTaskIds = new Set<string>()
 const GENERATION_TASKS_STORAGE_KEY = 'zhiban_generation_tasks_v2'
 let hasHydratedTasks = false
 let hydratePromise: Promise<GenerationTask[]> | null = null
@@ -56,6 +59,7 @@ const persistTasks = () => {
         chatGroupId: task.chatGroupId,
         status: task.status,
         progress: task.progress,
+        thinkingProcess: task.thinkingProcess,
         error: task.error,
         files: task.files,
         images: task.images,
@@ -90,6 +94,7 @@ const restorePersistedTasks = () => {
         chatGroupId: item.chatGroupId ?? null,
         status: item.status || 'running',
         progress: item.progress || '正在生成资源...',
+        thinkingProcess: item.thinkingProcess || '',
         error: item.error || '',
         files: Array.isArray(item.files) ? item.files : [],
         images: Array.isArray(item.images) ? item.images : [],
@@ -124,6 +129,23 @@ const formatTaskProgress = (taskData: any) => {
   return '正在生成资源...'
 }
 
+const formatTaskThinking = (value: any) => {
+  const raw = Array.isArray(value)
+    ? value.join('\n')
+    : String(value || '')
+  return raw
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const getBackendThinking = (taskData: any) => formatTaskThinking(
+  taskData?.progress_msg ||
+  taskData?.progressMsg ||
+  taskData?.message ||
+  taskData?.msg
+)
+
 const normalizeTaskFiles = (taskData: any) => {
   const result = taskData?.result || taskData?.resources || []
   return (Array.isArray(result) ? result : []).map((item: any) => ({
@@ -145,6 +167,8 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
   task.progress = task.status === 'failed'
     ? (taskData?.error || '资源生成失败，请稍后再试。')
     : formatTaskProgress(taskData)
+  const thinking = getBackendThinking(taskData)
+  if (thinking) task.thinkingProcess = thinking
   task.error = taskData?.error || ''
   // 保留已生成的课件文件和 doneEvent.presentation，
   // 避免 hydrate 时后端数据覆盖前端已完成的课件状态导致重复生成
@@ -192,6 +216,7 @@ const upsertBackendTask = (taskData: any, tool?: ResourceToolConfig) => {
       chatGroupId: taskData?.chat_group_id || taskData?.chatGroupId || null,
       status: 'running',
       progress: '正在生成资源...',
+      thinkingProcess: getBackendThinking(taskData),
       error: '',
       files: [],
       images: [],
@@ -232,17 +257,96 @@ const pollBackendTask = (task: GenerationTask) => {
   window.setTimeout(tick, 800)
 }
 
+const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
+  if (!eventData || eventData.type === '__close__') return
+
+  if (eventData.type === 'stream_start') {
+    ;(task as any)._pptStream = { slides: [] }
+  }
+
+  if (eventData.type === 'stream_slide' && eventData.content) {
+    const stream = (task as any)._pptStream || { slides: [] }
+    stream.slides.push(eventData.content)
+    ;(task as any)._pptStream = stream
+  }
+
+  const thinking = getBackendThinking(eventData)
+  if (thinking) task.thinkingProcess = thinking
+
+  if (eventData.progress_msg || eventData.progressMsg || eventData.progress || eventData.status) {
+    task.progress = formatTaskProgress(eventData)
+    task.status = toFrontendStatus(String(eventData.status || task.status || 'running'))
+  }
+
+  if (eventData.error) {
+    task.error = eventData.error
+    task.status = 'failed'
+    task.progress = eventData.error
+  }
+
+  if (eventData.result || eventData.resources) {
+    task.files.splice(0, task.files.length, ...normalizeTaskFiles(eventData))
+  }
+
+  if (eventData.type === 'done' || eventData.done) {
+    task.status = toFrontendStatus(String(eventData.status || 'done'))
+    task.doneEvent = {
+      chat_group_id: task.chatGroupId,
+      resources: task.files,
+      ...eventData,
+    }
+  }
+
+  task.updatedAt = Date.now()
+  persistTasks()
+}
+
+const streamBackendTask = (task: GenerationTask) => {
+  if (!task.backendTaskId || streamingTaskIds.has(task.backendTaskId)) return
+  streamingTaskIds.add(task.backendTaskId)
+
+  void streamResourceGenerationTask(task.backendTaskId, {
+    onEvent: eventData => {
+      applyTaskStreamEvent(task, eventData)
+    },
+    onDone: async () => {
+      try {
+        const result = await getResourceGenerationTask(task.backendTaskId)
+        applyBackendTaskData(task, unwrapResponseData(result))
+      } finally {
+        streamingTaskIds.delete(task.backendTaskId)
+      }
+    },
+    onError: error => {
+      task.error = error || task.error
+      task.updatedAt = Date.now()
+      persistTasks()
+    }
+  }).catch(() => {
+    streamingTaskIds.delete(task.backendTaskId)
+    pollBackendTask(task)
+  })
+}
+
 const runLegacyFrontendTask = (task: GenerationTask) => {
   void executeGeneration(task.text, task.tool, task.chatGroupId, {
     onSubmitted: data => {
       const submitData: any = data || {}
       task.backendTaskId = submitData?.task_id || submitData?.taskId || submitData?.id || task.backendTaskId
       task.chatGroupId = submitData?.chat_group_id || submitData?.chatGroupId || task.chatGroupId
+      const thinking = getBackendThinking(submitData)
+      if (thinking) task.thinkingProcess = thinking
       task.updatedAt = Date.now()
       persistTasks()
     },
     onProgress: msg => {
       task.progress = msg
+      task.thinkingProcess = formatTaskThinking(msg) || task.thinkingProcess
+      task.updatedAt = Date.now()
+      persistTasks()
+    },
+    onThinking: msg => {
+      task.thinkingProcess = formatTaskThinking(msg) || task.thinkingProcess
       task.updatedAt = Date.now()
       persistTasks()
     },
@@ -424,7 +528,10 @@ export function useGenerationTaskQueue() {
         task.chatGroupId = data?.chat_group_id || data?.chatGroupId
       }
       task.progress = formatTaskProgress(data)
+      const thinking = getBackendThinking(data)
+      if (thinking) task.thinkingProcess = thinking
       task.updatedAt = Date.now()
+      streamBackendTask(task)
       pollBackendTask(task)
     }).catch(error => {
       task.status = 'failed'
@@ -443,6 +550,7 @@ export function useGenerationTaskQueue() {
       chatGroupId,
       status: 'running',
       progress: '正在提交生成任务...',
+      thinkingProcess: '',
       error: '',
       files: [],
       images: [],
@@ -454,7 +562,7 @@ export function useGenerationTaskQueue() {
     tasks.unshift(task)
     persistTasks()
 
-    if (tool.generateMode === 'image' || (tool.generateMode === 'resource' && tool.resourceTypes?.length === 1 && tool.resourceTypes[0] === 'ppt')) {
+    if (tool.generateMode === 'image') {
       runLegacyFrontendTask(task)
       return task
     }
@@ -522,7 +630,10 @@ export function useGenerationTaskQueue() {
   const hydrateTasks = async () => {
     if (hydratePromise) return hydratePromise
     if (hasHydratedTasks) {
-      tasks.filter(task => task.status === 'running').forEach(task => pollBackendTask(task))
+      tasks.filter(task => task.status === 'running').forEach(task => {
+        streamBackendTask(task)
+        pollBackendTask(task)
+      })
       return tasks
     }
 
@@ -540,7 +651,10 @@ export function useGenerationTaskQueue() {
         } catch {
           // Keep list-level task state if detail lookup is temporarily unavailable.
         }
-        if (task.status === 'running') pollBackendTask(task)
+        if (task.status === 'running') {
+          streamBackendTask(task)
+          pollBackendTask(task)
+        }
       }))
       hasHydratedTasks = true
       return hydrated
