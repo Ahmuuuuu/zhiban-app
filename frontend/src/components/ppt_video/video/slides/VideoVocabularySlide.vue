@@ -175,7 +175,9 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   padding: 17px;
   border-radius: 8px;
   border: 1px solid var(--video-card-border);
-  background: var(--video-card-bg);
+  background:
+    radial-gradient(circle at 18% 18%, color-mix(in srgb, var(--video-warm, #ffd166) 22%, transparent), transparent 38%),
+    var(--video-card-bg);
   display: grid;
   gap: 8px;
   box-shadow: 0 18px 42px var(--video-shadow);
@@ -183,9 +185,42 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   animation-delay: calc(var(--delay) * 0.08s);
 }
 
+.video-vocabulary-slide.layout-1 .vocab-deck article {
+  min-height: 76px;
+  border-radius: 999px;
+  grid-template-columns: minmax(90px, 0.44fr) minmax(0, 1fr);
+  align-items: center;
+}
+
+.video-vocabulary-slide.layout-2 .vocab-deck article {
+  border-radius: 8px 28px 8px 28px;
+  transform-origin: center;
+}
+
+.video-vocabulary-slide.layout-2 .vocab-deck article:nth-child(odd) {
+  transform: rotate(-1.4deg);
+}
+
+.video-vocabulary-slide.layout-2 .vocab-deck article:nth-child(even) {
+  transform: rotate(1.2deg);
+}
+
+.video-vocabulary-slide.layout-3 .vocab-deck article {
+  border-radius: 50%;
+  aspect-ratio: 1.22;
+  place-items: center;
+  text-align: center;
+}
+
+.video-vocabulary-slide.layout-4 .vocab-deck article {
+  border-radius: 6px;
+  clip-path: polygon(0 0, 92% 0, 100% 18%, 100% 100%, 0 100%);
+}
+
 .vocab-deck b {
   font-size: clamp(21px, 2vw, 32px);
   line-height: 1;
+  color: var(--video-accent, currentColor);
 }
 
 .vocab-deck span {
@@ -200,10 +235,30 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   padding: 28px;
   border: 1px solid var(--video-card-border);
   border-radius: 8px;
-  background: var(--video-card-bg);
+  background:
+    linear-gradient(140deg, color-mix(in srgb, var(--video-accent-soft, #6ec6ff) 20%, transparent), transparent 58%),
+    var(--video-card-bg);
   display: grid;
   align-content: center;
   gap: 18px;
+}
+
+.video-vocabulary-slide.layout-1 .scene-board {
+  border-radius: 30px 8px 30px 8px;
+}
+
+.video-vocabulary-slide.layout-2 .scene-board {
+  border-radius: 999px;
+  padding-inline: 56px;
+}
+
+.video-vocabulary-slide.layout-3 .scene-board {
+  clip-path: polygon(4% 0, 100% 0, 96% 100%, 0 100%);
+}
+
+.video-vocabulary-slide.layout-4 .scene-board {
+  border-radius: 50%;
+  aspect-ratio: 1;
 }
 
 .scene-board p {

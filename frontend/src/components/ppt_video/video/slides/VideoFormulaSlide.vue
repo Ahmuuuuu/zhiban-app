@@ -96,8 +96,44 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   min-width: 0;
   border: 1px solid var(--video-card-border);
   border-radius: 8px;
-  background: var(--video-card-bg);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--video-accent, #2f7de1) 16%, transparent), transparent 58%),
+    var(--video-card-bg);
   backdrop-filter: blur(14px);
+}
+
+.video-formula-slide.layout-1 .formula-main,
+.video-formula-slide.layout-1 .formula-notes {
+  border-radius: 32px 8px 32px 8px;
+}
+
+.video-formula-slide.layout-2 .formula-main {
+  border-radius: 999px;
+  padding-inline: 72px;
+}
+
+.video-formula-slide.layout-2 .formula-notes {
+  border-radius: 8px 34px 8px 34px;
+}
+
+.video-formula-slide.layout-3 .formula-main {
+  clip-path: polygon(6% 0, 100% 0, 94% 100%, 0 100%);
+}
+
+.video-formula-slide.layout-3 .formula-notes {
+  border-radius: 50%;
+  aspect-ratio: 1;
+  align-self: center;
+}
+
+.video-formula-slide.layout-4 .formula-main {
+  border-radius: 50%;
+  aspect-ratio: 1.35;
+  align-self: center;
+}
+
+.video-formula-slide.layout-4 .formula-notes {
+  clip-path: polygon(0 0, 94% 0, 100% 16%, 100% 100%, 6% 100%, 0 84%);
 }
 
 .formula-main {
@@ -131,12 +167,19 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
 .formula-box {
   min-height: 104px;
   padding: 22px;
-  border-radius: 8px;
-  background: var(--video-card-strong);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at center, color-mix(in srgb, var(--video-warm, #ffd166) 18%, transparent), transparent 64%),
+    var(--video-card-strong);
   display: grid;
   place-items: center;
   overflow: hidden;
   animation: formula-pulse 2.8s ease-in-out infinite;
+}
+
+.video-formula-slide.layout-2 .formula-box,
+.video-formula-slide.layout-4 .formula-box {
+  border-radius: 999px;
 }
 
 .formula-box :deep(.katex-display) {
@@ -167,6 +210,14 @@ const notes = computed(() => (props.slide.items || []).slice(0, 4))
   align-items: start;
   animation: note-in 0.5s ease both;
   animation-delay: calc(var(--delay) * 0.09s);
+}
+
+.formula-notes article:nth-child(2n) {
+  border-radius: 999px;
+}
+
+.formula-notes article:nth-child(3n) {
+  border-radius: 8px 24px 8px 24px;
 }
 
 .formula-notes b {
