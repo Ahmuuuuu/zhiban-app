@@ -40,6 +40,43 @@
                   {{ isPlaying ? '暂停' : '播放' }}
                 </button>
                 <button type="button" :disabled="activeIndex >= slides.length - 1" @click="nextSlide">下一页</button>
+          />
+
+          <div class="lesson-slide__content" :class="`is-${activeSlide.layout}`">
+            <section class="lesson-hero">
+              <span class="lesson-slide__kicker">{{ activeSlide.chapterTitle }}</span>
+              <h2>{{ activeSlide.title }}</h2>
+              <p>{{ activeSlide.summary }}</p>
+
+              <div v-if="timedWords.length" class="lesson-karaoke">
+                <span
+                  v-for="(word, wi) in timedWords"
+                  :key="wi"
+                  class="karaoke-word"
+                  :class="{ 'is-done': word.isDone, 'is-current': word.isCurrent }"
+                >{{ word.text }}</span>
+              </div>
+            </section>
+
+            <section v-if="activeSlide.items.length" class="lesson-card-wall">
+              <article
+                v-for="(item, index) in activeSlide.items.slice(0, 3)"
+                :key="index"
+                :class="{ featured: index === 0 }"
+              >
+                <b>{{ index + 1 }}</b>
+                <span v-html="renderMath(item)"></span>
+              </article>
+            </section>
+
+            <section class="lesson-visual-board">
+              <div v-if="activeSlide.formulas.length" class="lesson-formula-stack">
+                <div
+                  v-for="formula in activeSlide.formulas"
+                  :key="formula"
+                  class="lesson-formula"
+                  v-html="renderMath(formula)"
+                ></div>
               </div>
             </template>
 
@@ -298,6 +335,8 @@ const videoBackgroundUrl = computed(() => selectVideoBackground({
   content: activeSlide.value?.summary || ''
 }))
 
+<<<<<<< HEAD
+=======
 const chapterNav = computed(() => slides.value.map(slide => ({
   id: slide.id,
   index: slide.index,
@@ -342,6 +381,7 @@ const timedWords = computed(() => {
   }))
 })
 
+>>>>>>> 7c689720959e4ac2a5802640c5fcca69faff33bb
 const formatTime = seconds => {
   if (!Number.isFinite(seconds) || seconds <= 0) return '00:00'
   const total = Math.floor(seconds)
