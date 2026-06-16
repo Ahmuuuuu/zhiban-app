@@ -12,6 +12,12 @@
     <VideoMotionLayer
       :slide="slide"
       :variant="variant"
+      :layout-seed="layoutSeed"
+    />
+    <VideoSubjectAssetLayer
+      :slide="slide"
+      :variant="variant"
+      :layout-seed="contentLayoutSeed"
     />
 
     <VideoStageInfo
@@ -23,7 +29,7 @@
       :slide="slide"
       :variant="variant"
       :tone="backgroundTone"
-      :layout-seed="layoutSeed"
+      :layout-seed="contentLayoutSeed"
     />
 
     <VideoWaveform
@@ -44,6 +50,7 @@ import VideoWaveform from '../VideoWaveform.vue'
 import { getVideoBackgroundStyle, getVideoBackgroundTone, selectVideoBackground } from '../videoAssets'
 import VideoMotionLayer from './VideoMotionLayer.vue'
 import VideoSlideRenderer from './VideoSlideRenderer.vue'
+import VideoSubjectAssetLayer from './VideoSubjectAssetLayer.vue'
 import { classifyVideoSlide } from './videoSlideClassifier'
 
 const props = defineProps({
@@ -93,10 +100,19 @@ const backgroundColorVars = computed(() => {
     ...(style.soft ? { '--video-soft': style.soft } : {}),
     ...(style.line ? { '--video-line': style.line } : {}),
     ...(style.numberBg ? { '--video-number-bg': style.numberBg } : {}),
-    ...(style.numberText ? { '--video-number-text': style.numberText } : {})
+    ...(style.numberText ? { '--video-number-text': style.numberText } : {}),
+    ...(style.cardBg ? { '--video-card-bg': style.cardBg } : {}),
+    ...(style.cardStrong ? { '--video-card-strong': style.cardStrong } : {}),
+    ...(style.cardBorder ? { '--video-card-border': style.cardBorder } : {}),
+    ...(style.chipBg ? { '--video-chip-bg': style.chipBg } : {}),
+    ...(style.chipText ? { '--video-chip-text': style.chipText } : {}),
+    ...(style.accent ? { '--video-accent': style.accent } : {}),
+    ...(style.accentSoft ? { '--video-accent-soft': style.accentSoft } : {}),
+    ...(style.warm ? { '--video-warm': style.warm } : {})
   }
 })
-const layoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
+const layoutSeed = computed(() => Number(props.slide?.index || 0) % 7)
+const contentLayoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
 </script>
 
 <style scoped>
@@ -119,6 +135,9 @@ const layoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
   --video-chip-text: rgba(240, 250, 255, 0.92);
   --video-number-bg: #ffffff;
   --video-number-text: #1f63d6;
+  --video-accent: #2f7de1;
+  --video-accent-soft: #6ec6ff;
+  --video-warm: #ffd166;
   --video-bg-shade: rgba(8, 28, 62, 0.38);
   --video-bg-glow: rgba(255, 255, 255, 0.14);
 }
@@ -146,5 +165,12 @@ const layoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
 
 .video-slide-canvas__background {
   z-index: 0;
+}
+
+.video-slide-canvas :deep(.video-keypoint-slide),
+.video-slide-canvas :deep(.video-vocabulary-slide),
+.video-slide-canvas :deep(.video-formula-slide),
+.video-slide-canvas :deep(.video-intro-slide) {
+  z-index: 2;
 }
 </style>

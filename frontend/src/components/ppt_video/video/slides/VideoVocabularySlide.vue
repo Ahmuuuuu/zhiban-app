@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-vocabulary-slide"
-    :class="`layout-${layoutSeed}`"
+    :class="[`layout-${layoutSeed}`, { 'is-dense': vocabCards.length > 6 }]"
   >
     <div class="video-vocabulary-slide__header">
       <span>{{ slide.chapterTitle }}</span>
@@ -55,13 +55,13 @@ const vocabCards = computed(() => {
   items.forEach(item => {
     const text = String(item || '')
     const pairs = text.match(/[A-Za-z][A-Za-z-]{2,}(?:\s*\([^)]{1,18}\)|（[^）]{1,18}）)?/g) || []
-    pairs.slice(0, 3).forEach(pair => {
+    pairs.forEach(pair => {
       const word = pair.replace(/[（(].*$/, '').trim()
       const meaning = pair.match(/[（(]([^）)]+)[）)]/)?.[1] || '重点词汇'
       cards.push({ word, meaning })
     })
   })
-  return cards.length ? cards.slice(0, 6) : [{ word: props.slide.title, meaning: '核心表达' }]
+  return cards.length ? cards : [{ word: props.slide.title, meaning: props.slide.summary || '核心表达' }]
 })
 
 const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary || '')
@@ -71,6 +71,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 .video-vocabulary-slide {
   position: absolute;
   inset: 82px 54px 104px;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
   grid-template-rows: auto minmax(0, 1fr);
@@ -79,6 +80,25 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
     "deck scene";
   gap: 22px 28px;
   color: var(--video-text);
+}
+
+.video-vocabulary-slide *,
+.video-vocabulary-slide *::before,
+.video-vocabulary-slide *::after {
+  box-sizing: border-box;
+}
+
+.video-vocabulary-slide.is-dense {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "header"
+    "deck";
+  gap: 18px;
+}
+
+.video-vocabulary-slide.is-dense .scene-board {
+  display: none;
 }
 
 .video-vocabulary-slide.layout-1 {
@@ -115,6 +135,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 
 .video-vocabulary-slide__header {
   grid-area: header;
+  min-width: 0;
   display: grid;
   align-content: end;
   gap: 12px;
@@ -142,23 +163,37 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   line-height: 1.12;
 }
 
+.video-vocabulary-slide.is-dense h2 {
+  font-size: clamp(26px, 3vw, 42px);
+}
+
 .video-vocabulary-slide__header p {
   max-width: 720px;
   margin: 0;
   color: var(--video-muted);
-  font-size: clamp(15px, 1.2vw, 19px);
-  line-height: 1.7;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  font-size: clamp(13px, 1.02vw, 18px);
+  line-height: 1.55;
+}
+
+.video-vocabulary-slide.is-dense .video-vocabulary-slide__header p {
+  max-width: 100%;
+  font-size: clamp(12px, 0.94vw, 16px);
+  line-height: 1.45;
 }
 
 .vocab-deck {
   grid-area: deck;
+  min-width: 0;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-content: start;
+}
+
+.video-vocabulary-slide.is-dense .vocab-deck {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
   align-content: start;
 }
 
@@ -175,22 +210,70 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   padding: 17px;
   border-radius: 8px;
   border: 1px solid var(--video-card-border);
-  background: var(--video-card-bg);
+  background:
+    radial-gradient(circle at 18% 18%, color-mix(in srgb, var(--video-warm, #ffd166) 22%, transparent), transparent 38%),
+    var(--video-card-bg);
   display: grid;
   gap: 8px;
+  overflow: hidden;
   box-shadow: 0 18px 42px var(--video-shadow);
   animation: vocab-card 0.62s ease both;
   animation-delay: calc(var(--delay) * 0.08s);
 }
 
+.video-vocabulary-slide.is-dense .vocab-deck article {
+  min-height: 68px;
+  padding: 11px;
+  gap: 5px;
+}
+
+.video-vocabulary-slide.layout-1 .vocab-deck article {
+  min-height: 76px;
+  border-radius: 999px;
+  grid-template-columns: minmax(90px, 0.44fr) minmax(0, 1fr);
+  align-items: center;
+}
+
+.video-vocabulary-slide.layout-2 .vocab-deck article {
+  border-radius: 8px 28px 8px 28px;
+  transform-origin: center;
+}
+
+.video-vocabulary-slide.layout-2 .vocab-deck article:nth-child(odd) {
+  transform: rotate(-1.4deg);
+}
+
+.video-vocabulary-slide.layout-2 .vocab-deck article:nth-child(even) {
+  transform: rotate(1.2deg);
+}
+
+.video-vocabulary-slide.layout-3 .vocab-deck article {
+  border-radius: 50%;
+  aspect-ratio: 1.22;
+  place-items: center;
+  text-align: center;
+}
+
+.video-vocabulary-slide.layout-3.is-dense .vocab-deck article {
+  aspect-ratio: auto;
+  border-radius: 18px;
+}
+
+.video-vocabulary-slide.layout-4 .vocab-deck article {
+  border-radius: 6px;
+  clip-path: polygon(0 0, 92% 0, 100% 18%, 100% 100%, 0 100%);
+}
+
 .vocab-deck b {
-  font-size: clamp(21px, 2vw, 32px);
+  font-size: clamp(17px, 1.55vw, 28px);
   line-height: 1;
+  color: var(--video-accent, currentColor);
 }
 
 .vocab-deck span {
   color: var(--video-muted);
-  font-size: 14px;
+  font-size: clamp(11px, 0.84vw, 14px);
+  line-height: 1.28;
 }
 
 .scene-board {
@@ -200,17 +283,37 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   padding: 28px;
   border: 1px solid var(--video-card-border);
   border-radius: 8px;
-  background: var(--video-card-bg);
+  background:
+    linear-gradient(140deg, color-mix(in srgb, var(--video-accent-soft, #6ec6ff) 20%, transparent), transparent 58%),
+    var(--video-card-bg);
   display: grid;
   align-content: center;
   gap: 18px;
 }
 
+.video-vocabulary-slide.layout-1 .scene-board {
+  border-radius: 30px 8px 30px 8px;
+}
+
+.video-vocabulary-slide.layout-2 .scene-board {
+  border-radius: 999px;
+  padding-inline: 56px;
+}
+
+.video-vocabulary-slide.layout-3 .scene-board {
+  clip-path: polygon(4% 0, 100% 0, 96% 100%, 0 100%);
+}
+
+.video-vocabulary-slide.layout-4 .scene-board {
+  border-radius: 50%;
+  aspect-ratio: 1;
+}
+
 .scene-board p {
   margin: 0;
   color: var(--video-text);
-  font-size: clamp(22px, 2.4vw, 34px);
-  line-height: 1.4;
+  font-size: clamp(15px, 1.45vw, 28px);
+  line-height: 1.42;
 }
 
 .scene-board div {

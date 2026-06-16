@@ -1815,20 +1815,22 @@ onBeforeUnmount(() => {
 .resource-card {
   min-height: 0;
   max-height: none;
-  height: 330px;
-  padding: 14px 15px 15px;
+  height: 286px;
+  padding: 12px 13px;
   border-radius: 24px;
   background:
     linear-gradient(135deg, rgba(250, 250, 250, 0.92), rgba(237, 249, 252, 0.84)),
     #fafafa;
   cursor: pointer;
   position: relative;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
   overflow: hidden;
 }
 
 .resource-cover {
-  height: 252px;
+  height: 176px;
   aspect-ratio: auto;
   border-radius: 16px;
   overflow: hidden;
@@ -1843,7 +1845,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: contain;
+  object-fit: cover;
 }
 
 .resource-cover__video {
@@ -1938,14 +1940,13 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 6px;
   min-height: 30px;
-  max-width: calc(100% - 30px);
-  position: absolute;
-  top: 22px;
-  right: 22px;
+  max-width: 100%;
+  margin-top: auto;
+  position: relative;
   z-index: 2;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-4px);
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
@@ -1953,7 +1954,7 @@ onBeforeUnmount(() => {
 .resource-card:focus-within .resource-card-actions {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0);
+  transform: none;
 }
 
 .reaction-btn {
