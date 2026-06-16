@@ -15,6 +15,11 @@ from typing import Any
 
 
 LAYOUTS = {
+    "intro",
+    "keypoint",
+    "formula",
+    "vocabulary",
+    # backward compat — old PPT pipeline
     "title_cover",
     "concept_visual",
     "process_steps",
@@ -74,19 +79,21 @@ def _looks_like_formula(text: str) -> bool:
     return bool(re.search(r"\$[^$]+\$|\\frac|\\sum|=|≈|≤|≥|\^|_", text))
 
 
+def _looks_like_vocabulary(title: str, bullets: list[str]) -> bool:
+    joined = f"{title}\n" + "\n".join(bullets)
+    english_terms = re.findall(r"[A-Za-z][A-Za-z-]{2,}", joined)
+    return bool(re.search(r"词汇|单词|英语|例句|短语|vocabulary|word|phrase", joined, re.IGNORECASE)) or len(english_terms) >= 5
+
+
 def _choose_layout(index: int, title: str, bullets: list[str]) -> str:
     joined = f"{title}\n" + "\n".join(bullets)
     if index == 0:
-        return "title_cover"
-    if re.search(r"对比|比较|区别|vs\.?|versus|差异", joined, re.IGNORECASE):
-        return "comparison"
-    if re.search(r"步骤|流程|过程|阶段|路径|step|process", joined, re.IGNORECASE):
-        return "process_steps"
+        return "intro"
     if _looks_like_formula(joined):
-        return "formula_focus"
-    if len(bullets) >= 5:
-        return "content_cards"
-    return "concept_visual"
+        return "formula"
+    if _looks_like_vocabulary(title, bullets):
+        return "vocabulary"
+    return "keypoint"
 
 
 def _choose_theme(index: int, title: str) -> str:
@@ -99,11 +106,7 @@ def _choose_theme(index: int, title: str) -> str:
 
 
 def _visual_type(layout: str, text: str) -> str:
-    if layout == "process_steps":
-        return "timeline"
-    if layout == "comparison":
-        return "comparison"
-    if layout == "formula_focus":
+    if layout == "formula":
         return "formula"
     if re.search(r"地图|历史|区域|地理|位置", text):
         return "map"
@@ -256,7 +259,7 @@ def slides_to_markdown(title: str, slides: list[dict]) -> str:
     for index, slide in enumerate(normalize_slides(slides or [])):
         slide_title = slide.get("title") or title or f"Slide {index + 1}"
         lines = [
-            f"<!-- layout: {slide.get('layout', 'content_cards')} -->",
+            f"<!-- layout: {slide.get('layout', 'keypoint')} -->",
             f"<!-- theme: {slide.get('theme', 'academic_blue')} -->",
         ]
         visual_query = (slide.get("visual") or {}).get("query")

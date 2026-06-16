@@ -391,8 +391,24 @@ async def generate_ppt_parallel(
             except Exception:
                 logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
 
+    async def _review_ppt_section(content: str, section_title: str) -> dict:
+        """调用 reviewer_ppt 审核单个章节，返回 {passed, score, feedback}"""
+        try:
+            reviewer_prompt = load_prompt("agent/reviewer_ppt")
+            prompt_text = fill_prompt(
+                reviewer_prompt,
+                content=content[:3000],
+                topic=topic,
+                kb_context=kb or "暂无相关知识库资料",
+            )
+            response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id, pool="reviewer")
+            return _parse_review_response(response.content)
+        except Exception as e:
+            logger.exception("[PPT-Review] section=%s 审核异常", section_title)
+            return {"passed": True, "score": 0, "feedback": f"审核异常: {e}"}
+
     async def _gen_section(idx: int, section_title: str) -> None:
-        """单章节：生成 → 快检日志 → 立即推送"""
+        """单章节：生成 → 审核 → 反馈重生成（最多 3 轮） → 推送"""
         if stream_writer:
             try:
                 stream_writer({
@@ -438,31 +454,85 @@ async def generate_ppt_parallel(
         else:
             prompt_with_context = base_prompt
 
-        # ── Step 1: 生成（连接错误重试一次）──
-        t0 = time.perf_counter()
+        # ── 生成 + 审核循环（最多 3 轮：1 次初稿 + 2 次修改）──
+        MAX_REVIEW_ROUNDS = 3
         content = ""
-        for attempt in range(2):
-            try:
-                response = await llm.ainvoke(prompt_with_context, priority=llm_priority, user_id=user_id, pool="ppt")
-                content = response.content
-                break
-            except Exception as e:
-                elapsed = time.perf_counter() - t0
-                is_conn_error = "RemoteProtocolError" in type(e).__name__ or "ConnectError" in type(e).__name__ or "Timeout" in type(e).__name__ or "timeout" in str(e).lower() or "incomplete" in str(e).lower()
-                if attempt == 0 and is_conn_error:
-                    logger.warning("[PPT-Gen] idx=%d section=%s 连接异常，重试中... err=%s", idx, section_title, str(e)[:120])
-                    await asyncio.sleep(1.5)
-                    continue
-                logger.exception("[PPT-Gen] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
+        review_feedback = ""
+        final_passed = False
+
+        for round_idx in range(MAX_REVIEW_ROUNDS):
+            if stream_writer and round_idx > 0:
+                try:
+                    stream_writer({
+                        "type": "stream_progress", "file_type": "ppt",
+                        "message": f"「{section_title}」审核未通过，正在修改...（第{round_idx + 1}轮）",
+                        "current": idx + 1, "total": total,
+                    })
+                except Exception:
+                    pass
+
+            # 拼接审核反馈到 prompt
+            if round_idx > 0 and review_feedback:
+                prompt_with_context = (
+                    f"{prompt_with_context}\n\n"
+                    f"## 上一轮审核未通过，请根据以下意见修改\n"
+                    f"{review_feedback}\n\n"
+                    f"请重新生成完整内容。"
+                )
+
+            # Step A: 生成（连接错误重试一次）
+            t0 = time.perf_counter()
+            gen_ok = False
+            for attempt in range(2):
+                try:
+                    response = await llm.ainvoke(prompt_with_context, priority=llm_priority, user_id=user_id, pool="ppt")
+                    content = response.content
+                    gen_ok = True
+                    break
+                except Exception as e:
+                    elapsed = time.perf_counter() - t0
+                    is_conn_error = "RemoteProtocolError" in type(e).__name__ or "ConnectError" in type(e).__name__ or "Timeout" in type(e).__name__ or "timeout" in str(e).lower() or "incomplete" in str(e).lower()
+                    if attempt == 0 and is_conn_error:
+                        logger.warning("[PPT-Gen] idx=%d section=%s 连接异常，重试中... err=%s", idx, section_title, str(e)[:120])
+                        await asyncio.sleep(1.5)
+                        continue
+                    logger.exception("[PPT-Gen] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
+                    _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
+                    _push_section(idx, _results[idx]["content"])
+                    return
+
+            if not gen_ok:
                 _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
                 _push_section(idx, _results[idx]["content"])
                 return
-        elapsed = time.perf_counter() - t0
 
-        if not is_portrait_section:
-            ok = _quick_check_ppt(content)
-            logger.info("[PPT-Gen] idx=%d section=%s %s 耗时=%.2fs",
-                        idx, section_title, "快检通过" if ok else "快检未通过", elapsed)
+            elapsed = time.perf_counter() - t0
+
+            # Step B: 快检日志
+            if not is_portrait_section:
+                ok = _quick_check_ppt(content)
+                logger.info("[PPT-Gen] idx=%d section=%s round=%d %s 耗时=%.2fs",
+                            idx, section_title, round_idx + 1, "快检通过" if ok else "快检未通过", elapsed)
+
+            # Step C: 审核（画像引入页跳过）
+            if is_portrait_section:
+                final_passed = True
+                break
+
+            review_result = await _review_ppt_section(content, section_title)
+            if review_result.get("passed"):
+                final_passed = True
+                logger.info("[PPT-Review] idx=%d section=%s round=%d 审核通过 score=%s",
+                            idx, section_title, round_idx + 1, review_result.get("score"))
+                break
+
+            review_feedback = review_result.get("feedback", "")
+            logger.warning("[PPT-Review] idx=%d section=%s round=%d 审核未通过: %s",
+                           idx, section_title, round_idx + 1, review_feedback[:120])
+
+        if not final_passed and not is_portrait_section:
+            logger.warning("[PPT-Review] idx=%d section=%s 达最大轮次 %d，接受当前版本",
+                           idx, section_title, MAX_REVIEW_ROUNDS)
 
         _results[idx] = {"idx": idx, "content": content}
         _push_section(idx, content)
@@ -861,7 +931,7 @@ async def reviewer_node(state: ResourceState) -> dict:
     user_id_int = int(state.get("user_id", 0))
 
     async def review_one(rt: str, content: str) -> dict:
-        # PPT / 文档 已在 generate_*_parallel 内部按章节生成，质量足够，跳过审核
+        # PPT / 文档 已在 generate_*_parallel 内部逐章节审核（生成→审核→重生成循环），跳过全局审核
         if rt in ("ppt", "document", "case", "reading"):
             return {"passed": True, "score": 100, "feedback": ""}
         # API 生成的图片跳过文本审核
