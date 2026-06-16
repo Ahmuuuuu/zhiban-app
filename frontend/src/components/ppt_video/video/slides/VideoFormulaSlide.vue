@@ -21,7 +21,7 @@
         :style="{ '--delay': index }"
       >
         <b>{{ index + 1 }}</b>
-        <span v-html="renderMath(item)"></span>
+        <span v-html="karaokeNotes[index]"></span>
       </article>
     </div>
   </section>
@@ -29,7 +29,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath } from '../../../../utils/renderMath'
+import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
 
 const props = defineProps({
   slide: {
@@ -39,11 +39,32 @@ const props = defineProps({
   layoutSeed: {
     type: Number,
     default: 0
+  },
+  timedWords: {
+    type: Array,
+    default: () => []
   }
 })
 
 const formulas = computed(() => props.slide.formulas?.length ? props.slide.formulas : [props.slide.title])
 const notes = computed(() => props.slide.items || [])
+
+const karaokeNotes = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return notes.value.map(item => renderMath(item))
+  // TTS 全文顺序：title → formulas(text) → notes(items)
+  // title 和 formulas 不以 karaoke 渲染，需跳过它们占用的词
+  let offset = 0
+  offset += renderKaraokeHTML(props.slide.title || '', words, offset).consumed
+  for (const f of formulas.value) {
+    offset += renderKaraokeHTML(f, words, offset).consumed
+  }
+  return notes.value.map(item => {
+    const { html, consumed } = renderKaraokeHTML(item, words, offset)
+    offset += consumed
+    return html
+  })
+})
 </script>
 
 <style scoped>

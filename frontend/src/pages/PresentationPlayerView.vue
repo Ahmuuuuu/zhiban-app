@@ -32,6 +32,7 @@
             :is-playing="isPlaying"
             :has-started="hasStarted"
             :background-url="videoBackgroundUrl"
+            :timed-words="timedWords"
           >
             <template #progress>
               <VideoGlowProgress
@@ -358,25 +359,53 @@ const visualTerms = computed(() => {
     .slice(0, 8)
 })
 
-const activeWordIndex = computed(() => {
+// 将词级 word_timestamps 插值为字级时间戳：每个词的时长均匀分给每个字
+// 过滤标点/空白 — renderKaraokeHTML 也不消耗这些字符，需保持一致
+const CHAR_PUNCT_RE = /^[\s，。、；：！？,.;:!?]+$/
+const charTimestamps = computed(() => {
   const wts = activeSlide.value?.wordTimestamps
-  if (!wts || !wts.length) return -1
+  if (!wts || !wts.length) return []
+  const chars = []
+  for (const wt of wts) {
+    const segments = [...wt.text]
+    const validSegs = segments.filter(s => !CHAR_PUNCT_RE.test(s))
+    if (!validSegs.length) continue
+    const perCharMs = wt.duration_ms / validSegs.length
+    for (let i = 0; i < validSegs.length; i++) {
+      chars.push({
+        text: validSegs[i],
+        offset_ms: wt.offset_ms + i * perCharMs,
+        duration_ms: perCharMs
+      })
+    }
+  }
+  return chars
+})
+
+const activeCharIndex = computed(() => {
+  const cts = charTimestamps.value
+  if (!cts.length) return -1
   const ms = currentTime.value * 1000
-  let lo = 0, hi = wts.length
+  let lo = 0, hi = cts.length
   while (lo < hi) {
     const mid = (lo + hi) >>> 1
-    if (wts[mid].offset_ms <= ms) lo = mid + 1
+    if (cts[mid].offset_ms <= ms) lo = mid + 1
     else hi = mid
   }
   return lo - 1
 })
 
 const timedWords = computed(() => {
-  const wts = activeSlide.value?.wordTimestamps
-  if (!wts || !wts.length) return []
-  const currentIdx = activeWordIndex.value
-  return wts.map((wt, i) => ({
-    text: wt.text,
+  const cts = charTimestamps.value
+  if (!cts.length) {
+    if (activeSlide.value && activeSlide.value.audioUrl) {
+      console.warn('[Karaoke] 有音频但 wordTimestamps 为空:', activeSlide.value.id, activeSlide.value.title?.slice(0, 20))
+    }
+    return []
+  }
+  const currentIdx = activeCharIndex.value
+  return cts.map((ct, i) => ({
+    text: ct.text,
     isDone: i <= currentIdx,
     isCurrent: i === currentIdx + 1
   }))
@@ -1146,8 +1175,10 @@ onBeforeUnmount(() => {
 
 .karaoke-word {
   display: inline;
-  opacity: 0.32;
-  transition: opacity 0.12s ease, color 0.18s ease, text-shadow 0.18s ease;
+  opacity: 0.36;
+  transition: opacity 0.1s ease, background 0.15s ease, color 0.15s ease;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .karaoke-word.is-done {
@@ -1157,8 +1188,10 @@ onBeforeUnmount(() => {
 
 .karaoke-word.is-current {
   opacity: 1;
-  color: var(--player-highlight, #ffd166);
-  text-shadow: 0 0 14px color-mix(in srgb, var(--player-highlight, #ffd166) 70%, transparent);
+  color: #fff;
+  background: #e8406c;
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(232, 64, 108, 0.55);
 }
 
 @keyframes mouth-patch-talk {

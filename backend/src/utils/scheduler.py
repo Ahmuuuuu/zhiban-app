@@ -1,11 +1,55 @@
 """APScheduler 定时任务调度器（AsyncIO 模式）"""
 
 import logging
+import shutil
+import time
+from pathlib import Path
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logger = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
+
+STATIC_DIR = Path(__file__).parent.parent.parent / "static"
+CLEANUP_AGE_SECONDS = 24 * 3600  # 1 天
+
+
+def _cleanup_old_files():
+    """删除 static 目录下超过 1 天的生成文件（音频缓存、视频、演示、PPT）"""
+    now = time.time()
+    dirs = [
+        STATIC_DIR / "audio" / "_cache",
+        STATIC_DIR / "videos",
+        STATIC_DIR / "presentations",
+        STATIC_DIR / "ppt",
+    ]
+    cleaned = 0
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for f in d.iterdir():
+            try:
+                if f.is_file() and now - f.stat().st_mtime > CLEANUP_AGE_SECONDS:
+                    f.unlink()
+                    cleaned += 1
+            except OSError:
+                pass
+        # 清理空的音频资源子目录
+        if d.name != "_cache" and d.parent.name == "audio":
+            continue
+    # 清理 audio 下的空资源目录
+    audio_dir = STATIC_DIR / "audio"
+    if audio_dir.is_dir():
+        for sub in audio_dir.iterdir():
+            if sub.is_dir() and sub.name != "_cache":
+                try:
+                    if not any(sub.iterdir()):
+                        sub.rmdir()
+                except OSError:
+                    pass
+    if cleaned:
+        logger.info("清理过期文件 %d 个", cleaned)
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -26,20 +70,31 @@ def start():
         generate_weekly_report_and_ai_tip,
     )
 
+    # 每天凌晨 3 点清理超过 1 天的静态文件
+    sched.add_job(
+        _cleanup_old_files,
+        trigger="cron",
+        hour=3,
+        minute=13,
+        id="cleanup_old_files",
+        name="清理过期静态文件",
+        replace_existing=True,
+    )
+
     # 每周一 9:00 生成周报 + AI 建议
     sched.add_job(
         generate_weekly_report_and_ai_tip,
         trigger="cron",
         day_of_week="mon",
         hour=9,
-        minute=7,  # 避免整点高峰
+        minute=7,
         id="weekly_report_and_ai_tip",
         name="周报与AI建议",
         replace_existing=True,
     )
 
     sched.start()
-    logger.info("定时任务已启动：每周一 09:07 生成周报+AI建议")
+    logger.info("定时任务已启动：清理过期文件（每日3:13）+ 周报（周一9:07）")
 
 
 def stop():
