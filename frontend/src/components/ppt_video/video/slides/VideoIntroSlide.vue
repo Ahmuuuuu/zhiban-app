@@ -2,8 +2,8 @@
   <section class="video-intro-slide">
     <div class="intro-profile">
       <span class="intro-kicker">学习画像</span>
-      <h2>{{ learnerTitle }}</h2>
-      <p>{{ introText }}</p>
+      <h2 v-html="karaokeTitle"></h2>
+      <p v-html="karaokeIntro"></p>
       <div class="profile-metrics">
         <article
           v-for="(metric, index) in metrics"
@@ -39,12 +39,17 @@
 
 <script setup>
 import { computed } from 'vue'
+import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
 import { getSlideTerms } from './videoSlideClassifier'
 
 const props = defineProps({
   slide: {
     type: Object,
     required: true
+  },
+  timedWords: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -56,6 +61,20 @@ const metrics = computed(() => [
   { value: String((props.slide.items || []).length || 3).padStart(2, '0'), label: '关键线索' },
   { value: 'AI', label: '个性匹配' }
 ])
+
+// karaoke：TTS 文本顺序为 title → introText，title 在先
+const karaokeTitle = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return renderMath(learnerTitle.value)
+  return renderKaraokeHTML(learnerTitle.value, words, 0).html
+})
+
+const karaokeIntro = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return renderMath(introText.value)
+  const offset = renderKaraokeHTML(learnerTitle.value, words, 0).consumed
+  return renderKaraokeHTML(introText.value, words, offset).html
+})
 </script>
 
 <style scoped>

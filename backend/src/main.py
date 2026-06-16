@@ -1,6 +1,12 @@
 import logging
 import sys
 import traceback
+from pathlib import Path
+
+# 确保 backend/ 的父目录在 sys.path，这样无论从项目根还是 backend/ 内启动 uvicorn 都能正确导入 backend.src.xxx
+_sys_root = Path(__file__).resolve().parent.parent.parent
+if str(_sys_root) not in sys.path:
+    sys.path.insert(0, str(_sys_root))
 
 logging.basicConfig(
     level=logging.INFO,

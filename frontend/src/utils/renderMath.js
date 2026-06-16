@@ -35,6 +35,73 @@ function fixBrokenLatex(text) {
 const NON_MATH_RE = /[一-鿿㐀-䶿豈-﫿　-〿＀-￯]/
 const CJK_STRIP_RE = /[一-鿿㐀-䶿豈-﫿　-〿＀-￯，。、；：！？（）【】《》""'']/g
 
+/** 标点/空白 — 不需要 karaoke 高亮，也不消耗 timedWords */
+const PUNCT_RE = /^[\s，。、；：！？,.;:!?]+$/
+
+/**
+ * 将文本渲染为带 karaoke 逐词高亮的 HTML。
+ * 与 renderMath 一样处理 LaTeX，同时将普通文字按 timedWords 状态包入 karaoke span。
+ *
+ * @param {string} text - 待渲染文本
+ * @param {Array<{text: string, isDone: boolean, isCurrent: boolean}>} timedWords - 全 slide 的词状态
+ * @param {number} wordOffset - 当前 item 在 timedWords 中的起始下标
+ * @returns {{ html: string, consumed: number }}
+ */
+export function renderKaraokeHTML(text, timedWords, wordOffset = 0) {
+  if (!text || typeof text !== 'string') return { html: text, consumed: 0 }
+
+  const fixed = fixBrokenLatex(text)
+  const words = timedWords || []
+  let wi = wordOffset
+  let consumedTotal = 0
+  let result = ''
+
+  const parts = fixed.split(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\$[^\s\$][^\$]*?\$|\\\([\s\S]*?\\\))/g)
+
+  for (const part of parts) {
+    if (!part) continue
+
+    // LaTeX 公式 — 直接渲染，不消耗 timedWords 位置
+    if (/^\$\$|^\\\[|^\$|^\\\(/.test(part)) {
+      if (part.startsWith('$$') || part.startsWith('\\[')) {
+        const f = part.replace(/^\$\$|\$\$$/g, '').replace(/^\\\[|\\\]$/g, '')
+        result += render(f, true)
+      } else {
+        const f = part.replace(/^\$|\$$/g, '').replace(/^\\\(|\\\)$/g, '')
+        if (NON_MATH_RE.test(f)) {
+          const stripped = f.replace(CJK_STRIP_RE, '').trim()
+          if (stripped && stripped.length > 1) {
+            try { result += render(stripped, false) } catch { result += `$${f}$` }
+          } else {
+            result += `$${f}$`
+          }
+        } else {
+          result += render(f, false)
+        }
+      }
+      continue
+    }
+
+    // 逐字拆分 — timedWords 已由上层插值为字级，每个 Unicode 字符对应一条
+    const chars = [...part]
+    for (const ch of chars) {
+      if (PUNCT_RE.test(ch)) {
+        result += ch
+        continue
+      }
+      const tw = wi < words.length ? words[wi] : null
+      const isDone = tw ? tw.isDone : true
+      const isCurrent = tw ? tw.isCurrent : false
+      const cls = `karaoke-word${isDone ? ' is-done' : ''}${isCurrent ? ' is-current' : ''}`
+      result += `<span class="${cls}">${ch}</span>`
+      wi++
+      consumedTotal++
+    }
+  }
+
+  return { html: result, consumed: consumedTotal }
+}
+
 /**
  * 将文本中的 LaTeX 公式渲染为 HTML。
  * 支持：$$...$$ / \[...\] （块级），$...$ / \(...\) （行内）

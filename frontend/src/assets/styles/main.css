@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+/* karaoke 逐词高亮（视频 PPT 播放器子组件内 v-html 渲染，需全局样式） */
+.karaoke-word {
+  display: inline;
+  opacity: 0.36;
+  transition: opacity 0.1s ease, background 0.15s ease, color 0.15s ease;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.karaoke-word.is-done {
+  opacity: 1;
+  color: var(--player-text, #fff);
+}
+.karaoke-word.is-current {
+  opacity: 1;
+  color: #fff;
+  background: #e8406c;
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(232, 64, 108, 0.55);
+}
+
 :root {
   --color-bg: #f1f7fb;
   --color-card: #ffffff;

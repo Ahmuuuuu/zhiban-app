@@ -17,7 +17,7 @@
         :class="{ featured: index === 0 }"
       >
         <b>{{ index + 1 }}</b>
-        <span v-html="renderMath(item)"></span>
+        <span v-html="karaokeItems[index]"></span>
       </article>
     </div>
 
@@ -42,7 +42,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath } from '../../../../utils/renderMath'
+import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
 import { getSlideTerms } from './videoSlideClassifier'
 
 const props = defineProps({
@@ -53,6 +53,10 @@ const props = defineProps({
   layoutSeed: {
     type: Number,
     default: 0
+  },
+  timedWords: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -62,6 +66,27 @@ const displayItems = computed(() => {
 })
 
 const terms = computed(() => getSlideTerms(props.slide))
+
+// 逐词 karaoke：TTS word_timestamps 覆盖 title + items + notes 全文，
+// 但 title/summary 不以 karaoke 渲染，因此先跳过它们占用的词，再对齐 items。
+const karaokeItems = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return displayItems.value.map(item => renderMath(item))
+  let offset = 0
+  // 跳过 title（普通渲染，不参与 karaoke）
+  offset += renderKaraokeHTML(props.slide.title || '', words, offset).consumed
+  // 跳过 summary（当 summary 与 items 来源不同时需跳过；若与 items 重叠则不跳过）
+  const summaryText = props.slide.summary || ''
+  const itemsText = displayItems.value.join(' ')
+  if (summaryText && !itemsText.includes(summaryText.slice(0, 10))) {
+    offset += renderKaraokeHTML(summaryText, words, offset).consumed
+  }
+  return displayItems.value.map(item => {
+    const { html, consumed } = renderKaraokeHTML(item, words, offset)
+    offset += consumed
+    return html
+  })
+})
 </script>
 
 <style scoped>

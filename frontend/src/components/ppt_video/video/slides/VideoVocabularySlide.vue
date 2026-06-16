@@ -22,7 +22,7 @@
 
     <div class="scene-board">
       <span>Scene Practice</span>
-      <p v-html="renderMath(exampleText)"></p>
+      <p v-html="karaokeExample"></p>
       <div>
         <i
           v-for="dot in 5"
@@ -36,7 +36,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath } from '../../../../utils/renderMath'
+import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
 
 const props = defineProps({
   slide: {
@@ -46,6 +46,10 @@ const props = defineProps({
   layoutSeed: {
     type: Number,
     default: 0
+  },
+  timedWords: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -65,6 +69,22 @@ const vocabCards = computed(() => {
 })
 
 const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary || '')
+
+const karaokeExample = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return renderMath(exampleText.value)
+  // TTS 全文顺序：title → items（vocab + example），title 不以 karaoke 渲染，需跳过
+  let offset = 0
+  offset += renderKaraokeHTML(props.slide.title || '', words, offset).consumed
+  // 若 vocabCards 的词来自 items 前半段，需额外跳过它们占用的词
+  // exampleText 通常是 items[0]，若前面还有词汇行则跳过
+  const items = Array.isArray(props.slide.items) ? props.slide.items : []
+  const exampleIdx = items.indexOf(exampleText.value)
+  for (let i = 0; i < (exampleIdx >= 0 ? exampleIdx : 0); i++) {
+    offset += renderKaraokeHTML(String(items[i] || ''), words, offset).consumed
+  }
+  return renderKaraokeHTML(exampleText.value, words, offset).html
+})
 </script>
 
 <style scoped>
