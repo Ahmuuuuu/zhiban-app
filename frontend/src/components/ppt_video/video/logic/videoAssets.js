@@ -1,4 +1,4 @@
-const backgroundModules = import.meta.glob('../../../assets/ppt_video/video/backgrounds/*.{png,jpg,jpeg,webp,avif}', {
+const backgroundModules = import.meta.glob('../../../../assets/ppt_video/video/backgrounds/*.{png,jpg,jpeg,webp,avif}', {
   eager: true,
   import: 'default'
 })

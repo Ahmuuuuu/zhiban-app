@@ -22,11 +22,9 @@ const props = defineProps({
   }
 })
 
-const backgroundStyle = computed(() => ({
-  backgroundImage: props.backgroundUrl
-    ? `url("${props.backgroundUrl}")`
-    : '#143f73'
-}))
+const backgroundStyle = computed(() => props.backgroundUrl
+  ? { backgroundImage: `url("${props.backgroundUrl}")` }
+  : { backgroundColor: '#143f73' })
 </script>
 
 <style scoped>

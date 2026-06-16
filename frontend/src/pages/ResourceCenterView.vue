@@ -1816,7 +1816,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   max-height: none;
   height: 286px;
-  padding: 12px 13px;
+  padding: 10px 12px;
   border-radius: 24px;
   background:
     linear-gradient(135deg, rgba(250, 250, 250, 0.92), rgba(237, 249, 252, 0.84)),
@@ -1825,12 +1825,12 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 6px;
   overflow: hidden;
 }
 
 .resource-cover {
-  height: 176px;
+  height: 190px;
   aspect-ratio: auto;
   border-radius: 16px;
   overflow: hidden;
@@ -1845,7 +1845,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .resource-cover__video {
@@ -1941,7 +1941,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   min-height: 30px;
   max-width: 100%;
-  margin-top: auto;
+  margin-top: 2px;
   position: relative;
   z-index: 2;
   opacity: 1;

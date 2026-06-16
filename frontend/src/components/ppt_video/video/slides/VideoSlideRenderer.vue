@@ -13,10 +13,10 @@
 
 <script setup>
 import { computed } from 'vue'
-import VideoFormulaSlide from './VideoFormulaSlide.vue'
-import VideoIntroSlide from './VideoIntroSlide.vue'
-import VideoKeyPointSlide from './VideoKeyPointSlide.vue'
-import VideoVocabularySlide from './VideoVocabularySlide.vue'
+import BlackboardKeypointTemplate from '../templates/BlackboardKeypointTemplate.vue'
+import VideoFormulaSlide from '../templates/VideoFormulaSlide.vue'
+import VideoIntroSlide from '../templates/VideoIntroSlide.vue'
+import VideoVocabularySlide from '../templates/VideoVocabularySlide.vue'
 
 const props = defineProps({
   slide: {
@@ -45,13 +45,10 @@ const componentMap = {
   intro: VideoIntroSlide,
   formula: VideoFormulaSlide,
   vocabulary: VideoVocabularySlide,
-  keypoint: VideoKeyPointSlide,
-  comparison: VideoKeyPointSlide,
-  process: VideoKeyPointSlide,
-  summary: VideoKeyPointSlide
+  keypoint: BlackboardKeypointTemplate
 }
 
-const componentName = computed(() => componentMap[props.variant] || VideoKeyPointSlide)
+const componentName = computed(() => componentMap[props.variant] || BlackboardKeypointTemplate)
 const transitionName = computed(() => [
   'slide-swing',
   'slide-rise',
