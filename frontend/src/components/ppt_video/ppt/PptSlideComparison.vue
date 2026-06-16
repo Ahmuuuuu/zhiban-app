@@ -21,7 +21,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath } from '../../utils/renderMath'
+import { renderMath } from '../../../utils/renderMath'
 
 const props = defineProps({
   blocks: {

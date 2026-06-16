@@ -17,7 +17,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import PptPreview from '../PptPreview.vue'
+import PptPreview from '../../PptPreview.vue'
 
 const props = defineProps({
   slides: {
