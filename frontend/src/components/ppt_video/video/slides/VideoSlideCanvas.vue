@@ -167,7 +167,7 @@ const contentLayoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
   z-index: 0;
 }
 
-.video-slide-canvas :deep(.video-keypoint-slide),
+.video-slide-canvas :deep(.blackboard-keypoint-template),
 .video-slide-canvas :deep(.video-vocabulary-slide),
 .video-slide-canvas :deep(.video-formula-slide),
 .video-slide-canvas :deep(.video-intro-slide) {
