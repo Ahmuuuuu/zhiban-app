@@ -140,7 +140,7 @@ import PptSlideContentCards from './PptSlideContentCards.vue'
 import PptSlideFormula from './PptSlideFormula.vue'
 import PptSlideProcess from './PptSlideProcess.vue'
 import { selectCustomPptAssets } from './pptAssets'
-import { renderMath } from '../../utils/renderMath'
+import { renderMath } from '../../../utils/renderMath'
 
 const props = defineProps({
   slide: {

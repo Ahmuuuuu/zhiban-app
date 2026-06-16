@@ -1,7 +1,7 @@
 <template>
   <section
     class="blackboard-keypoint-template"
-    :class="[`layout-${layoutSeed}`, { 'is-dense': displayItems.length > 4 }]"
+    :class="{ 'is-dense': displayItems.length > 4, 'is-flipped': flip }"
   >
     <BoardHeaderBlock
       class="blackboard-keypoint-template__header"
@@ -46,6 +46,7 @@ const displayItems = computed(() => {
 })
 
 const terms = computed(() => getSlideTerms(props.slide))
+const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 </script>
 
 <style scoped>
@@ -54,11 +55,11 @@ const terms = computed(() => getSlideTerms(props.slide))
   inset: 82px 54px 104px;
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   grid-template-rows: minmax(0, 0.72fr) minmax(160px, 0.9fr);
   grid-template-areas:
     "header visual"
-    "body visual";
+    "body   visual";
   gap: 22px 28px;
   color: var(--video-text);
 }
@@ -69,66 +70,26 @@ const terms = computed(() => getSlideTerms(props.slide))
   box-sizing: border-box;
 }
 
-.blackboard-keypoint-template.layout-1 {
-  grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+/* ===== grid areas ===== */
+.blackboard-keypoint-template__header { grid-area: header; }
+.blackboard-keypoint-template__body   { grid-area: body; }
+.blackboard-keypoint-template__visual { grid-area: visual; }
+
+/* ===== flip: visual panel on left ===== */
+.blackboard-keypoint-template.is-flipped {
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   grid-template-areas:
     "visual header"
     "visual body";
 }
 
-.blackboard-keypoint-template.layout-2 {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(120px, 0.52fr) minmax(180px, 0.72fr);
-  grid-template-areas:
-    "header"
-    "visual"
-    "body";
-}
-
-.blackboard-keypoint-template.layout-3 {
-  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-areas:
-    "header body"
-    "visual body";
-}
-
-.blackboard-keypoint-template.layout-4 {
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas:
-    "header header"
-    "body visual";
-}
-
+/* ===== Dense — only shrink, keep layout ===== */
 .blackboard-keypoint-template.is-dense {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas:
-    "header"
-    "body";
-  gap: 18px;
-}
-
-.blackboard-keypoint-template__header {
-  grid-area: header;
-  animation: header-in 0.58s ease both;
-}
-
-.blackboard-keypoint-template__body {
-  grid-area: body;
-}
-
-.blackboard-keypoint-template__visual {
-  grid-area: visual;
-}
-
-.blackboard-keypoint-template.is-dense .blackboard-keypoint-template__visual {
-  display: none;
+  gap: 16px 22px;
 }
 
 .blackboard-keypoint-template.is-dense :deep(.board-header-block h2) {
-  font-size: clamp(26px, 3vw, 42px);
+  font-size: clamp(24px, 2.6vw, 38px);
 }
 
 .blackboard-keypoint-template.is-dense :deep(.board-header-block p) {
@@ -137,9 +98,14 @@ const terms = computed(() => getSlideTerms(props.slide))
   line-height: 1.45;
 }
 
+/* ===== Animations ===== */
+.blackboard-keypoint-template__header {
+  animation: header-in 0.58s ease both;
+}
+
 @keyframes header-in {
   from { opacity: 0; transform: translateY(18px); }
-  to { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 980px) {

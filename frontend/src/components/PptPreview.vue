@@ -87,8 +87,8 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import PptSlide from './ppt_video/PptSlide.vue'
-import PresentationToolbar from './ppt_video/PresentationToolbar.vue'
+import PptSlide from './ppt_video/ppt/PptSlide.vue'
+import PresentationToolbar from './ppt_video/ppt/PresentationToolbar.vue'
 import 'katex/dist/katex.min.css'
 
 const props = defineProps({
