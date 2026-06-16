@@ -360,6 +360,7 @@
               v-else-if="pptPreview.slides.length"
               v-model:slides="pptPreview.slides"
               :title="pptPreview.title"
+              :exporting="pptPreview.exporting"
               :annotatable="Boolean(pptPreview.resourceId)"
               :annotations="pptPreview.annotations || []"
               @create-note="createPptPreviewAnnotation($event)"
@@ -1949,6 +1950,7 @@ const exportChatPptx = async slides => {
     return
   }
 
+  pptPreview.value = { ...pptPreview.value, exporting: true }
   try {
     const target = messages.value.find(item => item.id === pptPreview.value.messageId)
     if (target) target.slides = slides
@@ -1961,6 +1963,8 @@ const exportChatPptx = async slides => {
   } catch (error) {
     console.error('[ChatView] export pptx failed:', error)
     window.alert(error?.message || '导出 PPTX 失败，请稍后再试。')
+  } finally {
+    pptPreview.value = { ...pptPreview.value, exporting: false }
   }
 }
 

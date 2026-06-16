@@ -356,7 +356,7 @@ async def export_edited_pptx(
         except ImportError:
             raise HTTPException(500, "PPT 导出需要安装 python-pptx 依赖")
 
-        content = markdown_to_pptx(markdown)
+        content = await asyncio.to_thread(markdown_to_pptx, markdown)
         if not content:
             raise HTTPException(400, "PPT 内容为空，无法导出")
 

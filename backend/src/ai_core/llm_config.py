@@ -11,26 +11,35 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 api_key = os.getenv("api_key")
 
 _raw_llm = ChatOpenAI(
-    model=os.getenv("AI_MODEL", "deepseek-chat"),
+    model=os.getenv("AI_MODEL", "deepseek-v4-flash"),
     api_key=api_key,
     base_url=os.getenv("AI_BASE_URL", "https://api.deepseek.com"),
     temperature=0.3,
     streaming=True,
-    model_kwargs={"tool_choice": "auto"},
+    request_timeout=120,  # 单次请求超时 120 秒，避免断连后无限等待
 )
 
-# 每用户每池并发上限
-_PER_USER = {
-    "ppt": 10,
-    "document": 10,
-    "path": 4,
-    "leader": 2,
-    "reviewer": 2,
-    "thread": 3,
-}
-_DEFAULT_PER_USER = 3
+# 多模态 LLM（MiMo，用于视觉审查 PPT 截图等）
+_vision_llm = ChatOpenAI(
+    model=os.getenv("VISION_MODEL", "MiMo-V2.5"),
+    api_key=os.getenv("VISION_API_KEY", api_key),
+    base_url=os.getenv("VISION_BASE_URL", "https://api.xiaomimimo.com/v1"),
+    temperature=0.3,
+    streaming=False,
+)
 
-_LLM_LOW_PRI_LIMIT = 2        # 有前台请求时，低优先级最多占 2 路
+# 每用户每池并发上限（峰值按 5 用户同时使用设计，总并发 ≤500）
+_PER_USER = {
+    "ppt": 95,          # 主力：PPT 章节生成，5 用户 ×95=475
+    "document": 20,     # 文档生成（实际受 ThreadPool 限制，20 已够）
+    "path": 8,          # 学习路径，低频
+    "leader": 3,        # 大纲规划，单次调用，不需多路
+    "reviewer": 50,     # 审核，5 用户 ×50=250，对齐 _review_sem
+    "thread": 10,       # 其他同步任务
+}
+_DEFAULT_PER_USER = 5
+
+_LLM_LOW_PRI_LIMIT = 10       # 有前台请求时，低优先级最多占 10 路
 
 # 每用户每池并发池（异步）
 _user_pool_async: dict[tuple[int, str], asyncio.Semaphore] = {}
@@ -66,8 +75,11 @@ def _get_user_sync_sem(user_id: int, pool: str = "default") -> threading.Bounded
 class _PriorityLLM:
     """LLM 代理：每用户每池独立并发 + 全局优先级限流。"""
 
+    def __init__(self, raw_llm=None):
+        self._raw = raw_llm or _raw_llm
+
     def __getattr__(self, name):
-        return getattr(_raw_llm, name)
+        return getattr(self._raw, name)
 
     async def ainvoke(self, prompt, priority: str = "high", user_id: int = 0, pool: str = "default"):
         user_sem = None
@@ -83,9 +95,9 @@ class _PriorityLLM:
         async def _call():
             if user_sem:
                 async with user_sem:
-                    return await _raw_llm.ainvoke(prompt)
+                    return await self._raw.ainvoke(prompt)
             else:
-                return await _raw_llm.ainvoke(prompt)
+                return await self._raw.ainvoke(prompt)
 
         global _async_high_active
         if priority == "high":
@@ -111,9 +123,9 @@ class _PriorityLLM:
         def _call():
             if user_sem:
                 with user_sem:
-                    return _raw_llm.invoke(prompt)
+                    return self._raw.invoke(prompt)
             else:
-                return _raw_llm.invoke(prompt)
+                return self._raw.invoke(prompt)
 
         global _sync_high_active
         if priority == "high":
@@ -135,3 +147,4 @@ class _PriorityLLM:
 
 
 llm = _PriorityLLM()
+llm_vision = _PriorityLLM(_vision_llm)
