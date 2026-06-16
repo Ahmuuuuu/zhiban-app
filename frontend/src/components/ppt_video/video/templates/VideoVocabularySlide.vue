@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-vocabulary-slide"
-    :class="[`layout-${layoutSeed}`, { 'is-dense': vocabCards.length > 6 }]"
+    :class="{ 'is-dense': vocabCards.length > 6, 'is-flipped': flip }"
   >
     <BoardHeaderBlock
       class="video-vocabulary-slide__header"
@@ -68,6 +68,7 @@ const vocabCards = computed(() => {
 })
 
 const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary || '')
+const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 </script>
 
 <style scoped>
@@ -80,7 +81,7 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas:
     "header scene"
-    "deck scene";
+    "deck   scene";
   gap: 22px 28px;
   color: var(--video-text);
 }
@@ -91,64 +92,29 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   box-sizing: border-box;
 }
 
-/* ===== Dense Mode ===== */
-.video-vocabulary-slide.is-dense {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas:
-    "header"
-    "deck";
-  gap: 18px;
-}
-
-.video-vocabulary-slide.is-dense .scene-board {
-  display: none;
-}
-
-/* ===== Layout Variants ===== */
-.video-vocabulary-slide.layout-1 {
+/* ===== flip: scene on left ===== */
+.video-vocabulary-slide.is-flipped {
   grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
   grid-template-areas:
     "scene header"
     "scene deck";
 }
 
-.video-vocabulary-slide.layout-2 {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(160px, 0.62fr) minmax(180px, 1fr);
-  grid-template-areas:
-    "header"
-    "scene"
-    "deck";
+/* ===== Dense — only shrink, keep layout ===== */
+.video-vocabulary-slide.is-dense {
+  gap: 16px 22px;
 }
 
-.video-vocabulary-slide.layout-3 {
-  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-areas:
-    "header deck"
-    "scene deck";
-}
-
-.video-vocabulary-slide.layout-4 {
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas:
-    "header header"
-    "deck scene";
-}
+/* ===== grid areas ===== */
+.video-vocabulary-slide__header { grid-area: header; }
 
 /* ===== Header (via BoardHeaderBlock) ===== */
-.video-vocabulary-slide__header {
-  grid-area: header;
-}
-
 .video-vocabulary-slide :deep(.video-vocabulary-slide__header.board-header-block) {
   animation: vocab-rise 0.58s ease both;
 }
 
 .video-vocabulary-slide.is-dense :deep(.video-vocabulary-slide__header.board-header-block h2) {
-  font-size: clamp(26px, 3vw, 42px);
+  font-size: clamp(24px, 2.6vw, 40px);
 }
 
 .video-vocabulary-slide.is-dense :deep(.video-vocabulary-slide__header.board-header-block p) {
@@ -166,32 +132,23 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   align-content: start;
+  overflow: hidden;
 }
 
 .video-vocabulary-slide.is-dense .vocab-deck {
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 10px;
-  align-content: start;
-}
-
-.video-vocabulary-slide.layout-3 .vocab-deck {
-  grid-template-columns: 1fr;
-}
-
-.video-vocabulary-slide.layout-4 .vocab-deck {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
 }
 
 .vocab-deck article {
-  min-height: 98px;
-  padding: 17px;
+  min-height: 0;
+  padding: 15px;
   border-radius: 8px;
   border: 1px solid var(--video-card-border);
   background:
     radial-gradient(circle at 18% 18%, color-mix(in srgb, var(--video-warm, #ffd166) 22%, transparent), transparent 38%),
     var(--video-card-bg);
   display: grid;
-  gap: 8px;
+  gap: 6px;
   overflow: hidden;
   box-shadow: 0 18px 42px var(--video-shadow);
   animation: vocab-card 0.62s ease both;
@@ -199,46 +156,8 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 }
 
 .video-vocabulary-slide.is-dense .vocab-deck article {
-  min-height: 68px;
   padding: 11px;
   gap: 5px;
-}
-
-.video-vocabulary-slide.layout-1 .vocab-deck article {
-  min-height: 76px;
-  border-radius: 999px;
-  grid-template-columns: minmax(90px, 0.44fr) minmax(0, 1fr);
-  align-items: center;
-}
-
-.video-vocabulary-slide.layout-2 .vocab-deck article {
-  border-radius: 8px 28px 8px 28px;
-  transform-origin: center;
-}
-
-.video-vocabulary-slide.layout-2 .vocab-deck article:nth-child(odd) {
-  transform: rotate(-1.4deg);
-}
-
-.video-vocabulary-slide.layout-2 .vocab-deck article:nth-child(even) {
-  transform: rotate(1.2deg);
-}
-
-.video-vocabulary-slide.layout-3 .vocab-deck article {
-  border-radius: 50%;
-  aspect-ratio: 1.22;
-  place-items: center;
-  text-align: center;
-}
-
-.video-vocabulary-slide.layout-3.is-dense .vocab-deck article {
-  aspect-ratio: auto;
-  border-radius: 18px;
-}
-
-.video-vocabulary-slide.layout-4 .vocab-deck article {
-  border-radius: 6px;
-  clip-path: polygon(0 0, 92% 0, 100% 18%, 100% 100%, 0 100%);
 }
 
 .vocab-deck b {
@@ -270,24 +189,6 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   box-shadow: 0 22px 54px var(--video-shadow);
 }
 
-.video-vocabulary-slide.layout-1 .scene-board {
-  border-radius: 30px 8px 30px 8px;
-}
-
-.video-vocabulary-slide.layout-2 .scene-board {
-  border-radius: 999px;
-  padding-inline: 56px;
-}
-
-.video-vocabulary-slide.layout-3 .scene-board {
-  clip-path: polygon(4% 0, 100% 0, 96% 100%, 0 100%);
-}
-
-.video-vocabulary-slide.layout-4 .scene-board {
-  border-radius: 50%;
-  aspect-ratio: 1;
-}
-
 .scene-board p {
   margin: 0;
   color: var(--video-text);
@@ -310,7 +211,6 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
   height: calc(12px + var(--dot) * 5px);
   border-radius: 999px;
   background: var(--video-number-bg);
-  color: var(--video-number-text);
   animation: vocab-wave 1.2s ease-in-out infinite;
   animation-delay: calc(var(--dot) * -0.1s);
 }
@@ -318,16 +218,16 @@ const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary
 /* ===== Animations ===== */
 @keyframes vocab-rise {
   from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes vocab-card {
   from { opacity: 0; transform: rotateY(-12deg) translateY(12px); }
-  to { opacity: 1; transform: rotateY(0) translateY(0); }
+  to   { opacity: 1; transform: rotateY(0) translateY(0); }
 }
 
 @keyframes vocab-wave {
   0%, 100% { transform: scaleY(0.62); opacity: 0.56; }
-  50% { transform: scaleY(1); opacity: 1; }
+  50%      { transform: scaleY(1);    opacity: 1; }
 }
 </style>

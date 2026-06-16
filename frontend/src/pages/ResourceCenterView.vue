@@ -290,7 +290,7 @@ import {
 } from '../api/apis'
 import { upsertQuizSet } from '../utils/quizBank'
 
-import PresentationPreview from '../components/ppt_video/PresentationPreview.vue'
+import PresentationPreview from '../components/ppt_video/ppt/PresentationPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 import { getResourceCoverUrl } from '../utils/resourceCover'
 

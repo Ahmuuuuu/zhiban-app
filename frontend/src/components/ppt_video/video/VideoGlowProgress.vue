@@ -189,25 +189,24 @@ const nudge = amount => {
 .video-progress__marker {
   position: absolute;
   top: 50%;
-  width: 9px;
-  height: 25px;
+  width: 5px;
+  height: 5px;
   padding: 0;
-  border: 1px solid #ffffff;
-  border-radius: 0;
+  border: 0;
+  border-radius: 999px;
   background: var(--player-blue-strong);
   cursor: pointer;
   transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 1px rgba(79, 143, 202, 0.34);
 }
 
 .video-progress__thumb {
   position: absolute;
   top: 50%;
-  width: 6px;
-  height: 27px;
-  border: 1px solid #ffffff;
-  border-radius: 0;
-  background: #ffffff;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: var(--player-blue-strong);
   box-shadow: 0 0 0 2px rgba(79, 143, 202, 0.4);
   pointer-events: none;
   transform: translate(-50%, -50%);

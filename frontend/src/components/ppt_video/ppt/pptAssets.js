@@ -1,16 +1,16 @@
-const backgroundModules = import.meta.glob('../../assets/ppt_video/ppt/backgrounds/*.{png,jpg,jpeg,webp}', {
+const backgroundModules = import.meta.glob('../../../assets/ppt_video/ppt/backgrounds/*.{png,jpg,jpeg,webp}', {
   eager: true,
   query: '?url',
   import: 'default'
 })
 
-const decorationModules = import.meta.glob('../../assets/ppt_video/ppt/decorations/*.{png,jpg,jpeg,webp,svg}', {
+const decorationModules = import.meta.glob('../../../assets/ppt_video/ppt/decorations/*.{png,jpg,jpeg,webp,svg}', {
   eager: true,
   query: '?url',
   import: 'default'
 })
 
-const subjectModules = import.meta.glob('../../assets/ppt_video/ppt/subjects/**/*.{png,jpg,jpeg,webp,svg}', {
+const subjectModules = import.meta.glob('../../../assets/ppt_video/ppt/subjects/**/*.{png,jpg,jpeg,webp,svg}', {
   eager: true,
   query: '?url',
   import: 'default'
