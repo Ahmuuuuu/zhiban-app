@@ -87,33 +87,7 @@ def _split_blocks(items: list[str], size: int) -> list[list[str]]:
 
 
 def _paginate_slides(slides_data: list[dict]) -> list[dict]:
-    paginated: list[dict] = []
-    for index, slide_data in enumerate(slides_data):
-        bullets = [_clean_ppt_text(item, 120) for item in (slide_data.get("bullets") or [])]
-        bullets = [item for item in bullets if item]
-        total_chars = sum(len(item) for item in bullets)
-        needs_split = index > 0 and (len(bullets) > 6 or total_chars > 390)
-        if not needs_split:
-            paginated.append({**slide_data, "bullets": bullets[:6] if total_chars > 330 else bullets})
-            continue
-
-        avg_len = total_chars / max(len(bullets), 1)
-        chunk_size = 3 if avg_len > 72 else 4
-        chunks = _split_blocks(bullets, chunk_size)
-        for chunk_index, chunk in enumerate(chunks):
-            clone = {
-                **slide_data,
-                "bullets": chunk,
-                "blocks": [{"type": "key_point", "text": item} for item in chunk],
-            }
-            if chunk_index:
-                clone["title"] = f"{slide_data.get('title') or 'Slide'} ({chunk_index + 1})"
-                clone["layout"] = "content_cards"
-                clone["visual"] = {**(slide_data.get("visual") or {}), "caption": chunk[0] if chunk else ""}
-            elif len(chunks) > 1 and slide_data.get("layout") in {"process_steps", "comparison"}:
-                clone["layout"] = "content_cards"
-            paginated.append(_prepare_slide_data(clone))
-    return paginated
+    return slides_data
 
 
 def _prepare_slide_data(slide_data: dict) -> dict:

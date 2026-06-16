@@ -212,12 +212,44 @@ const cleanDisplayText = value => String(value || '')
   .replace(/\n{3,}/g, '\n\n')
   .trim()
 
-const compactDisplayText = (value, limit = 180) => {
+const compactDisplayText = (value, limit = 260) => {
   const text = cleanDisplayText(value).replace(/\s+/g, ' ').trim()
-  return text.length > limit ? `${text.slice(0, limit - 1)}...` : text
+  if (text.length <= limit) return text
+  // 避免截断在 $...$ 或 $$...$$ 内部，破坏 KaTeX 渲染
+  let cut = limit - 1
+  const dollars = []
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '$') {
+      if (text[i + 1] === '$') { dollars.push({ pos: i, display: true }); i++ }
+      else { dollars.push({ pos: i, display: false }) }
+    }
+  }
+  // 找到 cut 位置落在哪个 $ 区间内
+  let inPair = false
+  for (let j = 0; j + 1 < dollars.length; j += 2) {
+    const open = dollars[j].pos
+    const close = dollars[j + 1] ? dollars[j + 1].pos + (dollars[j + 1].display ? 1 : 0) : text.length
+    if (cut > open && cut < close) {
+      // cut 在 $...$ 内部 → 退回到 $ 之前
+      cut = open - 1
+      inPair = true
+      break
+    }
+  }
+  // 如果退回到 $ 之前导致太短（< 一半），则包含完整的公式
+  if (inPair && cut < limit * 0.4) {
+    for (let j = 0; j + 1 < dollars.length; j += 2) {
+      const close = dollars[j + 1] ? dollars[j + 1].pos + (dollars[j + 1].display ? 1 : 0) : text.length
+      if (close > limit * 0.5 && close < limit * 1.3) {
+        cut = close
+        break
+      }
+    }
+  }
+  return text.slice(0, cut).replace(/\s+$/, '') + '...'
 }
 
-const displayBlockText = (value, limit = 150) => compactDisplayText(value, limit)
+const displayBlockText = (value, limit = 200) => compactDisplayText(value, limit)
 
 const visualSvgData = slide => {
   const [primary, secondary, accent, paper] = slidePalette(slide)
@@ -719,7 +751,7 @@ watch(
   justify-self: center;
   align-self: center;
   width: auto;
-  height: min(100%, calc((100vw - 96px) * 9 / 16));
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
   aspect-ratio: 16 / 9;
@@ -840,7 +872,7 @@ watch(
 
 .ppt-slide h3 {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -852,7 +884,7 @@ watch(
   overflow: hidden;
   white-space: pre-line;
   display: -webkit-box;
-  -webkit-line-clamp: 10;
+  -webkit-line-clamp: 20;
   -webkit-box-orient: vertical;
 }
 
@@ -1000,7 +1032,7 @@ watch(
   font-size: clamp(14px, 1.35vw, 18px);
   line-height: 1.55;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1052,51 +1084,55 @@ watch(
   min-height: 0;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 8;
   -webkit-box-orient: vertical;
 }
 
 .content-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
   min-height: 0;
-  height: 100%;
 }
 
 .content-card-grid article {
-  min-height: 0;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid rgba(95, 143, 195, 0.16);
   border-radius: 8px;
   background: #ffffff;
   color: rgba(31, 51, 86, 0.82);
   display: grid;
-  gap: 10px;
+  gap: 6px;
   align-content: start;
   box-shadow: 0 12px 26px rgba(22, 63, 143, 0.08);
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .content-card-grid article span {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
   background: color-mix(in srgb, var(--slide-primary, #163f8f) 14%, #ffffff);
   color: var(--slide-primary, #163f8f);
   display: grid;
   place-items: center;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 900;
+  flex-shrink: 0;
 }
 
 .content-card-grid article p {
-  font-size: clamp(13px, 1.2vw, 16px);
-  line-height: 1.52;
-  display: -webkit-box;
-  -webkit-line-clamp: 5;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  font-size: clamp(14px, 1.3vw, 16px);
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.content-card-grid article p .katex {
+  font-size: 0.95em;
+  max-width: 100%;
+  overflow-x: auto;
+  display: inline-block;
+  vertical-align: middle;
 }
 
 .ppt-slide.is-dense h3 {
@@ -1109,20 +1145,6 @@ watch(
   line-height: 1.45;
 }
 
-.ppt-slide.is-dense .slide-rich-text {
-  -webkit-line-clamp: 8;
-}
-
-.ppt-slide.is-dense .process-step span,
-.ppt-slide.is-dense .content-card-grid article p {
-  -webkit-line-clamp: 4;
-}
-
-.ppt-slide.is-dense .comparison-card p,
-.ppt-slide.is-dense .formula-points p {
-  -webkit-line-clamp: 3;
-}
-
 .ppt-slide.is-very-dense h3 {
   font-size: clamp(20px, 2.5vw, 32px);
 }
@@ -1131,17 +1153,6 @@ watch(
   width: min(96%, 1100px);
   font-size: clamp(12px, 1vw, 15px);
   line-height: 1.38;
-}
-
-.ppt-slide.is-very-dense .slide-rich-text {
-  -webkit-line-clamp: 6;
-}
-
-.ppt-slide.is-very-dense .process-step span,
-.ppt-slide.is-very-dense .content-card-grid article p,
-.ppt-slide.is-very-dense .comparison-card p,
-.ppt-slide.is-very-dense .formula-points p {
-  -webkit-line-clamp: 3;
 }
 
 .ppt-slide.is-very-dense .formula-box {

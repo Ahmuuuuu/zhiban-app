@@ -176,6 +176,7 @@
               v-if="canUsePresentationPreview(selectedResource)"
               :resource="selectedResource"
               :editable="true"
+              :exporting="pptExporting"
               :annotatable="true"
               :annotations="selectedResource.annotations || []"
               @download="downloadResource"
@@ -245,6 +246,7 @@ const resources = ref([])
 const selectedResource = ref(null)
 const previewOpen = ref(false)
 const loading = ref(false)
+const pptExporting = ref(false)
 const errorMessage = ref('')
 const deleteLoading = ref({})
 const {
@@ -749,6 +751,7 @@ const exportResourcePptx = async (resource, slides) => {
     return
   }
 
+  pptExporting.value = true
   try {
     await exportEditedPptx(resourceId, {
       title: resource?.title || '',
@@ -758,6 +761,8 @@ const exportResourcePptx = async (resource, slides) => {
   } catch (error) {
     console.error('导出 PPTX 失败', error)
     window.alert(error?.message || '导出 PPTX 失败，请稍后再试。')
+  } finally {
+    pptExporting.value = false
   }
 }
 

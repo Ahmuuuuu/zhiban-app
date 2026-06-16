@@ -1,8 +1,8 @@
 <template>
   <div class="content-card-grid">
-    <article v-for="(block, index) in blocks.slice(0, 6)" :key="index">
+    <article v-for="(block, index) in blocks.slice(0, 9)" :key="index">
       <span>{{ index + 1 }}</span>
-      <p v-html="renderMath(displayBlockText(block.text, 105))"></p>
+      <p v-html="renderMath(displayBlockText(block.text, 100))"></p>
     </article>
   </div>
 </template>

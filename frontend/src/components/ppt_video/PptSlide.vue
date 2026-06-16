@@ -8,8 +8,8 @@
         editing,
         'custom-slide': styleSource === 'custom',
         'has-custom-subject': styleSource === 'custom' && Boolean(customAssets.subjectImage),
-        'is-dense': slideTextLength > 420,
-        'is-very-dense': slideTextLength > 800
+        'is-dense': slideTextLength > 800,
+        'is-very-dense': slideTextLength > 1400
       }
     ]"
     :style="slideVisualStyle(slide)"
@@ -253,12 +253,12 @@ const cleanDisplayText = value => String(value || '')
   .replace(/\n{3,}/g, '\n\n')
   .trim()
 
-const compactDisplayText = (value, limit = 180) => {
+const compactDisplayText = (value, limit = 260) => {
   const text = cleanDisplayText(value).replace(/\s+/g, ' ').trim()
   return text.length > limit ? `${text.slice(0, limit - 1)}...` : text
 }
 
-const displayBlockText = (value, limit = 150) => compactDisplayText(value, limit)
+const displayBlockText = (value, limit = 200) => compactDisplayText(value, limit)
 
 const visualSvgData = slide => {
   const [primary, secondary, accent, paper] = slidePalette(slide)

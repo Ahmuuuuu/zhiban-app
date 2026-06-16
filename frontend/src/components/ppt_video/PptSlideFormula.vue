@@ -5,7 +5,7 @@
       <p
         v-for="(block, index) in formulaBlocks"
         :key="index"
-        v-html="renderMath(displayBlockText(block.text, 120))"
+        v-html="renderMath(displayBlockText(block.text, 180))"
       ></p>
     </div>
   </div>
