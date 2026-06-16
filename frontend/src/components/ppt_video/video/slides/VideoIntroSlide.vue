@@ -72,8 +72,10 @@ const metrics = computed(() => [
 .intro-relation {
   min-width: 0;
   border: 1px solid var(--video-card-border);
-  border-radius: 8px;
-  background: var(--video-card-bg);
+  border-radius: 28px 8px 28px 8px;
+  background:
+    radial-gradient(circle at 18% 16%, color-mix(in srgb, var(--video-warm, #ffd166) 18%, transparent), transparent 34%),
+    var(--video-card-bg);
   box-shadow: 0 24px 58px var(--video-shadow);
   backdrop-filter: blur(16px);
 }
@@ -111,8 +113,8 @@ const metrics = computed(() => [
   max-width: 780px;
   margin: 0;
   color: var(--video-muted);
-  font-size: clamp(17px, 1.45vw, 24px);
-  line-height: 1.65;
+  font-size: clamp(14px, 1.18vw, 22px);
+  line-height: 1.52;
 }
 
 .profile-metrics {
@@ -125,13 +127,24 @@ const metrics = computed(() => [
   min-height: 92px;
   padding: 16px;
   border: 1px solid var(--video-card-border);
-  border-radius: 8px;
-  background: var(--video-card-strong);
+  border-radius: 999px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--video-accent, #2f7de1) 18%, transparent), transparent),
+    var(--video-card-strong);
   display: grid;
   align-content: center;
   gap: 6px;
   animation: metric-in 0.5s ease both;
   animation-delay: calc(var(--delay) * 0.1s + 0.18s);
+}
+
+.profile-metrics article:nth-child(2) {
+  border-radius: 50%;
+  aspect-ratio: 1;
+}
+
+.profile-metrics article:nth-child(3) {
+  border-radius: 8px 28px 8px 28px;
 }
 
 .profile-metrics b {
@@ -156,6 +169,19 @@ const metrics = computed(() => [
   animation: intro-map 0.72s ease both;
 }
 
+.intro-relation::before {
+  content: "";
+  position: absolute;
+  right: -36px;
+  top: -36px;
+  width: 138px;
+  height: 138px;
+  border: 1px solid var(--video-card-border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--video-accent-soft, #6ec6ff) 18%, transparent);
+  animation: orbit-soft 5.6s ease-in-out infinite;
+}
+
 .relation-map {
   position: relative;
   min-height: 300px;
@@ -167,7 +193,9 @@ const metrics = computed(() => [
   height: 88px;
   border: 1px solid var(--video-card-border);
   border-radius: 50%;
-  background: var(--video-number-bg);
+  background:
+    radial-gradient(circle at 32% 26%, var(--video-accent-soft, #6ec6ff), transparent 32%),
+    var(--video-number-bg);
   color: var(--video-number-text);
   display: grid;
   place-items: center;
@@ -175,6 +203,14 @@ const metrics = computed(() => [
   font-weight: 900;
   box-shadow: 0 18px 36px var(--video-shadow);
   animation: node-float 3.6s ease-in-out infinite;
+}
+
+.node--course {
+  border-radius: 26px 50% 50% 26px;
+}
+
+.node--goal {
+  clip-path: polygon(50% 0, 100% 34%, 82% 100%, 18% 100%, 0 34%);
 }
 
 .node--learner {
@@ -271,6 +307,11 @@ const metrics = computed(() => [
   0% { transform: translate(-130px, -34px) scale(0.65); opacity: 0; }
   32% { opacity: 1; }
   100% { transform: translate(118px, 62px) scale(1); opacity: 0; }
+}
+
+@keyframes orbit-soft {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.92); opacity: 0.34; }
+  50% { transform: translate3d(-18px, 20px, 0) scale(1.08); opacity: 0.62; }
 }
 
 @keyframes term-float {
