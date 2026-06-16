@@ -8,7 +8,7 @@
 </template>
 
 <script setup>
-import { renderMath } from '../../utils/renderMath'
+import { renderMath } from '../../../utils/renderMath'
 
 defineProps({
   blocks: {

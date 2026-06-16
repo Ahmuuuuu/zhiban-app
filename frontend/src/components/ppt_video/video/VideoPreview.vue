@@ -82,7 +82,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import ResourceMediaFrame from '../ResourceMediaFrame.vue'
+import ResourceMediaFrame from '../ppt/ResourceMediaFrame.vue'
 import VideoAmbientBackground from './effects/VideoAmbientBackground.vue'
 import VideoChapterList from './VideoChapterList.vue'
 import VideoGlowProgress from './VideoGlowProgress.vue'

@@ -23,7 +23,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { selectCustomPptAssets } from '../../pptAssets'
+import { selectCustomPptAssets } from '../../ppt/pptAssets'
 
 const props = defineProps({
   slide: {

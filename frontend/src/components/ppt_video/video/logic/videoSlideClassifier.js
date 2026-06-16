@@ -1,20 +1,22 @@
-const hasFormula = slide => Array.isArray(slide?.formulas) && slide.formulas.length > 0
-
-const hasVocabularySignal = slide => {
-  const text = [
-    slide?.title,
-    slide?.summary,
-    ...(slide?.items || [])
-  ].join(' ')
-  const englishTerms = text.match(/[A-Za-z][A-Za-z-]{2,}/g) || []
-  return /词汇|单词|英语|例句|短语|vocabulary|word|phrase/i.test(text) || englishTerms.length >= 5
-}
+/**
+ * 分类逻辑：后端 layout 字段说了算，前端不再猜内容。
+ *
+ * 后端 LLM 产出 title + bullets + 可选 layout，
+ * layout 取值：intro | formula | vocabulary | keypoint（或不传）
+ * 不传 layout 默认走 keypoint。
+ */
 
 export const classifyVideoSlide = slide => {
+  // 第一张永远是 intro
   if (Number(slide?.index || 0) === 0) return 'intro'
+
   const layout = String(slide?.layout || '').toLowerCase()
-  if (hasFormula(slide) || /formula|math|equation/.test(layout)) return 'formula'
-  if (hasVocabularySignal(slide)) return 'vocabulary'
+
+  if (layout === 'formula') return 'formula'
+  if (layout === 'vocabulary') return 'vocabulary'
+  if (layout === 'intro') return 'intro'
+
+  // 其他所有情况 → keypoint
   return 'keypoint'
 }
 
@@ -24,7 +26,7 @@ export const getSlideTerms = slide => {
     ...(slide?.items || [])
   ].join(' ')
   const english = text.match(/[A-Za-z][A-Za-z\s&-]{2,}/g) || []
-  const chinese = text.match(/[\u4e00-\u9fa5]{2,6}/g) || []
+  const chinese = text.match(/[一-龥]{2,6}/g) || []
   return [...english, ...chinese]
     .map(item => item.trim().replace(/[，。；：、,.]/g, ''))
     .filter(Boolean)

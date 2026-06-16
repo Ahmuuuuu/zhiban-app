@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-formula-slide"
-    :class="[`layout-${layoutSeed}`, { 'is-dense': notes.length > 4 || formulas.length > 3 }]"
+    :class="{ 'is-dense': notes.length > 4 || formulas.length > 3, 'is-flipped': flip }"
   >
     <div class="formula-main">
       <ChalkTag>{{ slide.chapterTitle }}</ChalkTag>
@@ -10,7 +10,6 @@
         v-for="formula in formulas"
         :key="formula"
         :formula="formula"
-        :style="{ '--bfd-radius': layoutSeed === 2 || layoutSeed === 4 ? '999px' : '18px' }"
       />
     </div>
 
@@ -45,8 +44,11 @@ const props = defineProps({
   }
 })
 
-const formulas = computed(() => props.slide.formulas?.length ? props.slide.formulas : [props.slide.title])
-const notes = computed(() => props.slide.items || [])
+const formulas = computed(() => props.slide.formulas?.length
+  ? props.slide.formulas
+  : (props.slide.items?.length ? props.slide.items : [props.slide.title]))
+const notes = computed(() => props.slide.items?.length ? [] : [])
+const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 </script>
 
 <style scoped>
@@ -55,7 +57,7 @@ const notes = computed(() => props.slide.items || [])
   inset: 82px 54px 104px;
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
   gap: 28px;
   color: var(--video-text);
 }
@@ -66,47 +68,17 @@ const notes = computed(() => props.slide.items || [])
   box-sizing: border-box;
 }
 
-/* ===== Dense Mode ===== */
+/* ===== flip: formulas on right ===== */
+.video-formula-slide.is-flipped {
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+}
+
+.video-formula-slide.is-flipped .formula-main { order: 2; }
+.video-formula-slide.is-flipped .formula-notes { order: 1; }
+
+/* ===== Dense — only shrink, keep layout ===== */
 .video-formula-slide.is-dense {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 0.72fr) minmax(0, 1fr);
   gap: 18px;
-}
-
-/* ===== Layout Variants ===== */
-.video-formula-slide.layout-1 {
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-}
-
-.video-formula-slide.layout-1 .formula-main {
-  order: 2;
-}
-
-.video-formula-slide.layout-1 .formula-notes {
-  order: 1;
-}
-
-.video-formula-slide.layout-2 {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 0.74fr) minmax(160px, 0.48fr);
-}
-
-.video-formula-slide.layout-2 .formula-notes {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: stretch;
-}
-
-.video-formula-slide.layout-3,
-.video-formula-slide.layout-4 {
-  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1fr);
-}
-
-.video-formula-slide.layout-3 .formula-main {
-  transform-origin: left center;
-}
-
-.video-formula-slide.layout-4 .formula-main {
-  min-height: 0;
 }
 
 /* ===== Shared Panel Base ===== */
@@ -123,41 +95,6 @@ const notes = computed(() => props.slide.items || [])
   backdrop-filter: blur(14px);
 }
 
-/* ===== Per-Layout Panel Shapes ===== */
-.video-formula-slide.layout-1 .formula-main,
-.video-formula-slide.layout-1 .formula-notes {
-  border-radius: 32px 8px 32px 8px;
-}
-
-.video-formula-slide.layout-2 .formula-main {
-  border-radius: 999px;
-  padding-inline: 72px;
-}
-
-.video-formula-slide.layout-2 .formula-notes {
-  border-radius: 8px 34px 8px 34px;
-}
-
-.video-formula-slide.layout-3 .formula-main {
-  clip-path: polygon(6% 0, 100% 0, 94% 100%, 0 100%);
-}
-
-.video-formula-slide.layout-3 .formula-notes {
-  border-radius: 50%;
-  aspect-ratio: 1;
-  align-self: center;
-}
-
-.video-formula-slide.layout-4 .formula-main {
-  border-radius: 50%;
-  aspect-ratio: 1.35;
-  align-self: center;
-}
-
-.video-formula-slide.layout-4 .formula-notes {
-  clip-path: polygon(0 0, 94% 0, 100% 16%, 100% 100%, 6% 100%, 0 84%);
-}
-
 /* ===== formula-main ===== */
 .formula-main {
   padding: 32px;
@@ -168,7 +105,7 @@ const notes = computed(() => props.slide.items || [])
 }
 
 .video-formula-slide.is-dense .formula-main {
-  padding: 22px;
+  padding: 20px;
   gap: 14px;
 }
 
@@ -179,11 +116,11 @@ const notes = computed(() => props.slide.items || [])
 }
 
 .video-formula-slide.is-dense .formula-main h2 {
-  font-size: clamp(24px, 2.6vw, 38px);
+  font-size: clamp(22px, 2.4vw, 34px);
 }
 
 .video-formula-slide.is-dense :deep(.board-formula-display) {
-  min-height: 64px;
+  min-height: 60px;
   padding: 12px;
 }
 
@@ -197,7 +134,6 @@ const notes = computed(() => props.slide.items || [])
 }
 
 .video-formula-slide.is-dense .formula-notes {
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 9px;
   padding: 16px;
   align-content: start;
@@ -205,7 +141,7 @@ const notes = computed(() => props.slide.items || [])
 
 .formula-notes article {
   --chalk-number-size: 30px;
-  min-height: 64px;
+  min-height: 0;
   padding: 12px;
   border-radius: 8px;
   background: var(--video-card-strong);
@@ -220,18 +156,12 @@ const notes = computed(() => props.slide.items || [])
 
 .video-formula-slide.is-dense .formula-notes article {
   --chalk-number-size: 26px;
-  min-height: 0;
   padding: 10px;
   grid-template-columns: 26px minmax(0, 1fr);
 }
 
-.formula-notes article:nth-child(2n) {
-  border-radius: 999px;
-}
-
-.formula-notes article:nth-child(3n) {
-  border-radius: 8px 24px 8px 24px;
-}
+.formula-notes article:nth-child(2n) { border-radius: 999px; }
+.formula-notes article:nth-child(3n) { border-radius: 8px 24px 8px 24px; }
 
 .formula-notes span {
   color: var(--video-muted);
@@ -242,11 +172,11 @@ const notes = computed(() => props.slide.items || [])
 /* ===== Animations ===== */
 @keyframes formula-in {
   from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: scale(1); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 @keyframes note-in {
   from { opacity: 0; transform: translateX(12px); }
-  to { opacity: 1; transform: translateX(0); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 </style>

@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-intro-slide"
-    :class="[`layout-${layoutSeed}`, { 'is-dense': isDense }]"
+    :class="{ 'is-dense': isDense, 'is-flipped': flip }"
   >
     <div class="intro-profile">
       <ChalkTag>学习画像</ChalkTag>
@@ -65,6 +65,7 @@ const metrics = computed(() => [
   { value: 'AI', label: '个性匹配' }
 ])
 const isDense = computed(() => terms.value.length > 8 || (props.slide.items || []).length > 6)
+const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 </script>
 
 <style scoped>
@@ -85,38 +86,15 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
   box-sizing: border-box;
 }
 
-/* ===== Dense Mode ===== */
-.video-intro-slide.is-dense {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas:
-    "profile"
-    "relation";
-  gap: 22px;
-}
-
-/* ===== Layout Variants ===== */
-.video-intro-slide.layout-1 {
+/* ===== flip: relation on left ===== */
+.video-intro-slide.is-flipped {
   grid-template-columns: minmax(320px, 0.76fr) minmax(0, 0.94fr);
   grid-template-areas: "relation profile";
 }
 
-.video-intro-slide.layout-2 {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(280px, 1fr);
-  grid-template-areas:
-    "profile"
-    "relation";
-}
-
-.video-intro-slide.layout-3 {
-  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
-  grid-template-areas: "profile relation";
-}
-
-.video-intro-slide.layout-4 {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0.78fr);
-  grid-template-areas: "profile relation";
+/* ===== Dense — only shrink, keep layout ===== */
+.video-intro-slide.is-dense {
+  gap: 22px;
 }
 
 /* ===== Shared Panel Base ===== */
@@ -139,11 +117,12 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
   display: grid;
   align-content: center;
   gap: 22px;
+  overflow: hidden;
   animation: intro-profile 0.72s ease both;
 }
 
 .video-intro-slide.is-dense .intro-profile {
-  padding: clamp(22px, 3vw, 36px);
+  padding: clamp(20px, 2.6vw, 36px);
   gap: 16px;
 }
 
@@ -155,7 +134,7 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
 }
 
 .video-intro-slide.is-dense .intro-profile h2 {
-  font-size: clamp(28px, 3.6vw, 52px);
+  font-size: clamp(26px, 3.4vw, 48px);
 }
 
 .intro-profile p {
@@ -167,7 +146,7 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
 }
 
 .video-intro-slide.is-dense .intro-profile p {
-  font-size: clamp(12px, 1vw, 16px);
+  font-size: clamp(12px, 0.94vw, 16px);
 }
 
 /* ===== Profile Metrics ===== */
@@ -178,7 +157,7 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
 }
 
 .profile-metrics article {
-  min-height: 92px;
+  min-height: 0;
   padding: 16px;
   border: 1px solid var(--video-card-border);
   border-radius: 999px;
@@ -188,12 +167,12 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
   display: grid;
   align-content: center;
   gap: 6px;
+  overflow: hidden;
   animation: metric-in 0.5s ease both;
   animation-delay: calc(var(--delay) * 0.1s + 0.18s);
 }
 
 .video-intro-slide.is-dense .profile-metrics article {
-  min-height: 72px;
   padding: 12px;
 }
 
@@ -218,6 +197,14 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
   font-weight: 800;
 }
 
+.video-intro-slide.is-dense .profile-metrics b {
+  font-size: 20px;
+}
+
+.video-intro-slide.is-dense .profile-metrics span {
+  font-size: 11px;
+}
+
 /* ===== Relation Panel ===== */
 .intro-relation {
   grid-area: relation;
@@ -233,7 +220,6 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
 .video-intro-slide.is-dense .intro-relation {
   padding: 20px;
   gap: 12px;
-  grid-template-rows: auto minmax(160px, 1fr) auto;
 }
 
 .intro-relation::before {
@@ -256,7 +242,7 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
 }
 
 .video-intro-slide.is-dense .relation-map {
-  min-height: 180px;
+  min-height: 200px;
 }
 
 .node {
@@ -277,37 +263,12 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
   animation: node-float 3.6s ease-in-out infinite;
 }
 
-.video-intro-slide.is-dense .node {
-  width: 64px;
-  height: 64px;
-  font-size: 12px;
-  box-shadow: 0 12px 24px var(--video-shadow);
-}
+.node--course { border-radius: 26px 50% 50% 26px; }
+.node--goal   { clip-path: polygon(50% 0, 100% 34%, 82% 100%, 18% 100%, 0 34%); }
 
-.node--course {
-  border-radius: 26px 50% 50% 26px;
-}
-
-.node--goal {
-  clip-path: polygon(50% 0, 100% 34%, 82% 100%, 18% 100%, 0 34%);
-}
-
-.node--learner {
-  left: 8%;
-  top: 34%;
-}
-
-.node--course {
-  right: 8%;
-  top: 18%;
-  animation-delay: -0.7s;
-}
-
-.node--goal {
-  right: 18%;
-  bottom: 10%;
-  animation-delay: -1.4s;
-}
+.node--learner { left: 8%;  top: 34%;              }
+.node--course  { right: 8%; top: 18%; animation-delay: -0.7s;  }
+.node--goal    { right: 18%; bottom: 10%; animation-delay: -1.4s; }
 
 .link {
   position: absolute;
@@ -317,19 +278,8 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
   opacity: 0.7;
 }
 
-.link--one {
-  left: 25%;
-  top: 45%;
-  width: 48%;
-  transform: rotate(-16deg);
-}
-
-.link--two {
-  left: 28%;
-  top: 56%;
-  width: 45%;
-  transform: rotate(22deg);
-}
+.link--one { left: 25%; top: 45%; width: 48%; transform: rotate(-16deg); }
+.link--two { left: 28%; top: 56%; width: 45%; transform: rotate(22deg);  }
 
 .pulse {
   position: absolute;
@@ -347,6 +297,7 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
+  overflow: hidden;
 }
 
 .relation-tags :deep(.chalk-tag) {
@@ -355,39 +306,11 @@ const isDense = computed(() => terms.value.length > 8 || (props.slide.items || [
 }
 
 /* ===== Animations ===== */
-@keyframes intro-profile {
-  from { opacity: 0; transform: translateY(18px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes intro-map {
-  from { opacity: 0; transform: translateX(18px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes metric-in {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes node-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-9px); }
-}
-
-@keyframes pulse-travel {
-  0% { transform: translate(-130px, -34px) scale(0.65); opacity: 0; }
-  32% { opacity: 1; }
-  100% { transform: translate(118px, 62px) scale(1); opacity: 0; }
-}
-
-@keyframes orbit-soft {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(0.92); opacity: 0.34; }
-  50% { transform: translate3d(-18px, 20px, 0) scale(1.08); opacity: 0.62; }
-}
-
-@keyframes term-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
-}
+@keyframes intro-profile { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes intro-map     { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes metric-in     { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes node-float    { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+@keyframes pulse-travel  { 0% { transform: translate(-130px, -34px) scale(0.65); opacity: 0; } 32% { opacity: 1; } 100% { transform: translate(118px, 62px) scale(1); opacity: 0; } }
+@keyframes orbit-soft    { 0%, 100% { transform: translate3d(0, 0, 0) scale(0.92); opacity: 0.34; } 50% { transform: translate3d(-18px, 20px, 0) scale(1.08); opacity: 0.62; } }
+@keyframes term-float    { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 </style>
