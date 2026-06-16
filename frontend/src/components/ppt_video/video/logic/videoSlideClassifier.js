@@ -1,3 +1,5 @@
+const VALID_LAYOUTS = new Set(['intro', 'keypoint', 'formula', 'vocabulary'])
+
 const hasFormula = slide => Array.isArray(slide?.formulas) && slide.formulas.length > 0
 
 const hasVocabularySignal = slide => {
@@ -11,8 +13,10 @@ const hasVocabularySignal = slide => {
 }
 
 export const classifyVideoSlide = slide => {
-  if (Number(slide?.index || 0) === 0) return 'intro'
   const layout = String(slide?.layout || '').toLowerCase()
+  if (VALID_LAYOUTS.has(layout)) return layout
+  // fallback heuristics — 后端未输出有效 layout 时兜底
+  if (Number(slide?.index || 0) === 0) return 'intro'
   if (hasFormula(slide) || /formula|math|equation/.test(layout)) return 'formula'
   if (hasVocabularySignal(slide)) return 'vocabulary'
   return 'keypoint'
@@ -24,7 +28,7 @@ export const getSlideTerms = slide => {
     ...(slide?.items || [])
   ].join(' ')
   const english = text.match(/[A-Za-z][A-Za-z\s&-]{2,}/g) || []
-  const chinese = text.match(/[\u4e00-\u9fa5]{2,6}/g) || []
+  const chinese = text.match(/[一-龥]{2,6}/g) || []
   return [...english, ...chinese]
     .map(item => item.trim().replace(/[，。；：、,.]/g, ''))
     .filter(Boolean)
