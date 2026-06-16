@@ -158,8 +158,11 @@ const slides = [
     note: '适合知识点讲解',
     progress: 42,
     slide: {
+      index: 1,
       title: '三段式黄金结构',
       text: '引言段：明确立场\n主体段：理由 + 例子\n结尾段：总结 + 升华',
+      items: ['引言段：明确立场，开门见山', '主体段：理由加具体例子支撑', '结尾段：总结观点并适当升华'],
+      summary: '掌握三段式结构，让你的作文逻辑清晰、层次分明。',
       notes: '强调每段的功能定位。',
       visual_hint: 'writing structure diagram'
     }
@@ -169,8 +172,11 @@ const slides = [
     note: '适合词汇和短语',
     progress: 86,
     slide: {
+      index: 1,
       title: '高频表达替换',
       text: 'important -> significant\nmany -> numerous\nhelp -> contribute to\nsolve -> address',
+      items: ['important (重要的)', 'significant (显著的)', 'numerous (许多的)', 'contribute to (有助于)', 'address (解决)', 'crucial (关键的)', 'substantial (大量的)'],
+      summary: '掌握这些高频替换词，让你的英语表达更丰富、更地道。',
       notes: '展示替换前后的表达层次。',
       visual_hint: 'English vocabulary cards'
     }
@@ -180,7 +186,11 @@ const slides = [
     note: '适合公式和符号',
     progress: 128,
     slide: {
+      index: 1,
       title: '函数增长模型',
+      layout: 'formula',
+      formulas: ['y = kx + b', 'y = a^x', 'y = \\log_a x'],
+      items: ['线性增长：变化率恒定，图像为直线', '指数增长：变化率递增，图像为曲线', '对数增长：变化率递减，图像趋于平缓'],
       text: '线性增长：y = kx + b\n指数增长：y = a^x\n对数增长：y = log_a x',
       notes: '注意公式需要清楚分行，不要挤在一段里。',
       visual_hint: 'math formula chart'
