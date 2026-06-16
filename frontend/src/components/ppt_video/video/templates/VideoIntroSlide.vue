@@ -39,7 +39,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { getSlideTerms } from './videoSlideClassifier'
+import { getSlideTerms } from '../logic/videoSlideClassifier'
 
 const props = defineProps({
   slide: {

@@ -116,7 +116,7 @@
 </template>
 
 <script setup>
-import VideoAmbientBackground from '../components/ppt_video/video/VideoAmbientBackground.vue'
+import VideoAmbientBackground from '../components/ppt_video/video/effects/VideoAmbientBackground.vue'
 import VideoChapterList from '../components/ppt_video/video/VideoChapterList.vue'
 import VideoGlowProgress from '../components/ppt_video/video/VideoGlowProgress.vue'
 import VideoPoster from '../components/ppt_video/video/VideoPoster.vue'
@@ -124,9 +124,9 @@ import VideoPreview from '../components/ppt_video/video/VideoPreview.vue'
 import VideoStageInfo from '../components/ppt_video/video/VideoStageInfo.vue'
 import VideoStatusBadge from '../components/ppt_video/video/VideoStatusBadge.vue'
 import VideoTranscriptPanel from '../components/ppt_video/video/VideoTranscriptPanel.vue'
-import VideoWaveform from '../components/ppt_video/video/VideoWaveform.vue'
+import VideoWaveform from '../components/ppt_video/video/effects/VideoWaveform.vue'
 import VideoSlideCanvas from '../components/ppt_video/video/slides/VideoSlideCanvas.vue'
-import { selectVideoBackground } from '../components/ppt_video/video/videoAssets'
+import { selectVideoBackground } from '../components/ppt_video/video/logic/videoAssets'
 
 const sampleContent = [
   '# 六级英语作文结构讲解',
