@@ -44,14 +44,14 @@
 
 <script setup>
 import { computed } from 'vue'
-import VideoAmbientBackground from '../VideoAmbientBackground.vue'
+import VideoAmbientBackground from '../effects/VideoAmbientBackground.vue'
+import VideoMotionLayer from '../effects/VideoMotionLayer.vue'
+import VideoSubjectAssetLayer from '../effects/VideoSubjectAssetLayer.vue'
+import VideoWaveform from '../effects/VideoWaveform.vue'
+import { getVideoBackgroundStyle, getVideoBackgroundTone, selectVideoBackground } from '../logic/videoAssets'
 import VideoStageInfo from '../VideoStageInfo.vue'
-import VideoWaveform from '../VideoWaveform.vue'
-import { getVideoBackgroundStyle, getVideoBackgroundTone, selectVideoBackground } from '../videoAssets'
-import VideoMotionLayer from './VideoMotionLayer.vue'
 import VideoSlideRenderer from './VideoSlideRenderer.vue'
-import VideoSubjectAssetLayer from './VideoSubjectAssetLayer.vue'
-import { classifyVideoSlide } from './videoSlideClassifier'
+import { classifyVideoSlide } from '../logic/videoSlideClassifier'
 
 const props = defineProps({
   slide: {

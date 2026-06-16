@@ -87,11 +87,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getPresentation, resolveApiUrl } from '../api/apis'
-import VideoAmbientBackground from '../components/ppt_video/video/VideoAmbientBackground.vue'
+import VideoAmbientBackground from '../components/ppt_video/video/effects/VideoAmbientBackground.vue'
 import VideoGlowProgress from '../components/ppt_video/video/VideoGlowProgress.vue'
 import VideoStatusBadge from '../components/ppt_video/video/VideoStatusBadge.vue'
 import VideoSlideCanvas from '../components/ppt_video/video/slides/VideoSlideCanvas.vue'
-import { selectVideoBackground } from '../components/ppt_video/video/videoAssets'
+import { selectVideoBackground } from '../components/ppt_video/video/logic/videoAssets'
 import 'katex/dist/katex.min.css'
 
 const route = useRoute()

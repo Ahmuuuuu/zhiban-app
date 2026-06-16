@@ -83,15 +83,15 @@
 <script setup>
 import { computed, ref } from 'vue'
 import ResourceMediaFrame from '../ResourceMediaFrame.vue'
-import VideoAmbientBackground from './VideoAmbientBackground.vue'
+import VideoAmbientBackground from './effects/VideoAmbientBackground.vue'
 import VideoChapterList from './VideoChapterList.vue'
 import VideoGlowProgress from './VideoGlowProgress.vue'
 import VideoPoster from './VideoPoster.vue'
 import VideoStageInfo from './VideoStageInfo.vue'
 import VideoStatusBadge from './VideoStatusBadge.vue'
 import VideoTranscriptPanel from './VideoTranscriptPanel.vue'
-import VideoWaveform from './VideoWaveform.vue'
-import { selectVideoBackground } from './videoAssets'
+import VideoWaveform from './effects/VideoWaveform.vue'
+import { selectVideoBackground } from './logic/videoAssets'
 
 const props = defineProps({
   src: {

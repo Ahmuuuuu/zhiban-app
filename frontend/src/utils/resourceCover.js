@@ -51,8 +51,8 @@ const compactTitle = value => {
 
 const splitTitleLines = value => {
   const title = String(value || '学习资源').replace(/\s+/g, ' ').trim()
-  if (title.length <= 12) return [title]
-  return [title.slice(0, 12), title.slice(12, 24)]
+  if (title.length <= 10) return [title]
+  return [title.slice(0, 10), title.slice(10, 20)]
 }
 
 const resourceKind = resource => {
@@ -287,10 +287,10 @@ const renderIllustratedResourceCover = ({ primary, accent, paper, kind, rawTitle
       <path d="M34 212c70-48 134-42 194 18 28 28 58 32 92 12" fill="none" stroke="${primary}" stroke-width="16" stroke-linecap="round" opacity="0.08"/>
       <rect x="38" y="42" width="236" height="176" rx="24" fill="#ffffff" opacity="0.74" filter="url(#shadow)"/>
       <rect x="62" y="68" width="88" height="10" rx="5" fill="${warm}" opacity="0.64"/>
-      <text x="62" y="124" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="29" font-weight="900" fill="#17345f">${lineOne}</text>
-      <text x="62" y="160" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="24" font-weight="800" fill="#4c6382">${lineTwo}</text>
-      <rect x="62" y="186" width="144" height="9" rx="4.5" fill="${primary}" opacity="0.16"/>
-      <rect x="62" y="205" width="186" height="9" rx="4.5" fill="${accent}" opacity="0.18"/>
+      <text x="82" y="122" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="24" font-weight="900" fill="#17345f">${lineOne}</text>
+      <text x="82" y="154" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-size="20" font-weight="800" fill="#4c6382">${lineTwo}</text>
+      <rect x="82" y="182" width="126" height="8" rx="4" fill="${primary}" opacity="0.16"/>
+      <rect x="82" y="201" width="166" height="8" rx="4" fill="${accent}" opacity="0.18"/>
       ${motif}
     </svg>
   `)
