@@ -1050,7 +1050,7 @@ onMounted(loadResources)
 
 .resource-card {
   height: 276px;
-  padding: 12px 13px;
+  padding: 10px 12px;
   border-radius: 24px;
   background:
     linear-gradient(135deg, rgba(250, 250, 250, 0.92), rgba(237, 249, 252, 0.84)),
@@ -1059,13 +1059,13 @@ onMounted(loadResources)
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 6px;
   overflow: hidden;
   transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
 .resource-cover {
-  height: 176px;
+  height: 184px;
   border-radius: 16px;
   overflow: hidden;
   background: rgba(237, 249, 252, 0.76);
@@ -1077,7 +1077,7 @@ onMounted(loadResources)
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .resource-cover__video {
@@ -1176,7 +1176,7 @@ onMounted(loadResources)
   gap: 6px;
   min-width: 0;
   min-height: 28px;
-  margin-top: auto;
+  margin-top: 2px;
 }
 
 .resource-action {

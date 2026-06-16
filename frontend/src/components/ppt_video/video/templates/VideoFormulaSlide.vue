@@ -4,14 +4,14 @@
     :class="[`layout-${layoutSeed}`, { 'is-dense': notes.length > 4 || formulas.length > 3 }]"
   >
     <div class="formula-main">
-      <span>{{ slide.chapterTitle }}</span>
+      <ChalkTag>{{ slide.chapterTitle }}</ChalkTag>
       <h2>{{ slide.title }}</h2>
-      <div
+      <BoardFormulaDisplay
         v-for="formula in formulas"
         :key="formula"
-        class="formula-box"
-        v-html="renderMath(formula)"
-      ></div>
+        :formula="formula"
+        :style="{ '--bfd-radius': layoutSeed === 2 || layoutSeed === 4 ? '999px' : '18px' }"
+      />
     </div>
 
     <div class="formula-notes">
@@ -20,8 +20,8 @@
         :key="`${index}-${item}`"
         :style="{ '--delay': index }"
       >
-        <b>{{ index + 1 }}</b>
-        <span v-html="karaokeNotes[index]"></span>
+        <ChalkNumber :value="index + 1" />
+        <span v-html="renderMath(item)"></span>
       </article>
     </div>
   </section>
@@ -29,7 +29,10 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
+import { renderMath } from '../../../../utils/renderMath'
+import ChalkTag from '../primitives/atoms/ChalkTag.vue'
+import ChalkNumber from '../primitives/atoms/ChalkNumber.vue'
+import BoardFormulaDisplay from '../primitives/blocks/BoardFormulaDisplay.vue'
 
 const props = defineProps({
   slide: {
@@ -84,12 +87,14 @@ const karaokeNotes = computed(() => {
   box-sizing: border-box;
 }
 
+/* ===== Dense Mode ===== */
 .video-formula-slide.is-dense {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 0.72fr) minmax(0, 1fr);
   gap: 18px;
 }
 
+/* ===== Layout Variants ===== */
 .video-formula-slide.layout-1 {
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
 }
@@ -125,6 +130,7 @@ const karaokeNotes = computed(() => {
   min-height: 0;
 }
 
+/* ===== Shared Panel Base ===== */
 .formula-main,
 .formula-notes {
   min-width: 0;
@@ -134,9 +140,11 @@ const karaokeNotes = computed(() => {
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--video-accent, #2f7de1) 16%, transparent), transparent 58%),
     var(--video-card-bg);
+  box-shadow: 0 22px 54px var(--video-shadow);
   backdrop-filter: blur(14px);
 }
 
+/* ===== Per-Layout Panel Shapes ===== */
 .video-formula-slide.layout-1 .formula-main,
 .video-formula-slide.layout-1 .formula-notes {
   border-radius: 32px 8px 32px 8px;
@@ -171,6 +179,7 @@ const karaokeNotes = computed(() => {
   clip-path: polygon(0 0, 94% 0, 100% 16%, 100% 100%, 6% 100%, 0 84%);
 }
 
+/* ===== formula-main ===== */
 .formula-main {
   padding: 32px;
   display: grid;
@@ -184,20 +193,6 @@ const karaokeNotes = computed(() => {
   gap: 14px;
 }
 
-.formula-main > span {
-  width: fit-content;
-  min-height: 30px;
-  padding: 0 11px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.12);
-  display: inline-flex;
-  align-items: center;
-  color: var(--video-soft);
-  font-size: 12px;
-  font-weight: 900;
-}
-
 .formula-main h2 {
   margin: 0;
   font-size: clamp(28px, 3vw, 46px);
@@ -208,38 +203,12 @@ const karaokeNotes = computed(() => {
   font-size: clamp(24px, 2.6vw, 38px);
 }
 
-.formula-box {
-  min-height: 88px;
-  padding: 18px;
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at center, color-mix(in srgb, var(--video-warm, #ffd166) 18%, transparent), transparent 64%),
-    var(--video-card-strong);
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  animation: formula-pulse 2.8s ease-in-out infinite;
-}
-
-.video-formula-slide.is-dense .formula-box {
+.video-formula-slide.is-dense :deep(.board-formula-display) {
   min-height: 64px;
   padding: 12px;
 }
 
-.video-formula-slide.layout-2 .formula-box,
-.video-formula-slide.layout-4 .formula-box {
-  border-radius: 999px;
-}
-
-.formula-box :deep(.katex-display) {
-  margin: 0;
-}
-
-.formula-box :deep(.katex) {
-  max-width: 100%;
-  font-size: clamp(18px, 2.1vw, 36px);
-}
-
+/* ===== formula-notes ===== */
 .formula-notes {
   padding: 22px;
   display: grid;
@@ -256,6 +225,7 @@ const karaokeNotes = computed(() => {
 }
 
 .formula-notes article {
+  --chalk-number-size: 30px;
   min-height: 64px;
   padding: 12px;
   border-radius: 8px;
@@ -270,6 +240,7 @@ const karaokeNotes = computed(() => {
 }
 
 .video-formula-slide.is-dense .formula-notes article {
+  --chalk-number-size: 26px;
   min-height: 0;
   padding: 10px;
   grid-template-columns: 26px minmax(0, 1fr);
@@ -283,36 +254,16 @@ const karaokeNotes = computed(() => {
   border-radius: 8px 24px 8px 24px;
 }
 
-.formula-notes b {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  background: var(--video-number-bg);
-  color: var(--video-number-text);
-  display: grid;
-  place-items: center;
-}
-
-.video-formula-slide.is-dense .formula-notes b {
-  width: 26px;
-  height: 26px;
-  font-size: 12px;
-}
-
 .formula-notes span {
   color: var(--video-muted);
   line-height: 1.32;
   font-size: clamp(11px, 0.88vw, 15px);
 }
 
+/* ===== Animations ===== */
 @keyframes formula-in {
   from { opacity: 0; transform: scale(0.98); }
   to { opacity: 1; transform: scale(1); }
-}
-
-@keyframes formula-pulse {
-  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
-  50% { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.36), 0 0 36px rgba(31, 99, 214, 0.14); }
 }
 
 @keyframes note-in {

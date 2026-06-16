@@ -162,9 +162,9 @@ const nudge = amount => {
 
 .video-progress__track {
   position: relative;
-  height: 15px;
-  border: 2px solid var(--player-blue);
-  border-radius: 0;
+  height: 6px;
+  border: 1px solid var(--player-blue);
+  border-radius: 999px;
   background: rgba(5, 12, 28, 0.2);
   cursor: pointer;
   overflow: visible;

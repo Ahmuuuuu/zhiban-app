@@ -1,9 +1,12 @@
 <template>
-  <section class="video-intro-slide">
+  <section
+    class="video-intro-slide"
+    :class="[`layout-${layoutSeed}`, { 'is-dense': isDense }]"
+  >
     <div class="intro-profile">
-      <span class="intro-kicker">学习画像</span>
-      <h2 v-html="karaokeTitle"></h2>
-      <p v-html="karaokeIntro"></p>
+      <ChalkTag>学习画像</ChalkTag>
+      <h2>{{ learnerTitle }}</h2>
+      <p>{{ introText }}</p>
       <div class="profile-metrics">
         <article
           v-for="(metric, index) in metrics"
@@ -17,7 +20,7 @@
     </div>
 
     <div class="intro-relation">
-      <span class="intro-kicker">课程关系</span>
+      <ChalkTag>课程关系</ChalkTag>
       <div class="relation-map">
         <i class="node node--learner">画像</i>
         <i class="node node--course">课程</i>
@@ -27,11 +30,11 @@
         <span class="pulse"></span>
       </div>
       <div class="relation-tags">
-        <b
+        <ChalkTag
           v-for="(term, index) in terms"
           :key="term"
           :style="{ '--delay': index }"
-        >{{ term }}</b>
+        >{{ term }}</ChalkTag>
       </div>
     </div>
   </section>
@@ -39,17 +42,17 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
-import { getSlideTerms } from './videoSlideClassifier'
+import { getSlideTerms } from '../logic/videoSlideClassifier'
+import ChalkTag from '../primitives/atoms/ChalkTag.vue'
 
 const props = defineProps({
   slide: {
     type: Object,
     required: true
   },
-  timedWords: {
-    type: Array,
-    default: () => []
+  layoutSeed: {
+    type: Number,
+    default: 0
   }
 })
 
@@ -61,32 +64,62 @@ const metrics = computed(() => [
   { value: String((props.slide.items || []).length || 3).padStart(2, '0'), label: '关键线索' },
   { value: 'AI', label: '个性匹配' }
 ])
-
-// karaoke：TTS 文本顺序为 title → introText，title 在先
-const karaokeTitle = computed(() => {
-  const words = props.timedWords || []
-  if (!words.length) return renderMath(learnerTitle.value)
-  return renderKaraokeHTML(learnerTitle.value, words, 0).html
-})
-
-const karaokeIntro = computed(() => {
-  const words = props.timedWords || []
-  if (!words.length) return renderMath(introText.value)
-  const offset = renderKaraokeHTML(learnerTitle.value, words, 0).consumed
-  return renderKaraokeHTML(introText.value, words, offset).html
-})
+const isDense = computed(() => terms.value.length > 8 || (props.slide.items || []).length > 6)
 </script>
 
 <style scoped>
 .video-intro-slide {
   position: absolute;
-  inset: 86px 58px 112px;
+  inset: 82px 54px 104px;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 0.94fr) minmax(320px, 0.76fr);
+  grid-template-areas: "profile relation";
   gap: 34px;
   color: var(--video-text);
 }
 
+.video-intro-slide *,
+.video-intro-slide *::before,
+.video-intro-slide *::after {
+  box-sizing: border-box;
+}
+
+/* ===== Dense Mode ===== */
+.video-intro-slide.is-dense {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "profile"
+    "relation";
+  gap: 22px;
+}
+
+/* ===== Layout Variants ===== */
+.video-intro-slide.layout-1 {
+  grid-template-columns: minmax(320px, 0.76fr) minmax(0, 0.94fr);
+  grid-template-areas: "relation profile";
+}
+
+.video-intro-slide.layout-2 {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(280px, 1fr);
+  grid-template-areas:
+    "profile"
+    "relation";
+}
+
+.video-intro-slide.layout-3 {
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+  grid-template-areas: "profile relation";
+}
+
+.video-intro-slide.layout-4 {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.78fr);
+  grid-template-areas: "profile relation";
+}
+
+/* ===== Shared Panel Base ===== */
 .intro-profile,
 .intro-relation {
   min-width: 0;
@@ -99,7 +132,9 @@ const karaokeIntro = computed(() => {
   backdrop-filter: blur(16px);
 }
 
+/* ===== Profile Panel ===== */
 .intro-profile {
+  grid-area: profile;
   padding: clamp(28px, 4vw, 56px);
   display: grid;
   align-content: center;
@@ -107,18 +142,9 @@ const karaokeIntro = computed(() => {
   animation: intro-profile 0.72s ease both;
 }
 
-.intro-kicker {
-  width: fit-content;
-  min-height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--video-card-border);
-  border-radius: 999px;
-  background: var(--video-chip-bg);
-  color: var(--video-soft);
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 900;
+.video-intro-slide.is-dense .intro-profile {
+  padding: clamp(22px, 3vw, 36px);
+  gap: 16px;
 }
 
 .intro-profile h2 {
@@ -126,6 +152,10 @@ const karaokeIntro = computed(() => {
   margin: 0;
   font-size: clamp(38px, 5vw, 76px);
   line-height: 1.04;
+}
+
+.video-intro-slide.is-dense .intro-profile h2 {
+  font-size: clamp(28px, 3.6vw, 52px);
 }
 
 .intro-profile p {
@@ -136,6 +166,11 @@ const karaokeIntro = computed(() => {
   line-height: 1.52;
 }
 
+.video-intro-slide.is-dense .intro-profile p {
+  font-size: clamp(12px, 1vw, 16px);
+}
+
+/* ===== Profile Metrics ===== */
 .profile-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -155,6 +190,11 @@ const karaokeIntro = computed(() => {
   gap: 6px;
   animation: metric-in 0.5s ease both;
   animation-delay: calc(var(--delay) * 0.1s + 0.18s);
+}
+
+.video-intro-slide.is-dense .profile-metrics article {
+  min-height: 72px;
+  padding: 12px;
 }
 
 .profile-metrics article:nth-child(2) {
@@ -178,7 +218,9 @@ const karaokeIntro = computed(() => {
   font-weight: 800;
 }
 
+/* ===== Relation Panel ===== */
 .intro-relation {
+  grid-area: relation;
   position: relative;
   padding: 28px;
   display: grid;
@@ -186,6 +228,12 @@ const karaokeIntro = computed(() => {
   gap: 18px;
   overflow: hidden;
   animation: intro-map 0.72s ease both;
+}
+
+.video-intro-slide.is-dense .intro-relation {
+  padding: 20px;
+  gap: 12px;
+  grid-template-rows: auto minmax(160px, 1fr) auto;
 }
 
 .intro-relation::before {
@@ -201,9 +249,14 @@ const karaokeIntro = computed(() => {
   animation: orbit-soft 5.6s ease-in-out infinite;
 }
 
+/* ===== Relation Map (Node Graph) ===== */
 .relation-map {
   position: relative;
   min-height: 300px;
+}
+
+.video-intro-slide.is-dense .relation-map {
+  min-height: 180px;
 }
 
 .node {
@@ -222,6 +275,13 @@ const karaokeIntro = computed(() => {
   font-weight: 900;
   box-shadow: 0 18px 36px var(--video-shadow);
   animation: node-float 3.6s ease-in-out infinite;
+}
+
+.video-intro-slide.is-dense .node {
+  width: 64px;
+  height: 64px;
+  font-size: 12px;
+  box-shadow: 0 12px 24px var(--video-shadow);
 }
 
 .node--course {
@@ -282,26 +342,19 @@ const karaokeIntro = computed(() => {
   animation: pulse-travel 2.4s ease-in-out infinite;
 }
 
+/* ===== Relation Tags ===== */
 .relation-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
 }
 
-.relation-tags b {
-  min-height: 30px;
-  padding: 0 11px;
-  border: 1px solid var(--video-card-border);
-  border-radius: 999px;
-  background: var(--video-chip-bg);
-  color: var(--video-chip-text);
-  display: inline-flex;
-  align-items: center;
-  font-size: 13px;
+.relation-tags :deep(.chalk-tag) {
   animation: term-float 3.2s ease-in-out infinite;
   animation-delay: calc(var(--delay) * -0.18s);
 }
 
+/* ===== Animations ===== */
 @keyframes intro-profile {
   from { opacity: 0; transform: translateY(18px); }
   to { opacity: 1; transform: translateY(0); }

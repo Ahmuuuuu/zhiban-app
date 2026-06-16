@@ -14,10 +14,7 @@ export const classifyVideoSlide = slide => {
   if (Number(slide?.index || 0) === 0) return 'intro'
   const layout = String(slide?.layout || '').toLowerCase()
   if (hasFormula(slide) || /formula|math|equation/.test(layout)) return 'formula'
-  if (/comparison|compare|contrast/.test(layout)) return 'comparison'
-  if (/process|step|timeline/.test(layout)) return 'process'
   if (hasVocabularySignal(slide)) return 'vocabulary'
-  if (/summary|review|recap/.test(layout) || /总结|回顾|小结/.test(`${slide?.title || ''} ${slide?.summary || ''}`)) return 'summary'
   return 'keypoint'
 }
 

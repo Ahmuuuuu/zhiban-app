@@ -45,14 +45,14 @@
 
 <script setup>
 import { computed } from 'vue'
-import VideoAmbientBackground from '../VideoAmbientBackground.vue'
+import VideoAmbientBackground from '../effects/VideoAmbientBackground.vue'
+import VideoMotionLayer from '../effects/VideoMotionLayer.vue'
+import VideoSubjectAssetLayer from '../effects/VideoSubjectAssetLayer.vue'
+import VideoWaveform from '../effects/VideoWaveform.vue'
+import { getVideoBackgroundStyle, getVideoBackgroundTone, selectVideoBackground } from '../logic/videoAssets'
 import VideoStageInfo from '../VideoStageInfo.vue'
-import VideoWaveform from '../VideoWaveform.vue'
-import { getVideoBackgroundStyle, getVideoBackgroundTone, selectVideoBackground } from '../videoAssets'
-import VideoMotionLayer from './VideoMotionLayer.vue'
 import VideoSlideRenderer from './VideoSlideRenderer.vue'
-import VideoSubjectAssetLayer from './VideoSubjectAssetLayer.vue'
-import { classifyVideoSlide } from './videoSlideClassifier'
+import { classifyVideoSlide } from '../logic/videoSlideClassifier'
 
 const props = defineProps({
   slide: {
@@ -172,7 +172,7 @@ const contentLayoutSeed = computed(() => Number(props.slide?.index || 0) % 5)
   z-index: 0;
 }
 
-.video-slide-canvas :deep(.video-keypoint-slide),
+.video-slide-canvas :deep(.blackboard-keypoint-template),
 .video-slide-canvas :deep(.video-vocabulary-slide),
 .video-slide-canvas :deep(.video-formula-slide),
 .video-slide-canvas :deep(.video-intro-slide) {

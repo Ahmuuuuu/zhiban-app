@@ -3,11 +3,12 @@
     class="video-vocabulary-slide"
     :class="[`layout-${layoutSeed}`, { 'is-dense': vocabCards.length > 6 }]"
   >
-    <div class="video-vocabulary-slide__header">
-      <span>{{ slide.chapterTitle }}</span>
-      <h2>{{ slide.title }}</h2>
-      <p>{{ slide.summary }}</p>
-    </div>
+    <BoardHeaderBlock
+      class="video-vocabulary-slide__header"
+      :kicker="slide.chapterTitle"
+      :title="slide.title"
+      :summary="slide.summary"
+    />
 
     <div class="vocab-deck">
       <article
@@ -21,9 +22,9 @@
     </div>
 
     <div class="scene-board">
-      <span>Scene Practice</span>
-      <p v-html="karaokeExample"></p>
-      <div>
+      <ChalkTag>Scene Practice</ChalkTag>
+      <p v-html="renderMath(exampleText)"></p>
+      <div class="scene-bars">
         <i
           v-for="dot in 5"
           :key="dot"
@@ -36,7 +37,9 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
+import { renderMath } from '../../../../utils/renderMath'
+import ChalkTag from '../primitives/atoms/ChalkTag.vue'
+import BoardHeaderBlock from '../primitives/blocks/BoardHeaderBlock.vue'
 
 const props = defineProps({
   slide: {
@@ -108,6 +111,7 @@ const karaokeExample = computed(() => {
   box-sizing: border-box;
 }
 
+/* ===== Dense Mode ===== */
 .video-vocabulary-slide.is-dense {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
@@ -121,6 +125,7 @@ const karaokeExample = computed(() => {
   display: none;
 }
 
+/* ===== Layout Variants ===== */
 .video-vocabulary-slide.layout-1 {
   grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
   grid-template-areas:
@@ -153,54 +158,26 @@ const karaokeExample = computed(() => {
     "deck scene";
 }
 
+/* ===== Header (via BoardHeaderBlock) ===== */
 .video-vocabulary-slide__header {
   grid-area: header;
-  min-width: 0;
-  display: grid;
-  align-content: end;
-  gap: 12px;
+}
+
+.video-vocabulary-slide :deep(.video-vocabulary-slide__header.board-header-block) {
   animation: vocab-rise 0.58s ease both;
 }
 
-.video-vocabulary-slide__header span,
-.scene-board > span {
-  width: fit-content;
-  min-height: 30px;
-  padding: 0 11px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.12);
-  display: inline-flex;
-  align-items: center;
-  color: var(--video-soft);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.video-vocabulary-slide h2 {
-  margin: 0;
-  font-size: clamp(30px, 3.7vw, 54px);
-  line-height: 1.12;
-}
-
-.video-vocabulary-slide.is-dense h2 {
+.video-vocabulary-slide.is-dense :deep(.video-vocabulary-slide__header.board-header-block h2) {
   font-size: clamp(26px, 3vw, 42px);
 }
 
-.video-vocabulary-slide__header p {
-  max-width: 720px;
-  margin: 0;
-  color: var(--video-muted);
-  font-size: clamp(13px, 1.02vw, 18px);
-  line-height: 1.55;
-}
-
-.video-vocabulary-slide.is-dense .video-vocabulary-slide__header p {
+.video-vocabulary-slide.is-dense :deep(.video-vocabulary-slide__header.board-header-block p) {
   max-width: 100%;
   font-size: clamp(12px, 0.94vw, 16px);
   line-height: 1.45;
 }
 
+/* ===== Vocab Deck ===== */
 .vocab-deck {
   grid-area: deck;
   min-width: 0;
@@ -296,6 +273,7 @@ const karaokeExample = computed(() => {
   line-height: 1.28;
 }
 
+/* ===== Scene Board ===== */
 .scene-board {
   grid-area: scene;
   position: relative;
@@ -309,6 +287,7 @@ const karaokeExample = computed(() => {
   display: grid;
   align-content: center;
   gap: 18px;
+  box-shadow: 0 22px 54px var(--video-shadow);
 }
 
 .video-vocabulary-slide.layout-1 .scene-board {
@@ -336,7 +315,7 @@ const karaokeExample = computed(() => {
   line-height: 1.42;
 }
 
-.scene-board div {
+.scene-bars {
   position: absolute;
   inset: auto 24px 24px;
   height: 42px;
@@ -345,7 +324,7 @@ const karaokeExample = computed(() => {
   align-items: end;
 }
 
-.scene-board i {
+.scene-bars i {
   width: 100%;
   max-width: 14px;
   height: calc(12px + var(--dot) * 5px);
@@ -356,6 +335,7 @@ const karaokeExample = computed(() => {
   animation-delay: calc(var(--dot) * -0.1s);
 }
 
+/* ===== Animations ===== */
 @keyframes vocab-rise {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
