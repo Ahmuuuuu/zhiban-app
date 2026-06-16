@@ -5,7 +5,7 @@
       <p
         v-for="(block, index) in leftBlocks"
         :key="index"
-        v-html="renderMath(displayBlockText(block.text, 110))"
+        v-html="renderMath(displayBlockText(block.text, 160))"
       ></p>
     </article>
     <article class="comparison-card comparison-card--accent">
@@ -13,7 +13,7 @@
       <p
         v-for="(block, index) in rightBlocks"
         :key="index"
-        v-html="renderMath(displayBlockText(block.text, 110))"
+        v-html="renderMath(displayBlockText(block.text, 160))"
       ></p>
     </article>
   </div>
@@ -34,6 +34,6 @@ const props = defineProps({
   }
 })
 
-const leftBlocks = computed(() => props.blocks.filter((_, index) => index % 2 === 0).slice(0, 4))
-const rightBlocks = computed(() => props.blocks.filter((_, index) => index % 2 === 1).slice(0, 4))
+const leftBlocks = computed(() => props.blocks.filter((_, index) => index % 2 === 0).slice(0, 6))
+const rightBlocks = computed(() => props.blocks.filter((_, index) => index % 2 === 1).slice(0, 6))
 </script>

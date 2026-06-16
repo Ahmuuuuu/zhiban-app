@@ -2,7 +2,7 @@
   <div class="process-strip">
     <article v-for="(block, index) in blocks.slice(0, 5)" :key="index" class="process-step">
       <b>{{ index + 1 }}</b>
-      <span v-html="renderMath(displayBlockText(block.text, 90))"></span>
+      <span v-html="renderMath(displayBlockText(block.text, 140))"></span>
     </article>
   </div>
 </template>
