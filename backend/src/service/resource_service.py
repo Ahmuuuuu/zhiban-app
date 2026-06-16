@@ -184,7 +184,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
     # 并行：画像/用户查询 + 学习指导 + KB搜索 + Skills
     user_task = User.filter(id=user_id).first()
     guidance_task = build_learning_guidance(user_id)
-    kb_task = kb_search(topic, top_k=5, user_id=user_id)
+    kb_task = kb_search(topic, top_k=3, user_id=user_id)
     skills_task = AgentSkill.filter(user_id=user_id, enabled=True).all()
 
     user, learning_guidance, kb_result, skills = await asyncio.gather(
@@ -1042,10 +1042,6 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
             target_user_id=user_id,
         )
 
-        # 后台预生成旁白音频，任务 done 不阻塞
-        for r in saved:
-            if r["resource_type"] in ("document", "ppt"):
-                asyncio.create_task(_pre_generate_narration(r["resource_id"]))
 
     except Exception as e:
         logger.exception("生成任务失败 task_id=%s", task_id)

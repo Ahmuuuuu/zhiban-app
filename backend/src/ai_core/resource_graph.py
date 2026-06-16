@@ -6,13 +6,14 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import re
 import time
 from typing import TypedDict, NotRequired
 
 from langgraph.config import get_stream_writer
 from langgraph.graph import StateGraph, START, END
 
-from backend.src.ai_core.llm_config import llm
+from backend.src.ai_core.llm_config import llm, llm_vision
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.utils.json_parser import parse_llm_json
 
@@ -91,6 +92,8 @@ async def leader_node(state: ResourceState) -> dict:
     return {"resource_types": resource_types}
 
 
+_template_cache: dict[str, str] = {}
+
 def build_resource_prompt(
     rt: str, topic: str, portrait: str = "", kb: str = "",
     guidance: str = "", feedback: str = "", user_notes: str = "",
@@ -98,6 +101,8 @@ def build_resource_prompt(
     difficulty: str = "medium", custom_prompts: dict | None = None,
     focus_guidance: str = "",
     section: str = "",
+    learning_objectives: str = "",
+    formula_sheet: str = "",
 ) -> str:
     """构建单个资源类型的生成 prompt，可从 executor_node 或 generate_stream 直接调用"""
     custom_prompts = custom_prompts or {}
@@ -106,8 +111,10 @@ def build_resource_prompt(
         template = custom
     else:
         prompt_path = PROMPT_MAP.get(rt, "resource/document")
-        template = load_prompt(prompt_path)
-    rt_kb = kb
+        if prompt_path not in _template_cache:
+            _template_cache[prompt_path] = load_prompt(prompt_path)
+        template = _template_cache[prompt_path]
+    rt_kb = kb[:1000] if len(kb) > 1000 else kb  # 截断，公式已由 formula_sheet 覆盖
     base = fill_prompt(
         template,
         topic=topic,
@@ -121,23 +128,25 @@ def build_resource_prompt(
         question_types=question_types,
         difficulty=difficulty,
         section=section,
+        learning_objectives=learning_objectives or "暂无学习目标数据",
+        formula_sheet=formula_sheet,
     )
     return base + focus_guidance if focus_guidance else base
 
 
 # PPT 并行生成参数
-PPT_PAGES_PER_SECTION = 2    # 每个章节最少 2 页，AI 可根据内容自动扩展到 4 页
-PPT_DEFAULT_SECTIONS = 10    # 默认 10 章节（20-40 页）
+PPT_PAGES_PER_SECTION = 2    # 每个章节 2-5 页（AI 按内容复杂度自行决定）
+PPT_DEFAULT_SECTIONS = 10    # 默认 10 章节（20-50 页）
 PPT_SECTION_COUNT_BY_DEPTH = {
-    "overview": 5,            # 快速概览 → 10-20 页
-    "standard": 10,           # 标准讲解 → 20-40 页
-    "deep": 15,              # 逐页详解 → 30-60 页
+    "overview": 5,            # 快速概览 → 10-25 页
+    "standard": 10,           # 标准讲解 → 20-50 页
+    "deep": 15,              # 逐页详解 → 30-75 页
 }
 
 # 文档并行生成参数
 DOC_DEFAULT_SECTIONS = 10    # 默认 10 章节，与 PPT 对齐
 DOC_SECTION_COUNT_BY_DEPTH = {
-    "overview": 5,
+    "overview": 5,            # 与 PPT 对齐
     "standard": 10,
     "deep": 15,
 }
@@ -152,12 +161,13 @@ async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", cou
 学习指导：{guidance}
 
 要求：
-- 固定 {count} 个章节（必须恰好 {count} 个），每个章节生成 2-4 页幻灯片，总共约 {total_pages}-{count * 4} 页
+- 固定 {count} 个章节（必须恰好 {count} 个），每个章节生成 2-5 页幻灯片，总共约 {total_pages}-{count * 5} 页
 - 章节标题简洁（10 字以内），由浅入深，逻辑连贯，形成完整的课程体系
-- 覆盖主题的：定义概念 → 原理推导 → 方法技巧 → 典型案例 → 应用实践 → 总结回顾
+- 覆盖主题的：定义概念 → 原理推导 → 分类对比 → 典型案例 → 应用实践 → 误区辨析 → 总结回顾
+- 每章内容要足够展开（含对比表格、流程图、例题、练习），不是概念名称的简单罗列
 - 只返回 JSON 字符串数组，不要任何其他文字
 
-返回示例：["矩阵的定义与表示", "矩阵基本运算", "矩阵乘法详解", "特殊矩阵", "行列式计算", "逆矩阵与伴随矩阵", "矩阵的秩与线性方程组", "特征值与特征向量", "矩阵分解与应用", "综合回顾与总结"]
+返回示例：["中断的基本概念", "中断处理流程与向量表", "INTR与NMI的对比", "DMA与中断方式比较", "8259A中断控制器", "中断嵌套与优先级", "综合例题与练习", "章节小结与回顾"]
 """
     try:
         t0 = time.perf_counter()
@@ -175,6 +185,84 @@ async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", cou
     return ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "与其他知识的联系", "综合练习与思考", "课程总结与回顾"][:count]
 
 
+async def generate_formula_sheet(
+    topic: str, kb: str = "", guidance: str = "",
+    llm_priority: str = "high", user_id: int = 0,
+) -> str:
+    """从知识库提取关键公式，生成公式速查表，供各章节 executor 直接引用"""
+    if not kb or kb == "暂无相关知识库资料":
+        return ""
+
+    prompt = f"""你是一个数学公式整理专家。从以下知识库资料中提取与「{topic}」相关的关键公式。
+
+## 要求
+- 只提取与主题直接相关的公式，无关的不要
+- 每个公式独立一行，格式：`- 公式名称：$LaTeX表达式$`
+- LaTeX 必须严格正确，变量、上下标、符号准确
+- 按逻辑顺序排列（从基础到进阶）
+- 总共 5-15 条公式，宁缺毋滥
+- 如果知识库中没有相关公式，返回"无"
+
+## 知识库资料
+{kb[:3000]}
+
+## 返回格式
+直接返回纯文本，每行一条：
+- 公式名称：$...$
+- 公式名称：$...$
+"""
+    try:
+        t0 = time.perf_counter()
+        response = await llm.ainvoke(prompt, priority=llm_priority, user_id=user_id, pool="ppt")
+        sheet = response.content.strip()
+        if sheet == "无":
+            sheet = ""
+        logger.info("[Formula-Sheet] 公式提取 耗时=%.2fs 条数≈%d", time.perf_counter() - t0, sheet.count('\n') + 1 if sheet else 0)
+        return sheet
+    except Exception:
+        logger.exception("[Formula-Sheet] 提取失败")
+        return ""
+
+
+async def generate_learning_objectives(
+    topic: str, sections: list[str], kb: str = "", guidance: str = "",
+    llm_priority: str = "high", user_id: int = 0,
+) -> str:
+    """为课程生成 Bloom 分类的学习目标注册表（LO Registry），返回格式化文本"""
+    sections_text = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sections))
+    prompt = f"""你是一个课程教学设计专家。为以下课程设计学习目标注册表。
+
+课程主题：{topic}
+学习指导：{guidance}
+知识库：{kb or '无'}
+
+## 课程章节
+{sections_text}
+
+## 要求
+- 为整个课程设计 8-15 条学习目标，编号 LO-01 到 LO-15
+- 每条目标标注 Bloom 认知层次（记忆/理解/应用/分析/评价/创造）
+- 确保覆盖 ≥4 个 Bloom 层次，其中必须有「应用」和「分析」
+- 每条 ≤30 字，使用可测量的行为动词（定义、解释、计算、对比、判断等）
+- 每条标注对应的章节编号，确保每个章节至少被 1 条目标覆盖
+
+## 返回格式
+直接返回纯文本，格式如下（不要 JSON）：
+LO-01: [目标描述]（[Bloom层次]）— 对应章节：[章节号]
+LO-02: ...
+...
+"""
+    try:
+        t0 = time.perf_counter()
+        response = await llm.ainvoke(prompt, priority=llm_priority, user_id=user_id, pool="ppt")
+        lo_text = response.content.strip()
+        logger.info("[LO-Registry] 学习目标生成 耗时=%.2fs", time.perf_counter() - t0)
+        return lo_text
+    except Exception:
+        logger.exception("[LO-Registry] 生成失败")
+        return "暂无学习目标数据"
+
+
 async def generate_ppt_parallel(
     topic: str,
     portrait: str = "",
@@ -189,8 +277,9 @@ async def generate_ppt_parallel(
     ppt_prompt_key: str = "ppt",
     llm_priority: str = "high",
     user_id: int = 0,
+    learning_objectives: str = "",
 ) -> str:
-    """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2-4 页），共 2N-4N 页 + 2 页画像学习引入"""
+    """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2-5 页），共 2N-5N 页 + 2 页画像学习引入"""
     _t_total = time.perf_counter()
     # 立即通知前端，避免长时间无反馈
     if stream_writer:
@@ -205,7 +294,11 @@ async def generate_ppt_parallel(
                 stream_writer({"type": "stream_progress", "file_type": "ppt", "message": "正在规划课程大纲..."})
             except Exception:
                 stream_writer = None
-        sections = await generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority, user_id=user_id)
+        outline_task = generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority, user_id=user_id)
+        formula_task = generate_formula_sheet(topic, kb=kb, guidance=guidance, llm_priority=llm_priority, user_id=user_id)
+        sections, formula_sheet = await asyncio.gather(outline_task, formula_task)
+    else:
+        formula_sheet = ""
 
     # 画像引入置顶（如果画像数据可用）
     has_portrait = portrait and portrait != "暂无画像数据"
@@ -216,64 +309,116 @@ async def generate_ppt_parallel(
     outline_lines = [f"第{i+1}章「{s}」" for i, s in enumerate(sections)]
     course_overview = "\n".join(outline_lines)
 
+    def _strip_framework(text: str) -> str:
+        """剥离所有 markdown 框架标记，只保留正文文字"""
+        t = text
+        t = re.sub(r'\$\$[\s\S]*?\$\$', '', t)          # 块公式
+        t = re.sub(r'\$[^$]*\$', '', t)                  # 行内公式
+        t = re.sub(r'```[\s\S]*?```', '', t)             # 代码块
+        t = re.sub(r'<!--[^>]*-->', '', t)               # HTML 注释（含 layout）
+        t = re.sub(r'^#{1,4}\s+', '', t, flags=re.MULTILINE)  # 标题 #/##/###/####
+        t = re.sub(r'^[-*+]\s+', '', t, flags=re.MULTILINE)   # 无序列表
+        t = re.sub(r'^\d+[.)]\s+', '', t, flags=re.MULTILINE) # 有序列表
+        t = re.sub(r'\*\*([^*]+)\*\*', r'\1', t)         # 加粗
+        t = re.sub(r'\*([^*]+)\*', r'\1', t)             # 斜体
+        t = re.sub(r'^>\s*', '', t, flags=re.MULTILINE)  # 引用
+        t = re.sub(r'\|', ' ', t)                        # 表格竖线
+        t = re.sub(r'^[-*_]{3,}\s*$', '', t, flags=re.MULTILINE)  # 分隔线
+        t = re.sub(r'!?\[([^\]]*)\]\([^)]+\)', r'\1', t) # 链接/图片
+        t = re.sub(r'`([^`]+)`', r'\1', t)               # 行内代码
+        return t.strip()
+
     def _quick_check_ppt(content: str) -> bool:
-        """启发式快检：内容明显合格则跳过 LLM 审核，节省 token"""
+        """启发式快检：只拦截明显不合格的（空白、$不配对、拆分页），其他留给 reviewer"""
         slides = content.split("\n---\n")
         for slide in slides:
             slide = slide.strip()
-            if not slide or not (slide.startswith("##") or slide.startswith("# ")):
+            if not slide:
                 continue
-            if len(slide) < 100:
+            has_layout = slide.startswith("<!-- layout:")
+            has_title = slide.startswith("# ") or slide.startswith("## ")
+            if not (has_layout or has_title):
+                continue
+            body = _strip_framework(slide)
+            if len(body) < 40:
+                return False
+            inline_n = len(re.findall(r'\$[^$]+\$', slide))
+            display_n = len(re.findall(r'\$\$[\s\S]*?\$\$', slide))
+            formula_count = inline_n + display_n
+            chinese_chars = len(re.findall(r'[一-鿿㐀-䶿]', body))
+            min_chinese = 15 + formula_count * 6
+            if chinese_chars < min_chinese:
                 return False
             if "（上）" in slide or "（下）" in slide:
                 return False
-            bullets = [l for l in slide.split("\n") if l.strip().startswith("-")]
-            if len(bullets) < 2:
-                return False
             dollars = slide.count("$")
             if dollars % 2 != 0:
+                return False
+            text_no_math = re.sub(r'\$\$[\s\S]*?\$\$', '', slide)
+            text_no_math = re.sub(r'\$[^$]*\$', '', text_no_math)
+            if re.search(r'\.{4,}|……{1,}', text_no_math):
+                return False
+            if re.search(r'(同上|以此类推|依此类推|类似可得|不再赘述|此处不再展开|（略）|证明略|过程略|推导略|步骤略)', text_no_math):
                 return False
         return True
 
 
 
-    async def gen_section(idx: int, section_title: str) -> tuple[int, str]:
-        # 推送开始生成通知
+
+    total = len(sections)
+    _results: list[dict] = [{} for _ in range(total)]
+
+    def _push_section(idx: int, content: str):
+        """将章节的幻灯片逐页推送给前端"""
         if stream_writer:
             try:
+                for slide in content.split("\n---\n"):
+                    slide = slide.strip()
+                    if slide:
+                        if slide.startswith("<!-- layout:"):
+                            slide = slide.replace("\n# ", "\n## ", 1)
+                        elif slide.startswith("# ") and not slide.startswith("## "):
+                            slide = slide.replace("# ", "## ", 1)
+                        stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide})
+                done = sum(1 for r in _results if r.get("content"))
                 stream_writer({
                     "type": "stream_progress",
                     "file_type": "ppt",
-                    "message": f"正在生成第 {idx + 1}/{total} 章「{section_title}」...",
-                    "current": idx + 1,
+                    "message": f"已生成 {done}/{total} 章节",
+                    "current": done,
                     "total": total,
+                })
+            except Exception:
+                logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
+
+    async def _gen_section(idx: int, section_title: str) -> None:
+        """单章节：生成 → 快检日志 → 立即推送"""
+        if stream_writer:
+            try:
+                stream_writer({
+                    "type": "stream_progress", "file_type": "ppt",
+                    "message": f"正在生成第 {idx + 1}/{total} 章「{section_title}」...",
+                    "current": idx + 1, "total": total,
                 })
             except Exception:
                 pass
 
         base_prompt = build_resource_prompt(
-            ppt_prompt_key, topic,
-            portrait=portrait, kb=kb, guidance=guidance,
-            feedback=feedback, user_notes=user_notes,
-            custom_prompts=custom_prompts,
-            section=section_title,
+            ppt_prompt_key, topic, portrait=portrait, kb=kb, guidance=guidance,
+            feedback=feedback, user_notes=user_notes, custom_prompts=custom_prompts,
+            section=section_title, learning_objectives=learning_objectives,
+            formula_sheet=formula_sheet,
         )
-        prev_section = sections[idx - 1] if idx > 0 else "（无，这是第一章）"
-        next_section = sections[idx + 1] if idx < len(sections) - 1 else "（无，这是最后一章）"
         is_portrait_section = has_portrait and idx == 0
 
         if is_portrait_section:
-            base_prompt = ""
-            context = ""
-            # 画像学习引入：从学生视角出发，建立学习连接
-            # 注意：不能用 ppt.yaml 模板，它的学术标题/6要点等要求与温暖引入冲突
-            portrait_context_block = ""
+            parts: list[str] = []
             if guidance:
-                portrait_context_block += f"\n\n## 学习指导\n{guidance}"
+                parts.append(f"\n\n## 学习指导\n{guidance}")
             if kb:
-                portrait_context_block += f"\n\n## 知识库参考资料\n{kb}"
+                parts.append(f"\n\n## 知识库参考资料\n{kb}")
             if feedback:
-                portrait_context_block += f"\n\n## 额外反馈\n{feedback}"
+                parts.append(f"\n\n## 额外反馈\n{feedback}")
             prompt_with_context = (
                 f"你是一个贴心的学习导师。为课程「{topic}」撰写 2 页学习引入幻灯片。"
                 f"\n\n## 输出格式"
@@ -288,120 +433,62 @@ async def generate_ppt_parallel(
                 f"\n- 保持鼓励和温暖的语气"
                 f"\n\n## 用户画像\n{portrait}"
                 f"\n\n## 课程全景（供预告参考，不要展开讲）\n{course_overview}"
-                f"{portrait_context_block}"
+                f"{''.join(parts)}"
             )
         else:
-            context = (
-                f"\n\n【课程全景 — 共 {len(sections)} 章，每章 2-4 页】\n{course_overview}"
-                f"\n\n【你的任务】只负责第 {idx + 1} 章「{section_title}」的 2-4 页幻灯片，根据内容多寡自行决定页数。"
-                f"\n- 前一章：{prev_section}（你的内容需自然承接）"
-                f"\n- 后一章：{next_section}（你的内容需为后面做铺垫）"
-                f"\n- 严禁重复其他章节的内容，每章内容独立且有明确边界"
-            )
-            prompt_with_context = base_prompt + context
+            prompt_with_context = base_prompt
 
-        _original_prompt = prompt_with_context
+        # ── Step 1: 生成（连接错误重试一次）──
         t0 = time.perf_counter()
+        content = ""
         for attempt in range(2):
             try:
                 response = await llm.ainvoke(prompt_with_context, priority=llm_priority, user_id=user_id, pool="ppt")
                 content = response.content
+                break
+            except Exception as e:
                 elapsed = time.perf_counter() - t0
-            except Exception:
-                elapsed = time.perf_counter() - t0
-                if attempt < 2:
-                    logger.warning("[PPT-Section] idx=%d section=%s LLM 失败，重试 %d/3 耗时=%.2fs",
-                                   idx, section_title, attempt + 1, elapsed)
+                is_conn_error = "RemoteProtocolError" in type(e).__name__ or "ConnectError" in type(e).__name__ or "Timeout" in type(e).__name__ or "timeout" in str(e).lower() or "incomplete" in str(e).lower()
+                if attempt == 0 and is_conn_error:
+                    logger.warning("[PPT-Gen] idx=%d section=%s 连接异常，重试中... err=%s", idx, section_title, str(e)[:120])
+                    await asyncio.sleep(1.5)
                     continue
-                logger.exception("[PPT-Section] idx=%d section=%s LLM 重试耗尽 耗时=%.2fs", idx, section_title, elapsed)
-                return idx, f"## {section_title}\n- 生成失败"
+                logger.exception("[PPT-Gen] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
+                _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
+                _push_section(idx, _results[idx]["content"])
+                return
+        elapsed = time.perf_counter() - t0
 
-            # 快检通过则跳过 LLM 审核
-            if _quick_check_ppt(content):
-                logger.info("[PPT-Section] idx=%d section=%s 快检通过，跳过审核 耗时=%.2fs",
-                            idx, section_title, elapsed)
-                _push_section(idx, content)
-                return idx, content
+        if not is_portrait_section:
+            ok = _quick_check_ppt(content)
+            logger.info("[PPT-Gen] idx=%d section=%s %s 耗时=%.2fs",
+                        idx, section_title, "快检通过" if ok else "快检未通过", elapsed)
 
-            # LLM 审核
-            try:
-                review_prompt = fill_prompt(
-                    load_prompt("agent/reviewer_ppt"),
-                    content=content[:3000],
-                    topic=topic,
-                )
-                review_response = await llm.ainvoke(review_prompt, priority=llm_priority, user_id=user_id, pool="ppt")
-                result = _parse_review_response(review_response.content)
-                passed = result.get("passed", False)
-                if isinstance(passed, str):
-                    passed = passed.lower() in ("true", "yes", "1", "是", "pass")
-                score = result.get("score", 0)
-                review_feedback = result.get("feedback", "")
-
-                if passed:
-                    logger.info("[PPT-Section] idx=%d section=%s 审核通过 score=%d 耗时=%.2fs attempt=%d",
-                                idx, section_title, score, elapsed, attempt + 1)
-                    _push_section(idx, content)
-                    return idx, content
-
-                logger.info("[PPT-Section] idx=%d section=%s 审核未通过 score=%d attempt=%d feedback=%s",
-                            idx, section_title, score, attempt + 1, review_feedback[:120])
-                prompt_with_context = _original_prompt + f"\n\n【审核未通过，必须修改】\n{review_feedback}\n请根据以上反馈重新生成。"
-            except Exception:
-                logger.exception("[PPT-Section] idx=%d section=%s 审核异常，跳过", idx, section_title)
-                _push_section(idx, content)
-                return idx, content
-
-        # 两次尝试均未通过，返回最后一次结果
-        logger.info("[PPT-Section] idx=%d section=%s 两次审核均未通过，使用最后一次结果 耗时=%.2fs",
-                    idx, section_title, time.perf_counter() - t0)
+        _results[idx] = {"idx": idx, "content": content}
         _push_section(idx, content)
-        return idx, content
 
-    completed_count = 0
-    total = len(sections)
+    # ── 所有章节同时启动（asyncio.gather 天然并行）──
+    await asyncio.gather(*[_gen_section(i, s) for i, s in enumerate(sections)])
 
-    def _push_section(idx: int, content: str):
-        """将章节的幻灯片逐页推送给前端"""
-        nonlocal completed_count
-        # 流式推前端
-        if stream_writer:
-            try:
-                for slide in content.split("\n---\n"):
-                    slide = slide.strip()
-                    if slide:
-                        if slide.startswith("# ") and not slide.startswith("## "):
-                            slide = slide.replace("# ", "## ", 1)
-                        stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide})
-                completed_count += 1
-                stream_writer({
-                    "type": "stream_progress",
-                    "file_type": "ppt",
-                    "message": f"已生成 {completed_count}/{total} 章节",
-                    "current": completed_count,
-                    "total": total,
-                })
-            except Exception:
-                logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
-
-    tasks = [gen_section(i, s) for i, s in enumerate(sections)]
-    results = await asyncio.gather(*tasks)
-    results.sort(key=lambda x: x[0])
-
-    # 组装全部幻灯片
+    # ═══════════════════════════════════
+    #  组装最终结果
+    # ═══════════════════════════════════
     parts: list[str] = []
-    for _, content in results:
-        for slide in content.split("\n---\n"):
+    for r in _results:
+        for slide in (r.get("content", "") or "").split("\n---\n"):
             slide = slide.strip()
             if not slide:
                 continue
-            if slide.startswith("# ") and not slide.startswith("## "):
+            if slide.startswith("<!-- layout:"):
+                slide = slide.replace("\n# ", "\n## ", 1)
+            elif slide.startswith("# ") and not slide.startswith("## "):
                 slide = slide.replace("# ", "## ", 1)
             parts.append(slide)
 
     combined = "\n---\n".join(parts)
-    logger.info("[PPT-Parallel] 完成 章节数=%d 总页数≈%d 全程耗时=%.1fs", len(sections), len(parts), time.perf_counter() - _t_total)
+    logger.info("[PPT-Parallel] 章节生成完成 章节数=%d 总页数≈%d 耗时=%.1fs", len(sections), len(parts), time.perf_counter() - _t_total)
 
+    logger.info("[PPT-Parallel] 完成 全程耗时=%.1fs", time.perf_counter() - _t_total)
     return combined
 
 
@@ -582,7 +669,7 @@ async def executor_node(state: ResourceState) -> dict:
 
     user_id = state.get("user_id", "0")
     user_id_int = int(user_id)
-    max_workers = min(len(thread_types), 5)
+    max_workers = min(len(thread_types), 20)
     llm_priority = state.get("llm_priority", "high")
 
     def gen_one_sync(rt: str) -> tuple[str, str]:
@@ -792,7 +879,7 @@ async def reviewer_node(state: ResourceState) -> dict:
                 topic=state.get("topic", ""),
                 kb_context=state.get("kb_context", "暂无相关知识库资料"),
             )
-            response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="reviewer")
+            response = await (llm_vision if rt == "image" else llm).ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="reviewer")
             result = _parse_review_response(response.content)
             logger.info(f"[审核] {rt}: passed={result.get('passed')} score={result.get('score')}")
             return result

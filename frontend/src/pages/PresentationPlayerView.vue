@@ -388,6 +388,7 @@ const durationLabel = computed(() => formatTime(totalDuration.value))
 
 const stopLessonMedia = () => {
   window.clearInterval(silentPlaybackTimer)
+  silentPlaybackTimer = 0
   audioRef.value?.pause?.()
   try {
     const win = frameRef.value?.contentWindow
@@ -456,6 +457,7 @@ const syncAudioTime = () => {
 
 const handleAudioPlay = () => {
   window.clearInterval(silentPlaybackTimer)
+  silentPlaybackTimer = 0
   hasStarted.value = true
   isPlaying.value = true
 }
@@ -471,6 +473,7 @@ const togglePlay = async () => {
   if (!audioRef.value || !activeAudioUrl.value) {
     isPlaying.value = !isPlaying.value
     window.clearInterval(silentPlaybackTimer)
+    silentPlaybackTimer = 0
     if (isPlaying.value) {
       silentPlaybackTimer = window.setInterval(() => {
         const nextTime = currentTime.value + 0.25
@@ -566,10 +569,22 @@ const refreshPresentationStatus = async () => {
   }
 }
 
-watch(activeAudioUrl, () => {
+watch(activeAudioUrl, (newUrl, oldUrl) => {
   currentTime.value = 0
   duration.value = 0
   nextTick(syncAudioTime)
+  // 当音频 URL 从无到有时，从静音模式切换到真实音频播放
+  if (newUrl && !oldUrl && isPlaying.value) {
+    window.clearInterval(silentPlaybackTimer)
+    silentPlaybackTimer = 0
+    nextTick(() => {
+      if (!audioRef.value) return
+      audioRef.value.play().catch(err => {
+        console.warn('[PresentationPlayer] auto-switch to audio failed:', err)
+        isPlaying.value = false
+      })
+    })
+  }
 })
 
 watch(slides, nextSlides => {
@@ -588,7 +603,9 @@ onBeforeUnmount(() => {
   stopLessonMedia()
   window.clearInterval(audioPollTimer)
   window.clearInterval(silentPlaybackTimer)
+  silentPlaybackTimer = 0
   window.clearInterval(presentationPollTimer)
+  presentationPollTimer = 0
 })
 </script>
 

@@ -1,0 +1,56 @@
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: zhiban-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: zhiban
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: zhiban-backend
+    restart: unless-stopped
+    ports:
+      - "2221:2221"
+    environment:
+      database: mysql://root:${MYSQL_ROOT_PASSWORD:-123456}@mysql:3306/zhiban
+      api_key: ${API_KEY}
+      JWT_KEY: ${JWT_KEY:-zhiban-jwt-secret}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      XF_APP_ID: ${XF_APP_ID}
+      XF_API_KEY: ${XF_API_KEY}
+      XF_API_SECRET: ${XF_API_SECRET}
+      SMTP_HOST: ${SMTP_HOST:-smtp.qq.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - backend_static:/app/static
+
+  frontend:
+    build: ./frontend
+    container_name: zhiban-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
+  backend_static:
