@@ -165,7 +165,7 @@
           </div>
 
           <div v-else-if="isPptFile(message)" class="file-placeholder">
-            PPT 已生成，可以打开幻灯片预览。
+            {{ message._generating ? '正在生成 PPT 幻灯片...' : 'PPT 已生成，可以打开幻灯片预览。' }}
           </div>
 
           <div v-else-if="isDocumentFile(message)" class="file-placeholder">
@@ -189,7 +189,7 @@
             文件已生成，等待后端提供可预览内容。
           </div>
 
-          <div v-if="message.previewUrl || message.downloadUrl || message.fileId || message.content" class="file-actions">
+          <div v-if="message._generating || message.previewUrl || message.downloadUrl || message.fileId || message.content" class="file-actions">
             <button v-if="isPptFile(message) && canOpenPptPreview(message)" type="button" @click="openPptPreview(message)">
               {{ pptPreview.loading && pptPreview.messageId === message.id ? '加载中...' : '预览' }}
             </button>
@@ -201,8 +201,9 @@
             <button v-if="isDocumentFile(message) && getFileResourceId(message)" type="button" @click="openDocumentPreview(message)">
               {{ documentPreview.loading && documentPreview.messageId === message.id ? '加载中...' : '预览' }}
             </button>
-            <button v-if="message.downloadUrl" type="button" @click="downloadGeneratedFile(message)">下载</button>
+            <button v-if="message.downloadUrl && !message._generating" type="button" @click="downloadGeneratedFile(message)">下载</button>
             <button
+              v-if="!message._generating"
               type="button"
               :disabled="message.centerSaveStatus === 'saving' || message.centerSaveStatus === 'saved'"
               @click="saveGeneratedFileToResourceCenter(message)"
@@ -1354,7 +1355,7 @@ const getFileResourceId = fileData => {
 }
 
 const canOpenPptPreview = message => {
-  return Boolean(message?.slides?.length || message?.content || getFileResourceId(message))
+  return Boolean(message?._generating || message?.slides?.length || message?.content || getFileResourceId(message))
 }
 
 const canAnnotateFile = message => {
@@ -1517,6 +1518,29 @@ const hydratePptPreview = async message => {
 
 const openPptPreview = async message => {
   const resourceId = getFileResourceId(message) || ''
+
+  // 生成中的占位卡片：直接从流式数据取 slides，跳过 API 请求
+  if (message._generating) {
+    const task = generationTasks.find((t: any) => t.id === message._taskId)
+    const streamSlides = ((task as any)?._pptStream?.slides || [])
+      .map((s: any) => {
+        const raw = typeof s === 'object' ? s.content : s
+        const slide = parseSingleSlide(raw)
+        return slide
+      })
+    ;(task as any)._pptSlideCursor = streamSlides.length
+    pptPreview.value = {
+      visible: true,
+      loading: false,
+      messageId: message.id,
+      resourceId: '',
+      title: message.filename || 'PPT 预览',
+      slides: streamSlides,
+      annotations: []
+    }
+    return
+  }
+
   pptPreview.value = {
     visible: true,
     loading: true,
@@ -2255,7 +2279,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
   let doneHandled = false
 
   watch(
-    () => [task.progress, task.thinkingProcess, task.status, task.files.length, task.images.length, task.updatedAt],
+    () => [task.progress, task.thinkingProcess, task.status, task.files.length, task.images.length, task.updatedAt, (task as any)._pptStream?.slides?.length, (task as any)._pptStream?._needsRebuild],
     async () => {
       // 任务是否属于当前显示的对话：chatGroupId 未分配或未匹配时视为外来任务
       const taskChatId = task.chatGroupId
@@ -2306,22 +2330,59 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         }
       }
 
+      // PPT 任务：后端开始生成后立即推占位卡片（只有预览可用）
+      if (!taskIsForeign && !(task as any)._pptPlaceholderId && task.status === 'running') {
+        const isPptTask = task.tool?.resourceTypes?.includes('ppt')
+        if (isPptTask) {
+          const placeholderId = `ppt-placeholder-${task.id}`
+          ;(task as any)._pptPlaceholderId = placeholderId
+          messages.value.push({
+            id: placeholderId,
+            role: 'assistant',
+            type: 'file',
+            fileType: 'ppt',
+            filename: task.tool?.label || task.text?.slice(0, 30) || 'PPT 课件',
+            _generating: true,
+            _taskId: task.id,
+            time: getNowTime()
+          })
+        }
+      }
+
       // PPT 流式内容只缓存，不自动弹出预览；用户点击”预览”后才展示。
       if (!taskIsForeign) {
         const pptStream = (task as any)._pptStream
-        if (pptStream && pptPreview.value.visible && pptPreview.value.messageId === messageId) {
-          const streamedCount = (task as any)._pptSlideCursor || 0
-          if (streamedCount < pptStream.slides.length) {
-            ;(task as any)._pptSlideCursor = pptStream.slides.length
-            const baseIdx = pptPreview.value.slides.length
-            const newSlides = pptStream.slides.slice(streamedCount).map((content, i) => {
-              const slide = parseSingleSlide(content)
-              return { ...slide, index: baseIdx + i }
+        const pptPlaceholderId = (task as any)._pptPlaceholderId || ''
+        const pptRealCardId = (task as any)._pptRealCardId || ''
+        const previewMatches = pptPreview.value.messageId === messageId
+          || (pptPlaceholderId && pptPreview.value.messageId === pptPlaceholderId)
+          || (pptRealCardId && pptPreview.value.messageId === pptRealCardId)
+        if (pptStream && pptPreview.value.visible && previewMatches) {
+          // 审核后有章节被替换 → 用当前全部幻灯片重建预览
+          if ((pptStream as any)._needsRebuild) {
+            ;(pptStream as any)._needsRebuild = false
+            const allSlides = pptStream.slides.map((s: any, i: number) => {
+              const raw = typeof s === 'object' ? s.content : s
+              const slide = parseSingleSlide(raw)
+              return { ...slide, index: i }
             })
-            pptPreview.value = {
-              ...pptPreview.value,
-              loading: false,
-              slides: [...pptPreview.value.slides, ...newSlides]
+            pptPreview.value = { ...pptPreview.value, loading: false, slides: allSlides }
+            ;(task as any)._pptSlideCursor = pptStream.slides.length
+          } else {
+            const streamedCount = (task as any)._pptSlideCursor || 0
+            if (streamedCount < pptStream.slides.length) {
+              ;(task as any)._pptSlideCursor = pptStream.slides.length
+              const baseIdx = pptPreview.value.slides.length
+              const newSlides = pptStream.slides.slice(streamedCount).map((s: any, i: number) => {
+                const raw = typeof s === 'object' ? s.content : s
+                const slide = parseSingleSlide(raw)
+                return { ...slide, index: baseIdx + i }
+              })
+              pptPreview.value = {
+                ...pptPreview.value,
+                loading: false,
+                slides: [...pptPreview.value.slides, ...newSlides]
+              }
             }
           }
         }
@@ -2334,8 +2395,27 @@ const attachGenerationTaskToMessage = (task, messageId) => {
           if (task.tool?.generateMode === 'video' && file.file_type !== 'video' && file.resource_type !== 'video') {
             continue
           }
+
+          // 真实文件到达前，先移除 PPT 占位卡片
+          const pptPlaceholderId = (task as any)._pptPlaceholderId
+          if (pptPlaceholderId) {
+            const placeholderIdx = messages.value.findIndex(m => m.id === pptPlaceholderId)
+            if (placeholderIdx !== -1) messages.value.splice(placeholderIdx, 1)
+            ;(task as any)._pptPlaceholderId = null
+          }
+
           const result = await appendFileMessage(file)
           if (result.isNew) addedNewFiles = true
+
+          // 将预览关联到真实文件卡片，记录 ID 供后续流式替换匹配
+          const newFileMsg = messages.value[result.index]
+          if (newFileMsg) {
+            ;(task as any)._pptRealCardId = newFileMsg.id
+            if (pptPreview.value.visible && pptPreview.value.messageId === pptPlaceholderId) {
+              pptPreview.value.messageId = newFileMsg.id
+              pptPreview.value.resourceId = getFileResourceId(newFileMsg) || pptPreview.value.resourceId
+            }
+          }
 
           if (isPptFile(file) && pptPreview.value.visible) {
             const fullSlides = parsePptSlidesFromContent(file.content || file.text || '')
@@ -2550,9 +2630,17 @@ const sendMessage = async () => {
           pptPreview.value = {
             ...pptPreview.value,
             loading: pptPreview.value.slides.length === 0,
-            slides: [...pptPreview.value.slides, { ...slide, index: idx }]
+            slides: [...pptPreview.value.slides, { ...slide, index: idx, _sectionIdx: eventData.section_idx }]
           }
           scrollToBottom()
+        }
+      },
+      onStreamSectionReplace: async eventData => {
+        if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
+          pptPreview.value = {
+            ...pptPreview.value,
+            slides: pptPreview.value.slides.filter((s: any) => s._sectionIdx !== eventData.section_idx)
+          }
         }
       },
       onThinking: async message => {

@@ -1,6 +1,5 @@
 import logging
 import sys
-import traceback
 from pathlib import Path
 
 # 确保 backend/ 的父目录在 sys.path，这样无论从项目根还是 backend/ 内启动 uvicorn 都能正确导入 backend.src.xxx
@@ -15,7 +14,6 @@ logging.basicConfig(
 )
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -42,16 +40,6 @@ app = FastAPI(
     description="Swagger接口文档",
     swagger_ui_init_oauth={},
 )
-
-# 跨域配置
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 from backend.src.utils.exceptions import ServiceError
 
@@ -122,7 +110,7 @@ async def shutdown():
     stop()
     await close_db()
 
-
+ 
 app.include_router(user_router)
 app.include_router(chat_router)
 app.include_router(portrait_router)

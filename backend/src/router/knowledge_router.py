@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import os
 
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query, Request
 
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.utils.file_processor import extract_text, chunk_text
@@ -20,10 +20,12 @@ VIDEO_DIR = STATIC_DIR / "videos"
 router = APIRouter(prefix="/knowledge_base", tags=["知识库"])
 
 ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".mp4"}
+MAX_UPLOAD_SIZE = 1 * 1024 * 1024 * 1024  # 1GB
 
 
 @router.post("/upload")
 async def upload_document(
+    request: Request,
     user_id: int = Depends(get_user_id_from_token),
     file: UploadFile = File(...),
     cover: UploadFile | None = File(None),
@@ -38,6 +40,10 @@ async def upload_document(
     - category: 前端自定义分类字符串
     - cover: 可选封面图，存到 /static/covers/
     """
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_UPLOAD_SIZE:
+        return {"code": 413, "msg": "上传文件过大，单次上限 1GB"}
+
     tmp_path = None
     requested_visibility = visibility
     try:

@@ -76,8 +76,14 @@ def _unsubscribe_task_sse(task_id: str, q: list):
 
 async def _notify_task_sse(task_id: str, data: dict):
     """通知所有 SSE 客户端"""
-    for q in _task_sse_queues.get(task_id, []):
-        q.append(data)
+    queues = _task_sse_queues.get(task_id, [])
+    if queues:
+        for q in queues:
+            q.append(data)
+        event_type = data.get("type", "unknown")
+        if event_type in ("stream_slide", "stream_section_replace", "stream_start"):
+            logger.info("[TaskSSE] task=%s event=%s section_idx=%s subscriber_count=%d",
+                        task_id[:12], event_type, data.get("section_idx", "-"), len(queues))
 
 from backend.src.service.portrait_service import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
@@ -946,8 +952,13 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         await task.save()
         await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 10, "progress_msg": "AI 规划中…", "elapsed_ms": int((_time.perf_counter() - _t_init) * 1000)})
 
+        _custom_count = 0
         async for mode, chunk in resource_graph.astream(initial_state, stream_mode=["values", "custom"]):
             if mode == "custom":
+                _custom_count += 1
+                if _custom_count <= 3 or chunk.get("type") in ("stream_slide", "stream_section_replace", "stream_start"):
+                    logger.info("[TaskStream] custom event #%d mode=%s type=%s keys=%s",
+                                _custom_count, mode, chunk.get("type", "?"), list(chunk.keys())[:5])
                 await _notify_task_sse(task_id, chunk)
                 continue
 

@@ -49,6 +49,7 @@ export function streamChatMessage(
     onFile?: (fileData: unknown) => void;
     onStreamStart?: (eventData: unknown) => void;
     onStreamSlide?: (eventData: unknown) => void;
+    onStreamSectionReplace?: (eventData: unknown) => void;
     onThinking?: (message: string) => void | Promise<void>;
   },
 ): Promise<void>;
@@ -90,6 +91,7 @@ export function streamResourceGeneration(
     onFile?: (eventData: unknown) => void;
     onStreamStart?: (eventData: unknown) => void;
     onStreamSlide?: (eventData: unknown) => void;
+    onStreamSectionReplace?: (eventData: unknown) => void;
     onThinking?: (message: string) => void;
   },
 ): Promise<void>;
