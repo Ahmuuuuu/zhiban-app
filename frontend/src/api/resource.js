@@ -1,7 +1,7 @@
 import request from './request'
 import { API_BASE_URL, parseStreamEvent, requestFirstAvailable, resolveApiUrl } from './config'
 
-export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide, onThinking } = {}) {
+export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide, onStreamSectionReplace, onThinking } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
   const token = localStorage.getItem('token')
 
@@ -77,6 +77,11 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
 
         if (eventData.type === 'stream_slide') {
           onStreamSlide?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_section_replace') {
+          onStreamSectionReplace?.(eventData)
           continue
         }
 

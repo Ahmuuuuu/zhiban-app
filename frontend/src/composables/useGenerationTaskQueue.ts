@@ -264,10 +264,22 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     ;(task as any)._pptStream = { slides: [] }
   }
 
+  if (eventData.type === 'stream_section_replace' && eventData.section_idx != null) {
+    const stream = (task as any)._pptStream || { slides: [] }
+    stream.slides = stream.slides.filter((s: any) => {
+      const si = typeof s === 'object' ? s.section_idx : null
+      return si !== eventData.section_idx
+    })
+    stream._needsRebuild = true
+    ;(task as any)._pptStream = stream
+  }
+
   if (eventData.type === 'stream_slide' && eventData.content) {
     const stream = (task as any)._pptStream || { slides: [] }
-    stream.slides.push(eventData.content)
+    stream.slides.push({ content: eventData.content, section_idx: eventData.section_idx })
     ;(task as any)._pptStream = stream
+    console.log('[GenerationTask] stream_slide taskId=%s section_idx=%s slides=%d',
+      task.backendTaskId?.slice(0, 12) || task.id, eventData.section_idx, stream.slides.length)
   }
 
   const thinking = getBackendThinking(eventData)

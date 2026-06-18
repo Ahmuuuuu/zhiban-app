@@ -52,6 +52,7 @@ export type GenerationCallbacks = {
   onError?: (err: string) => void
   onStreamStart?: (eventData: unknown) => void
   onStreamSlide?: (eventData: unknown) => void
+  onStreamSectionReplace?: (eventData: unknown) => void
   onThinking?: (msg: string) => void
 }
 
@@ -229,6 +230,9 @@ export async function executeGeneration(
           onStreamSlide: (eventData: unknown) => {
             callbacks.onStreamSlide?.(eventData)
           },
+          onStreamSectionReplace: (eventData: unknown) => {
+            callbacks.onStreamSectionReplace?.(eventData)
+          },
           onDone: (eventData: any) => {
             if (Array.isArray(eventData?.resources)) {
               generatedResources.push(...eventData.resources)
@@ -321,6 +325,9 @@ export async function executeGeneration(
         },
         onStreamSlide: (eventData: unknown) => {
           callbacks.onStreamSlide?.(eventData)
+        },
+        onStreamSectionReplace: (eventData: unknown) => {
+          callbacks.onStreamSectionReplace?.(eventData)
         },
         onDone: (eventData: unknown) => {
           callbacks.onDone?.(eventData)
