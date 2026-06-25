@@ -260,6 +260,20 @@ const pollBackendTask = (task: GenerationTask) => {
 const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
   if (!eventData || eventData.type === '__close__') return
 
+  // 外部视频搜索结果（在 graph 完成前提前推送）
+  if (eventData.type === 'external_videos' && Array.isArray(eventData.external_videos)) {
+    if (!(task as any).externalVideos) {
+      ;(task as any).externalVideos = []
+    }
+    ;(task as any).externalVideos.push(...eventData.external_videos)
+    if (eventData.progress_msg) {
+      task.progress = eventData.progress_msg
+    }
+    task.updatedAt = Date.now()
+    persistTasks()
+    return
+  }
+
   if (eventData.type === 'stream_start') {
     ;(task as any)._pptStream = { slides: [] }
   }

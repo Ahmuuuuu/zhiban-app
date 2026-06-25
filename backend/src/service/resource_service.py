@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -13,6 +14,7 @@ from datetime import datetime, timedelta
 from backend.src.ai_core.resource_graph import resource_graph
 from backend.src.utils.prompt_loader import fill_prompt
 from backend.src.utils.chat_utils import allocate_chat_group_id
+from backend.src.utils.redis_client import subscribe_sse, unsubscribe_sse, notify_sse, replay_sse, get_redis as _get_redis
 from backend.src.ai_core.llm_config import llm
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.agent_skill_model import AgentSkill
@@ -46,6 +48,7 @@ _FILE_EXT_MAP = {
     "audio": "mp3",
     "html": "html",
     "video": "html",
+    "external_video": "url",
 }
 
 
@@ -55,35 +58,40 @@ async def _generate_resource_title(topic: str, type_names: list[str]) -> str:
     return f"「{topic}」{types_str}"
 
 
-# ─── 任务 SSE 通知队列 ───
-_task_sse_queues: dict[str, list] = {}
+# ─── 任务 SSE 通知队列（基于 Redis Pub/Sub + Stream，兼容多进程）───
+# 使用 redis_client 的统一 SSE 机制：本地进程走内存队列，跨进程走 Redis
 
 
 def _subscribe_task_sse(task_id: str):
     """为生成任务 SSE 客户端创建消息队列"""
-    q: list = []
-    _task_sse_queues.setdefault(task_id, []).append(q)
-    return q
+    return subscribe_sse(f"task:{task_id}")
 
 
 def _unsubscribe_task_sse(task_id: str, q: list):
-    queues = _task_sse_queues.get(task_id, [])
-    if q in queues:
-        queues.remove(q)
-    if not queues:
-        _task_sse_queues.pop(task_id, None)
+    """取消 SSE 订阅"""
+    unsubscribe_sse(f"task:{task_id}", q)
 
 
 async def _notify_task_sse(task_id: str, data: dict):
-    """通知所有 SSE 客户端"""
-    queues = _task_sse_queues.get(task_id, [])
-    if queues:
-        for q in queues:
-            q.append(data)
-        event_type = data.get("type", "unknown")
-        if event_type in ("stream_slide", "stream_section_replace", "stream_start"):
-            logger.info("[TaskSSE] task=%s event=%s section_idx=%s subscriber_count=%d",
-                        task_id[:12], event_type, data.get("section_idx", "-"), len(queues))
+    """通知所有 SSE 客户端（本地内存 + Redis Pub/Sub + Stream）"""
+    await notify_sse(f"task:{task_id}", data)
+
+
+# ─── Task 状态 Redis 缓存 ───
+# key: task:{task_id}:state → JSON, TTL: 30s（生成中）/ 300s（已完成）
+
+_TASK_CACHE_TTL_RUNNING = 30
+_TASK_CACHE_TTL_DONE = 300
+
+
+async def _cache_task_state(task_id: str, state: dict):
+    """写 Task 状态到 Redis 缓存（非关键，异常静默降级）"""
+    try:
+        r = await _get_redis()
+        ttl = _TASK_CACHE_TTL_DONE if state.get("status") in ("success", "failed") else _TASK_CACHE_TTL_RUNNING
+        await r.setex(f"task:{task_id}:state", ttl, json.dumps(state, ensure_ascii=False))
+    except Exception:
+        pass
 
 from backend.src.service.portrait_service import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
@@ -137,7 +145,8 @@ def _resource_history_response(resources: list[dict]) -> str:
         topic = resource.get("topic") or "学习资源"
         resource_id = resource.get("resource_id")
         ext = _FILE_EXT_MAP.get(file_type, "md")
-        filename = f"{topic}_{file_type}.{ext}"
+        # 优先使用资源自带的 filename（外部视频有自定义标题）
+        filename = resource.get("filename") or f"{topic}_{file_type}.{ext}"
         item = {
             "type": "resource",
             "file_type": file_type,
@@ -147,6 +156,12 @@ def _resource_history_response(resources: list[dict]) -> str:
             "download_url": f"/resource/{resource_id}/download" if resource_id else None,
             "topic": topic,
         }
+        # 外部视频：保留封面、嵌入地址等展示字段，刷新后仍能正常渲染卡片
+        if file_type == "external_video":
+            for k in ("cover_url", "embed_url", "title", "author", "duration_text",
+                      "view_count_text", "source", "source_label", "description", "file_url", "preview_url"):
+                if resource.get(k):
+                    item[k] = resource[k]
         items.append(item)
 
     return json.dumps({
@@ -317,7 +332,7 @@ async def _resource_to_dict(record: GeneratedResource, current_user_id: int | No
     if record.file_url:
         item["file_url"] = record.file_url
         item["url"] = record.file_url
-        item["preview_url"] = record.file_url if record.resource_type in ("html", "video") else ""
+        item["preview_url"] = record.file_url if record.resource_type in ("html", "video", "external_video") else ""
 
     if current_user_id:
         from backend.src.models.study_model import ResourceLike, ResourceCollection
@@ -421,6 +436,11 @@ class ResourceService:
             if item["resource_type"] == "mindmap":
                 item["content"] = _format_mindmap_content(item.get("content"))
 
+        # 后台预生成旁白（播放时秒开）
+        for item in saved:
+            if item["resource_type"] in ("ppt", "document"):
+                asyncio.ensure_future(_pre_generate_narration(item["resource_id"]))
+
         logger.info("[Resource] generate_and_save 完成 topic=%s types=%s 全程耗时=%.1fs",
                     topic, resource_types, _time.perf_counter() - _t_total)
         return saved
@@ -496,6 +516,11 @@ class ResourceService:
             r["retry_count"] = final_retry
         if chat_group_id > 0:
             await _save_generation_to_history(user_id, chat_group_id, topic, saved_resources)
+
+        # 后台预生成旁白（播放时秒开）
+        for r in saved_resources:
+            if r["resource_type"] in ("ppt", "document"):
+                asyncio.ensure_future(_pre_generate_narration(r["resource_id"]))
 
         done_data = {
             "done": True,
@@ -595,7 +620,7 @@ class ResourceService:
         if record.file_url:
             result["file_url"] = record.file_url
             result["url"] = record.file_url
-            result["preview_url"] = record.file_url if record.resource_type in ("html", "video") else ""
+            result["preview_url"] = record.file_url if record.resource_type in ("html", "video", "external_video") else ""
 
         # 当前用户的交互状态
         from backend.src.models.study_model import ResourceLike, ResourceCollection
@@ -678,7 +703,7 @@ class ResourceService:
             if r.file_url:
                 item["file_url"] = r.file_url
                 item["url"] = r.file_url
-                item["preview_url"] = r.file_url if r.resource_type in ("html", "video") else ""
+                item["preview_url"] = r.file_url if r.resource_type in ("html", "video", "external_video") else ""
             # 附带当前用户的交互状态
             from backend.src.models.study_model import ResourceLike, ResourceCollection
             item["liked"] = await ResourceLike.filter(user_id=user_id, resource_id=r.id).exists()
@@ -827,9 +852,28 @@ class ResourceService:
     # ═══════════════════════════════════════════
 
     @staticmethod
-    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None, bind_chat_history: bool = False) -> dict:
-        """创建生成任务，启动后台运行，立即返回 task_id 和 chat_group_id"""
+    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None, bind_chat_history: bool = False, skip_review: bool = False) -> dict:
+        """创建生成任务（带 Redis 并发锁，防止重复提交）"""
         from backend.src.models.task_model import GenerationTask
+
+        # Redis 并发锁：同一用户同一话题 30s 内不重复创建
+        if topic and user_id:
+            try:
+                _lk = f"lock:task:{user_id}:{hashlib.md5(topic.strip().lower().encode()).hexdigest()}"
+                r = await _get_redis()
+                locked = await r.setnx(_lk, "1")
+                if not locked:
+                    # 锁被占用 → 查找是否已有正在运行的任务
+                    existing = await GenerationTask.filter(
+                        user_id=user_id, topic=topic.strip(),
+                        status__in=["pending", "running"],
+                    ).order_by("-created_at").first()
+                    if existing:
+                        return {"task_id": existing.task_id, "status": existing.status, "chat_group_id": existing.chat_group_id, "duplicated": True}
+                else:
+                    await r.expire(_lk, 30)
+            except Exception:
+                pass  # Redis 不可用时降级，不阻塞任务创建
 
         chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
         tid = uuid.uuid4().hex
@@ -841,18 +885,31 @@ class ResourceService:
             chat_group_id=chat_group_id,
             status="pending",
         )
-        asyncio.ensure_future(_run_generation_task(task.id, tid, answers))
+        asyncio.ensure_future(_run_generation_task(task.id, tid, answers, skip_review=skip_review))
         return {"task_id": tid, "status": "pending", "chat_group_id": chat_group_id}
 
     @staticmethod
     async def get_task(task_id: str, user_id: int) -> dict | None:
-        """查询任务状态"""
+        """查询任务状态（Redis 缓存仅信任终态，running 状态直查 MySQL）"""
+        _redis_cache_key = f"task:{task_id}:state"
+        # 1) 尝试 Redis 缓存（仅终态可信任，running 状态可能过期）
+        try:
+            r = await _get_redis()
+            cached = await r.get(_redis_cache_key)
+            if cached:
+                state = json.loads(cached)
+                if state.get("user_id") == user_id and state.get("status") in ("success", "failed"):
+                    return state
+        except Exception:
+            pass
+
+        # 2) 回退 MySQL
         from backend.src.models.task_model import GenerationTask
 
         task = await GenerationTask.filter(task_id=task_id, user_id=user_id).first()
         if not task:
             return None
-        return {
+        state = {
             "task_id": task.task_id,
             "topic": task.topic,
             "resource_types": json.loads(task.resource_types) if task.resource_types else [],
@@ -864,7 +921,11 @@ class ResourceService:
             "error": task.error,
             "created_at": str(task.created_at),
             "updated_at": str(task.updated_at),
+            "user_id": user_id,
         }
+        # 3) 回填缓存
+        asyncio.ensure_future(_cache_task_state(task_id, state))
+        return state
 
     @staticmethod
     async def list_tasks(user_id: int) -> list[dict]:
@@ -903,7 +964,7 @@ class ResourceService:
 #  后台任务执行
 # ═══════════════════════════════════════════════
 
-async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = None):
+async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = None, skip_review: bool = False):
     """后台运行资源生成任务，更新 DB 进度并推送 SSE"""
     import time as _time
     _t_total = _time.perf_counter()
@@ -928,9 +989,16 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         await task.save()
         _t_init = _time.perf_counter()
         await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 5, "progress_msg": "正在初始化…"})
+        asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": 5, "progress_msg": "正在初始化…", "user_id": user_id}))
+
+        # 提前搜索外部视频（仅用户请求了视频资源时才搜索，避免思维导图等也弹出）
+        if topic and len(topic) > 1 and "video" in resource_types:
+            asyncio.ensure_future(_search_external_videos_early(
+                task_id, topic, user_id, chat_group_id,
+            ))
 
         # 构建 graph 初始状态
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, answers=answers, ppt_prompt_key="ppt")
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, answers=answers, ppt_prompt_key="ppt", skip_review=skip_review)
         topic = initial_state["topic"]
 
         # 更新 topic（可能从聊天记录提取）
@@ -951,6 +1019,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         task.progress_msg = "AI 规划中…"
         await task.save()
         await _notify_task_sse(task_id, {"type": "status", "status": "running", "progress": 10, "progress_msg": "AI 规划中…", "elapsed_ms": int((_time.perf_counter() - _t_init) * 1000)})
+        asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": 10, "progress_msg": "AI 规划中…", "user_id": user_id}))
 
         _custom_count = 0
         async for mode, chunk in resource_graph.astream(initial_state, stream_mode=["values", "custom"]):
@@ -982,6 +1051,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
                             "progress_msg": task.progress_msg,
                             "elapsed_ms": rt_elapsed,
                         })
+                        asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": task.progress, "progress_msg": task.progress_msg, "user_id": user_id}))
 
             chunk_file_urls = chunk.get("file_urls", {})
             if chunk_file_urls:
@@ -995,15 +1065,22 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         task.progress_msg = "AI 审核中…"
         await task.save()
         await _notify_task_sse(task_id, {"type": "status", "progress": 70, "progress_msg": "AI 审核中…"})
+        asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": 70, "progress_msg": "AI 审核中…", "user_id": user_id}))
 
         # 保存到 DB
         task.progress = 85
         task.progress_msg = "正在保存…"
         await task.save()
         await _notify_task_sse(task_id, {"type": "status", "progress": 85, "progress_msg": "正在保存…"})
+        asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": 85, "progress_msg": "正在保存…", "user_id": user_id}))
 
         saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry,
                                       file_urls=final_file_urls)
+
+        # 后台预生成旁白音频（PPT/文档等文字类资源），播放时秒开
+        for r in saved:
+            if r["resource_type"] in ("ppt", "document"):
+                asyncio.ensure_future(_pre_generate_narration(r["resource_id"]))
 
         # 保存到聊天历史
         await _save_generation_to_history(user_id, chat_group_id, topic, saved)
@@ -1044,6 +1121,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
             "progress_msg": f"全部生成完毕，总耗时 {total_ms / 1000:.1f}s",
         })
         await _notify_task_sse(task_id, {"type": "__close__"})
+        asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "success", "progress": 100, "progress_msg": "生成完成", "result": json.dumps(result_data), "user_id": user_id}))
 
         await Notification.create(
             type="resource",
@@ -1068,6 +1146,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
                     "error": str(e),
                 })
                 await _notify_task_sse(task_id, {"type": "__close__"})
+                asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "failed", "error": str(e)[:200], "user_id": task.user_id}))
                 await Notification.create(
                     type="resource",
                     title="资源生成失败",
@@ -1086,3 +1165,68 @@ async def _pre_generate_narration(resource_id: int, voice: str = "zh-CN-Xiaoxiao
         await narrate_resource(resource_id, voice)
     except Exception:
         logger.exception("预生成旁白音频失败 resource_id=%s", resource_id)
+
+
+async def _search_external_videos_early(task_id: str, topic: str, user_id: int, chat_group_id: int = 0):
+    """在资源生成任务启动时并行搜索外部教学视频（B站），通过 SSE 实时推送给前端。
+
+    本函数与主 graph 并发执行，搜索结果会先于自生成资源到达前端。
+    """
+    try:
+        from backend.src.service.video_service import ExternalVideoService, _format_duration, _format_view_count
+        videos = await ExternalVideoService.search(topic, max_results=2)
+        if not videos:
+            logger.info("[外部视频] 未搜索到「%s」的相关视频", topic)
+            return
+
+        logger.info("[外部视频] 搜索到 %d 个「%s」的相关视频", len(videos), topic)
+        saved = []
+        for v in videos:
+            record = await GeneratedResource.create(
+                topic=topic,
+                resource_type="external_video",
+                content=json.dumps(v, ensure_ascii=False),
+                file_url=v.get("page_url", v.get("embed_url", "")),
+                cover_url=v.get("cover_url"),
+                review_passed=True,
+                retry_count=0,
+                user_id=user_id,
+            )
+            saved.append({
+                "resource_id": record.id,
+                "topic": record.topic,
+                "resource_type": "external_video",
+                "file_type": "external_video",
+                "filename": f"推荐视频: {(v.get('title') or '')[:40]}",
+                "file_url": record.file_url,
+                "cover_url": v.get("cover_url", ""),
+                "embed_url": v.get("embed_url", ""),
+                "title": v.get("title", ""),
+                "author": v.get("author", ""),
+                "duration": v.get("duration"),
+                "duration_text": _format_duration(v.get("duration")) if v.get("duration") else "",
+                "view_count": v.get("view_count", 0),
+                "view_count_text": _format_view_count(v.get("view_count")),
+                "description": v.get("description", ""),
+                "source": v.get("source_label", ""),
+                "source_label": v.get("source_label", ""),
+                "preview_url": v.get("embed_url", ""),
+            })
+
+        # 写入聊天历史（刷新页面后仍可见）
+        if not chat_group_id or chat_group_id <= 0:
+            from backend.src.utils.chat_utils import allocate_chat_group_id
+            chat_group_id = await allocate_chat_group_id(user_id)
+        await _save_generation_to_history(user_id, chat_group_id, topic, saved)
+
+        await _notify_task_sse(task_id, {
+            "type": "external_videos",
+            "external_videos": saved,
+            "progress_msg": f"已找到相关教学视频",
+        })
+        logger.info("[外部视频] 已推送 %d 个视频到 task_id=%s", len(saved), task_id)
+
+    except ImportError:
+        logger.debug("[外部视频] video_service 未就绪，跳过")
+    except Exception:
+        logger.info("[外部视频] 搜索失败（非关键错误，继续主流程）", exc_info=True)

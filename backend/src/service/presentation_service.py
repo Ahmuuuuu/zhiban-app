@@ -16,6 +16,7 @@ from backend.src.ai_core.llm_config import llm
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.utils.exceptions import ServiceError
 from backend.src.utils.chat_utils import allocate_chat_group_id
+from backend.src.utils.redis_client import notify_sse as _redis_notify_sse
 
 logger = logging.getLogger(__name__)
 
@@ -397,10 +398,10 @@ def _trim_content_depth(content: str, depth: str, is_ppt: bool = False) -> str:
         trimmed.append("\n".join(kept_lines))
     return sep.join(trimmed)
 _sse_queues: dict[int, list[asyncio.Queue]] = {}
-_progress_events: dict[int, list[dict]] = {}  # 存储进度事件历史，供迟到 SSE 订阅者回放
 
 
 def _subscribe_sse(presentation_id: int) -> asyncio.Queue:
+    """订阅课件 SSE（返回 asyncio.Queue，兼容现有路由）"""
     q = asyncio.Queue()
     _sse_queues.setdefault(presentation_id, []).append(q)
     return q
@@ -412,26 +413,26 @@ def _unsubscribe_sse(presentation_id: int, q: asyncio.Queue):
         queues.remove(q)
     if not queues:
         _sse_queues.pop(presentation_id, None)
-        # 所有订阅者都断开后延迟清理进度历史
-        _progress_events.pop(presentation_id, None)
 
 
 async def _notify_sse(presentation_id: int, data: dict):
+    """通知所有本地课件 SSE 订阅者 + Redis 跨进程"""
     for q in _sse_queues.get(presentation_id, []):
         q.put_nowait(data)
+    await _redis_notify_sse(f"pres:{presentation_id}", data)
 
 
 def _push_progress(presentation_id: int, step: str, label: str, status: str = "running", elapsed_ms: int | None = None):
-    """同步推送生成进度到 SSE 队列 + 存储事件历史"""
+    """同步推送生成进度到 SSE 队列 + Redis Stream（无等待，纯 put_nowait）"""
     event = {"type": "progress", "step": step, "label": label, "status": status, "elapsed_ms": elapsed_ms}
-    _progress_events.setdefault(presentation_id, []).append(event)
+    # 本地 asyncio.Queue（立即送达，零延迟）
     for q in _sse_queues.get(presentation_id, []):
         try:
             q.put_nowait(event)
         except asyncio.QueueFull:
             logger.warning("SSE 队列已满 presentation_id=%s", presentation_id)
-        except Exception:
-            logger.exception("SSE 进度推送异常 presentation_id=%s", presentation_id)
+    # Redis 跨进程 + Stream（异步 fire-and-forget）
+    asyncio.ensure_future(_redis_notify_sse(f"pres:{presentation_id}", event))
 
 
 # ═══════════════════════════════════════════════

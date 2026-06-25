@@ -9,6 +9,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.src.service.resource_service import ResourceService, _subscribe_task_sse, _unsubscribe_task_sse
+from backend.src.service.resource_service import replay_sse as _replay_task_sse
+from backend.src.utils.redis_client import check_rate_limit
 from backend.src.service.skill_service import SkillService
 from backend.src.schemas.resource import GenerateResourceRequest
 from backend.src.schemas.skill import UpsertSkillRequest
@@ -89,6 +91,8 @@ async def generate_resource(
     user_id : int = Depends(get_user_id_from_token),
     data : GenerateResourceRequest = Body(...)
 ):
+    if not await check_rate_limit("resource_gen", user_id, 5, 60):
+        raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     try :
         result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history)
         return {"code" : 200, "msg" : "success", "data" : result}
@@ -103,8 +107,10 @@ async def generate_resource_stream(
     user_id : int = Depends(get_user_id_from_token),
     data : GenerateResourceRequest = Body(...)
 ):
+    if not await check_rate_limit("resource_stream", user_id, 10, 60):
+        raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     return StreamingResponse(
-        ResourceService.generate_stream(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history),
+        ResourceService.generate_stream(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history, skip_review=data.skip_review),
         media_type = "text/event-stream",
         headers = {
             "Cache-Control": "no-cache",
@@ -123,8 +129,12 @@ async def create_generation_task(
     user_id: int = Depends(get_user_id_from_token),
     data: GenerateResourceRequest = Body(...),
 ):
+    if not await check_rate_limit("resource_task", user_id, 5, 60):
+        raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     try:
-        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers, bind_chat_history=data.bind_chat_history)
+        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers, bind_chat_history=data.bind_chat_history, skip_review=data.skip_review)
+        if result.get("duplicated"):
+            return {"code": 200, "msg": "该话题已在生成中", "data": result}
         return {"code": 200, "msg": "success", "data": result}
     except Exception:
         raise HTTPException(500, "创建任务失败")
@@ -177,6 +187,13 @@ async def stream_generation_task(
                 yield "data: [DONE]\n\n"
                 return
             yield f"data: {json.dumps({'type': 'status', **task_data}, ensure_ascii=False)}\n\n"
+
+            # 回放 Redis Stream 中的消息（跨进程/断线重连时补发）
+            for msg in await _replay_task_sse(f"task:{task_id}"):
+                if msg.get("type") == "__close__":
+                    yield "data: [DONE]\n\n"
+                    return
+                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
 
             # 持续监听队列
             while True:

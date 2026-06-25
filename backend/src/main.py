@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -20,6 +21,9 @@ from pathlib import Path
 from backend.src.utils.database import init_db, close_db
 
 logger = logging.getLogger("api")
+
+# Redis SSE 转发器任务句柄（在 startup 中赋值，shutdown 中清理）
+_redis_forward_task = None
 from backend.src.router.chat_router import router as chat_router
 from backend.src.router.portrait_router import router as portrait_router
 from backend.src.router.resource_router import router as resource_router
@@ -102,6 +106,14 @@ async def startup():
     # 启动定时任务（周报 + AI 建议）
     from backend.src.utils.scheduler import start
     start()
+    # 初始化 Redis 连接 & 启动 SSE 跨进程转发器
+    global _redis_forward_task
+    try:
+        from backend.src.utils.redis_client import get_redis, _forward_redis_messages
+        await get_redis()
+        _redis_forward_task = asyncio.create_task(_forward_redis_messages())
+    except Exception:
+        logger.warning("Redis 不可用，SSE 降级为单进程模式（不影响核心功能）")
 
 
 @app.on_event("shutdown")
@@ -109,6 +121,12 @@ async def shutdown():
     from backend.src.utils.scheduler import stop
     stop()
     await close_db()
+    # 关闭 Redis 连接 & 取消转发器
+    global _redis_forward_task
+    if _redis_forward_task and not _redis_forward_task.done():
+        _redis_forward_task.cancel()
+    from backend.src.utils.redis_client import close_redis
+    await close_redis()
 
  
 app.include_router(user_router)

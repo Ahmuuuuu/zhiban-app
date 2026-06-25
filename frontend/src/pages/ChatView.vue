@@ -164,6 +164,22 @@
             动态课件已生成，可以打开预览。
           </div>
 
+          <div v-else-if="isExternalVideoFile(message)" class="ext-video-card">
+            <div class="ext-video-thumb" @click="openExternalVideoPlayer(message)">
+              <img :src="message.coverUrl" :alt="message.title" loading="lazy" @error="e => e.target.style.display = 'none'" />
+              <span class="ext-video-duration-badge">{{ message.durationText || '' }}</span>
+              <div class="ext-video-play-overlay">▶ 观看</div>
+            </div>
+            <div class="ext-video-info">
+              <div class="ext-video-title" :title="message.title">{{ message.title || message.filename }}</div>
+              <div class="ext-video-meta">
+                <span v-if="message.author" class="ext-video-author">{{ message.author }}</span>
+                <span v-if="message.viewCountText" class="ext-video-views">{{ message.viewCountText }}次</span>
+                <span class="ext-video-source">{{ message.source || 'B站' }}</span>
+              </div>
+            </div>
+          </div>
+
           <div v-else-if="isPptFile(message)" class="file-placeholder">
             {{ message._generating ? '正在生成 PPT 幻灯片...' : 'PPT 已生成，可以打开幻灯片预览。' }}
           </div>
@@ -197,7 +213,8 @@
               {{ message.mindmapPreviewLoading ? '加载中...' : '预览' }}
             </button>
             <button v-if="isVideoFile(message) && (message.previewUrl || message.presentation?.id || message.presentationId)" type="button" @click="openPresentationPlayer(message)">打开课件</button>
-            <a v-else-if="message.previewUrl" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
+            <button v-if="isExternalVideoFile(message)" type="button" @click="openExternalVideoPlayer(message)">▶ 立即观看</button>
+            <a v-else-if="message.previewUrl && !isExternalVideoFile(message)" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="isDocumentFile(message) && getFileResourceId(message)" type="button" @click="openDocumentPreview(message)">
               {{ documentPreview.loading && documentPreview.messageId === message.id ? '加载中...' : '预览' }}
             </button>
@@ -460,7 +477,27 @@
       </section>
     </Teleport>
 
-    <Teleport to="body">    </Teleport>
+    <Teleport to="body">
+      <section v-if="externalVideoPlayer.visible" class="ext-video-player-dialog" @click.self="closeExternalVideoPlayer">
+        <article class="ext-video-player-dialog__panel">
+          <header class="ext-video-player-dialog__header">
+            <span>{{ externalVideoPlayer.title }}</span>
+            <button type="button" aria-label="关闭视频" @click="closeExternalVideoPlayer">
+              <X :size="20" />
+            </button>
+          </header>
+          <div class="ext-video-player-dialog__body">
+            <iframe
+              v-if="externalVideoPlayer.url"
+              :src="externalVideoPlayer.url"
+              frameborder="0"
+              allowfullscreen
+              allow="autoplay; encrypted-media"
+            ></iframe>
+          </div>
+        </article>
+      </section>
+    </Teleport>
   </div>
 </template>
 
@@ -1159,6 +1196,13 @@ const normalizeFileMessage = data => {
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.presentation_url || data.presentationUrl || data.file_url || data.fileUrl || data.preview || ''),
     downloadUrl: resolveApiUrl(data.download_url || data.downloadUrl || data.url || (resourceKind !== 'presentation' && fileId ? `/resource/${fileId}/download` : '')),
     centerSaveStatus: data.centerSaveStatus || '',
+    // 外部视频展示字段
+    embedUrl: data.embed_url || data.embedUrl || '',
+    coverUrl: data.cover_url || data.coverUrl || '',
+    durationText: data.duration_text || data.durationText || '',
+    viewCountText: data.view_count_text || data.viewCountText || '',
+    author: data.author || '',
+    source: data.source_label || data.source || '',
     time: getNowTime()
   }
 }
@@ -2023,6 +2067,17 @@ const openPresentationPlayer = message => {
   })
 }
 
+const externalVideoPlayer = ref({ visible: false, url: '', title: '' })
+const openExternalVideoPlayer = message => {
+  const embedUrl = message.embedUrl || message.previewUrl || message.file_url || message.fileUrl || ''
+  if (!embedUrl) return
+  const url = embedUrl.startsWith('//') ? 'https:' + embedUrl : embedUrl
+  externalVideoPlayer.value = { visible: true, url, title: message.title || message.filename || '外部视频' }
+}
+const closeExternalVideoPlayer = () => {
+  externalVideoPlayer.value = { visible: false, url: '', title: '' }
+}
+
 const fileExtension = type => {
   const normalizedType = String(type || '').toLowerCase()
 
@@ -2040,6 +2095,7 @@ const fileTypeLabel = type => {
 
   if (normalizedType.includes('ppt')) return 'PPT 文件'
   if (normalizedType.includes('image')) return '图片'
+  if (normalizedType === 'external_video') return '外部视频'
   if (normalizedType.includes('video')) return '动态课件'
   if (normalizedType.includes('mind')) return '思维导图'
   if (normalizedType.includes('txt')) return 'TXT 文档'
@@ -2109,6 +2165,11 @@ const openMindmapLargePreview = async message => {
 const isVideoFile = message => {
   const text = String(`${message?.fileType || ''} ${message?.filename || ''} ${message?.title || ''}`).toLowerCase()
   return text.includes('video') || text.includes('视频')
+}
+
+const isExternalVideoFile = message => {
+  const type = String(message?.fileType || message?.resource_type || '').toLowerCase()
+  return type === 'external_video'
 }
 
 const isDocumentFile = message => {
@@ -2331,7 +2392,8 @@ const attachGenerationTaskToMessage = (task, messageId) => {
       }
 
       // PPT 任务：后端开始生成后立即推占位卡片（只有预览可用）
-      if (!taskIsForeign && !(task as any)._pptPlaceholderId && task.status === 'running') {
+      // 视频模式下不放 PPT 占位（后续直接弹视频卡片）
+      if (!taskIsForeign && !(task as any)._pptPlaceholderId && task.status === 'running' && task.tool?.generateMode !== 'video') {
         const isPptTask = task.tool?.resourceTypes?.includes('ppt')
         if (isPptTask) {
           const placeholderId = `ppt-placeholder-${task.id}`
@@ -2392,7 +2454,14 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         while (fileCursor < task.files.length) {
           const file = task.files[fileCursor]
           fileCursor += 1
-          if (task.tool?.generateMode === 'video' && file.file_type !== 'video' && file.resource_type !== 'video') {
+          if (task.tool?.generateMode === 'video' && file.file_type !== 'video' && file.resource_type !== 'video' && file.resource_type !== 'external_video') {
+            continue
+          }
+
+          // 去重：同一个 fileId 且同类型已渲染过就不再重复创建
+          const fileId = file.file_id || file.fileId || file.resource_id || file.resourceId
+          const fileType = String(file.file_type || file.fileType || file.resource_type || file.resourceType || '').toLowerCase()
+          if (fileId && messages.value.some(m => m.fileId === fileId && String(m.fileType || '').toLowerCase() === fileType)) {
             continue
           }
 
@@ -2436,6 +2505,42 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             task.tool?.generateMode === 'image' && imageCursor === 0 ? messageId : ''
           )
           imageCursor += 1
+        }
+
+        // 外部视频（B站推荐，graph 完成前已推送）
+        const extVideos = (task as any).externalVideos
+        if (extVideos && extVideos.length > 0) {
+          let extCursor = (task as any)._extVideoCursor || 0
+          while (extCursor < extVideos.length) {
+            const ev = extVideos[extCursor]
+            ;(task as any)._extVideoCursor = extCursor + 1
+            const evId = `ext-video-${ev.resource_id || `${Date.now()}-${extCursor}`}`
+            // 去重：同一 resource_id 不重复渲染
+            if (!messages.value.some(m => m.id === evId)) {
+              messages.value.push({
+                id: evId,
+                role: 'assistant',
+                type: 'file',
+                fileType: 'external_video',
+                resource_type: 'external_video',
+                filename: ev.filename || `推荐视频: ${(ev.title || '').slice(0, 30)}`,
+                title: ev.title || '',
+                content: ev.description || '',
+                embedUrl: ev.embed_url || '',
+                coverUrl: ev.cover_url || '',
+                author: ev.author || '',
+                durationText: ev.duration_text || '',
+                viewCountText: ev.view_count_text || '',
+                source: ev.source || ev.source_label || 'B站',
+                previewUrl: ev.embed_url || '',
+                fileUrl: ev.file_url || '',
+                fileId: ev.resource_id || evId,
+                centerSaveStatus: '',
+                time: getNowTime(),
+              })
+            }
+            extCursor = (task as any)._extVideoCursor
+          }
         }
 
         // 如果任务已完成且所有文件/图片都是去重的（历史中已存在），清理残留的占位文本消息
@@ -4572,5 +4677,135 @@ textarea::placeholder {
   .message-body {
     max-width: 88%;
   }
+}
+
+/* ── 外部视频卡片 ── */
+.ext-video-card {
+  margin-top: 12px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(22, 63, 143, 0.12);
+  background: #fff;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+.ext-video-card:hover {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+.ext-video-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #f0f2f5;
+}
+.ext-video-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ext-video-duration-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+.ext-video-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 28px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  background: rgba(0,0,0,0.15);
+}
+.ext-video-card:hover .ext-video-play-overlay {
+  opacity: 1;
+}
+.ext-video-info {
+  padding: 10px 12px 12px;
+}
+.ext-video-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a2e;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ext-video-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(22, 63, 143, 0.62);
+}
+.ext-video-author::after {
+  content: "·";
+  margin-left: 8px;
+}
+.ext-video-views::after {
+  content: "·";
+  margin-left: 8px;
+}
+
+/* ── 外部视频播放器弹窗 ── */
+.ext-video-player-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+.ext-video-player-dialog__panel {
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  width: 100%;
+  max-width: 960px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+}
+.ext-video-player-dialog__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #1a1a2e;
+  color: #f1f3f5;
+  font-size: 14px;
+}
+.ext-video-player-dialog__header button {
+  background: none;
+  border: none;
+  color: #f1f3f5;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+}
+.ext-video-player-dialog__header button:hover {
+  background: rgba(255,255,255,0.1);
+}
+.ext-video-player-dialog__body {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+}
+.ext-video-player-dialog__body iframe {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 </style>

@@ -135,11 +135,13 @@ export async function executeGeneration(
         return
       }
 
-      const MAX_POLLS = 30
+      const MAX_POLLS = 150
       const POLL_INTERVAL = 2000
 
       for (let i = 0; i < MAX_POLLS; i++) {
-        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL))
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL))
+        }
         let statusRes: any
         try {
           statusRes = await getImageTaskStatus(taskId)
@@ -177,10 +179,14 @@ export async function executeGeneration(
           return
         }
 
-        callbacks.onProgress?.(`正在生成图片 ${Math.round(((i + 1) / MAX_POLLS) * 100)}%...`)
+        const realProgress = taskInfo.progress != null ? Number(taskInfo.progress) : NaN
+        const pct = !isNaN(realProgress) && realProgress > 0
+          ? Math.min(realProgress, 99)
+          : Math.round(((i + 1) / MAX_POLLS) * 50)
+        callbacks.onProgress?.(`正在生成图片 ${pct}%...`)
       }
 
-      console.error('[executeGeneration] 图片生成超时，90 次轮询后仍未完成')
+      console.error(`[executeGeneration] 图片生成超时，${MAX_POLLS} 次轮询后仍未完成`)
       callbacks.onError?.('图片生成超时，请稍后重试。')
     } catch (err: any) {
       console.error('[executeGeneration] 图片生成异常:', err?.response?.data || err?.message || err)

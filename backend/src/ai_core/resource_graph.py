@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 PROMPT_MAP = {
     "document": "resource/document",
     "ppt": "resource/ppt",
-    "ppt_video": "resource/ppt_video",
     "mindmap": "resource/mindmap",
     "exercise": "resource/exam",
     "case": "resource/document",
@@ -135,20 +134,20 @@ def build_resource_prompt(
 
 
 # PPT 并行生成参数
-PPT_PAGES_PER_SECTION = 2    # 每个章节 2-5 页（AI 按内容复杂度自行决定）
-PPT_DEFAULT_SECTIONS = 10    # 默认 10 章节（20-50 页）
+PPT_PAGES_PER_SECTION = 2    # 每个章节 1-3 页（AI 按内容复杂度自行决定）
+PPT_DEFAULT_SECTIONS = 6     # 默认 6 章节（视频模式下 12 页左右，5-8 分钟）
 PPT_SECTION_COUNT_BY_DEPTH = {
-    "overview": 5,            # 快速概览 → 10-25 页
-    "standard": 10,           # 标准讲解 → 20-50 页
-    "deep": 15,              # 逐页详解 → 30-75 页
+    "overview": 3,            # 快速概览 → 6 页左右
+    "standard": 6,           # 标准讲解 → 12 页左右
+    "deep": 10,              # 逐页详解 → 20 页左右
 }
 
 # 文档并行生成参数
-DOC_DEFAULT_SECTIONS = 10    # 默认 10 章节，与 PPT 对齐
+DOC_DEFAULT_SECTIONS = 6    # 默认 6 章节，与 PPT 对齐
 DOC_SECTION_COUNT_BY_DEPTH = {
-    "overview": 5,            # 与 PPT 对齐
-    "standard": 10,
-    "deep": 15,
+    "overview": 3,            # 与 PPT 对齐
+    "standard": 6,
+    "deep": 10,
 }
 
 
@@ -363,6 +362,54 @@ async def generate_ppt_parallel(
         return True
 
 
+    def _trim_section_context(
+        full_portrait: str,
+        full_lo: str,
+        full_guidance: str,
+        section_title: str,
+        idx: int,
+        total_sections: int,
+    ) -> tuple[str, str, str]:
+        """根据章节动态裁剪画像/学习目标/指导语，减少重复 token 注入
+
+        首章（含引入页）返回完整内容，后续章节只保留章节定位等精简信息。
+        非首章每章可节省约 1100 字 input token。
+
+        Returns:
+            (trimmed_portrait, trimmed_lo, trimmed_guidance)
+        """
+        if idx == 0:
+            return full_portrait, full_lo, full_guidance
+
+        # 后续章节：画像压缩为一行定位提示
+        trimmed_portrait = (
+            f"（用户画像要点见首章引入页。当前第{idx + 1}章「{section_title}」，请参考前文画像信息调整难度与侧重点。）"
+            if full_portrait and full_portrait != "暂无画像数据"
+            else ""
+        )
+
+        # 学习目标压缩为章节定位
+        trimmed_lo = (
+            f"本课程共{total_sections}章，当前第{idx + 1}章「{section_title}」。"
+            f"整体学习目标见首章引入页，本节聚焦该章节核心知识点展开。"
+            if full_lo and full_lo != "暂无学习目标数据"
+            else ""
+        )
+
+        # 指导语截取核心要求（保留前120字）
+        if full_guidance:
+            trimmed_guidance = full_guidance[:120]
+            if len(full_guidance) > 120:
+                trimmed_guidance += "…（完整要求见首章）"
+        else:
+            trimmed_guidance = ""
+
+        return trimmed_portrait, trimmed_lo, trimmed_guidance
+
+
+
+
+
 
 
     total = len(sections)
@@ -391,15 +438,21 @@ async def generate_ppt_parallel(
             except Exception:
                 logger.exception("[PPT-Parallel] 章节 %d 推送异常", _idx)
 
-    async def _review_ppt_section(content: str, section_title: str) -> dict:
-        """调用 reviewer_ppt 审核单个章节，返回 {passed, score, feedback}"""
+    async def _review_ppt_section(content: str, section_title: str, format_checked: bool = False) -> dict:
+        """调用 reviewer 审核单个章节，返回 {passed, score, feedback}
+
+        Args:
+            format_checked: 若 True，表示格式层（layout/分隔符/公式配对/禁用词/字数）
+                已由 _quick_check_ppt 通过，reviewer 只需审核语义质量（prompt 更短）。
+        """
         try:
-            reviewer_prompt = load_prompt("agent/reviewer_ppt")
+            # 根据是否已做格式预检选择不同模板
+            template_key = "agent/reviewer_ppt_semantic" if format_checked else "agent/reviewer_ppt"
+            reviewer_prompt = load_prompt(template_key)
             prompt_text = fill_prompt(
                 reviewer_prompt,
                 content=content[:3000],
                 topic=topic,
-                kb_context=kb or "暂无相关知识库资料",
             )
             response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id, pool="reviewer")
             return _parse_review_response(response.content)
@@ -419,13 +472,19 @@ async def generate_ppt_parallel(
             except Exception:
                 pass
 
+        is_portrait_section = has_portrait and idx == 0
+
+        # 根据章节位置动态裁剪上下文，减少重复 token 注入
+        _eff_portrait, _eff_lo, _eff_guidance = _trim_section_context(
+            portrait, learning_objectives, guidance,
+            section_title, idx, total,
+        )
         base_prompt = build_resource_prompt(
-            ppt_prompt_key, topic, portrait=portrait, kb=kb, guidance=guidance,
+            ppt_prompt_key, topic, portrait=_eff_portrait, kb=kb, guidance=_eff_guidance,
             feedback=feedback, user_notes=user_notes, custom_prompts=custom_prompts,
-            section=section_title, learning_objectives=learning_objectives,
+            section=section_title, learning_objectives=_eff_lo,
             formula_sheet=formula_sheet,
         )
-        is_portrait_section = has_portrait and idx == 0
 
         if is_portrait_section:
             parts: list[str] = []
@@ -543,7 +602,7 @@ async def generate_ppt_parallel(
                 _push_section_replace(idx, content, section_title)
 
             # Step D: 审核（画像引入页已在上面 return）
-            review_result = await _review_ppt_section(content, section_title)
+            review_result = await _review_ppt_section(content, section_title, format_checked=quick_ok)
             if review_result.get("passed"):
                 final_passed = True
                 logger.info("[PPT-Review] idx=%d section=%s round=%d 审核通过 score=%s",
@@ -551,6 +610,9 @@ async def generate_ppt_parallel(
                 break
 
             review_feedback = review_result.get("feedback", "")
+            # 截断反馈防止多轮累积导致 prompt 膨胀
+            if len(review_feedback) > 400:
+                review_feedback = review_feedback[:400] + "…"
             logger.warning("[PPT-Review] idx=%d section=%s round=%d 审核未通过: %s",
                            idx, section_title, round_idx + 1, review_feedback[:120])
 

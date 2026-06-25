@@ -16,8 +16,8 @@ from backend.src.service.presentation_service import (
     delete_presentation,
     _subscribe_sse,
     _unsubscribe_sse,
-    _progress_events,
 )
+from backend.src.utils.redis_client import replay_sse as _replay_pres_sse, check_rate_limit
 from backend.src.utils.jwt import get_user_id_from_token
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,9 @@ class QuestionsRequest(BaseModel):
 
 @router.post("/generate")
 async def generate_presentation(data: GenerateRequest, user_id: int = Depends(get_user_id_from_token)):
-    """生成动态 HTML 课件：学科介绍 → 思维导图 → PPT讲解 → EdgeTTS 配音"""
+    """生成动态 HTML 课件"""
+    if not await check_rate_limit("pres_gen", user_id, 5, 60):
+        raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     result = await generate(data.topic, user_id, voice=data.voice, chapters=data.chapters, answers=data.answers, chat_group_id=data.chat_group_id, video_mode=data.video_mode, background=True)
     return {"code": 200, "msg": "success", "data": result}
 
@@ -103,7 +105,8 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
     async def event_stream():
         try:
             yield f"data: {json.dumps(refreshed or result, ensure_ascii=False)}\n\n"
-            for evt in _progress_events.get(presentation_id, []):
+            # 从 Redis Stream 回放历史进度（替换旧的 _progress_events 内存存储）
+            for evt in await _replay_pres_sse(f"pres:{presentation_id}"):
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
             current = refreshed or result
             if current["status"] in ("ready", "failed"):
