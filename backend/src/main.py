@@ -8,6 +8,11 @@ _sys_root = Path(__file__).resolve().parent.parent.parent
 if str(_sys_root) not in sys.path:
     sys.path.insert(0, str(_sys_root))
 
+# ── 项目唯一 .env 加载点 ──
+from dotenv import load_dotenv
+_backend_root = Path(__file__).resolve().parent.parent  # backend/
+load_dotenv(_backend_root / ".env")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
@@ -17,7 +22,6 @@ logging.basicConfig(
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 from backend.src.utils.database import init_db, close_db
 
 logger = logging.getLogger("api")

@@ -6,6 +6,7 @@ from pathlib import Path
 from tortoise.exceptions import IntegrityError
 
 from backend.src.models.usermodel import User
+from backend.src.utils.constants import AVATARS_DIR
 
 logger = logging.getLogger(__name__)
 from backend.src.models.portraitmodel import User_picture
@@ -179,7 +180,7 @@ class UserService():
 
         # 保存新头像
         ext = os.path.splitext(filename)[1] or ".png"
-        avatar_dir = Path(__file__).parent.parent.parent / "static" / "avatars"
+        avatar_dir = AVATARS_DIR
         avatar_dir.mkdir(parents=True, exist_ok=True)
 
         save_name = f"{user_id}_{uuid.uuid4().hex}{ext}"

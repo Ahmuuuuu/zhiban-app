@@ -15,6 +15,7 @@ from backend.src.ai_core.resource_graph import resource_graph
 from backend.src.utils.prompt_loader import fill_prompt
 from backend.src.utils.chat_utils import allocate_chat_group_id
 from backend.src.utils.redis_client import subscribe_sse, unsubscribe_sse, notify_sse, replay_sse, get_redis as _get_redis
+from backend.src.utils.constants import TASK_CACHE_TTL_RUNNING, TASK_CACHE_TTL_DONE
 from backend.src.ai_core.llm_config import llm
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.agent_skill_model import AgentSkill
@@ -80,18 +81,15 @@ async def _notify_task_sse(task_id: str, data: dict):
 # ─── Task 状态 Redis 缓存 ───
 # key: task:{task_id}:state → JSON, TTL: 30s（生成中）/ 300s（已完成）
 
-_TASK_CACHE_TTL_RUNNING = 30
-_TASK_CACHE_TTL_DONE = 300
-
 
 async def _cache_task_state(task_id: str, state: dict):
     """写 Task 状态到 Redis 缓存（非关键，异常静默降级）"""
     try:
         r = await _get_redis()
-        ttl = _TASK_CACHE_TTL_DONE if state.get("status") in ("success", "failed") else _TASK_CACHE_TTL_RUNNING
+        ttl = TASK_CACHE_TTL_DONE if state.get("status") in ("success", "failed") else TASK_CACHE_TTL_RUNNING
         await r.setex(f"task:{task_id}:state", ttl, json.dumps(state, ensure_ascii=False))
     except Exception:
-        pass
+        logger.debug("Task 状态缓存失败 task_id=%s status=%s（降级运行）", task_id, state.get("status"))
 
 from backend.src.service.portrait_service import format_portrait
 from backend.src.utils.knowledge_base import search as kb_search
@@ -873,7 +871,7 @@ class ResourceService:
                 else:
                     await r.expire(_lk, 30)
             except Exception:
-                pass  # Redis 不可用时降级，不阻塞任务创建
+                logger.debug("Redis 并发锁不可用，跳过（不阻塞任务创建）")
 
         chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
         tid = uuid.uuid4().hex
@@ -901,7 +899,7 @@ class ResourceService:
                 if state.get("user_id") == user_id and state.get("status") in ("success", "failed"):
                     return state
         except Exception:
-            pass
+            logger.debug("Task 缓存读取失败 task_id=%s，回退 MySQL", task_id)
 
         # 2) 回退 MySQL
         from backend.src.models.task_model import GenerationTask

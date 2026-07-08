@@ -11,10 +11,10 @@ from backend.src.utils.file_processor import extract_text, chunk_text
 from backend.src.utils.knowledge_base import ingest, list_all, list_grouped, get_by_id, update, delete
 from backend.src.utils.admin_check import is_admin
 from backend.src.models.knowledgemodel import KnowledgeVector
+from backend.src.utils.constants import STATIC_DIR
 
 logger = logging.getLogger(__name__)
 
-STATIC_DIR = Path(__file__).parent.parent.parent / "static"
 VIDEO_DIR = STATIC_DIR / "videos"
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库"])

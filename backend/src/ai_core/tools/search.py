@@ -2,8 +2,6 @@
 
 import os
 import asyncio
-from pathlib import Path
-from dotenv import load_dotenv
 from langchain_core.tools import tool
 from ddgs import DDGS
 
@@ -13,8 +11,6 @@ async def web_search(query: str):
     """搜索网页获取最新信息。在创建动作 skill 之前，必须先用此工具搜索真实的 API 接口和文档。
     也用于查找其他需要实时信息的内容。参数：query搜索关键词，建议包含 API、免费 等字眼"""
 
-    env_file = Path(__file__).parent.parent.parent.parent / ".env"
-    load_dotenv(env_file)
     proxy = os.getenv("HTTP_PROXY", None)
 
     try:

@@ -10,6 +10,7 @@ import asyncio
 
 from backend.src.ai_core.llm_config import llm
 from backend.src.ai_core.path_graph import path_graph
+from backend.src.utils.constants import PRESENTATIONS_DIR
 
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
@@ -1079,9 +1080,8 @@ class PathService:
             user_id=user_id, topic=video_topic, resource_type="html"
         ).first()
         if existing_html:
-            from pathlib import Path as _Path
             file_url = existing_html.file_url or ""
-            _html_path = _Path(__file__).parent.parent.parent / "static" / "presentations" / (file_url.split("/")[-1] if file_url else "")
+            _html_path = PRESENTATIONS_DIR / (file_url.split("/")[-1] if file_url else "")
             if _html_path.exists() and "template-version:visual-v6" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
                 content = {}
                 try:
@@ -1572,8 +1572,7 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
             content = {}
         pres_id = content.get("presentation_id", 0)
         file_url = existing_html.file_url or ""
-        from pathlib import Path as _Path
-        _html_path = _Path(__file__).parent.parent.parent / "static" / "presentations" / (file_url.split("/")[-1] if file_url else "")
+        _html_path = PRESENTATIONS_DIR / (file_url.split("/")[-1] if file_url else "")
         if _html_path.exists() and "template-version:visual-v6" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
             return {"html_id": existing_html.id, "presentation_id": pres_id, "file_url": file_url}
         logger.info("旧 HTML 非交互模板，重建 presentation html_id=%s", existing_html.id)

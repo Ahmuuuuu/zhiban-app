@@ -18,6 +18,7 @@ import os
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
+from backend.src.utils.constants import REDIS_CONNECT_TIMEOUT, REDIS_SOCKET_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,8 @@ async def get_redis() -> aioredis.Redis:
         _redis = aioredis.from_url(
             url,
             decode_responses=True,      # 自动将 bytes 解码为 str
-            socket_connect_timeout=5,
-            socket_timeout=10,
+            socket_connect_timeout=REDIS_CONNECT_TIMEOUT,
+            socket_timeout=REDIS_SOCKET_TIMEOUT,
             retry_on_timeout=True,
         )
         # 验证连接
@@ -97,7 +98,7 @@ async def cache_set(key: str, value: Any, ttl: int):
         r = await get_redis()
         await r.setex(key, ttl, _json.dumps(value, ensure_ascii=False, default=str))
     except Exception:
-        pass
+        logger.debug("Redis cache_set 失败 key=%s ttl=%d（降级运行）", key, ttl)
 
 
 # ═══════════════════════════════════════════════

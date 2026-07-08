@@ -1,9 +1,5 @@
-from pathlib import Path
 from tortoise import Tortoise
-from dotenv import load_dotenv
 import os
-
-load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 database = os.getenv("database")
 # 连接池参数：默认最小5、最大20

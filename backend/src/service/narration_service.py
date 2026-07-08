@@ -11,6 +11,7 @@ import shutil
 
 from backend.src.utils.tts_utils import parse_by_type, generate_audio_with_timestamps, NARRATABLE_TYPES
 from backend.src.utils.exceptions import ServiceError
+from backend.src.utils.constants import AUDIO_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ async def narrate_content(content: str, resource_type: str, voice: str, resource
     if not sections:
         return {"sections": []}
 
-    base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+    base_dir = AUDIO_DIR / str(resource_id)
     base_dir.mkdir(parents=True, exist_ok=True)
 
     results = await _generate_sections_audio(sections, voice, base_dir, resource_id)
@@ -65,7 +66,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     if force_regenerate:
         existing = await Narration.filter(resource_id=resource_id, voice=voice).first()
         if existing:
-            audio_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+            audio_dir = AUDIO_DIR / str(resource_id)
             if audio_dir.exists():
                 shutil.rmtree(audio_dir)
             await existing.delete()
@@ -85,7 +86,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     if not sections:
         raise ServiceError("无法解析内容，资源可能为空")
 
-    base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+    base_dir = AUDIO_DIR / str(resource_id)
     base_dir.mkdir(parents=True, exist_ok=True)
 
     results = await _generate_sections_audio(sections, voice, base_dir, resource_id)
@@ -398,7 +399,7 @@ async def delete_narration(narration_id: int, user_id: int) -> bool:
     # 检查该 resource 是否有其他 voice 的旁白，没有才删文件夹
     others = await Narration.filter(resource_id=resource_id).exclude(id=narration_id).count()
     if others == 0:
-        audio_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+        audio_dir = AUDIO_DIR / str(resource_id)
         if audio_dir.exists():
             shutil.rmtree(audio_dir)
 

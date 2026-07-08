@@ -3,16 +3,13 @@
 import logging
 import shutil
 import time
-from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from backend.src.utils.constants import STATIC_DIR, CLEANUP_AGE_SECONDS
 
 logger = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
-
-STATIC_DIR = Path(__file__).parent.parent.parent / "static"
-CLEANUP_AGE_SECONDS = 24 * 3600  # 1 天
 
 
 def _cleanup_old_files():

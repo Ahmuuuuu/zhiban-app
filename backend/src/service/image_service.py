@@ -11,9 +11,7 @@ import time as _time
 from datetime import datetime
 from time import mktime
 from wsgiref.handlers import format_date_time
-from pathlib import Path
 from urllib.parse import urlencode
-from dotenv import load_dotenv
 import httpx
 
 from backend.src.models.chat_history_model import ChatHistory
@@ -94,8 +92,6 @@ _MIN_SUBMIT_INTERVAL = 1.5  # 两次提交最小间隔（秒）
 
 
 def _load_env():
-    env_file = Path(__file__).parent.parent.parent / ".env"
-    load_dotenv(env_file)
     app_id = os.getenv("XF_APP_ID", "")
     api_key = os.getenv("XF_API_KEY", "")
     api_secret = os.getenv("XF_API_SECRET", "")
@@ -118,7 +114,9 @@ def _make_auth_url(path: str, api_key: str, api_secret: str) -> str:
     })
 
 
-SAVE_DIR = Path(__file__).parent.parent.parent / "static" / "images"
+from backend.src.utils.constants import IMAGES_DIR
+
+SAVE_DIR = IMAGES_DIR
 
 
 
