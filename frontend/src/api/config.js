@@ -4,6 +4,13 @@ const rawBase = request.defaults.baseURL || '/'
 
 export const API_BASE_URL = rawBase.endsWith('/') ? rawBase : rawBase + '/'
 
+const isNgrokApi = /^https?:\/\/[^/]+\.ngrok-free\.(app|dev)(\/|$)/i.test(API_BASE_URL)
+
+export const apiFetchHeaders = (headers = {}) => ({
+  ...headers,
+  ...(isNgrokApi ? { 'ngrok-skip-browser-warning': 'true' } : {})
+})
+
 export const resolveApiUrl = path => {
   if (!path) return ''
   if (/^https?:\/\//i.test(path)) return path
@@ -52,9 +59,9 @@ export async function downloadWithToken(url, filename = 'download') {
   }
   const href = targetUrl.toString()
   const response = await fetch(href, {
-    headers: {
+    headers: apiFetchHeaders({
       ...(token ? { token } : {})
-    }
+    })
   })
 
   if (!response.ok) {

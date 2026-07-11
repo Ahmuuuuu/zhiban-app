@@ -1,5 +1,5 @@
 import request from './request'
-import { API_BASE_URL, parseStreamEvent, requestFirstAvailable } from './config'
+import { API_BASE_URL, apiFetchHeaders, parseStreamEvent, requestFirstAvailable } from './config'
 
 export function sendChatMessage(data) {
   if (data.chat_group_id) {
@@ -66,10 +66,10 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
+    headers: apiFetchHeaders({
       'Content-Type': 'application/json',
       ...(token ? { token } : {})
-    },
+    }),
     body: isExistingConversation
       ? JSON.stringify({
         chat_group_id: Number(data.chat_group_id),

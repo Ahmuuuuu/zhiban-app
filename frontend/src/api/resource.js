@@ -1,5 +1,5 @@
 import request from './request'
-import { API_BASE_URL, parseStreamEvent, requestFirstAvailable, resolveApiUrl } from './config'
+import { API_BASE_URL, apiFetchHeaders, parseStreamEvent, requestFirstAvailable, resolveApiUrl } from './config'
 
 export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide, onStreamSlideStart, onStreamSlideDelta, onStreamSlideDone, onStreamSectionReplace, onThinking } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
@@ -7,10 +7,10 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
+    headers: apiFetchHeaders({
       'Content-Type': 'application/json',
       ...(token ? { token } : {})
-    },
+    }),
     body: JSON.stringify({
       topic: data.topic,
       resource_types: data.resource_types,
@@ -194,10 +194,10 @@ export async function exportEditedPptx(resourceId, data = {}) {
   const href = targetUrl.toString()
   const response = await fetch(href, {
     method: 'POST',
-    headers: {
+    headers: apiFetchHeaders({
       'Content-Type': 'application/json',
       ...(token ? { token } : {})
-    },
+    }),
     body: JSON.stringify({
       title: data.title || '',
       slides: Array.isArray(data.slides) ? data.slides : []
@@ -248,9 +248,9 @@ export async function streamResourceGenerationTask(taskId, { onEvent, onDone, on
   const token = localStorage.getItem('token')
   const url = `${API_BASE_URL}resource/generate/task/${encodeURIComponent(taskId)}/stream`
   const response = await fetch(url, {
-    headers: {
+    headers: apiFetchHeaders({
       ...(token ? { token } : {})
-    }
+    })
   })
 
   if (!response.ok || !response.body) {
