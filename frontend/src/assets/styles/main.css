@@ -20,15 +20,87 @@
   box-shadow: 0 0 10px rgba(232, 64, 108, 0.55);
 }
 
+/* ============================================================
+   Theme System — CSS custom properties
+   Switch via html[data-theme="dark"] / prefers-color-scheme
+   ============================================================ */
 :root {
+  /* ---- 🌞 Light theme ---- */
   --color-bg: #f1f7fb;
+  --color-bg-alt: #e8f1f7;
   --color-card: #ffffff;
+  --color-card-hover: #f7fafd;
   --color-primary: #2f6b2f;
   --color-primary-dark: #1f4f24;
   --color-primary-soft: #eef5ea;
   --color-text: #1f1f1a;
+  --color-text-heading: #143761;
   --color-muted: #7a756b;
   --color-border: #e5ded3;
+  --color-nav-bg: #f1f7fb;
+  --color-nav-border: rgba(201, 220, 233, 0.7);
+  --color-nav-text: #5f8fc3;
+  --color-nav-active-bg: #143761;
+  --color-nav-active-text: #ffffff;
+  --color-stage-bg: #f1f7fb;
+  --color-shadow: rgba(20, 55, 97, 0.08);
+  --color-paper-texture: #000;
+}
+
+/* ---- 🌙 Dark theme ---- */
+html[data-theme="dark"] {
+  --color-bg: #0f1724;
+  --color-bg-alt: #161f2e;
+  --color-card: #1a2535;
+  --color-card-hover: #1f2c3d;
+  --color-primary: #52b86f;
+  --color-primary-dark: #3d8f56;
+  --color-primary-soft: #16281c;
+  --color-text: #e4e6ed;
+  --color-text-heading: #c8d6e5;
+  --color-muted: #8a94a6;
+  --color-border: #2a3546;
+  --color-nav-bg: #0f1724;
+  --color-nav-border: rgba(42, 53, 70, 0.8);
+  --color-nav-text: #7a8ba0;
+  --color-nav-active-bg: #2f6b2f;
+  --color-nav-active-text: #ffffff;
+  --color-stage-bg: #0f1724;
+  --color-shadow: rgba(0, 0, 0, 0.25);
+  --color-paper-texture: #fff;
+}
+
+/* ---- auto-detect OS preference ---- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --color-bg: #0f1724;
+    --color-bg-alt: #161f2e;
+    --color-card: #1a2535;
+    --color-card-hover: #1f2c3d;
+    --color-primary: #52b86f;
+    --color-primary-dark: #3d8f56;
+    --color-primary-soft: #16281c;
+    --color-text: #e4e6ed;
+    --color-text-heading: #c8d6e5;
+    --color-muted: #8a94a6;
+    --color-border: #2a3546;
+    --color-nav-bg: #0f1724;
+    --color-nav-border: rgba(42, 53, 70, 0.8);
+    --color-nav-text: #7a8ba0;
+    --color-nav-active-bg: #2f6b2f;
+    --color-nav-active-text: #ffffff;
+    --color-stage-bg: #0f1724;
+    --color-shadow: rgba(0, 0, 0, 0.25);
+    --color-paper-texture: #fff;
+  }
+}
+
+/* ---- transition (only when toggling, not on page load) ---- */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition: background-color 0.35s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease !important;
 }
 
 * {
@@ -47,7 +119,7 @@ body {
     sans-serif;
 }
 
-/* 轻微纸张质感，保持克制 */
+/* 轻微纸张质感，保持克制 — dark mode adjusts colour */
 body::before {
   content: "";
   position: fixed;
@@ -56,7 +128,7 @@ body::before {
   opacity: 0.025;
   z-index: 9999;
   background-image:
-    radial-gradient(circle at 1px 1px, #000 1px, transparent 0);
+    radial-gradient(circle at 1px 1px, var(--color-paper-texture, #000) 1px, transparent 0);
   background-size: 18px 18px;
   mix-blend-mode: multiply;
 }

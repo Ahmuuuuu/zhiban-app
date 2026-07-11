@@ -78,6 +78,9 @@
           <div class="tag-list">
             <span v-for="tag in learnerTags" :key="tag">{{ tag }}</span>
           </div>
+          <div v-if="knowledgeDistribution.length" class="mini-donut">
+            <SimpleChart type="donut" :data="knowledgeDistribution" :size="150" unit="知识点" />
+          </div>
           </article>
         </aside>
 
@@ -180,10 +183,15 @@
             <MessageSquareText :size="18" />
             <h2>&#x8D44;&#x6E90;&#x4F7F;&#x7528;&#x53CD;&#x9988;</h2>
           </div>
-          <div class="feedback-summary">
-            <div v-for="item in resourceFeedback" :key="item.label">
-              <strong>{{ item.value }}</strong>
-              <span>{{ item.label }}</span>
+          <div class="feedback-chart-row">
+            <div class="feedback-summary">
+              <div v-for="item in resourceFeedback" :key="item.label">
+                <strong>{{ item.value }}</strong>
+                <span>{{ item.label }}</span>
+              </div>
+            </div>
+            <div v-if="resourceChartData.length" class="feedback-bar">
+              <SimpleChart type="hbar" :data="resourceChartData" :width="280" :height="140" />
             </div>
           </div>
           <p>{{ resourceFeedbackText }}</p>
@@ -205,6 +213,7 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
+import SimpleChart from '../components/SimpleChart.vue'
 import { getLearningGuidance, getPortrait, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyPathStats, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
 
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
@@ -467,6 +476,29 @@ const suggestions = ref([])
 const resourceFeedback = ref([])
 const resourceFeedbackText = ref(zh([0x6682, 0x65e0, 0x8d44, 0x6e90, 0x4f7f, 0x7528, 0x8bb0, 0x5f55]))
 
+// ---- chart data (for SimpleChart components) ----
+const CHART_COLORS = ['#163f8f', '#2f80ed', '#28b487', '#e86c00', '#8b5cf6', '#fb7185', '#f59e0b', '#11695f']
+
+const knowledgeDistribution = computed(() => {
+  const points = weakPoints.value
+  if (!points.length) return []
+  return points.slice(0, 6).map((point, i) => ({
+    label: point.name.length > 6 ? point.name.slice(0, 6) + '…' : point.name,
+    value: point.value,
+    color: CHART_COLORS[i % CHART_COLORS.length]
+  }))
+})
+
+const resourceChartData = computed(() => {
+  const feedback = resourceFeedback.value
+  if (!feedback.length) return []
+  return feedback.slice(0, 5).map((item, i) => ({
+    label: item.label,
+    value: parseFloat(item.value) || 0,
+    color: CHART_COLORS[i % CHART_COLORS.length]
+  }))
+})
+
 const toPercent = value => `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`
 const formatSecondsToMinutes = seconds => Math.round(Number(seconds || 0) / 60)
 
@@ -610,8 +642,8 @@ onBeforeUnmount(() => {
   height: 100vh;
   min-height: 0;
   padding: 26px 34px 30px;
-  background: #f1f7fb;
-  color: #163f8f;
+  background: var(--color-bg, #f1f7fb);
+  color: var(--color-text-heading, #163f8f);
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -622,7 +654,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: #f1f7fb;
+  background: var(--color-bg, #f1f7fb);
   overflow: hidden;
   pointer-events: none;
 }
@@ -633,7 +665,7 @@ onBeforeUnmount(() => {
   position: absolute;
   display: block;
   border-radius: 50%;
-  background: #e9eff3;
+  background: var(--color-bg-alt, #e9eff3);
 }
 
 .page-bg-deco::before,
@@ -783,13 +815,13 @@ onBeforeUnmount(() => {
 }
 
 .panel-card {
-  border: 1px solid rgba(22, 63, 143, 0.14);
+  border: 1px solid var(--color-border, rgba(22, 63, 143, 0.14));
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(250, 250, 250, 0.94), rgba(237, 249, 252, 0.84)),
-    #fafafa;
+    linear-gradient(135deg, var(--color-card, rgba(250, 250, 250, 0.94)), var(--color-card-hover, rgba(237, 249, 252, 0.84))),
+    var(--color-card, #fafafa);
   box-shadow:
-    0 14px 34px rgba(22, 63, 143, 0.08),
+    0 14px 34px var(--color-shadow, rgba(22, 63, 143, 0.08)),
     inset 0 1px 0 rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(14px) saturate(135%);
   -webkit-backdrop-filter: blur(14px) saturate(135%);
@@ -1205,6 +1237,33 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
+}
+
+.feedback-chart-row {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.feedback-bar {
+  min-width: 200px;
+  padding: 10px 8px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.mini-donut {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(201, 220, 233, 0.62);
+}
+
+.feedback-chart-row .feedback-summary {
+  margin-top: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .feedback-summary div {
