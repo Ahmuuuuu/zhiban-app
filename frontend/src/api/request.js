@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const request = axios.create({
-  baseURL: '/',
+  baseURL: 'http://10.198.169.72:2221',
   timeout: 300000
 })
 
@@ -23,9 +23,7 @@ const notifyAuthExpired = () => {
 
   clearAuthStorage()
 
-  const message = '登录已过期，请重新登录。'
-  window.dispatchEvent(new CustomEvent('zhiban-auth-expired', { detail: { message } }))
-  window.alert(message)
+  window.dispatchEvent(new CustomEvent('zhiban-auth-expired', { detail: { message: '登录已过期，请重新登录。' } }))
 
   window.setTimeout(() => {
     authExpiredNotified = false
