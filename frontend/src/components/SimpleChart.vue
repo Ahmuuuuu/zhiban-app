@@ -51,6 +51,16 @@
       role="img"
       :aria-label="`Bar chart: ${data.map(d => d.label).join(', ')}`"
     >
+      <defs>
+        <linearGradient
+          v-for="(bar, i) in barRects" :key="'grad-'+i"
+          :id="`bar-grad-${i}`"
+          x1="0" y1="0" x2="0" y2="1"
+        >
+          <stop offset="0%" :stop-color="bar.color" stop-opacity="0.92" />
+          <stop offset="100%" :stop-color="bar.color" stop-opacity="0.55" />
+        </linearGradient>
+      </defs>
       <template v-for="(tick, i) in barTicks" :key="'tick-'+i">
         <line :x1="padL" :y1="tick.y" :x2="width - padR" :y2="tick.y" class="chart-grid-line" />
         <text :x="padL - 6" :y="tick.y + 3" text-anchor="end" class="chart-tick-text">{{ tick.label }}</text>
@@ -63,8 +73,8 @@
           :width="bar.w"
           :height="bar.h"
           :rx="bar.w < 20 ? bar.w/3 : 5"
-          :fill="bar.color"
-          :opacity="hoverIndex === i ? 0.95 : 0.78"
+          :fill="`url(#bar-grad-${i})`"
+          :opacity="hoverIndex === i ? 1 : 0.88"
           @mouseenter="hoverIndex = i"
           @mouseleave="hoverIndex = -1"
           class="chart-bar-rect"
@@ -77,11 +87,13 @@
           class="chart-bar-label"
         >{{ bar.value }}</text>
         <text
+          v-for="(char, ci) in bar.label.split('')"
+          :key="ci"
           :x="bar.x + bar.w / 2"
-          :y="height - 4"
+          :y="height - 2 + ci * 11"
           text-anchor="middle"
           class="chart-bar-name"
-        >{{ bar.label }}</text>
+        >{{ char }}</text>
       </template>
     </svg>
 
@@ -93,6 +105,16 @@
       role="img"
       :aria-label="`Horizontal bar chart: ${data.map(d => d.label).join(', ')}`"
     >
+      <defs>
+        <linearGradient
+          v-for="(bar, i) in hbarRects" :key="'hbgrad-'+i"
+          :id="`hbar-grad-${i}`"
+          x1="0" y1="0" x2="1" y2="0"
+        >
+          <stop offset="0%" :stop-color="bar.color" stop-opacity="0.92" />
+          <stop offset="100%" :stop-color="bar.color" stop-opacity="0.45" />
+        </linearGradient>
+      </defs>
       <template v-for="(bar, i) in hbarRects" :key="'hbar-'+i">
         <rect
           :x="bar.x"
@@ -100,8 +122,8 @@
           :width="bar.w"
           :height="bar.h"
           :rx="4"
-          :fill="bar.color"
-          :opacity="hoverIndex === i ? 0.92 : 0.74"
+          :fill="`url(#hbar-grad-${i})`"
+          :opacity="hoverIndex === i ? 1 : 0.85"
           @mouseenter="hoverIndex = i"
           @mouseleave="hoverIndex = -1"
           class="chart-bar-rect"
@@ -130,9 +152,16 @@
 import { computed, ref } from 'vue'
 
 const PALETTE = [
-  '#163f8f', '#2f80ed', '#11695f', '#28b487',
-  '#93491f', '#e86c00', '#4c1d95', '#8b5cf6',
-  '#9f1239', '#fb7185', '#854d0e', '#f59e0b'
+  '#2563eb', '#0891b2', '#059669', '#7c3aed',
+  '#db2777', '#ea580c', '#ca8a04', '#4f46e5',
+  '#0d9488', '#b91c1c', '#854d0e', '#1d4ed8'
+]
+
+// Vibrant mode palette — richer saturation
+const PALETTE_VIBRANT = [
+  '#2563eb', '#0e7490', '#16a34a', '#7c3aed',
+  '#e11d48', '#f97316', '#eab308', '#6366f1',
+  '#14b8a6', '#dc2626', '#a855f7', '#0ea5e9'
 ]
 
 const props = defineProps({

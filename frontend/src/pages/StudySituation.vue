@@ -91,14 +91,14 @@
           </div>
           <p v-if="!currentPaths.length" class="path-empty">&#x6682;&#x65E0;&#x6B63;&#x5728;&#x8FDB;&#x884C;&#x7684;&#x5B66;&#x4E60;&#x8DEF;&#x5F84;</p>
           <ol v-else class="path-list compact">
-            <li v-for="item in currentPaths" :key="item.id">
+            <li v-for="(item, idx) in currentPaths" :key="item.id">
               <router-link class="path-link" :to="{ name: 'learningPath', query: { pathId: item.id } }">
-                <span>{{ item.index }}</span>
+                <span :style="{ background: progressBarColors[idx % progressBarColors.length] }">{{ item.index }}</span>
                 <div>
                   <strong>{{ item.title }}</strong>
                   <p v-if="item.meta" class="path-meta">{{ item.meta }}</p>
                   <p>{{ item.time }} · {{ item.score }}</p>
-                  <div class="path-progress"><span :style="{ width: `${item.percent}%` }"></span></div>
+                  <div class="path-progress"><span :style="{ width: `${item.percent}%`, background: progressBarColors[index % progressBarColors.length] }"></span></div>
                 </div>
               </router-link>
             </li>
@@ -133,9 +133,9 @@
           </div>
           <p v-if="!completedPaths.length" class="path-empty">&#x6682;&#x65E0;&#x5DF2;&#x5B8C;&#x6210;&#x5B66;&#x4E60;&#x8DEF;&#x5F84;</p>
           <ol v-else class="path-list">
-            <li v-for="item in completedPaths" :key="item.id">
+            <li v-for="(item, idx) in completedPaths" :key="item.id">
               <router-link class="path-link" :to="{ name: 'learningPath', query: { pathId: item.id } }">
-                <span>{{ item.index }}</span>
+                <span :style="{ background: progressBarColors[idx % progressBarColors.length] }">{{ item.index }}</span>
                 <div>
                   <strong>{{ item.title }}</strong>
                   <p v-if="item.meta" class="path-meta">{{ item.meta }}</p>
@@ -160,7 +160,7 @@
                   <span>{{ item.tip }}</span>
                 </div>
                 <div class="weak-bar">
-                  <span :style="{ width: `${item.value}%` }"></span>
+                  <span :style="{ width: `${item.value}%`, background: progressBarColors[index % progressBarColors.length] }"></span>
                 </div>
               </div>
             </div>
@@ -185,8 +185,8 @@
           </div>
           <div class="feedback-chart-row">
             <div class="feedback-summary">
-              <div v-for="item in resourceFeedback" :key="item.label">
-                <strong>{{ item.value }}</strong>
+              <div v-for="(item, idx) in resourceFeedback" :key="item.label" class="feedback-stat-card" :style="{ borderTopColor: progressBarColors[idx % progressBarColors.length] }">
+                <strong :style="{ color: progressBarColors[idx % progressBarColors.length] }">{{ item.value }}</strong>
                 <span>{{ item.label }}</span>
               </div>
             </div>
@@ -477,7 +477,11 @@ const resourceFeedback = ref([])
 const resourceFeedbackText = ref(zh([0x6682, 0x65e0, 0x8d44, 0x6e90, 0x4f7f, 0x7528, 0x8bb0, 0x5f55]))
 
 // ---- chart data (for SimpleChart components) ----
-const CHART_COLORS = ['#163f8f', '#2f80ed', '#28b487', '#e86c00', '#8b5cf6', '#fb7185', '#f59e0b', '#11695f']
+const CHART_COLORS = [
+  '#2563eb', '#0891b2', '#16a34a', '#7c3aed',
+  '#e11d48', '#ea580c', '#eab308', '#6366f1',
+  '#14b8a6', '#dc2626', '#a855f7', '#0ea5e9'
+]
 
 const knowledgeDistribution = computed(() => {
   const points = weakPoints.value
@@ -498,6 +502,9 @@ const resourceChartData = computed(() => {
     color: CHART_COLORS[i % CHART_COLORS.length]
   }))
 })
+
+// ---- color helpers for progress bars ----
+const progressBarColors = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#e11d48', '#0891b2', '#eab308', '#6366f1']
 
 const toPercent = value => `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`
 const formatSecondsToMinutes = seconds => Math.round(Number(seconds || 0) / 60)
@@ -1270,11 +1277,18 @@ onBeforeUnmount(() => {
   min-height: 74px;
   padding: 12px 8px;
   border: 1px solid rgba(201, 220, 233, 0.82);
+  border-top: 3px solid transparent;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.7);
   display: grid;
   place-items: center;
   text-align: center;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.feedback-summary div:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(22, 63, 143, 0.1);
 }
 
 .feedback-summary strong {

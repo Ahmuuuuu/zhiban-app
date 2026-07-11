@@ -311,6 +311,16 @@ html[data-theme="dark"] .home-pill {
 html[data-theme="dark"] .feedback-summary div {
   background: #1a2535 !important;
   border-color: #2a3546 !important;
+  border-top-width: 3px !important;
+  border-top-style: solid !important;
+}
+
+html[data-theme="dark"] .feedback-summary div strong {
+  color: #e4e6ed !important;
+}
+
+html[data-theme="dark"] .feedback-summary div span {
+  color: #8a94a6 !important;
 }
 
 /* --- accuracy summary --- */
