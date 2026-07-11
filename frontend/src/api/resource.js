@@ -12,6 +12,7 @@ const buildFetchHeaders = (extra = {}) => {
 
 export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide, onStreamSlideStart, onStreamSlideDelta, onStreamSlideDone, onStreamSectionReplace, onThinking } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
+  const token = localStorage.getItem('token')
 
   const response = await fetch(url, {
     method: 'POST',
@@ -257,6 +258,7 @@ export function getResourceGenerationTasks() {
 
 export async function streamResourceGenerationTask(taskId, { onEvent, onDone, onError } = {}) {
   const url = `${API_BASE_URL}resource/generate/task/${encodeURIComponent(taskId)}/stream`
+  const token = localStorage.getItem('token')
   const response = await fetch(url, {
     headers: apiFetchHeaders({
       ...(token ? { token } : {})
