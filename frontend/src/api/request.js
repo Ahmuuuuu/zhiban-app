@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+const apiBaseURL = import.meta.env.VITE_API_BASE_URL?.trim() || ''
+
 const request = axios.create({
-  baseURL: 'https://compel-dividable-unfasten.ngrok-free.dev',
+  baseURL: apiBaseURL,
   timeout: 300000
 })
 
