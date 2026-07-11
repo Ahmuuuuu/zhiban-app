@@ -76,9 +76,9 @@
                 :disabled="isNarrationLoading(resource)"
                 @click.stop="toggleNarration(resource)"
               >
-                <PauseCircle v-if="isNarrationPlaying(resource)" :size="15" />
-                <Volume2 v-else :size="15" />
-                {{ isNarrationLoading(resource) ? '...' : (isNarrationPlaying(resource) ? '停' : '听') }}
+                <PauseCircle v-if="isNarrationPlaying(resource)" :size="16" />
+                <Volume2 v-else-if="!isNarrationLoading(resource)" :size="16" />
+                <span v-else class="loading-dot"></span>
               </button>
               <button
                 v-if="isQuizResource(resource)"
@@ -86,7 +86,7 @@
                 type="button"
                 @click.stop="startResourceQuiz(resource)"
               >
-                开始练习
+                <BookOpen :size="16" />
               </button>
               <button
                 v-if="resource.downloadUrl"
@@ -94,7 +94,7 @@
                 type="button"
                 @click.stop="downloadResource(resource)"
               >
-                下载原文件
+                <Download :size="16" />
               </button>
               <button
                 v-if="canDeleteResource(resource)"
@@ -103,8 +103,7 @@
                 :disabled="isDeleteLoading(resource)"
                 @click.stop="deleteVisibleResource(resource)"
               >
-                <Trash2 :size="15" />
-                {{ isDeleteLoading(resource) ? '删除中' : '删除' }}
+                <Trash2 :size="16" />
               </button>
             </div>
           </article>
@@ -188,6 +187,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertCircle,
+  BookOpen,
+  Download,
   FileSearch,
   PauseCircle,
   Volume2,

@@ -34,6 +34,11 @@
 
       <!-- 右侧操作区 -->
       <div class="nav-actions">
+        <button class="theme-toggle" type="button" :aria-label="themeLabel" :title="themeLabel" @click="toggleTheme">
+          <Sun v-if="!isThemeDark" :size="18" />
+          <Moon v-else :size="18" />
+        </button>
+
         <router-link to="/notifications" class="bell-btn" aria-label="消息中心">
           <Bell :size="20" />
           <span v-if="unreadCount > 0" class="bell-badge">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
@@ -52,10 +57,11 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Bell, Pause, Play, Square } from 'lucide-vue-next'
+import { Bell, Moon, Pause, Play, Square, Sun } from 'lucide-vue-next'
 import UserAccountButton from './UserAccountButton.vue'
 import { getUnreadNotificationCount } from '../api/apis'
 import { useResourceNarration } from '../composables/useResourceNarration'
+import { useTheme } from '../composables/useTheme'
 import { currentUserRole, isAdminRole } from '../utils/auth'
 
 const unreadCount = ref(0)
@@ -63,6 +69,9 @@ const route = useRoute()
 const userRole = ref(currentUserRole())
 let pollTimer = null
 const { narrationState, toggleCurrentAudio, stopCurrentAudio } = useResourceNarration()
+const { toggle: toggleTheme, isDark: isThemeDark } = useTheme()
+
+const themeLabel = computed(() => isThemeDark.value ? '切换亮色模式' : '切换暗色模式')
 
 const isResourceSection = computed(() => {
   return route.path === '/resources' || route.path === '/learning-resources'
@@ -164,11 +173,11 @@ onBeforeUnmount(() => {
   right: 0;
   z-index: 100;
   height: 64px;
-  background: #f1f7fb;
+  background: var(--color-nav-bg, #f1f7fb);
   backdrop-filter: blur(24px) saturate(155%);
   -webkit-backdrop-filter: blur(24px) saturate(155%);
-  border-bottom: 1px solid rgba(201, 220, 233, 0.7);
-  box-shadow: 0 4px 24px rgba(20, 55, 97, 0.08);
+  border-bottom: 1px solid var(--color-nav-border, rgba(201, 220, 233, 0.7));
+  box-shadow: 0 4px 24px var(--color-shadow, rgba(20, 55, 97, 0.08));
 }
 
 .topnav-inner {
@@ -277,6 +286,37 @@ onBeforeUnmount(() => {
 }
 
 /* 右侧操作区 */
+.theme-toggle {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(20, 55, 97, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+  color: #e8a400;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease, color 0.2s ease;
+  flex-shrink: 0;
+}
+
+html[data-theme="dark"] .theme-toggle {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fbbf24;
+}
+
+.theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.86);
+  transform: translateY(-1px);
+}
+
+html[data-theme="dark"] .theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .audio-control {
   min-width: 300px;
   max-width: 430px;

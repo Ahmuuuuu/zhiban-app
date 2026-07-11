@@ -180,7 +180,7 @@ watch(
   position: fixed;
   inset: 64px 0 0;
   overflow: hidden;
-  background: #f1f7fb;
+  background: var(--color-stage-bg, #f1f7fb);
 }
 
 /* ---- pane: absolutely positioned, GPU-composited ---- */

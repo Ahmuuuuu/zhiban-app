@@ -254,6 +254,15 @@ const renderIllustratedResourceCover = ({ primary, accent, paper, kind, rawTitle
         <rect x="24" y="74" width="80" height="9" rx="4.5" fill="${accent}" opacity="0.26"/>
         <rect x="24" y="100" width="66" height="9" rx="4.5" fill="${warm}" opacity="0.35"/>
       </g>
+    `,
+    video: `
+      <g transform="translate(330 64)">
+        <rect x="0" y="0" width="132" height="96" rx="16" fill="#ffffff" filter="url(#shadow)"/>
+        <polygon points="52,28 52,68 92,48" fill="${warm}" opacity="0.86"/>
+        <rect x="0" y="106" width="132" height="8" rx="4" fill="${primary}" opacity="0.18"/>
+        <rect x="0" y="124" width="76" height="8" rx="4" fill="${accent}" opacity="0.32"/>
+        <rect x="84" y="124" width="48" height="8" rx="4" fill="${warm}" opacity="0.22"/>
+      </g>
     `
   }[kind] || `
     <g transform="translate(326 62)">
@@ -319,21 +328,9 @@ const getGeneratedResourceCoverUrl = resource => {
 }
 
 const shouldUseExplicitCover = resource => {
+  // 只有图片有真实预览图才用原图做封面，其余全部走生成
   const kind = resourceKind(resource)
-  if (kind === 'image' || kind === 'video') return true
-
-  const explicitCover = String(
-    resource?.coverUrl ||
-    resource?.cover_url ||
-    resource?.thumbnailUrl ||
-    resource?.thumbnail_url ||
-    resource?.thumb_url ||
-    ''
-  )
-
-  if (!explicitCover) return false
-
-  return !/\/static\/covers\/|\/covers\/|resource-cover|generated-cover|default-cover/i.test(explicitCover)
+  return kind === 'image' && Boolean(resource?.previewUrl)
 }
 
 export const getResourceCoverUrl = resource => {

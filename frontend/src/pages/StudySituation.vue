@@ -78,6 +78,9 @@
           <div class="tag-list">
             <span v-for="tag in learnerTags" :key="tag">{{ tag }}</span>
           </div>
+          <div v-if="knowledgeDistribution.length" class="mini-donut">
+            <SimpleChart type="donut" :data="knowledgeDistribution" :size="150" unit="知识点" />
+          </div>
           </article>
         </aside>
 
@@ -88,14 +91,14 @@
           </div>
           <p v-if="!currentPaths.length" class="path-empty">&#x6682;&#x65E0;&#x6B63;&#x5728;&#x8FDB;&#x884C;&#x7684;&#x5B66;&#x4E60;&#x8DEF;&#x5F84;</p>
           <ol v-else class="path-list compact">
-            <li v-for="item in currentPaths" :key="item.id">
+            <li v-for="(item, idx) in currentPaths" :key="item.id">
               <router-link class="path-link" :to="{ name: 'learningPath', query: { pathId: item.id } }">
-                <span>{{ item.index }}</span>
+                <span :style="{ background: progressBarColors[idx % progressBarColors.length] }">{{ item.index }}</span>
                 <div>
                   <strong>{{ item.title }}</strong>
                   <p v-if="item.meta" class="path-meta">{{ item.meta }}</p>
                   <p>{{ item.time }} · {{ item.score }}</p>
-                  <div class="path-progress"><span :style="{ width: `${item.percent}%` }"></span></div>
+                  <div class="path-progress"><span :style="{ width: `${item.percent}%`, background: progressBarColors[index % progressBarColors.length] }"></span></div>
                 </div>
               </router-link>
             </li>
@@ -130,9 +133,9 @@
           </div>
           <p v-if="!completedPaths.length" class="path-empty">&#x6682;&#x65E0;&#x5DF2;&#x5B8C;&#x6210;&#x5B66;&#x4E60;&#x8DEF;&#x5F84;</p>
           <ol v-else class="path-list">
-            <li v-for="item in completedPaths" :key="item.id">
+            <li v-for="(item, idx) in completedPaths" :key="item.id">
               <router-link class="path-link" :to="{ name: 'learningPath', query: { pathId: item.id } }">
-                <span>{{ item.index }}</span>
+                <span :style="{ background: progressBarColors[idx % progressBarColors.length] }">{{ item.index }}</span>
                 <div>
                   <strong>{{ item.title }}</strong>
                   <p v-if="item.meta" class="path-meta">{{ item.meta }}</p>
@@ -157,7 +160,7 @@
                   <span>{{ item.tip }}</span>
                 </div>
                 <div class="weak-bar">
-                  <span :style="{ width: `${item.value}%` }"></span>
+                  <span :style="{ width: `${item.value}%`, background: progressBarColors[index % progressBarColors.length] }"></span>
                 </div>
               </div>
             </div>
@@ -180,10 +183,15 @@
             <MessageSquareText :size="18" />
             <h2>&#x8D44;&#x6E90;&#x4F7F;&#x7528;&#x53CD;&#x9988;</h2>
           </div>
-          <div class="feedback-summary">
-            <div v-for="item in resourceFeedback" :key="item.label">
-              <strong>{{ item.value }}</strong>
-              <span>{{ item.label }}</span>
+          <div class="feedback-chart-row">
+            <div class="feedback-summary">
+              <div v-for="(item, idx) in resourceFeedback" :key="item.label" class="feedback-stat-card" :style="{ borderTopColor: progressBarColors[idx % progressBarColors.length] }">
+                <strong :style="{ color: progressBarColors[idx % progressBarColors.length] }">{{ item.value }}</strong>
+                <span>{{ item.label }}</span>
+              </div>
+            </div>
+            <div v-if="resourceChartData.length" class="feedback-bar">
+              <SimpleChart type="hbar" :data="resourceChartData" :width="280" :height="140" />
             </div>
           </div>
           <p>{{ resourceFeedbackText }}</p>
@@ -205,6 +213,7 @@ import {
   TrendingUp,
   UserRound
 } from 'lucide-vue-next'
+import SimpleChart from '../components/SimpleChart.vue'
 import { getLearningGuidance, getPortrait, getPortraitRadar, getStudyCollections, getStudyExamWeekly, getStudyPathStats, getStudyStats, getUserProfile, normalizeAvatarUrl } from '../api/apis'
 
 import avatarUrl from '../assets/pic/study-pet-reference-cutout.png'
@@ -467,6 +476,36 @@ const suggestions = ref([])
 const resourceFeedback = ref([])
 const resourceFeedbackText = ref(zh([0x6682, 0x65e0, 0x8d44, 0x6e90, 0x4f7f, 0x7528, 0x8bb0, 0x5f55]))
 
+// ---- chart data (for SimpleChart components) ----
+const CHART_COLORS = [
+  '#2563eb', '#0891b2', '#16a34a', '#7c3aed',
+  '#e11d48', '#ea580c', '#eab308', '#6366f1',
+  '#14b8a6', '#dc2626', '#a855f7', '#0ea5e9'
+]
+
+const knowledgeDistribution = computed(() => {
+  const points = weakPoints.value
+  if (!points.length) return []
+  return points.slice(0, 6).map((point, i) => ({
+    label: point.name.length > 6 ? point.name.slice(0, 6) + '…' : point.name,
+    value: point.value,
+    color: CHART_COLORS[i % CHART_COLORS.length]
+  }))
+})
+
+const resourceChartData = computed(() => {
+  const feedback = resourceFeedback.value
+  if (!feedback.length) return []
+  return feedback.slice(0, 5).map((item, i) => ({
+    label: item.label,
+    value: parseFloat(item.value) || 0,
+    color: CHART_COLORS[i % CHART_COLORS.length]
+  }))
+})
+
+// ---- color helpers for progress bars ----
+const progressBarColors = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#e11d48', '#0891b2', '#eab308', '#6366f1']
+
 const toPercent = value => `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`
 const formatSecondsToMinutes = seconds => Math.round(Number(seconds || 0) / 60)
 
@@ -610,8 +649,8 @@ onBeforeUnmount(() => {
   height: 100vh;
   min-height: 0;
   padding: 26px 34px 30px;
-  background: #f1f7fb;
-  color: #163f8f;
+  background: var(--color-bg, #f1f7fb);
+  color: var(--color-text-heading, #163f8f);
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -622,7 +661,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: #f1f7fb;
+  background: var(--color-bg, #f1f7fb);
   overflow: hidden;
   pointer-events: none;
 }
@@ -633,7 +672,7 @@ onBeforeUnmount(() => {
   position: absolute;
   display: block;
   border-radius: 50%;
-  background: #e9eff3;
+  background: var(--color-bg-alt, #e9eff3);
 }
 
 .page-bg-deco::before,
@@ -783,13 +822,13 @@ onBeforeUnmount(() => {
 }
 
 .panel-card {
-  border: 1px solid rgba(22, 63, 143, 0.14);
+  border: 1px solid var(--color-border, rgba(22, 63, 143, 0.14));
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(250, 250, 250, 0.94), rgba(237, 249, 252, 0.84)),
-    #fafafa;
+    linear-gradient(135deg, var(--color-card, rgba(250, 250, 250, 0.94)), var(--color-card-hover, rgba(237, 249, 252, 0.84))),
+    var(--color-card, #fafafa);
   box-shadow:
-    0 14px 34px rgba(22, 63, 143, 0.08),
+    0 14px 34px var(--color-shadow, rgba(22, 63, 143, 0.08)),
     inset 0 1px 0 rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(14px) saturate(135%);
   -webkit-backdrop-filter: blur(14px) saturate(135%);
@@ -1207,15 +1246,49 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.feedback-chart-row {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.feedback-bar {
+  min-width: 200px;
+  padding: 10px 8px;
+  border: 1px solid rgba(201, 220, 233, 0.82);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.mini-donut {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(201, 220, 233, 0.62);
+}
+
+.feedback-chart-row .feedback-summary {
+  margin-top: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .feedback-summary div {
   min-height: 74px;
   padding: 12px 8px;
   border: 1px solid rgba(201, 220, 233, 0.82);
+  border-top: 3px solid transparent;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.7);
   display: grid;
   place-items: center;
   text-align: center;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.feedback-summary div:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(22, 63, 143, 0.1);
 }
 
 .feedback-summary strong {

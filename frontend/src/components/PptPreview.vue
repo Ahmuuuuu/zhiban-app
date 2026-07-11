@@ -965,6 +965,8 @@ watch(
   color: rgba(31, 51, 86, 0.82);
   box-shadow: 0 12px 28px rgba(22, 63, 143, 0.09);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .process-step b {
@@ -1039,9 +1041,10 @@ watch(
 
 .formula-layout {
   display: grid;
-  grid-template-rows: minmax(72px, auto) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   min-height: 0;
+  height: 100%;
 }
 
 .formula-box {
@@ -1064,6 +1067,7 @@ watch(
 .formula-points {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
   gap: 12px;
   min-height: 0;
 }
@@ -1091,8 +1095,10 @@ watch(
 .content-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
   gap: 10px;
   min-height: 0;
+  height: 100%;
 }
 
 .content-card-grid article {
@@ -1105,7 +1111,8 @@ watch(
   gap: 6px;
   align-content: start;
   box-shadow: 0 12px 26px rgba(22, 63, 143, 0.08);
-  overflow-y: auto;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .content-card-grid article span {
