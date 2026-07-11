@@ -585,3 +585,227 @@ html[data-theme="dark"] .chat-page h4,
 html[data-theme="dark"] .chat-page strong {
   color: #c8d6e5 !important;
 }
+
+/* ============================================================
+   🔥 AGGRESSIVE DARK MODE — catch all remaining white/light
+   Targets common patterns across resource center, study path,
+   notification center, import, admin, and all other pages.
+   ============================================================ */
+
+/* Any element with white/light backgrounds in dark mode → dark blue-gray */
+html[data-theme="dark"] .resource-center-page [class*="card"],
+html[data-theme="dark"] .resource-center-page [class*="panel"],
+html[data-theme="dark"] .resource-center-page [class*="item"],
+html[data-theme="dark"] .resource-center-page [class*="box"],
+html[data-theme="dark"] .resource-center-page [class*="row"],
+html[data-theme="dark"] .resource-center-page [class*="grid"],
+html[data-theme="dark"] .resource-center-page article,
+html[data-theme="dark"] .resource-center-page .skeleton,
+html[data-theme="dark"] .study-panel [class*="card"],
+html[data-theme="dark"] .study-panel [class*="panel"],
+html[data-theme="dark"] .study-panel [class*="item"],
+html[data-theme="dark"] .study-panel [class*="box"],
+html[data-theme="dark"] .study-panel article,
+html[data-theme="dark"] .study-panel .skeleton,
+html[data-theme="dark"] .study-panel .skeleton-card,
+html[data-theme="dark"] .admin-page [class*="card"],
+html[data-theme="dark"] .admin-page [class*="panel"],
+html[data-theme="dark"] .admin-page [class*="item"],
+html[data-theme="dark"] .admin-page [class*="row"],
+html[data-theme="dark"] .admin-page article,
+html[data-theme="dark"] .admin-page .metric,
+html[data-theme="dark"] .admin-page .review-item,
+html[data-theme="dark"] .my-full-page [class*="card"],
+html[data-theme="dark"] .my-full-page [class*="panel"],
+html[data-theme="dark"] .my-full-page article,
+html[data-theme="dark"] .import-page [class*="card"],
+html[data-theme="dark"] .import-page [class*="panel"],
+html[data-theme="dark"] .import-page article,
+html[data-theme="dark"] .question-bank-page [class*="card"],
+html[data-theme="dark"] .question-bank-page [class*="panel"],
+html[data-theme="dark"] .question-bank-page [class*="item"],
+html[data-theme="dark"] .quiz-runner-page [class*="card"],
+html[data-theme="dark"] .quiz-runner-page [class*="panel"],
+html[data-theme="dark"] .quiz-runner-page [class*="item"],
+html[data-theme="dark"] .profile-page [class*="card"],
+html[data-theme="dark"] .profile-page [class*="panel"],
+html[data-theme="dark"] .resource-page [class*="card"],
+html[data-theme="dark"] .resource-page [class*="panel"],
+html[data-theme="dark"] .chat-page [class*="card"],
+html[data-theme="dark"] .chat-page [class*="bubble"],
+html[data-theme="dark"] .chat-page [class*="panel"],
+html[data-theme="dark"] .chat-page [class*="box"] {
+  background-color: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+/* Buttons on dark pages — keep readable */
+html[data-theme="dark"] .resource-center-page button[class],
+html[data-theme="dark"] .study-panel button[class],
+html[data-theme="dark"] .admin-page button[class] {
+  /* Don't touch buttons with specific brand colors */
+}
+
+/* Search fields, inputs on all pages */
+html[data-theme="dark"] .resource-center-page input,
+html[data-theme="dark"] .resource-center-page textarea,
+html[data-theme="dark"] .resource-center-page select,
+html[data-theme="dark"] .study-panel input,
+html[data-theme="dark"] .study-panel textarea,
+html[data-theme="dark"] .study-panel select,
+html[data-theme="dark"] .admin-page input,
+html[data-theme="dark"] .admin-page textarea,
+html[data-theme="dark"] .admin-page select,
+html[data-theme="dark"] .my-full-page input,
+html[data-theme="dark"] .my-full-page textarea,
+html[data-theme="dark"] .import-page input,
+html[data-theme="dark"] .import-page textarea,
+html[data-theme="dark"] .notification-center-page input {
+  background: #0f1724 !important;
+  color: #e4e6ed !important;
+  border-color: #2a3546 !important;
+}
+
+/* Page header areas */
+html[data-theme="dark"] .center-header,
+html[data-theme="dark"] .panel-header,
+html[data-theme="dark"] .admin-header,
+html[data-theme="dark"] .sketch-topbar {
+  background: #0f1724 !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .center-header h1,
+html[data-theme="dark"] .panel-header h1,
+html[data-theme="dark"] .admin-header h1,
+html[data-theme="dark"] .center-header span,
+html[data-theme="dark"] .title-block h1 {
+  color: #c8d6e5 !important;
+}
+
+/* Resource Center specific */
+html[data-theme="dark"] .resource-center-page .category-tabs,
+html[data-theme="dark"] .resource-center-page .filter-bar,
+html[data-theme="dark"] .resource-center-page .tab-row,
+html[data-theme="dark"] .resource-grid article,
+html[data-theme="dark"] .resource-list article {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+}
+
+/* Study path specific */
+html[data-theme="dark"] .path-summary article,
+html[data-theme="dark"] .path-summary .skeleton-card,
+html[data-theme="dark"] .path-track,
+html[data-theme="dark"] .diagnosis-panel,
+html[data-theme="dark"] .diagnosis-panel > *,
+html[data-theme="dark"] .path-node-card,
+html[data-theme="dark"] .node-card {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .path-summary strong,
+html[data-theme="dark"] .path-summary span,
+html[data-theme="dark"] .diagnosis-panel h3,
+html[data-theme="dark"] .diagnosis-panel p,
+html[data-theme="dark"] .diagnosis-panel li,
+html[data-theme="dark"] .diagnosis-panel span,
+html[data-theme="dark"] .node-card h3,
+html[data-theme="dark"] .node-card p,
+html[data-theme="dark"] .path-node-card h3,
+html[data-theme="dark"] .path-node-card p {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .diagnosis-panel .muted,
+html[data-theme="dark"] .path-summary .muted,
+html[data-theme="dark"] .node-card .muted {
+  color: #8a94a6 !important;
+}
+
+/* Admin specific */
+html[data-theme="dark"] .admin-page .metric,
+html[data-theme="dark"] .admin-page .review-item,
+html[data-theme="dark"] .admin-page .table-wrap,
+html[data-theme="dark"] .admin-page table,
+html[data-theme="dark"] .admin-page th,
+html[data-theme="dark"] .admin-page td {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .admin-page .metric strong,
+html[data-theme="dark"] .admin-page .metric span {
+  color: #c8d6e5 !important;
+}
+
+/* Tabs and filter buttons */
+html[data-theme="dark"] .admin-tabs button,
+html[data-theme="dark"] .category-tabs button {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .admin-tabs button.active,
+html[data-theme="dark"] .category-tabs button.active {
+  background: #2f6b2f !important;
+  border-color: #3d8f56 !important;
+  color: #fff !important;
+}
+
+/* Empty states */
+html[data-theme="dark"] .empty-path,
+html[data-theme="dark"] .empty-line,
+html[data-theme="dark"] .empty-history,
+html[data-theme="dark"] .path-empty {
+  color: #8a94a6 !important;
+}
+
+/* Links on dark pages */
+html[data-theme="dark"] .resource-center-page a[class],
+html[data-theme="dark"] .study-panel a[class],
+html[data-theme="dark"] .admin-page a[class] {
+  color: #7aa2f7 !important;
+}
+
+/* Notification center page */
+html[data-theme="dark"] .notification-center-page,
+html[data-theme="dark"] [class*="notification"] {
+  background: #0f1724 !important;
+}
+
+html[data-theme="dark"] .notification-center-page [class*="item"],
+html[data-theme="dark"] .notification-center-page [class*="card"],
+html[data-theme="dark"] .notification-center-page [class*="msg"] {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+/* Any remaining skeleton loaders */
+html[data-theme="dark"] [class*="skeleton"] {
+  background: #1f2c3d !important;
+}
+
+/* Modal/dialog backdrops */
+html[data-theme="dark"] .ppt-dialog__panel,
+html[data-theme="dark"] .doc-dialog__panel,
+html[data-theme="dark"] .ppt-gen-panel {
+  background: #1a2535 !important;
+}
+
+html[data-theme="dark"] .ppt-dialog__header,
+html[data-theme="dark"] .doc-dialog__header {
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .ppt-dialog__header h2,
+html[data-theme="dark"] .doc-dialog__header h2,
+html[data-theme="dark"] .ppt-dialog__header span,
+html[data-theme="dark"] .doc-dialog__header span {
+  color: #c8d6e5 !important;
+}

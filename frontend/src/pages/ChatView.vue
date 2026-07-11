@@ -381,6 +381,7 @@
               :exporting="pptPreview.exporting"
               :annotatable="Boolean(pptPreview.resourceId)"
               :annotations="pptPreview.annotations || []"
+              :theme-id="pptGenThemeId"
               @create-note="createPptPreviewAnnotation($event)"
               @update-note="(id, payload) => updatePptPreviewAnnotation(id, payload)"
               @delete-note="deletePptPreviewAnnotation($event)"
@@ -391,6 +392,13 @@
         </article>
       </section>
     </Teleport>
+
+    <!-- PPT 生成弹窗：选择模板 + 输入需求 -->
+    <PptGenerateModal
+      :visible="pptGenModalVisible"
+      @close="pptGenModalVisible = false"
+      @generate="handlePptGenerate"
+    />
 
     <Teleport to="body">
       <section v-if="documentPreview.visible" class="doc-dialog" @click.self="closeDocumentPreview">
@@ -527,6 +535,7 @@ import { useVoiceInput } from '../composables/useVoiceInput'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
+import PptGenerateModal from '../components/ppt_video/ppt/PptGenerateModal.vue'
 import {
   FileText,
   GitBranch,
@@ -551,6 +560,8 @@ import 'katex/dist/katex.min.css'
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
+const pptGenModalVisible = ref(false)
+const pptGenThemeId = ref('minimal-white')
 const route = useRoute()
 const router = useRouter()
 const {
@@ -610,6 +621,10 @@ const resourceTools = [
 ]
 
 const selectResourceTool = tool => {
+  if (tool.label === 'ppt') {
+    pptGenModalVisible.value = true
+    return
+  }
   if (selectedResourceTool.value?.label === tool.label) {
     selectedResourceTool.value = null
     return
@@ -619,6 +634,32 @@ const selectResourceTool = tool => {
   nextTick(() => {
     document.querySelector('.input-box textarea')?.focus()
   })
+}
+
+const handlePptGenerate = ({ prompt, topic, themeId, requirements }) => {
+  pptGenThemeId.value = themeId
+  pptGenModalVisible.value = false
+
+  // Build the complete user-visible prompt
+  const userText = requirements
+    ? `帮我生成一份PPT：${topic}。要求：${requirements}`
+    : `帮我生成一份PPT：${topic}`
+  inputValue.value = userText
+
+  // Use ppt tool but with empty prompt to avoid double-prompt concatenation
+  const pptTool = resourceTools.find(t => t.label === 'ppt')
+  selectedResourceTool.value = pptTool ? { ...pptTool, prompt: '' } : null
+
+  // Force-reset loading state in case it's stuck
+  if (loading.value) {
+    console.warn('[PPT生成] loading 仍为 true，强制重置')
+    loading.value = false
+  }
+  // Small delay for modal close transition, then send
+  setTimeout(() => {
+    if (!inputValue.value.trim()) return
+    sendMessage()
+  }, 200)
 }
 
 const selectedResourceToolName = computed(() => {
