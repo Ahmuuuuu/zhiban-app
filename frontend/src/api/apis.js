@@ -34,7 +34,8 @@ export {
 export {
   getPortrait,
   getPortraitRadar,
-  initPortrait
+  initPortrait,
+  initPortraitFromDialogue
 } from './portrait'
 
 export {

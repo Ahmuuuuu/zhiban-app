@@ -444,7 +444,7 @@ class ResourceService:
         return saved
 
     @staticmethod
-    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", bind_chat_history: bool = False):
+    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", bind_chat_history: bool = False, answers: dict | None = None):
         """astream(stream_mode=["values", "custom"]) — PPT 通过 custom 事件逐页推送，其他类型通过 values 事件推送"""
         import time as _time
         _t_total = _time.perf_counter()
@@ -464,7 +464,7 @@ class ResourceService:
 
         user = await User.filter(id=user_id).first()
 
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, skip_review=skip_review, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, answers=answers, skip_review=skip_review, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority)
         topic = initial_state["topic"]
 
         final_passed = False
@@ -1157,7 +1157,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
 
 
 async def _pre_generate_narration(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"):
-    """后台预生成旁白音频，后续课件构建时可复用缓存"""
+    """后台预生成旁白音频，后续视频构建时可复用缓存"""
     try:
         from backend.src.service.narration_service import narrate_resource
         await narrate_resource(resource_id, voice)

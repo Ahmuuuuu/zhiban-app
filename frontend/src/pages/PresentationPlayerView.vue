@@ -11,7 +11,7 @@
         :has-started="hasStarted"
         :has-source="Boolean(activeSlide)"
       />
-      <a v-if="presentationUrl" :href="presentationUrl" target="_blank" rel="noopener noreferrer">打开原始课件</a>
+      <a v-if="presentationUrl" :href="presentationUrl" target="_blank" rel="noopener noreferrer">打开原始视频</a>
       <select class="theme-select" :value="activeTheme" @change="setTheme($event.target.value)">
         <option v-for="(t, key) in videoThemes" :key="key" :value="key">{{ t.label }}</option>
       </select>
@@ -66,15 +66,15 @@
         class="lesson-frame"
         :src="lessonHtml ? undefined : frameUrl"
         :srcdoc="lessonHtml || undefined"
-        title="动态课件"
+        title="学习视频"
         allow="autoplay; fullscreen"
         @load="handleFrameLoad"
       ></iframe>
 
-      <div v-else-if="presentationStatus === 'failed'" class="empty-state">课件生成失败</div>
+      <div v-else-if="presentationStatus === 'failed'" class="empty-state">视频生成失败</div>
 
       <div v-if="presentationStatus === 'generating'" class="loading-mask">
-        正在等待后端写入完整课件...
+        正在等待后端写入完整视频...
       </div>
 
       <aside v-if="isPlaying" class="teacher-tip" aria-label="小知讲解提示">
@@ -473,7 +473,7 @@ const loadLessonHtml = async () => {
     const html = await response.text()
     lessonHtml.value = prepareLessonHtml(html, activePresentationUrl.value)
   } catch (error) {
-    console.warn('[PresentationPlayer] load html as srcdoc failed, fallback to iframe src:', error)
+    console.warn('[VideoPlayer] load html as srcdoc failed, fallback to iframe src:', error)
     lessonHtml.value = ''
   }
 }
@@ -530,7 +530,7 @@ const togglePlay = async () => {
   try {
     await audioRef.value.play()
   } catch (error) {
-    console.warn('[PresentationPlayer] audio play failed:', error)
+    console.warn('[VideoPlayer] audio play failed:', error)
   }
 }
 
@@ -598,7 +598,7 @@ const refreshPresentationStatus = async () => {
       presentationPollTimer = 0
     }
   } catch (error) {
-    console.warn('[PresentationPlayer] status check failed:', error)
+    console.warn('[VideoPlayer] status check failed:', error)
     presentationStatus.value = activePresentationUrl.value ? 'ready' : 'failed'
     loadLessonHtml()
   }
@@ -615,7 +615,7 @@ watch(activeAudioUrl, (newUrl, oldUrl) => {
     nextTick(() => {
       if (!audioRef.value) return
       audioRef.value.play().catch(err => {
-        console.warn('[PresentationPlayer] auto-switch to audio failed:', err)
+        console.warn('[VideoPlayer] auto-switch to audio failed:', err)
         isPlaying.value = false
       })
     })

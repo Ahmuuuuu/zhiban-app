@@ -277,6 +277,7 @@ async def generate_ppt_parallel(
     llm_priority: str = "high",
     user_id: int = 0,
     learning_objectives: str = "",
+    skip_review_sections: bool = False,
 ) -> str:
     """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2-5 页），共 2N-5N 页 + 2 页画像学习引入"""
     _t_total = time.perf_counter()
@@ -415,18 +416,54 @@ async def generate_ppt_parallel(
     total = len(sections)
     _results: list[dict] = [{} for _ in range(total)]
 
-    def _push_section(_idx: int, _content: str):
+    def _slide_stream_meta(_idx: int, slide_idx: int, _section_title: str) -> dict:
+        return {
+            "file_type": "ppt",
+            "section_idx": _idx,
+            "slide_idx": slide_idx,
+            "section_title": _section_title,
+            "section_total": total,
+        }
+
+    def _iter_text_chunks(text: str, chunk_size: int = 12):
+        for start in range(0, len(text), chunk_size):
+            yield text[start:start + chunk_size]
+
+    def _push_section(_idx: int, _content: str, _section_title: str = ""):
         """将章节的幻灯片逐页推送给前端"""
         if stream_writer:
             try:
-                for slide in _content.split("\n---\n"):
+                for slide_idx, slide in enumerate(_content.split("\n---\n")):
                     slide = slide.strip()
                     if slide:
                         if slide.startswith("<!-- layout:"):
                             slide = slide.replace("\n# ", "\n## ", 1)
                         elif slide.startswith("# ") and not slide.startswith("## "):
                             slide = slide.replace("# ", "## ", 1)
-                        stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide, "section_idx": _idx})
+                        meta = _slide_stream_meta(_idx, slide_idx, _section_title)
+                        stream_writer({
+                            "type": "stream_slide_start",
+                            **meta,
+                        })
+                        cursor = 0
+                        for delta in _iter_text_chunks(slide):
+                            stream_writer({
+                                "type": "stream_slide_delta",
+                                "delta": delta,
+                                "cursor": cursor,
+                                **meta,
+                            })
+                            cursor += len(delta)
+                        stream_writer({
+                            "type": "stream_slide",
+                            "content": slide,
+                            **meta,
+                        })
+                        stream_writer({
+                            "type": "stream_slide_done",
+                            "content": slide,
+                            **meta,
+                        })
                 done = sum(1 for r in _results if r.get("content"))
                 stream_writer({
                     "type": "stream_progress",
@@ -531,7 +568,7 @@ async def generate_ppt_parallel(
                     })
                 except Exception:
                     pass
-            _push_section(_idx, _content)
+            _push_section(_idx, _content, _title)
 
         for round_idx in range(MAX_REVIEW_ROUNDS):
             is_first_round = (round_idx == 0)
@@ -573,12 +610,12 @@ async def generate_ppt_parallel(
                         continue
                     logger.exception("[PPT-Gen] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
                     _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
-                    _push_section(idx, _results[idx]["content"])
+                    _push_section(idx, _results[idx]["content"], section_title)
                     return
 
             if not gen_ok:
                 _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
-                _push_section(idx, _results[idx]["content"])
+                _push_section(idx, _results[idx]["content"], section_title)
                 return
 
             elapsed = time.perf_counter() - t0
@@ -593,8 +630,8 @@ async def generate_ppt_parallel(
             # Step C: 初稿立即推送（不等审核），后续轮次推送替换
             if is_first_round:
                 _results[idx] = {"idx": idx, "content": content}
-                _push_section(idx, content)
-                if is_portrait_section:
+                _push_section(idx, content, section_title)
+                if is_portrait_section or skip_review_sections:
                     return
             # 非首轮：更新 _results 后推送替换
             else:
@@ -858,6 +895,7 @@ async def executor_node(state: ResourceState) -> dict:
             ppt_prompt_key=state.get("ppt_prompt_key", "ppt"),
             llm_priority=llm_priority,
             user_id=user_id_int,
+            skip_review_sections=bool(state.get("skip_review")),
         )
 
     async def _run_doc():

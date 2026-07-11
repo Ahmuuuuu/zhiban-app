@@ -15,3 +15,11 @@ export function initPortrait(data) {
     data
   })
 }
+
+export function initPortraitFromDialogue(data) {
+  return request({
+    url: '/ai_portrait/init_from_dialogue',
+    method: 'post',
+    data
+  })
+}

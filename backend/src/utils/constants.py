@@ -6,11 +6,11 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # backend/ 的父目录
 
 # ── 静态文件 ──
-STATIC_DIR = PROJECT_ROOT / "backend" / "static"
+STATIC_DIR = PROJECT_ROOT / "static"
 IMAGES_DIR = STATIC_DIR / "images"
 AUDIO_DIR = STATIC_DIR / "audio"
-VIDEOS_DIR = STATIC_DIR / "videos"
 PRESENTATIONS_DIR = STATIC_DIR / "presentations"
+VIDEOS_DIR = PRESENTATIONS_DIR
 AVATARS_DIR = STATIC_DIR / "avatars"
 PPT_DIR = STATIC_DIR / "ppt"
 COVERS_DIR = STATIC_DIR / "covers"

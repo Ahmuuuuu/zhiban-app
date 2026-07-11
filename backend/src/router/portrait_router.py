@@ -1,6 +1,8 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Depends, Body
+from pydantic import BaseModel
+from typing import List
 from backend.src.service.portrait_service import PortraitChatHistory_Service, PortraitRadarService
 from backend.src.schemas.portrait import Init_Portrait
 from backend.src.utils.jwt import create_access_token, get_user_id_from_token
@@ -63,6 +65,41 @@ async def regenerate_portrait(user_id: int = Depends(get_user_id_from_token)):
     except Exception:
         logger = logging.getLogger(__name__)
         logger.exception("画像再生失败")
+        raise HTTPException(500, "服务器错误")
+
+
+# ═══════════════════════════════════════
+#  对话问答画像初始化
+# ═══════════════════════════════════════
+
+class DialogueTurn(BaseModel):
+    question: str = ""
+    answer: str = ""
+
+
+class InitFromDialogueRequest(BaseModel):
+    dialogue: List[DialogueTurn]
+
+
+@router.post("/init_from_dialogue")
+async def init_from_dialogue(
+    user_id: int = Depends(get_user_id_from_token),
+    data: InitFromDialogueRequest = Body(...),
+):
+    """通过多轮自然语言问答让 LLM 提取用户画像（替代标签选择）"""
+    try:
+        result = await PortraitChatHistory_Service.init_from_dialogue(
+            user_id,
+            [{"question": t.question, "answer": t.answer} for t in data.dialogue],
+        )
+        return {"code": 200, "msg": "画像初始化成功", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger = logging.getLogger(__name__)
+        logger.exception("对话画像初始化失败 user_id=%s", user_id)
         raise HTTPException(500, "服务器错误")
 
 

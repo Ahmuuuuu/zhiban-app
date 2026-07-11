@@ -488,8 +488,8 @@
             <div v-else-if="isHtmlResource(previewResource) && previewResource.previewUrl" class="resource-html-placeholder">
               <MonitorPlay :size="32" />
               <strong>{{ previewResource.title }}</strong>
-              <span>动态课件 — 点击下方按钮在新窗口播放</span>
-              <a :href="resolveApiUrl(previewResource.previewUrl)" target="_blank" rel="noopener noreferrer" class="html-open-btn">打开课件</a>
+              <span>学习视频 — 点击下方按钮在新窗口播放</span>
+              <a :href="resolveApiUrl(previewResource.previewUrl)" target="_blank" rel="noopener noreferrer" class="html-open-btn">播放视频</a>
             </div>
             <div v-else-if="isAudioResource(previewResource)" class="resource-audio-player">
               <Volume2 :size="32" />
@@ -1295,7 +1295,7 @@ const fileTypeLabel = type => {
   if (t.includes('image')) return '图片'
   if (t.includes('mind')) return '思维导图'
   if (t.includes('video') || t.includes('mp4')) return '视频'
-  if (t.includes('html')) return '动态课件'
+  if (t.includes('html')) return '学习视频'
   if (t.includes('audio')) return '音频旁白'
   if (t.includes('txt') || t.includes('document')) return '学习文档'
   if (t.includes('pdf')) return 'PDF 文件'
@@ -1329,7 +1329,7 @@ const isDynamicLessonResource = r => {
   return isHtmlResource(r) ||
     Boolean(r?.presentationId || r?.presentation_id) ||
     /static\/presentations\/.+\.html/.test(text) ||
-    /动态课件|dynamic lesson/.test(text)
+    /学习视频|dynamic lesson/.test(text)
 }
 
 const isExerciseResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('exercise')

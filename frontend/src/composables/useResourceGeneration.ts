@@ -1,4 +1,4 @@
-﻿import { generateImage, generatePresentation, getImageTaskStatus, streamResourceGeneration } from '../api/apis'
+﻿import { generateImage, generatePresentation, getImageTaskStatus, getPresentation, streamResourceGeneration } from '../api/apis'
 
 export interface ResourceToolConfig {
   label: string
@@ -57,6 +57,33 @@ export type GenerationCallbacks = {
 }
 
 const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+const waitForPresentationFile = async (
+  initial: any,
+  onProgress?: (message: string) => void,
+  maxAttempts = 90,
+) => {
+  let presentation = initial || {}
+  const id = presentation?.id || presentation?.presentation_id || presentation?.presentationId
+  if (!id) return presentation
+  if (presentation?.file_url || presentation?.fileUrl) return presentation
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await wait(attempt <= 3 ? 1000 : 2000)
+    const detail = unwrapResponseData(await getPresentation(id))
+    presentation = { ...presentation, ...detail }
+    if (presentation?.file_url || presentation?.fileUrl) return presentation
+    if (presentation?.status === 'failed') {
+      throw new Error(presentation?.error_message || presentation?.errorMessage || '学习视频生成失败')
+    }
+    if (attempt === 1 || attempt % 5 === 0) {
+      onProgress?.('学习视频骨架生成中，请稍等...')
+    }
+  }
+
+  throw new Error('学习视频仍在生成中，暂时没有拿到可预览文件')
+}
 
 const getGeneratedResourceId = (resource: any) => {
   const directId = resource?.resource_id || resource?.resourceId || resource?.file_id || resource?.fileId || resource?.id || ''
@@ -208,6 +235,7 @@ export async function executeGeneration(
           resource_types: resourceTypes,
           chat_group_id: Number(chatGroupId || 0),
           bind_chat_history: true,
+          skip_review: true,
         },
         {
           onProgress: (eventData: any) => {
@@ -259,9 +287,11 @@ export async function executeGeneration(
         return
       }
 
-      callbacks.onProgress?.('视频脚本已生成，正在生成动态课件...')
-      const presentationResult: any = await generatePresentation({ topic: text, chat_group_id: Number(chatGroupId || 0), video_mode: true })
-      const presentation = unwrapResponseData(presentationResult)
+      callbacks.onProgress?.('视频脚本已生成，正在生成学习视频...')
+      const presentationResult: any = await generatePresentation({ topic: text, chat_group_id: Number(chatGroupId || 0), video_mode: false })
+      let presentation = unwrapResponseData(presentationResult)
+      callbacks.onProgress?.('视频任务已提交，正在生成课件骨架...')
+      presentation = await waitForPresentationFile(presentation, message => callbacks.onProgress?.(message))
       const title = sourceResource?.topic || sourceResource?.title || text || '学习视频'
 
       callbacks.onFile?.({
@@ -280,7 +310,7 @@ export async function executeGeneration(
         download_url: '',
         source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
       })
-      callbacks.onProgress?.('动态课件已生成，可以打开预览。')
+      callbacks.onProgress?.('学习视频已生成，可以打开预览。')
       callbacks.onDone?.({
         chat_group_id: presentation?.chat_group_id || presentation?.chatGroupId,
         resources: [],
@@ -302,6 +332,7 @@ export async function executeGeneration(
         resource_types: resourceTypes,
         chat_group_id: Number(chatGroupId || 0),
         bind_chat_history: true,
+        skip_review: Boolean((tool as any).skipReview),
       },
       {
         onProgress: (eventData: any) => {

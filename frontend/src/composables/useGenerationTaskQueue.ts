@@ -2,6 +2,7 @@ import { reactive } from 'vue'
 import {
   createResourceGenerationTask,
   generatePresentation,
+  getPresentation,
   getPresentationQuestions,
   getResourceGenerationTask,
   getResourceGenerationTasks,
@@ -111,6 +112,34 @@ const restorePersistedTasks = () => {
 restorePersistedTasks()
 
 const unwrapResponseData = (result: any) => result?.data?.data ?? result?.data ?? result
+const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
+
+const waitForPresentationFile = async (
+  initial: any,
+  onProgress?: (message: string) => void,
+  maxAttempts = 90,
+) => {
+  let presentation = initial || {}
+  const id = presentation?.id || presentation?.presentation_id || presentation?.presentationId
+  if (!id) return presentation
+  if (presentation?.file_url || presentation?.fileUrl) return presentation
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await wait(attempt <= 3 ? 1000 : 2000)
+    const detail = unwrapResponseData(await getPresentation(id))
+    presentation = { ...presentation, ...detail }
+    const fileUrl = presentation?.file_url || presentation?.fileUrl
+    if (fileUrl) return presentation
+    if (presentation?.status === 'failed') {
+      throw new Error(presentation?.error_message || presentation?.errorMessage || '学习视频生成失败')
+    }
+    if (attempt === 1 || attempt % 5 === 0) {
+      onProgress?.('学习视频骨架生成中，请稍等...')
+    }
+  }
+
+  throw new Error('学习视频仍在生成中，暂时没有拿到可预览文件')
+}
 
 const makeLocalTaskId = (taskId = '') => taskId ? `generation-${taskId}` : `generation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -170,14 +199,14 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
   const thinking = getBackendThinking(taskData)
   if (thinking) task.thinkingProcess = thinking
   task.error = taskData?.error || ''
-  // 保留已生成的课件文件和 doneEvent.presentation，
-  // 避免 hydrate 时后端数据覆盖前端已完成的课件状态导致重复生成
+  // 保留已生成的视频文件和 doneEvent.presentation，
+  // 避免 hydrate 时后端数据覆盖前端已完成的视频状态导致重复生成
   const existingPresentation = (task.doneEvent as any)?.presentation
   const existingVideoFiles = task.files.filter(
     f => (f as any).file_type === 'video' || (f as any).resource_type === 'video' || (f as any).resourceKind === 'presentation'
   )
   task.files.splice(0, task.files.length, ...normalizeTaskFiles(taskData))
-  // 把课件文件追加回去（放在资源文件后面）
+  // 把视频文件追加回去（放在资源文件后面）
   if (existingVideoFiles.length) {
     task.files.push(...existingVideoFiles)
   }
@@ -257,6 +286,31 @@ const pollBackendTask = (task: GenerationTask) => {
   window.setTimeout(tick, 800)
 }
 
+const streamOrder = (value: any, fallback = Number.MAX_SAFE_INTEGER) => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+const sortPptStreamSlides = (slides: any[]) => {
+  return [...slides].sort((a, b) => {
+    const sectionDiff = streamOrder(a?.section_idx) - streamOrder(b?.section_idx)
+    if (sectionDiff !== 0) return sectionDiff
+    return streamOrder(a?.slide_idx) - streamOrder(b?.slide_idx)
+  })
+}
+
+const findPptStreamSlideIndex = (slides: any[], eventData: any) => {
+  return slides.findIndex((s: any) =>
+    streamOrder(s?.section_idx) === streamOrder(eventData?.section_idx) &&
+    streamOrder(s?.slide_idx) === streamOrder(eventData?.slide_idx)
+  )
+}
+
+const bumpPptStreamVersion = (stream: any) => {
+  stream._version = Number(stream._version || 0) + 1
+  return stream
+}
+
 const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
   if (!eventData || eventData.type === '__close__') return
 
@@ -288,10 +342,64 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     ;(task as any)._pptStream = stream
   }
 
+  if (eventData.type === 'stream_slide_start') {
+    const stream = (task as any)._pptStream || { slides: [] }
+    const nextSlide = {
+      content: '',
+      section_idx: eventData.section_idx,
+      slide_idx: eventData.slide_idx,
+      section_title: eventData.section_title,
+      streaming: true,
+    }
+    const existingIdx = findPptStreamSlideIndex(stream.slides, eventData)
+    if (existingIdx >= 0) {
+      stream.slides[existingIdx] = nextSlide
+    } else {
+      stream.slides.push(nextSlide)
+    }
+    stream.slides = sortPptStreamSlides(stream.slides)
+    ;(task as any)._pptStream = bumpPptStreamVersion(stream)
+  }
+
+  if (eventData.type === 'stream_slide_delta') {
+    const stream = (task as any)._pptStream || { slides: [] }
+    const existingIdx = findPptStreamSlideIndex(stream.slides, eventData)
+    if (existingIdx >= 0) {
+      stream.slides[existingIdx] = {
+        ...stream.slides[existingIdx],
+        content: `${stream.slides[existingIdx].content || ''}${eventData.delta || ''}`,
+        streaming: true,
+      }
+    } else {
+      stream.slides.push({
+        content: eventData.delta || '',
+        section_idx: eventData.section_idx,
+        slide_idx: eventData.slide_idx,
+        section_title: eventData.section_title,
+        streaming: true,
+      })
+    }
+    stream.slides = sortPptStreamSlides(stream.slides)
+    ;(task as any)._pptStream = bumpPptStreamVersion(stream)
+  }
+
   if (eventData.type === 'stream_slide' && eventData.content) {
     const stream = (task as any)._pptStream || { slides: [] }
-    stream.slides.push({ content: eventData.content, section_idx: eventData.section_idx })
-    ;(task as any)._pptStream = stream
+    const finalSlide = {
+      content: eventData.content,
+      section_idx: eventData.section_idx,
+      slide_idx: eventData.slide_idx,
+      section_title: eventData.section_title,
+      streaming: false,
+    }
+    const existingIdx = findPptStreamSlideIndex(stream.slides, eventData)
+    if (existingIdx >= 0) {
+      stream.slides[existingIdx] = finalSlide
+    } else {
+      stream.slides.push(finalSlide)
+    }
+    stream.slides = sortPptStreamSlides(stream.slides)
+    ;(task as any)._pptStream = bumpPptStreamVersion(stream)
     console.log('[GenerationTask] stream_slide taskId=%s section_idx=%s slides=%d',
       task.backendTaskId?.slice(0, 12) || task.id, eventData.section_idx, stream.slides.length)
   }
@@ -435,17 +543,17 @@ const maybeGeneratePresentation = async (task: GenerationTask) => {
   ;(task as any)._presentationGenerating = true
 
   try {
-    // 新流程：追问前置已回答 → 直接生成课件，资源已按答案精准生成
+    // 新流程：追问前置已回答 → 直接生成视频，资源已按答案精准生成
     if ((task as any).questionsShown && (task as any)._answers) {
       task.status = 'running'
-      task.progress = '正在生成动态课件...'
+      task.progress = '正在生成学习视频...'
       task.updatedAt = Date.now()
       persistTasks()
       try {
         await _doGeneratePresentation(task)
       } catch (e: any) {
         task.status = 'failed'
-        task.error = e?.response?.data?.detail || e?.message || '动态课件生成失败'
+        task.error = e?.response?.data?.detail || e?.message || '学习视频生成失败'
         task.progress = task.error
       } finally {
         task.updatedAt = Date.now()
@@ -470,19 +578,19 @@ const maybeGeneratePresentation = async (task: GenerationTask) => {
       if (questions && Array.isArray(questions) && questions.length > 0) {
         ;(task as any).pendingQuestions = questions
         task.status = 'done'
-        task.progress = '请选择课件方向以继续...'
+        task.progress = '请选择视频方向以继续...'
       } else {
         // 无问题则直接生成
         await _doGeneratePresentation(task)
       }
     } catch (error: any) {
-      // 问题生成失败 → 降级直接生成课件
-      console.warn('[GenerationTask] 追问生成失败，直接生成课件:', error)
+      // 问题生成失败 → 降级直接生成视频
+      console.warn('[GenerationTask] 追问生成失败，直接生成视频:', error)
       try {
         await _doGeneratePresentation(task)
       } catch (e: any) {
         task.status = 'failed'
-        task.error = e?.response?.data?.detail || e?.message || '动态课件生成失败'
+        task.error = e?.response?.data?.detail || e?.message || '学习视频生成失败'
         task.progress = task.error
       }
     } finally {
@@ -501,9 +609,17 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
     topic: task.text,
     answers,
     chat_group_id: chatGroupId,
-    video_mode: true,
+    video_mode: false,
   })
-  const presentation = unwrapResponseData(presentationResult)
+  let presentation = unwrapResponseData(presentationResult)
+  task.progress = '视频任务已提交，正在生成课件骨架...'
+  task.updatedAt = Date.now()
+  persistTasks()
+  presentation = await waitForPresentationFile(presentation, message => {
+    task.progress = message
+    task.updatedAt = Date.now()
+    persistTasks()
+  })
   const sourceResource: any = task.files[0]
   const resourceId = sourceResource?.resource_id || sourceResource?.file_id || ''
   const title = sourceResource?.topic || sourceResource?.title || task.text || '学习视频'
@@ -524,11 +640,11 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
     source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
   }
   // doneEvent.presentation 必须先于 files.push 设置，
-  // 否则 watcher 触发 maybeGeneratePresentation 时会因 guard 缺失而重复生成课件
+  // 否则 watcher 触发 maybeGeneratePresentation 时会因 guard 缺失而重复生成视频
   task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: [...task.files, presentationFile] }
   task.files.push(presentationFile)
   task.status = 'done'
-  task.progress = '动态课件已生成，可以打开预览。'
+  task.progress = '学习视频已生成，可以打开预览。'
   delete (task as any).pendingQuestions
   ;(task as any).questionsShown = true
 }
@@ -544,9 +660,10 @@ export function useGenerationTaskQueue() {
       topic: task.text,
       resource_types: task.tool.resourceTypes || ['document'],
       chat_group_id: task.chatGroupId || 0,
-      // 视频模式：中间资源不写入聊天记录，最终课件卡片才是用户想看到的
+      // 视频模式：中间资源不写入聊天记录，最终视频卡片才是用户想看到的
       bind_chat_history: task.tool.generateMode !== 'video',
       answers: (task as any)._answers || undefined,
+      skip_review: Boolean((task as any).skipReview || task.tool.generateMode === 'video'),
     }).then(result => {
       const data = unwrapResponseData(result)
       task.backendTaskId = data?.task_id || data?.taskId || ''
@@ -609,7 +726,7 @@ export function useGenerationTaskQueue() {
           if (questions && Array.isArray(questions) && questions.length > 0) {
             ;(task as any).pendingQuestions = questions
             task.status = 'done'
-            task.progress = '请选择课件方向以继续...'
+            task.progress = '请选择视频方向以继续...'
           } else {
             _submitBackendTask(task)
           }
@@ -636,9 +753,9 @@ export function useGenerationTaskQueue() {
       return
     }
 
-    // 旧流程兼容：资源已生成 → 直接生成课件
+    // 旧流程兼容：资源已生成 → 直接生成视频
     task.status = 'running'
-    task.progress = '正在生成动态课件...'
+    task.progress = '正在生成学习视频...'
     task.updatedAt = Date.now()
     persistTasks()
 
@@ -646,7 +763,7 @@ export function useGenerationTaskQueue() {
       await _doGeneratePresentation(task)
     } catch (error: any) {
       task.status = 'failed'
-      task.error = error?.response?.data?.detail || error?.message || '动态课件生成失败'
+      task.error = error?.response?.data?.detail || error?.message || '学习视频生成失败'
       task.progress = task.error
     } finally {
       task.updatedAt = Date.now()

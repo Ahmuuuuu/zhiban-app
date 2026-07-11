@@ -110,7 +110,15 @@ async def generate_resource_stream(
     if not await check_rate_limit("resource_stream", user_id, 10, 60):
         raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     return StreamingResponse(
-        ResourceService.generate_stream(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history, skip_review=data.skip_review),
+        ResourceService.generate_stream(
+            data.topic,
+            user_id,
+            data.resource_types,
+            data.chat_group_id,
+            bind_chat_history=data.bind_chat_history,
+            skip_review=data.skip_review,
+            answers=data.answers,
+        ),
         media_type = "text/event-stream",
         headers = {
             "Cache-Control": "no-cache",

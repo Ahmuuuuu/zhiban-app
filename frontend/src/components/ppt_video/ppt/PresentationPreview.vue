@@ -16,7 +16,7 @@
       allowfullscreen
     ></iframe>
 
-    <p v-else-if="isHtml" class="presentation-preview__empty">课件加载中，请稍后...</p>
+    <p v-else-if="isHtml" class="presentation-preview__empty">视频加载中，请稍后...</p>
 
     <VideoPreview
       v-else-if="isVideo"
@@ -130,7 +130,7 @@ const isImage = computed(() => props.resource?.type === 'image')
 const isPpt = computed(() => /ppt|powerpoint|presentation|slide/.test(resourceText.value))
 const isVideo = computed(() => /video|mp4|webm|ogg/.test(resourceText.value))
 const isMindmap = computed(() => /mindmap|mind_map|mind-map|思维导图/.test(resourceText.value))
-const isHtml = computed(() => !isPpt.value && /html|interactive|presentation-player|课件/.test(resourceText.value))
+const isHtml = computed(() => !isPpt.value && /html|interactive|presentation-player|视频/.test(resourceText.value))
 </script>
 
 <style scoped>

@@ -161,7 +161,7 @@
           </div>
 
           <div v-else-if="isVideoFile(message)" class="file-placeholder">
-            动态课件已生成，可以打开预览。
+            学习视频已生成，可以打开预览。
           </div>
 
           <div v-else-if="isExternalVideoFile(message)" class="ext-video-card">
@@ -212,7 +212,7 @@
             <button v-if="isMindmapFile(message)" type="button" @click="openMindmapLargePreview(message)">
               {{ message.mindmapPreviewLoading ? '加载中...' : '预览' }}
             </button>
-            <button v-if="isVideoFile(message) && (message.previewUrl || message.presentation?.id || message.presentationId)" type="button" @click="openPresentationPlayer(message)">打开课件</button>
+            <button v-if="isVideoFile(message) && (message.previewUrl || message.presentation?.id || message.presentationId)" type="button" @click="openPresentationPlayer(message)">播放视频</button>
             <button v-if="isExternalVideoFile(message)" type="button" @click="openExternalVideoPlayer(message)">▶ 立即观看</button>
             <a v-else-if="message.previewUrl && !isExternalVideoFile(message)" :href="message.previewUrl" target="_blank" rel="noopener noreferrer">预览</a>
             <button v-if="isDocumentFile(message) && getFileResourceId(message)" type="button" @click="openDocumentPreview(message)">
@@ -258,7 +258,7 @@
             class="q-confirm-btn"
             :disabled="!hasAnyAnswer(message)"
             @click="handleConfirmAnswers(message)"
-          >确认，开始生成课件</button>
+          >确认，开始生成视频</button>
         </div>
 
         <div
@@ -645,7 +645,7 @@ const stripTypedResourceInstruction = value => {
   return String(value || '').replace(/\n\n【生成类型指令】[\s\S]*$/, '')
 }
 
-// 过滤掉 AI 生成的 JSON 资源响应（如课件/视频生成后的 JSON 元数据），保留友好文案
+// 过滤掉 AI 生成的 JSON 资源响应（如视频/视频生成后的 JSON 元数据），保留友好文案
 const stripJsonResponse = value => {
   const text = String(value || '').trim()
   if (!text) return ''
@@ -654,12 +654,12 @@ const stripJsonResponse = value => {
   if (text.startsWith('{')) {
     try {
       const parsed = JSON.parse(text)
-      // 课件/视频等生成资源类响应
+      // 视频/视频等生成资源类响应
       if (parsed.type === 'presentation') {
-        return '动态课件已生成，可立即查看'
+        return '学习视频已生成，可立即查看'
       }
       if (parsed.type === 'presentation_questions') {
-        return '课件问答已准备好'
+        return '视频问答已准备好'
       }
       // 其他 JSON 响应（可能是资源列表等），不显示
       if (parsed.type || parsed.resource_type || parsed.resources) {
@@ -825,13 +825,13 @@ const normalizePresentationTopic = value => String(value || '')
 
 const isVideoHistoryRecord = record => {
   const text = String(`${record?.req || record?.content || ''} ${record?.res || record?.content || record?.answer || ''}`)
-  return /(视频|video|课程视频|教学视频|动态课件)/i.test(text)
+  return /(视频|video|课程视频|教学视频|学习视频)/i.test(text)
 }
 
 const appendPresentationCardsFromHistory = async (records, targetMessages) => {
   try {
     const presentations = normalizeList(await getPresentations())
-    console.log('[ChatView] 已生成的课件列表:', presentations.map(p => ({ id: p.id, topic: p.topic, hasFileUrl: !!p.file_url })))
+    console.log('[ChatView] 已生成的视频列表:', presentations.map(p => ({ id: p.id, topic: p.topic, hasFileUrl: !!p.file_url })))
     if (!presentations.length) return
 
     const existingUrls = new Set(targetMessages.map(message => message.previewUrl).filter(Boolean))
@@ -846,7 +846,7 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
     }
 
     for (const record of records) {
-      // 从 assistant 回复中提取课件 ID / file_url
+      // 从 assistant 回复中提取视频 ID / file_url
       const resRaw = record.res || record.content || record.answer || ''
       const resParsed = typeof resRaw === 'string' ? tryParseJson(resRaw) : resRaw
       const resId = resParsed?.id || resParsed?.presentation_id || resParsed?.presentationId || ''
@@ -872,7 +872,7 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
         file_type: 'video',
         resource_type: 'video',
         resourceKind: 'presentation',
-        filename: `${presentation.topic || reqTopic || '动态课件'}.html`,
+        filename: `${presentation.topic || reqTopic || '学习视频'}.html`,
         preview_url: presentation.file_url,
         file_url: presentation.file_url,
         presentation,
@@ -883,7 +883,7 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
       if (presentationId) existingIds.add(presentationId)
     }
 
-    // 已有课件 → 移除冗余的中间资源卡片（PPT/文档），避免过程文件干扰
+    // 已有视频 → 移除冗余的中间资源卡片（PPT/文档），避免过程文件干扰
     if (existingUrls.size > 0 || existingIds.size > 0) {
       for (let i = targetMessages.length - 1; i >= 0; i--) {
         const msg = targetMessages[i]
@@ -1226,7 +1226,7 @@ const parseResourceHistoryMessage = value => {
 
   const presentationMatch = text.match(/\[([^\]]+)\]\(((?:https?:\/\/[^)\s]+|\/[^)\s]+)?\/static\/presentations\/[^)\s]+\.html(?:[?#][^)]*)?)\)/i)
   if (presentationMatch) {
-    const filename = presentationMatch[1] || '动态课件.html'
+    const filename = presentationMatch[1] || '学习视频.html'
     const url = presentationMatch[2]
     return {
       file_id: url,
@@ -1317,12 +1317,12 @@ const normalizeHistoryAssistantMessage = (item, id, time) => {
     }
   }
 
-  // 课件问答元数据，不单独展示（课件卡片由 appendPresentationCardsFromHistory 统一处理）
+  // 视频问答元数据，不单独展示（视频卡片由 appendPresentationCardsFromHistory 统一处理）
   if (parsed && parsed.type === 'presentation_questions') {
-    return { id, role: 'assistant', type: 'text', content: '课件问答已准备好', time }
+    return { id, role: 'assistant', type: 'text', content: '视频问答已准备好', time }
   }
   if (parsed && parsed.type === 'presentation') {
-    return { id, role: 'assistant', type: 'text', content: '动态课件已生成，可立即查看', time }
+    return { id, role: 'assistant', type: 'text', content: '学习视频已生成，可立即查看', time }
   }
 
   const resourceHistory = parseResourceHistoryMessage(rawContent)
@@ -1483,6 +1483,61 @@ const parseSingleSlide = (content) => {
   }
 }
 
+const streamOrder = (value, fallback = Number.MAX_SAFE_INTEGER) => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+const sortPptStreamSlides = slides => {
+  return [...(slides || [])].sort((a, b) => {
+    const sectionDiff = streamOrder(a?._sectionIdx ?? a?.section_idx) - streamOrder(b?._sectionIdx ?? b?.section_idx)
+    if (sectionDiff !== 0) return sectionDiff
+    return streamOrder(a?._slideIdx ?? a?.slide_idx) - streamOrder(b?._slideIdx ?? b?.slide_idx)
+  })
+}
+
+const normalizeStreamSlide = (source, index = 0) => {
+  const raw = typeof source === 'object' ? source.content : source
+  const slide = parseSingleSlide(raw)
+  return {
+    ...slide,
+    index,
+    _sectionIdx: typeof source === 'object' ? source.section_idx : undefined,
+    _slideIdx: typeof source === 'object' ? source.slide_idx : undefined,
+  }
+}
+
+const findStreamSlideIndex = (slides, sectionIdx, slideIdx) => {
+  return (slides || []).findIndex(slide =>
+    streamOrder(slide?._sectionIdx ?? slide?.section_idx) === streamOrder(sectionIdx) &&
+    streamOrder(slide?._slideIdx ?? slide?.slide_idx) === streamOrder(slideIdx)
+  )
+}
+
+const upsertPreviewStreamSlide = (source, { appendDelta = false } = {}) => {
+  const baseSlides = [...(pptPreview.value.slides || [])]
+  const sectionIdx = source?.section_idx
+  const slideIdx = source?.slide_idx
+  const existingIdx = findStreamSlideIndex(baseSlides, sectionIdx, slideIdx)
+  const existing = existingIdx >= 0 ? baseSlides[existingIdx] : null
+  const raw = appendDelta
+    ? `${existing?._rawContent || ''}${source?.delta || ''}`
+    : (source?.content || '')
+  const slide = {
+    ...normalizeStreamSlide({ content: raw, section_idx: sectionIdx, slide_idx: slideIdx }),
+    _rawContent: raw,
+    _streaming: appendDelta,
+  }
+
+  if (existingIdx >= 0) {
+    baseSlides[existingIdx] = slide
+  } else {
+    baseSlides.push(slide)
+  }
+
+  return sortPptStreamSlides(baseSlides).map((item, index) => ({ ...item, index }))
+}
+
 const parsePptSlidesFromContent = content => {
   const text = String(content || '').trim()
   if (!text) return []
@@ -1567,11 +1622,13 @@ const openPptPreview = async message => {
   if (message._generating) {
     const task = generationTasks.find((t: any) => t.id === message._taskId)
     const streamSlides = ((task as any)?._pptStream?.slides || [])
-      .map((s: any) => {
-        const raw = typeof s === 'object' ? s.content : s
-        const slide = parseSingleSlide(raw)
-        return slide
+      .map((s: any) => normalizeStreamSlide(s))
+      .sort((a: any, b: any) => {
+        const sectionDiff = streamOrder(a._sectionIdx) - streamOrder(b._sectionIdx)
+        if (sectionDiff !== 0) return sectionDiff
+        return streamOrder(a._slideIdx) - streamOrder(b._slideIdx)
       })
+      .map((slide: any, index: number) => ({ ...slide, index }))
     ;(task as any)._pptSlideCursor = streamSlides.length
     pptPreview.value = {
       visible: true,
@@ -2061,7 +2118,7 @@ const openPresentationPlayer = message => {
     query: {
       url: message.previewUrl || '',
       id: pid,
-      title: message.filename || '动态课件',
+      title: message.filename || '学习视频',
       chat_group_id: chatGroupId
     }
   })
@@ -2096,7 +2153,7 @@ const fileTypeLabel = type => {
   if (normalizedType.includes('ppt')) return 'PPT 文件'
   if (normalizedType.includes('image')) return '图片'
   if (normalizedType === 'external_video') return '外部视频'
-  if (normalizedType.includes('video')) return '动态课件'
+  if (normalizedType.includes('video')) return '学习视频'
   if (normalizedType.includes('mind')) return '思维导图'
   if (normalizedType.includes('txt')) return 'TXT 文档'
   if (normalizedType.includes('document')) return '学习文档'
@@ -2274,14 +2331,14 @@ const handleConfirmAnswers = async (message) => {
   message.answered = true
 
   // 保存 Q&A 到聊天历史（通过 presentation/question-answers 不需要额外接口）
-  // 直接把追问消息替换为"正在生成课件..."的过渡消息
+  // 直接把追问消息替换为"正在生成视频..."的过渡消息
   const idx = messages.value.findIndex(m => m.id === message.id)
   if (idx >= 0) {
     messages.value.splice(idx, 1, {
       id: message.id,
       role: 'assistant',
       type: 'text',
-      content: '正在根据你的选择生成课件...',
+      content: '正在根据你的选择生成视频...',
       time: getNowTime()
     })
   }
@@ -2340,7 +2397,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
   let doneHandled = false
 
   watch(
-    () => [task.progress, task.thinkingProcess, task.status, task.files.length, task.images.length, task.updatedAt, (task as any)._pptStream?.slides?.length, (task as any)._pptStream?._needsRebuild],
+    () => [task.progress, task.thinkingProcess, task.status, task.files.length, task.images.length, task.updatedAt, (task as any)._pptStream?.slides?.length, (task as any)._pptStream?._version, (task as any)._pptStream?._needsRebuild],
     async () => {
       // 任务是否属于当前显示的对话：chatGroupId 未分配或未匹配时视为外来任务
       const taskChatId = task.chatGroupId
@@ -2403,7 +2460,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             role: 'assistant',
             type: 'file',
             fileType: 'ppt',
-            filename: task.tool?.label || task.text?.slice(0, 30) || 'PPT 课件',
+            filename: task.tool?.label || task.text?.slice(0, 30) || 'PPT 视频',
             _generating: true,
             _taskId: task.id,
             time: getNowTime()
@@ -2423,27 +2480,20 @@ const attachGenerationTaskToMessage = (task, messageId) => {
           // 审核后有章节被替换 → 用当前全部幻灯片重建预览
           if ((pptStream as any)._needsRebuild) {
             ;(pptStream as any)._needsRebuild = false
-            const allSlides = pptStream.slides.map((s: any, i: number) => {
-              const raw = typeof s === 'object' ? s.content : s
-              const slide = parseSingleSlide(raw)
-              return { ...slide, index: i }
-            })
+            const allSlides = sortPptStreamSlides(pptStream.slides)
+              .map((s: any, i: number) => normalizeStreamSlide(s, i))
             pptPreview.value = { ...pptPreview.value, loading: false, slides: allSlides }
             ;(task as any)._pptSlideCursor = pptStream.slides.length
           } else {
             const streamedCount = (task as any)._pptSlideCursor || 0
             if (streamedCount < pptStream.slides.length) {
               ;(task as any)._pptSlideCursor = pptStream.slides.length
-              const baseIdx = pptPreview.value.slides.length
-              const newSlides = pptStream.slides.slice(streamedCount).map((s: any, i: number) => {
-                const raw = typeof s === 'object' ? s.content : s
-                const slide = parseSingleSlide(raw)
-                return { ...slide, index: baseIdx + i }
-              })
+              const newSlides = sortPptStreamSlides(pptStream.slides)
+                .map((s: any, i: number) => normalizeStreamSlide(s, i))
               pptPreview.value = {
                 ...pptPreview.value,
                 loading: false,
-                slides: [...pptPreview.value.slides, ...newSlides]
+                slides: newSlides
               }
             }
           }
@@ -2728,14 +2778,30 @@ const sendMessage = async () => {
       onStreamStart: async eventData => {
         // PPT 生成开始时不自动打开预览，等用户点击文件卡片里的“预览”。
       },
+      onStreamSlideStart: async eventData => {
+        if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: false,
+            slides: upsertPreviewStreamSlide({ ...eventData, content: '' })
+          }
+        }
+      },
+      onStreamSlideDelta: async eventData => {
+        if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
+          pptPreview.value = {
+            ...pptPreview.value,
+            loading: false,
+            slides: upsertPreviewStreamSlide(eventData, { appendDelta: true })
+          }
+        }
+      },
       onStreamSlide: async eventData => {
         if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
-          const slide = parseSingleSlide(eventData?.content || '')
-          const idx = pptPreview.value.slides.length
           pptPreview.value = {
             ...pptPreview.value,
             loading: pptPreview.value.slides.length === 0,
-            slides: [...pptPreview.value.slides, { ...slide, index: idx, _sectionIdx: eventData.section_idx }]
+            slides: upsertPreviewStreamSlide(eventData)
           }
           scrollToBottom()
         }
@@ -2887,9 +2953,9 @@ const openConversation = async (conversationId) => {
     try {
       const presResult = await getPresentations()
       const presList = normalizeList(presResult)
-      console.log('[ChatView] 已生成课件:', presList.length, '条', presList.map(p => ({ id: p.id, topic: p.topic, file_url: p.file_url })))
+      console.log('[ChatView] 已生成视频:', presList.length, '条', presList.map(p => ({ id: p.id, topic: p.topic, file_url: p.file_url })))
     } catch (e) {
-      console.error('[ChatView] 获取课件列表失败:', e)
+      console.error('[ChatView] 获取视频列表失败:', e)
     }
     await appendPresentationCardsFromHistory(records, messages.value)
     await hydrateGenerationTasks().catch(error => {

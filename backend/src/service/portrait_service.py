@@ -265,6 +265,93 @@ class PortraitChatHistory_Service:
         return data
 
 
+    @staticmethod
+    async def init_from_dialogue(user_id: int, dialogue: list[dict]) -> dict:
+        """通过多轮问答对话让 LLM 提取并初始化用户画像"""
+        user = await User.filter(id=user_id).first()
+        if not user:
+            raise ValueError("用户不存在")
+
+        picture = await user.picture
+        if not picture:
+            picture = await User_picture.create()
+            user.picture = picture
+            await user.save()
+
+        # 格式化对话文本
+        lines = []
+        for i, turn in enumerate(dialogue):
+            q = turn.get("question", "").strip()
+            a = turn.get("answer", "").strip()
+            if q:
+                lines.append(f"AI 第{i+1}问：{q}")
+            if a:
+                lines.append(f"用户回答：{a}")
+        dialogue_text = "\n".join(lines)
+
+        if not dialogue_text.strip():
+            raise ValueError("对话内容为空，无法提取画像")
+
+        from backend.src.ai_core.llm_config import llm
+        from backend.src.utils.prompt_loader import load_prompt, fill_prompt
+        from backend.src.utils.json_parser import parse_llm_json
+
+        template = load_prompt("portrait/init_from_dialogue")
+        prompt = fill_prompt(template, dialogue_text=dialogue_text)
+
+        try:
+            response = await llm.ainvoke(prompt)
+            result = parse_llm_json(response.content.strip())
+        except Exception:
+            logger.exception("对话画像提取 LLM 调用失败 user_id=%s", user_id)
+            raise RuntimeError("画像分析失败，请稍后重试")
+
+        if not result or not isinstance(result, dict):
+            logger.warning("对话画像提取无有效返回 user_id=%s", user_id)
+            raise RuntimeError("画像分析无结果")
+
+        cognition = result.get("cognition", "") or ""
+        learning_goal = result.get("learning_goal", "") or ""
+        tags = result.get("personality_tags") or []
+
+        # 只写非空值
+        if cognition:
+            picture.cognition = cognition
+        if learning_goal:
+            picture.learning_goal = learning_goal
+        if isinstance(tags, list) and tags:
+            import json
+            picture.personality_tags = json.dumps(tags, ensure_ascii=False)
+
+        # 同步写入 traits 的 interest 维度（如果有对话提取的兴趣信息）
+        traits = parse_traits(picture.traits)
+        if tags:
+            traits["interest"] = build_trait_entry(
+                "、".join(tags[:3]), "user_stated", traits.get("interest")
+            )
+
+            # 从标签中推断 strengths
+            ability_keywords = ["逻辑", "分析", "表达", "动手", "创意", "记忆", "专注", "思维"]
+            strength_tags = [t for t in tags if any(kw in t for kw in ability_keywords)]
+            if strength_tags:
+                traits["strengths"] = build_trait_entry(
+                    "、".join(strength_tags), "user_stated", traits.get("strengths")
+                )
+
+        picture.traits = dump_traits(traits)
+        await picture.save()
+
+        logger.info("对话画像初始化成功 user_id=%s cognition=%s goal=%s tags=%s",
+                     user_id, cognition, learning_goal, tags)
+
+        return {
+            "cognition": picture.cognition,
+            "learning_goal": picture.learning_goal,
+            "personality_tags": picture.personality_tags,
+            "traits": parse_traits(picture.traits),
+        }
+
+
 # ═══════════════════════════════════════
 #  六维雷达 Service
 # ═══════════════════════════════════════

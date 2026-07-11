@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { deleteConversation, getConversationList, getConversationMessages, resolveApiUrl, streamChatMessage } from "../api/apis";
+import { deleteConversation, getConversationList, getConversationMessages, initPortraitFromDialogue, resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
 import { useVoiceInput } from "../composables/useVoiceInput";
@@ -334,6 +334,10 @@ const createNewPetChat = () => {
   chatInput.value = "";
   chatError.value = "";
   historyOpen.value = false;
+  portraitQAMode.value = false;
+  portraitQAStep.value = 0;
+  portraitQAAnswers.value = [];
+  portraitQASaving.value = false;
 };
 
 const scrollPetMessagesToBottom = async () => {
@@ -488,6 +492,100 @@ const closePetQuizPreview = () => {
   };
 };
 
+// ── 画像问答 onboarding ──
+const PORTRAIT_QUESTIONS = [
+  "你好呀！很高兴认识你！🎉 我想先了解一下你，这样以后可以给你更合适的学习建议和资源~ 先说说你平时有什么兴趣爱好吧？比如喜欢做什么事情？",
+  "那你学习的时候，是更喜欢自己安安静静看书、听老师或视频讲解、还是动手做实验/练习题呀？",
+  "你现在学习主要是为了什么呢？比如准备考试、参加竞赛、考个证书、纯粹兴趣学习，还是为了找工作？",
+  "你觉得自己在学习上有什么特点或者擅长的方面吗？比如逻辑分析能力特别强、记忆力好、还是想象力丰富、动手能力强？",
+  "最后一个问题~ 你平时会做学习计划吗？是那种自律性很强的类型，还是随性一点想学就学？",
+];
+
+const portraitQAMode = ref(false);
+const portraitQAStep = ref(0);
+const portraitQAAnswers = ref<string[]>([]);
+const portraitQASaving = ref(false);
+
+const startPortraitQA = () => {
+  portraitQAMode.value = true;
+  portraitQAStep.value = 0;
+  portraitQAAnswers.value = [];
+  portraitQASaving.value = false;
+
+  emit("update:modelValue", true);
+  chatExpanded.value = true;
+  emit("update:expanded", true);
+
+  petMessages.value = [
+    {
+      id: `portrait-welcome-${Date.now()}`,
+      role: "assistant",
+      content: "初次见面，我来问你几个小问题，这样以后可以给你更贴心的学习建议！😊",
+    },
+  ];
+
+  window.setTimeout(() => sendNextPortraitQuestion(), 1200);
+};
+
+const sendNextPortraitQuestion = () => {
+  if (portraitQAStep.value >= PORTRAIT_QUESTIONS.length) {
+    void finishPortraitQA();
+    return;
+  }
+  petMessages.value.push({
+    id: `portrait-q-${portraitQAStep.value}-${Date.now()}`,
+    role: "assistant",
+    content: PORTRAIT_QUESTIONS[portraitQAStep.value],
+  });
+  void scrollPetMessagesToBottom();
+};
+
+const handlePortraitAnswer = async (answer: string) => {
+  portraitQAAnswers.value.push(answer);
+  portraitQAStep.value++;
+
+  if (portraitQAStep.value < PORTRAIT_QUESTIONS.length) {
+    window.setTimeout(() => sendNextPortraitQuestion(), 800);
+  } else {
+    await finishPortraitQA();
+  }
+};
+
+const finishPortraitQA = async () => {
+  if (portraitQASaving.value) return;
+  portraitQASaving.value = true;
+  chatLoading.value = true;
+  emit("update:loading", true);
+
+  try {
+    const dialogue = PORTRAIT_QUESTIONS.map((q, i) => ({
+      question: q,
+      answer: portraitQAAnswers.value[i] || "",
+    }));
+
+    await initPortraitFromDialogue({ dialogue });
+
+    petMessages.value.push({
+      id: `portrait-done-${Date.now()}`,
+      role: "assistant",
+      content: "太好了，我现在对你有了一些了解！以后多和我聊天，我会越来越了解你，给你更好的学习建议哦~ 🎉",
+    });
+  } catch (err: any) {
+    console.error("[PetChat] 画像保存失败:", err);
+    petMessages.value.push({
+      id: `portrait-error-${Date.now()}`,
+      role: "assistant",
+      content: "抱歉，保存时出了一点问题，不过别担心，我们以后可以在聊天中慢慢相互了解！",
+    });
+  } finally {
+    portraitQAMode.value = false;
+    portraitQASaving.value = false;
+    chatLoading.value = false;
+    emit("update:loading", false);
+    void scrollPetMessagesToBottom();
+  }
+};
+
 const getPetCenterSaveLabel = (message: PetChatMessage) => {
   if (message.centerSaveStatus === "saving") return "保存中...";
   if (message.centerSaveStatus === "saved") return "已存入资源中心";
@@ -552,6 +650,16 @@ const savePetQuizToResources = async (message: PetChatMessage) => {
 const sendPetMessage = async () => {
   const text = chatInput.value.trim();
   if (!text || chatLoading.value || isVoiceTranscribing.value) return;
+
+  // 画像问答模式：本地处理回答，不走 AI 对话
+  if (portraitQAMode.value && !portraitQASaving.value) {
+    petMessages.value.push({ id: `user-${Date.now()}`, role: "user", content: text });
+    chatInput.value = "";
+    chatError.value = "";
+    void scrollPetMessagesToBottom();
+    await handlePortraitAnswer(text);
+    return;
+  }
 
   const contextPrefix = buildContextPrefix()
   const aiMessage = contextPrefix ? `${contextPrefix}\n\n用户问题：${text}` : text
@@ -730,6 +838,11 @@ const closeChat = () => {
   chatError.value = "";
   petChatGroupId.value = null;
   petMessages.value = [createWelcomeMessage()];
+  // 重置画像问答状态
+  portraitQAMode.value = false;
+  portraitQAStep.value = 0;
+  portraitQAAnswers.value = [];
+  portraitQASaving.value = false;
 };
 
 const handleChatEnter = (event: KeyboardEvent) => {
@@ -746,6 +859,11 @@ watch(
       void loadPetHistory();
     } else {
       historyOpen.value = false;
+      // 外部关闭时重置画像问答状态
+      portraitQAMode.value = false;
+      portraitQAStep.value = 0;
+      portraitQAAnswers.value = [];
+      portraitQASaving.value = false;
     }
   },
   { immediate: true },
@@ -753,11 +871,13 @@ watch(
 
 onMounted(() => {
   window.addEventListener("zhiban-quiz-context", handleQuizContext)
+  window.addEventListener("zhiban-start-portrait-qa", startPortraitQA)
 })
 
 onUnmounted(() => {
   stopVoiceInput()
   window.removeEventListener("zhiban-quiz-context", handleQuizContext)
+  window.removeEventListener("zhiban-start-portrait-qa", startPortraitQA)
 })
 </script>
 
