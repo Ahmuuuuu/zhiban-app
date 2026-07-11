@@ -395,6 +395,7 @@
               @create-note="createPptPreviewAnnotation($event)"
               @update-note="(id, payload) => updatePptPreviewAnnotation(id, payload)"
               @delete-note="deletePptPreviewAnnotation($event)"
+              @advanced-edit="openPptistAdvancedEditor"
               @export-pptx="exportChatPptx"
             />
             <div v-else class="ppt-dialog__loading">暂无可预览的幻灯片内容。</div>
@@ -566,6 +567,7 @@ import petHeroImage from '../assets/pic/zhiban-pet-base.png'
 import { getQuizSet, looksLikeQuizContent, upsertQuizSet } from '../utils/quizBank'
 import { saveGeneratedResourceRef } from '../utils/savedResources'
 import { renderMath } from '../utils/renderMath'
+import { openPptistEditor, toPptistPayload } from '../utils/pptistAdapter'
 import 'katex/dist/katex.min.css'
 
 const showHistoryPanel = ref(false)
@@ -2386,6 +2388,27 @@ const getDownloadName = message => {
 
 const getPptxExportName = title => {
   return normalizeFileName(fileTitleWithoutExtension(title || 'edited-presentation'), 'ppt')
+}
+
+const openPptistAdvancedEditor = slides => {
+  const currentSlides = Array.isArray(slides) && slides.length ? slides : pptPreview.value.slides
+  if (!currentSlides?.length) {
+    window.alert('暂无可编辑的 PPT 内容。')
+    return
+  }
+
+  const payload = toPptistPayload({
+    title: fileTitleWithoutExtension(pptPreview.value.title || 'Zhiban PPT'),
+    slides: currentSlides,
+    themeId: pptPreview.value.themeId || pptGenThemeId.value
+  })
+
+  if (!payload.slides.length) {
+    window.alert('当前 PPT 内容为空，暂时无法打开高级编辑。')
+    return
+  }
+
+  openPptistEditor(payload)
 }
 
 const exportChatPptx = async slides => {

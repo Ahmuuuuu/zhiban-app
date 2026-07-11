@@ -1,6 +1,8 @@
 import axios from 'axios'
 
 export const DEFAULT_API_BASE_URL = ''
+const rawApiBaseURL = import.meta.env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL
+export const apiBaseURL = rawApiBaseURL.replace(/\/+$/, '')
 
 export const isBackendUnavailableError = error => {
   const status = Number(error?.response?.status || error?.status || 0)

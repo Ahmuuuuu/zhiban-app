@@ -56,6 +56,9 @@
       <button v-if="editable" class="edit-toggle" type="button" @click="$emit('update:editing', !editing)">
         {{ editing ? '完成编辑' : '编辑内容' }}
       </button>
+      <button v-if="editable" class="advanced-edit-btn" type="button" @click="$emit('advanced-edit')">
+        高级编辑
+      </button>
       <button v-if="editable && editing" class="history-btn" type="button" :disabled="!canUndo" @click="$emit('undo')">
         上一步
       </button>
@@ -141,6 +144,7 @@ defineEmits([
   'update:editing',
   'undo',
   'redo',
+  'advanced-edit',
   'export'
 ])
 </script>
@@ -180,6 +184,7 @@ defineEmits([
 }
 
 .edit-toggle,
+.advanced-edit-btn,
 .highlight-toggle,
 .note-toggle,
 .nav-btn,
@@ -231,6 +236,12 @@ defineEmits([
 
 .edit-toggle {
   border-color: rgba(22, 63, 143, 0.9);
+}
+
+.advanced-edit-btn {
+  border-color: rgba(22, 63, 143, 0.5);
+  background: #ffffff;
+  color: #163f8f;
 }
 
 .highlight-toggle {
