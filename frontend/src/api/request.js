@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const request = axios.create({
-  baseURL: 'http://localhost:2221',
+  baseURL: 'https://compel-dividable-unfasten.ngrok-free.dev',
   timeout: 300000
 })
 

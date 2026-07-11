@@ -7,6 +7,7 @@
     :exporting="exporting"
     :annotatable="annotatable"
     :annotations="annotations"
+    :theme-id="themeId"
     @change="$emit('change', $event)"
     @export-pptx="$emit('export-pptx', $event)"
     @create-note="$emit('create-note', $event)"
@@ -43,6 +44,10 @@ const props = defineProps({
   annotations: {
     type: Array,
     default: () => []
+  },
+  themeId: {
+    type: String,
+    default: ''
   }
 })
 

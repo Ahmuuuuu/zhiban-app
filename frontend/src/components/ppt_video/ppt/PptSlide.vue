@@ -141,6 +141,7 @@ import PptSlideFormula from './PptSlideFormula.vue'
 import PptSlideProcess from './PptSlideProcess.vue'
 import { selectCustomPptAssets } from './pptAssets'
 import { renderMath } from '../../../utils/renderMath'
+import { getThemeById } from '../../../data/pptThemes'
 
 const props = defineProps({
   slide: {
@@ -178,6 +179,10 @@ const props = defineProps({
   slideIndex: {
     type: Number,
     default: 0
+  },
+  themeId: {
+    type: String,
+    default: ''
   }
 })
 
@@ -236,6 +241,11 @@ const visualGlyph = visual => {
 }
 
 const slidePalette = slide => {
+  // Use selected theme from template picker
+  if (props.themeId) {
+    const theme = getThemeById(props.themeId)
+    if (theme) return theme.palette
+  }
   if (Array.isArray(slide?.palette) && slide.palette.length >= 4) return slide.palette
   return themePalettes[slide?.theme] || themePalettes.academic_blue
 }

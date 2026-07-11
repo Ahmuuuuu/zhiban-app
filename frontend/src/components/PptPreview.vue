@@ -32,6 +32,7 @@
       :style-source="styleSource"
       :annotations="currentSlideAnnotations"
       :slide-index="activeIndex"
+      :theme-id="themeId"
       @update-field="updateSlideField"
       @select-text="handleTextSelection"
       @open-annotation="openAnnotation"
@@ -115,6 +116,10 @@ const props = defineProps({
   annotations: {
     type: Array,
     default: () => []
+  },
+  themeId: {
+    type: String,
+    default: ''
   }
 })
 
