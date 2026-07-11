@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const request = axios.create({
-  baseURL: 'http://10.198.169.72:2221',
+  baseURL: 'http://localhost:2221',
   timeout: 300000
 })
 
@@ -32,6 +32,9 @@ const notifyAuthExpired = () => {
 
 request.interceptors.request.use(
   config => {
+    config.headers = config.headers || {}
+    config.headers['ngrok-skip-browser-warning'] = 'true'
+
     const token = localStorage.getItem('token')
     const publicUrls = ['/user/create_user', '/user/login_user', '/user/send_email_code', '/user/register_by_email', '/user/login_by_email']
 
