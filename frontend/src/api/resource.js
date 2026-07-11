@@ -1,16 +1,21 @@
 import request from './request'
 import { API_BASE_URL, parseStreamEvent, requestFirstAvailable, resolveApiUrl } from './config'
 
+const buildFetchHeaders = (extra = {}) => {
+  const token = localStorage.getItem('token')
+  return {
+    'ngrok-skip-browser-warning': 'true',
+    ...(token ? { token } : {}),
+    ...extra
+  }
+}
+
 export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide, onStreamSlideStart, onStreamSlideDelta, onStreamSlideDone, onStreamSectionReplace, onThinking } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
-  const token = localStorage.getItem('token')
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { token } : {})
-    },
+    headers: buildFetchHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       topic: data.topic,
       resource_types: data.resource_types,
@@ -194,10 +199,7 @@ export async function exportEditedPptx(resourceId, data = {}) {
   const href = targetUrl.toString()
   const response = await fetch(href, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { token } : {})
-    },
+    headers: buildFetchHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       title: data.title || '',
       slides: Array.isArray(data.slides) ? data.slides : []
@@ -245,16 +247,16 @@ export function getResourceGenerationTasks() {
 }
 
 export async function streamResourceGenerationTask(taskId, { onEvent, onDone, onError } = {}) {
-  const token = localStorage.getItem('token')
   const url = `${API_BASE_URL}resource/generate/task/${encodeURIComponent(taskId)}/stream`
   const response = await fetch(url, {
-    headers: {
-      ...(token ? { token } : {})
-    }
+    headers: buildFetchHeaders()
   })
 
   if (!response.ok || !response.body) {
-    throw new Error(`任务日志订阅失败：${response.status}`)
+    const error = new Error(`任务日志订阅失败：${response.status}`)
+    error.status = response.status
+    error.response = { status: response.status }
+    throw error
   }
 
   const reader = response.body.getReader()

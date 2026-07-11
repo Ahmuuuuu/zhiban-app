@@ -275,8 +275,17 @@
           v-if="message.thinkingProcess"
           class="thinking-process"
         >
-          <span>思考过程</span>
-          <p>{{ message.thinkingProcess }}</p>
+          <div class="thinking-process__head">
+            <span>思考过程</span>
+            <button
+              v-if="hasLongThinkingProcess(message.thinkingProcess)"
+              type="button"
+              @click="toggleThinkingExpanded(message.id)"
+            >
+              {{ isThinkingExpanded(message.id) ? '收起' : '展开' }}
+            </button>
+          </div>
+          <p>{{ visibleThinkingProcess(message) }}</p>
         </div>
 
         <div class="message-time">
@@ -379,6 +388,7 @@
               v-model:slides="pptPreview.slides"
               :title="pptPreview.title"
               :exporting="pptPreview.exporting"
+              :follow-latest="Boolean(pptPreview.followLatest)"
               :annotatable="Boolean(pptPreview.resourceId)"
               :annotations="pptPreview.annotations || []"
               @create-note="createPptPreviewAnnotation($event)"
@@ -518,6 +528,7 @@ import {
   getConversationMessages,
   getGeneratedResource,
   getPresentations,
+  isBackendUnavailableError,
   resolveApiUrl,
   updateResourceAnnotation
 } from '../api/apis'
@@ -831,7 +842,6 @@ const isVideoHistoryRecord = record => {
 const appendPresentationCardsFromHistory = async (records, targetMessages) => {
   try {
     const presentations = normalizeList(await getPresentations())
-    console.log('[ChatView] 已生成的视频列表:', presentations.map(p => ({ id: p.id, topic: p.topic, hasFileUrl: !!p.file_url })))
     if (!presentations.length) return
 
     const existingUrls = new Set(targetMessages.map(message => message.previewUrl).filter(Boolean))
@@ -894,6 +904,7 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
       }
     }
   } catch (error) {
+    if (isBackendUnavailableError(error)) return
     console.warn('[ChatView] load presentations for history failed:', error)
   }
 }
@@ -1147,6 +1158,7 @@ const getNowTime = () => {
 
 // 初始空状态展示草图里的学习资源引导
 const messages = ref([])
+const expandedThinkingMessageIds = ref(new Set())
 const pptPreview = ref({
   visible: false,
   loading: false,
@@ -1154,8 +1166,26 @@ const pptPreview = ref({
   resourceId: '',
   title: '',
   slides: [],
-  annotations: []
+  annotations: [],
+  followLatest: false
 })
+
+const thinkingLines = value => String(value || '').split(/\r?\n/)
+const hasLongThinkingProcess = value => thinkingLines(value).length > 5
+const isThinkingExpanded = messageId => expandedThinkingMessageIds.value.has(String(messageId))
+const visibleThinkingProcess = message => {
+  const text = String(message?.thinkingProcess || '')
+  if (isThinkingExpanded(message?.id)) return text
+  const lines = thinkingLines(text)
+  return lines.length > 5 ? lines.slice(-5).join('\n') : text
+}
+const toggleThinkingExpanded = messageId => {
+  const next = new Set(expandedThinkingMessageIds.value)
+  const key = String(messageId)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedThinkingMessageIds.value = next
+}
 
 const documentPreview = ref({
   visible: false,
@@ -1538,6 +1568,40 @@ const upsertPreviewStreamSlide = (source, { appendDelta = false } = {}) => {
   return sortPptStreamSlides(baseSlides).map((item, index) => ({ ...item, index }))
 }
 
+const normalizePptStreamSlides = pptStream => {
+  return sortPptStreamSlides(pptStream?.slides || [])
+    .map((s: any, i: number) => normalizeStreamSlide(s, i))
+}
+
+const openStreamingPptPreview = (task, messageId, title = 'PPT 预览') => {
+  const slides = normalizePptStreamSlides((task as any)?._pptStream)
+    .map((slide: any, index: number) => ({ ...slide, index }))
+  ;(task as any)._pptSlideCursor = slides.length
+  pptPreview.value = {
+    visible: true,
+    loading: false,
+    messageId,
+    resourceId: '',
+    title,
+    slides,
+    annotations: [],
+    followLatest: true
+  }
+}
+
+const isPptGenerationTask = task => {
+  return task?.tool?.generateMode !== 'video' && task?.tool?.resourceTypes?.includes('ppt')
+}
+
+const formatPptStreamPlainContent = (pptStream, task) => {
+  const slides = sortPptStreamSlides(pptStream?.slides || [])
+    .map(slide => String(typeof slide === 'object' ? slide.content : slide || '').trim())
+    .filter(Boolean)
+  const title = task?.status === 'done' ? 'PPT 内容已生成，可以在下方打开预览。' : '正在生成 PPT 内容...'
+  if (!slides.length) return title
+  return `${title}\n\n${slides.join('\n\n---\n\n')}`
+}
+
 const parsePptSlidesFromContent = content => {
   const text = String(content || '').trim()
   if (!text) return []
@@ -1637,7 +1701,8 @@ const openPptPreview = async message => {
       resourceId: '',
       title: message.filename || 'PPT 预览',
       slides: streamSlides,
-      annotations: []
+      annotations: [],
+      followLatest: true
     }
     return
   }
@@ -1649,7 +1714,8 @@ const openPptPreview = async message => {
     resourceId,
     title: message.filename || 'PPT 预览',
     slides: message.slides || [],
-    annotations: message.annotations || []
+    annotations: message.annotations || [],
+    followLatest: false
   }
 
   try {
@@ -1661,7 +1727,8 @@ const openPptPreview = async message => {
       ...pptPreview.value,
       loading: false,
       slides: slides || [],
-      annotations
+      annotations,
+      followLatest: false
     }
   } catch (err) {
     console.error('[ChatView] load ppt preview failed:', err)
@@ -1669,7 +1736,8 @@ const openPptPreview = async message => {
       ...pptPreview.value,
       loading: false,
       slides: parsePptSlidesFromContent(message.content),
-      annotations: message.annotations || []
+      annotations: message.annotations || [],
+      followLatest: false
     }
   }
 }
@@ -1682,7 +1750,8 @@ const closePptPreview = () => {
     resourceId: '',
     title: '',
     slides: [],
-    annotations: []
+    annotations: [],
+    followLatest: false
   }
 }
 
@@ -1872,6 +1941,48 @@ const appendFileMessage = async fileData => {
   return { index: fallbackIndex, isNew: false }
 }
 
+const buildPresentationFileFromTask = task => {
+  if (task?.tool?.generateMode !== 'video') return null
+
+  const presentationFile = task.files?.find(file => {
+    const fileType = String(file?.file_type || file?.fileType || file?.resource_type || file?.resourceType || '').toLowerCase()
+    const resourceKind = String(file?.resourceKind || file?.kind || '').toLowerCase()
+    return resourceKind === 'presentation' ||
+      fileType === 'video' ||
+      Boolean(file?.presentation || file?.presentation_id || file?.presentationId || file?.presentation_url || file?.presentationUrl)
+  })
+  if (presentationFile) return presentationFile
+
+  const doneEvent = task.doneEvent || {}
+  const presentation = doneEvent.presentation
+  if (!presentation) return null
+
+  const presentationId = presentation.id || presentation.presentation_id || presentation.presentationId || ''
+  const fileUrl = presentation.file_url || presentation.fileUrl || presentation.preview_url || presentation.previewUrl || ''
+  if (!presentationId && !fileUrl) return null
+
+  return {
+    file_id: presentationId || fileUrl,
+    presentation_id: presentationId,
+    file_type: 'video',
+    resource_type: 'video',
+    resourceKind: 'presentation',
+    filename: `${presentation.topic || task.text || '学习视频'}.html`,
+    presentation,
+    preview_url: fileUrl,
+    file_url: fileUrl,
+    download_url: ''
+  }
+}
+
+const ensureVideoPresentationMessage = async task => {
+  const presentationFile = buildPresentationFileFromTask(task)
+  if (!presentationFile) return false
+
+  const result = await appendFileMessage(presentationFile)
+  return result.isNew
+}
+
 const normalizeImageFileMessage = imageData => {
   const imageId = imageData?.image_id || imageData?.imageId || imageData?.id || ''
   const imageUrl = resolveApiUrl(imageData?.url || imageData?.image_url || imageData?.imageUrl || '')
@@ -1891,7 +2002,7 @@ const normalizeImageFileMessage = imageData => {
 const findDuplicateFileIndex = (fileMessage) => {
   return messages.value.findIndex(item => {
     if (item.type !== 'file') return false
-    if (item.fileId && item.fileId === fileMessage.fileId) return true
+    if (item.fileId && fileMessage.fileId && String(item.fileId) === String(fileMessage.fileId)) return true
     if (fileMessage.previewUrl && item.previewUrl === fileMessage.previewUrl) return true
     if (fileMessage.downloadUrl && item.downloadUrl === fileMessage.downloadUrl) return true
     return false
@@ -2411,21 +2522,25 @@ const attachGenerationTaskToMessage = (task, messageId) => {
 
       if (!taskIsForeign) {
         const target = messages.value.find(item => item.id === messageId)
+        const pptStream = isPptGenerationTask(task) ? (task as any)._pptStream : null
 
         if (target) {
-          target.thinkingProcess = getTaskThinkingProcess(task)
+          target.thinkingProcess = pptStream
+            ? formatPptStreamPlainContent(pptStream, task)
+            : getTaskThinkingProcess(task)
           if (task.status === 'failed') {
             target.content = task.error || '资源生成失败，请稍后再试。'
           } else {
             target.content = task.files.length || task.images.length
               ? '资源已生成，可以在下方查看。'
-              : '正在生成资源...'
+              : (pptStream ? '正在生成 PPT 内容...' : '正在生成资源...')
           }
           target.time = getNowTime()
         }
 
         if (task.status === 'done' && task.tool?.generateMode === 'video') {
           await maybeGeneratePresentation(task)
+          await ensureVideoPresentationMessage(task)
           await loadConversationList()
         }
       }
@@ -2468,7 +2583,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         }
       }
 
-      // PPT 流式内容只缓存，不自动弹出预览；用户点击”预览”后才展示。
+      // PPT 流式内容：不自动弹出预览；只在用户手动打开预览时同步最新内容。
       if (!taskIsForeign) {
         const pptStream = (task as any)._pptStream
         const pptPlaceholderId = (task as any)._pptPlaceholderId || ''
@@ -2480,20 +2595,18 @@ const attachGenerationTaskToMessage = (task, messageId) => {
           // 审核后有章节被替换 → 用当前全部幻灯片重建预览
           if ((pptStream as any)._needsRebuild) {
             ;(pptStream as any)._needsRebuild = false
-            const allSlides = sortPptStreamSlides(pptStream.slides)
-              .map((s: any, i: number) => normalizeStreamSlide(s, i))
+            const allSlides = normalizePptStreamSlides(pptStream)
             pptPreview.value = { ...pptPreview.value, loading: false, slides: allSlides }
             ;(task as any)._pptSlideCursor = pptStream.slides.length
           } else {
-            const streamedCount = (task as any)._pptSlideCursor || 0
-            if (streamedCount < pptStream.slides.length) {
-              ;(task as any)._pptSlideCursor = pptStream.slides.length
-              const newSlides = sortPptStreamSlides(pptStream.slides)
-                .map((s: any, i: number) => normalizeStreamSlide(s, i))
+            const newSlides = normalizePptStreamSlides(pptStream)
+            if (newSlides.length) {
+              ;(task as any)._pptSlideCursor = newSlides.length
               pptPreview.value = {
                 ...pptPreview.value,
                 loading: false,
-                slides: newSlides
+                slides: newSlides,
+                followLatest: true
               }
             }
           }
@@ -2544,7 +2657,8 @@ const attachGenerationTaskToMessage = (task, messageId) => {
               loading: false,
               resourceId: resourceId || pptPreview.value.resourceId,
               slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
-              title: file.filename || pptPreview.value.title
+              title: file.filename || pptPreview.value.title,
+              followLatest: false
             }
           }
         }
@@ -2758,6 +2872,50 @@ const sendMessage = async () => {
     }
 
     let hasReceivedChunk = false
+    let hasPptStreamText = false
+    const pptTextStream = { slides: [] }
+
+    const ensurePptTextStream = async () => {
+      if (!target) return
+      if (!hasPptStreamText) {
+        target.content = '正在生成 PPT 内容...'
+        target.thinkingProcess = formatPptStreamPlainContent(pptTextStream, { status: 'running' })
+        target.time = getNowTime()
+        hasPptStreamText = true
+        hasReceivedChunk = true
+        await scrollToBottom()
+      }
+    }
+
+    const rebuildPptTextStream = async () => {
+      if (!target) return
+      target.thinkingProcess = formatPptStreamPlainContent(pptTextStream, { status: 'running' })
+      target.time = getNowTime()
+      await scrollToBottom()
+    }
+
+    const upsertPptTextSlide = (eventData, { appendDelta = false, content = undefined } = {}) => {
+      const sectionIdx = eventData?.section_idx
+      const slideIdx = eventData?.slide_idx
+      const existingIdx = findStreamSlideIndex(pptTextStream.slides, sectionIdx, slideIdx)
+      const existing = existingIdx >= 0 ? pptTextStream.slides[existingIdx] : null
+      const nextContent = appendDelta
+        ? `${existing?.content || ''}${eventData?.delta || ''}`
+        : String(content ?? eventData?.content ?? existing?.content ?? '')
+      const nextSlide = {
+        ...(existing || {}),
+        content: nextContent,
+        section_idx: sectionIdx,
+        slide_idx: slideIdx,
+        section_title: eventData?.section_title || existing?.section_title || '',
+      }
+      if (existingIdx >= 0) {
+        pptTextStream.slides[existingIdx] = nextSlide
+      } else {
+        pptTextStream.slides.push(nextSlide)
+      }
+      pptTextStream.slides = sortPptStreamSlides(pptTextStream.slides)
+    }
 
     await streamChatMessage({
       user_req: chatRequestText,
@@ -2776,46 +2934,43 @@ const sendMessage = async () => {
         await scrollToBottom()
       },
       onStreamStart: async eventData => {
-        // PPT 生成开始时不自动打开预览，等用户点击文件卡片里的“预览”。
+        if (eventData?.file_type === 'ppt') {
+          await ensurePptTextStream()
+        }
       },
       onStreamSlideStart: async eventData => {
-        if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
-          pptPreview.value = {
-            ...pptPreview.value,
-            loading: false,
-            slides: upsertPreviewStreamSlide({ ...eventData, content: '' })
-          }
+        if (eventData?.file_type === 'ppt') {
+          await ensurePptTextStream()
+          upsertPptTextSlide(eventData, { content: '' })
+          await rebuildPptTextStream()
         }
       },
       onStreamSlideDelta: async eventData => {
-        if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
-          pptPreview.value = {
-            ...pptPreview.value,
-            loading: false,
-            slides: upsertPreviewStreamSlide(eventData, { appendDelta: true })
-          }
+        if (eventData?.file_type === 'ppt') {
+          await ensurePptTextStream()
+          upsertPptTextSlide(eventData, { appendDelta: true })
+          await rebuildPptTextStream()
         }
       },
       onStreamSlide: async eventData => {
-        if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
-          pptPreview.value = {
-            ...pptPreview.value,
-            loading: pptPreview.value.slides.length === 0,
-            slides: upsertPreviewStreamSlide(eventData)
-          }
-          scrollToBottom()
+        if (eventData?.file_type === 'ppt') {
+          await ensurePptTextStream()
+          upsertPptTextSlide(eventData)
+          await rebuildPptTextStream()
         }
       },
       onStreamSectionReplace: async eventData => {
-        if (eventData?.file_type === 'ppt' && pptPreview.value.visible && pptPreview.value.messageId === loadingMessageId) {
-          pptPreview.value = {
-            ...pptPreview.value,
-            slides: pptPreview.value.slides.filter((s: any) => s._sectionIdx !== eventData.section_idx)
-          }
+        if (eventData?.file_type === 'ppt') {
+          await ensurePptTextStream()
+          pptTextStream.slides = pptTextStream.slides.filter(slide =>
+            streamOrder(slide?.section_idx) !== streamOrder(eventData.section_idx)
+          )
+          await rebuildPptTextStream()
         }
       },
       onThinking: async message => {
         if (!target) return
+        if (hasPptStreamText) return
         const thinking = formatThinkingProcess(message)
         if (!thinking) return
         target.thinkingProcess = thinking
@@ -2823,6 +2978,12 @@ const sendMessage = async () => {
         await scrollToBottom()
       },
       onFile: async fileData => {
+        if (target && hasPptStreamText && isPptFile(fileData)) {
+          target.content = 'PPT 已生成，可以在下方打开预览。'
+          target.thinkingProcess = formatPptStreamPlainContent(pptTextStream, { status: 'done' })
+          target.time = getNowTime()
+        }
+
         if (target && !hasReceivedChunk) {
           target.content = '已生成文件，可以在下方查看预览。'
           target.time = getNowTime()
@@ -2840,7 +3001,8 @@ const sendMessage = async () => {
             loading: false,
             resourceId: resourceId || pptPreview.value.resourceId,
             slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
-            title: fileData.filename || pptPreview.value.title
+            title: fileData.filename || pptPreview.value.title,
+            followLatest: false
           }
         }
 
@@ -2925,6 +3087,10 @@ const loadConversationList = async () => {
 
     recentChats.value = chatGroups
   } catch (error) {
+    if (isBackendUnavailableError(error)) {
+      console.warn('[ChatView] 后端暂时不可用，跳过刷新历史对话')
+      return
+    }
     console.error('获取历史对话失败：', error)
   }
 }
@@ -2949,14 +3115,6 @@ const openConversation = async (conversationId) => {
     const records = normalizeList(res)
 
     messages.value = buildMessagesFromHistory(records, conversationId)
-    // 诊断：检查 presentation 匹配
-    try {
-      const presResult = await getPresentations()
-      const presList = normalizeList(presResult)
-      console.log('[ChatView] 已生成视频:', presList.length, '条', presList.map(p => ({ id: p.id, topic: p.topic, file_url: p.file_url })))
-    } catch (e) {
-      console.error('[ChatView] 获取视频列表失败:', e)
-    }
     await appendPresentationCardsFromHistory(records, messages.value)
     await hydrateGenerationTasks().catch(error => {
       console.warn('[ChatView] restore generation tasks failed:', error)
@@ -3627,21 +3785,33 @@ watch(
   line-height: 1.55;
 }
 
-.thinking-process span {
-  display: block;
+.thinking-process__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 2px;
+}
+
+.thinking-process__head span {
   color: rgba(95, 143, 195, 0.86);
   font-size: 11px;
   font-weight: 900;
 }
 
+.thinking-process__head button {
+  border: 0;
+  background: transparent;
+  color: rgba(22, 63, 143, 0.82);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0;
+}
+
 .thinking-process p {
   margin: 0;
   white-space: pre-line;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-  overflow: hidden;
 }
 
 .user .message-time {

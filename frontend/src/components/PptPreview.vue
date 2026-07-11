@@ -14,8 +14,8 @@
       v-model:style-source="styleSource"
       :can-undo="canUndo"
       :can-redo="canRedo"
-      @previous="activeIndex -= 1"
-      @next="activeIndex += 1"
+      @previous="goPrevious"
+      @next="goNext"
       @toggle-tool="toggleAnnotationTool"
       @undo="undoEdit"
       @redo="redoEdit"
@@ -46,7 +46,7 @@
           type="button"
           :class="{ active: index === activeIndex }"
           :aria-label="`slide ${index + 1}`"
-          @click="activeIndex = index"
+          @click="selectSlide(index)"
         ></button>
       </div>
     </div>
@@ -120,6 +120,10 @@ const props = defineProps({
   themeId: {
     type: String,
     default: ''
+  },
+  followLatest: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -134,6 +138,7 @@ const localSlides = ref([])
 const undoStack = ref([])
 const redoStack = ref([])
 const skipNextSlideSync = ref(false)
+const userSelectedSlide = ref(false)
 const annotationEditor = reactive({
   visible: false,
   mode: 'create',
@@ -444,6 +449,26 @@ const currentExportSlides = () => localSlides.value.map(slide => ({
   speaker_notes: slide.notes
 }))
 
+const clampActiveIndex = value => {
+  const max = Math.max(localSlides.value.length - 1, 0)
+  return Math.min(Math.max(Number(value) || 0, 0), max)
+}
+
+const selectSlide = index => {
+  userSelectedSlide.value = true
+  activeIndex.value = clampActiveIndex(index)
+}
+
+const goPrevious = () => {
+  userSelectedSlide.value = true
+  activeIndex.value = clampActiveIndex(activeIndex.value - 1)
+}
+
+const goNext = () => {
+  userSelectedSlide.value = true
+  activeIndex.value = clampActiveIndex(activeIndex.value + 1)
+}
+
 const emitExport = () => {
   const slides = currentExportSlides()
   emit('update:slides', slides)
@@ -582,11 +607,23 @@ watch(
     }
     const previousLength = localSlides.value.length
     syncLocalSlides(slides)
-    if (previousLength !== localSlides.value.length) {
+    if (props.followLatest && !userSelectedSlide.value) {
+      activeIndex.value = Math.max(localSlides.value.length - 1, 0)
+    } else if (previousLength !== localSlides.value.length) {
       activeIndex.value = Math.min(activeIndex.value, Math.max(localSlides.value.length - 1, 0))
     }
     undoStack.value = []
     redoStack.value = []
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.followLatest,
+  value => {
+    if (!value) return
+    userSelectedSlide.value = false
+    activeIndex.value = Math.max(localSlides.value.length - 1, 0)
   },
   { immediate: true }
 )

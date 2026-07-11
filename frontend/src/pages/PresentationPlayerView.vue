@@ -50,13 +50,14 @@
 
         <audio
           ref="audioRef"
-          :src="activeAudioUrl"
+          :src="playableAudioUrl"
           preload="metadata"
           @loadedmetadata="syncAudioTime"
           @timeupdate="syncAudioTime"
           @play="handleAudioPlay"
           @pause="isPlaying = false"
           @ended="handleAudioEnded"
+          @error="handleAudioError"
         ></audio>
       </template>
 
@@ -296,6 +297,8 @@ const slides = computed(() => {
 
 const activeSlide = computed(() => slides.value[activeIndex.value] || null)
 const activeAudioUrl = computed(() => activeSlide.value?.audioUrl || '')
+const playableAudioUrl = ref('')
+let playableAudioObjectUrl = ''
 const videoBackgroundUrl = computed(() => selectVideoBackground({
   title: title.value,
   content: activeSlide.value?.summary || ''
@@ -468,13 +471,69 @@ const prepareLessonHtml = (html, url) => {
 const loadLessonHtml = async () => {
   if (!activePresentationUrl.value || slides.value.length) return
   try {
-    const response = await fetch(appendFrameVersion(activePresentationUrl.value))
+    const token = localStorage.getItem('token')
+    const response = await fetch(appendFrameVersion(activePresentationUrl.value), {
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+        ...(token ? { token } : {})
+      }
+    })
     if (!response.ok) throw new Error(`HTML load failed: ${response.status}`)
     const html = await response.text()
     lessonHtml.value = prepareLessonHtml(html, activePresentationUrl.value)
   } catch (error) {
     console.warn('[VideoPlayer] load html as srcdoc failed, fallback to iframe src:', error)
     lessonHtml.value = ''
+  }
+}
+
+const clearPlayableAudioUrl = () => {
+  if (playableAudioObjectUrl) {
+    URL.revokeObjectURL(playableAudioObjectUrl)
+    playableAudioObjectUrl = ''
+  }
+  playableAudioUrl.value = ''
+}
+
+const loadPlayableAudio = async url => {
+  clearPlayableAudioUrl()
+  if (!url) return
+
+  const expectedUrl = url
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch(url, {
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+        ...(token ? { token } : {})
+      }
+    })
+    if (!response.ok) throw new Error(`Audio load failed: ${response.status}`)
+
+    const contentType = response.headers.get('content-type') || ''
+    if (contentType && !/audio|mpeg|octet-stream/i.test(contentType)) {
+      throw new Error(`Unexpected audio content-type: ${contentType}`)
+    }
+
+    const blob = await response.blob()
+    if (activeAudioUrl.value !== expectedUrl) return
+    playableAudioObjectUrl = URL.createObjectURL(blob)
+    playableAudioUrl.value = playableAudioObjectUrl
+    await nextTick()
+    syncAudioTime()
+    if (isPlaying.value) {
+      window.clearInterval(silentPlaybackTimer)
+      silentPlaybackTimer = 0
+      audioRef.value?.play?.().catch(error => {
+        console.warn('[VideoPlayer] blob audio play failed:', error)
+        startSilentPlayback()
+      })
+    }
+  } catch (error) {
+    console.warn('[VideoPlayer] audio fetch failed, fallback to direct src:', error)
+    if (activeAudioUrl.value === expectedUrl) {
+      playableAudioUrl.value = expectedUrl
+    }
   }
 }
 
@@ -497,6 +556,27 @@ const handleAudioPlay = () => {
   isPlaying.value = true
 }
 
+const startSilentPlayback = () => {
+  hasStarted.value = true
+  isPlaying.value = true
+  window.clearInterval(silentPlaybackTimer)
+  silentPlaybackTimer = window.setInterval(() => {
+    const nextTime = currentTime.value + 0.25
+    const currentDuration = getSlideDuration(activeSlide.value)
+    if (nextTime >= currentDuration) {
+      currentTime.value = currentDuration
+      handleAudioEnded()
+      return
+    }
+    currentTime.value = nextTime
+  }, 250)
+}
+
+const handleAudioError = () => {
+  console.warn('[VideoPlayer] audio load failed, fallback to silent timeline:', activeAudioUrl.value)
+  if (isPlaying.value || hasStarted.value) startSilentPlayback()
+}
+
 const handleAudioEnded = () => {
   isPlaying.value = false
   syncAudioTime()
@@ -505,32 +585,28 @@ const handleAudioEnded = () => {
 
 const togglePlay = async () => {
   hasStarted.value = true
-  if (!audioRef.value || !activeAudioUrl.value) {
-    isPlaying.value = !isPlaying.value
-    window.clearInterval(silentPlaybackTimer)
-    silentPlaybackTimer = 0
+  if (!audioRef.value || !activeAudioUrl.value || !playableAudioUrl.value) {
     if (isPlaying.value) {
-      silentPlaybackTimer = window.setInterval(() => {
-        const nextTime = currentTime.value + 0.25
-        const currentDuration = getSlideDuration(activeSlide.value)
-        if (nextTime >= currentDuration) {
-          currentTime.value = currentDuration
-          handleAudioEnded()
-          return
-        }
-        currentTime.value = nextTime
-      }, 250)
+      window.clearInterval(silentPlaybackTimer)
+      silentPlaybackTimer = 0
+      isPlaying.value = false
+    } else {
+      startSilentPlayback()
     }
     return
   }
   if (isPlaying.value) {
+    window.clearInterval(silentPlaybackTimer)
+    silentPlaybackTimer = 0
     audioRef.value.pause()
+    isPlaying.value = false
     return
   }
   try {
     await audioRef.value.play()
   } catch (error) {
     console.warn('[VideoPlayer] audio play failed:', error)
+    startSilentPlayback()
   }
 }
 
@@ -587,6 +663,7 @@ const refreshPresentationStatus = async () => {
     presentationStatus.value = data.status || 'ready'
     if (data.file_url || data.fileUrl) {
       activePresentationUrl.value = resolveApiUrl(data.file_url || data.fileUrl)
+      loadLessonHtml()
     }
     if (Array.isArray(data.chapters)) {
       presentationChapters.value = data.chapters
@@ -604,23 +681,13 @@ const refreshPresentationStatus = async () => {
   }
 }
 
-watch(activeAudioUrl, (newUrl, oldUrl) => {
+watch(activeAudioUrl, newUrl => {
   currentTime.value = 0
   duration.value = 0
+  loadPlayableAudio(newUrl)
   nextTick(syncAudioTime)
   // 当音频 URL 从无到有时，从静音模式切换到真实音频播放
-  if (newUrl && !oldUrl && isPlaying.value) {
-    window.clearInterval(silentPlaybackTimer)
-    silentPlaybackTimer = 0
-    nextTick(() => {
-      if (!audioRef.value) return
-      audioRef.value.play().catch(err => {
-        console.warn('[VideoPlayer] auto-switch to audio failed:', err)
-        isPlaying.value = false
-      })
-    })
-  }
-})
+}, { immediate: true })
 
 watch(slides, nextSlides => {
   if (activeIndex.value >= nextSlides.length) activeIndex.value = 0
@@ -636,6 +703,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopLessonMedia()
+  clearPlayableAudioUrl()
   window.clearInterval(audioPollTimer)
   window.clearInterval(silentPlaybackTimer)
   silentPlaybackTimer = 0

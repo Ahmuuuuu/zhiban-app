@@ -59,7 +59,7 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Bell, Moon, Pause, Play, Square, Sun } from 'lucide-vue-next'
 import UserAccountButton from './UserAccountButton.vue'
-import { getUnreadNotificationCount } from '../api/apis'
+import { getUnreadNotificationCount, isBackendUnavailableError } from '../api/apis'
 import { useResourceNarration } from '../composables/useResourceNarration'
 import { useTheme } from '../composables/useTheme'
 import { currentUserRole, isAdminRole } from '../utils/auth'
@@ -68,6 +68,7 @@ const unreadCount = ref(0)
 const route = useRoute()
 const userRole = ref(currentUserRole())
 let pollTimer = null
+let unreadRetryAt = 0
 const { narrationState, toggleCurrentAudio, stopCurrentAudio } = useResourceNarration()
 const { toggle: toggleTheme, isDark: isThemeDark } = useTheme()
 
@@ -103,19 +104,22 @@ const audioProgressText = computed(() => {
 })
 
 const fetchUnread = async () => {
+  if (Date.now() < unreadRetryAt) return
+
   try {
     const res = await getUnreadNotificationCount()
-    console.log('[TopNav] fetchUnread 原始响应:', res)
     const raw = res?.data || res || {}
     const data = raw?.data || raw
-    console.log('[TopNav] fetchUnread 解析后:', data, 'unread_count:', data.unread_count)
     if (typeof data.unread_count === 'number') {
       unreadCount.value = data.unread_count
-      console.log('[TopNav] unreadCount 更新为:', unreadCount.value)
     } else {
       console.warn('[TopNav] unread_count 不是数字:', typeof data.unread_count, data)
     }
   } catch (e) {
+    if (isBackendUnavailableError(e)) {
+      unreadRetryAt = Date.now() + 15_000
+      return
+    }
     console.error('[TopNav] fetchUnread 异常:', e)
   }
 }
@@ -130,7 +134,6 @@ const handleNotifRead = () => {
 }
 
 const handleNotifUpdate = () => {
-  console.log('[TopNav] 收到 zhiban:notification-update 事件，刷新未读数')
   fetchUnread()
   // 二次确认：后端 Notification.create 可能晚于 task.status 更新
   setTimeout(fetchUnread, 2000)

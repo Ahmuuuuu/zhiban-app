@@ -435,10 +435,6 @@ class ResourceService:
                 item["content"] = _format_mindmap_content(item.get("content"))
 
         # 后台预生成旁白（播放时秒开）
-        for item in saved:
-            if item["resource_type"] in ("ppt", "document"):
-                asyncio.ensure_future(_pre_generate_narration(item["resource_id"]))
-
         logger.info("[Resource] generate_and_save 完成 topic=%s types=%s 全程耗时=%.1fs",
                     topic, resource_types, _time.perf_counter() - _t_total)
         return saved
@@ -516,10 +512,6 @@ class ResourceService:
             await _save_generation_to_history(user_id, chat_group_id, topic, saved_resources)
 
         # 后台预生成旁白（播放时秒开）
-        for r in saved_resources:
-            if r["resource_type"] in ("ppt", "document"):
-                asyncio.ensure_future(_pre_generate_narration(r["resource_id"]))
-
         done_data = {
             "done": True,
             "chat_group_id": chat_group_id,
@@ -1076,10 +1068,6 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
                                       file_urls=final_file_urls)
 
         # 后台预生成旁白音频（PPT/文档等文字类资源），播放时秒开
-        for r in saved:
-            if r["resource_type"] in ("ppt", "document"):
-                asyncio.ensure_future(_pre_generate_narration(r["resource_id"]))
-
         # 保存到聊天历史
         await _save_generation_to_history(user_id, chat_group_id, topic, saved)
 
@@ -1157,6 +1145,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
 
 
 async def _pre_generate_narration(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"):
+    return
     """后台预生成旁白音频，后续视频构建时可复用缓存"""
     try:
         from backend.src.service.narration_service import narrate_resource

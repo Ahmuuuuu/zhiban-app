@@ -8,6 +8,10 @@ export {
 } from './config'
 
 export {
+  isBackendUnavailableError
+} from './request'
+
+export {
   login,
   register,
   registerByEmail,

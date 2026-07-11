@@ -3,6 +3,16 @@ import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
+const backendTarget = process.env.VITE_API_BASE_URL || 'http://127.0.0.1:2221'
+const proxyTarget = {
+  target: backendTarget,
+  changeOrigin: true,
+  secure: true,
+  headers: {
+    'ngrok-skip-browser-warning': 'true',
+  },
+}
+
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
   resolve: {
@@ -13,23 +23,23 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     proxy: {
-      '/static': 'http://127.0.0.1:2221',
-      '/ai_chat': 'http://127.0.0.1:2221',
-      '/ai_portrait': 'http://127.0.0.1:2221',
-      '/path': 'http://127.0.0.1:2221',
-      '/learning_path': 'http://127.0.0.1:2221',
-      '/resource': 'http://127.0.0.1:2221',
-      '/image': 'http://127.0.0.1:2221',
-      '/knowledge': 'http://127.0.0.1:2221',
-      '/user': 'http://127.0.0.1:2221',
-      '/admin': 'http://127.0.0.1:2221',
-      '/exam': 'http://127.0.0.1:2221',
-      '/video': 'http://127.0.0.1:2221',
-      '/study': 'http://127.0.0.1:2221',
-      '/presentation': 'http://127.0.0.1:2221',
-      '/notification': 'http://127.0.0.1:2221',
-      '/annotation': 'http://127.0.0.1:2221',
-      '/debug': 'http://127.0.0.1:2221',
+      '/static': proxyTarget,
+      '/ai_chat': proxyTarget,
+      '/ai_portrait': proxyTarget,
+      '/path': proxyTarget,
+      '/learning_path': proxyTarget,
+      '/resource': proxyTarget,
+      '/image': proxyTarget,
+      '/knowledge': proxyTarget,
+      '/user': proxyTarget,
+      '/admin': proxyTarget,
+      '/exam': proxyTarget,
+      '/video': proxyTarget,
+      '/study': proxyTarget,
+      '/presentation': proxyTarget,
+      '/notification': proxyTarget,
+      '/annotation': proxyTarget,
+      '/debug': proxyTarget,
     },
   },
   css: {

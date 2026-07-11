@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
-from backend.src.models.video_model import Video as Presentation
+from backend.src.models.video_model import Video
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.notification_model import Notification
 from backend.src.models.chat_history_model import ChatHistory

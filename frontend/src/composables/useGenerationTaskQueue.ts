@@ -6,6 +6,7 @@ import {
   getPresentationQuestions,
   getResourceGenerationTask,
   getResourceGenerationTasks,
+  isBackendUnavailableError,
   streamResourceGenerationTask,
 } from '../api/apis'
 import { executeGeneration, type ResourceToolConfig } from './useResourceGeneration'
@@ -275,6 +276,13 @@ const pollBackendTask = (task: GenerationTask) => {
         pollingTaskIds.delete(task.backendTaskId)
       }
     } catch (error: any) {
+      if (isBackendUnavailableError(error)) {
+        task.progress = '后端暂时不可用，正在等待重连...'
+        task.updatedAt = Date.now()
+        persistTasks()
+        window.setTimeout(tick, 5000)
+        return
+      }
       task.status = 'failed'
       task.error = error?.response?.data?.detail || error?.message || '任务状态同步失败'
       task.progress = task.error
@@ -456,8 +464,13 @@ const streamBackendTask = (task: GenerationTask) => {
       task.updatedAt = Date.now()
       persistTasks()
     }
-  }).catch(() => {
+  }).catch(error => {
     streamingTaskIds.delete(task.backendTaskId)
+    if (isBackendUnavailableError(error)) {
+      task.progress = '后端暂时不可用，正在等待重连...'
+      task.updatedAt = Date.now()
+      persistTasks()
+    }
     pollBackendTask(task)
   })
 }
@@ -679,7 +692,9 @@ export function useGenerationTaskQueue() {
       pollBackendTask(task)
     }).catch(error => {
       task.status = 'failed'
-      task.error = error?.response?.data?.detail || error?.message || '创建生成任务失败'
+      task.error = isBackendUnavailableError(error)
+        ? '后端暂时不可用，请确认后端服务或代理已启动。'
+        : error?.response?.data?.detail || error?.message || '创建生成任务失败'
       task.progress = task.error
       task.updatedAt = Date.now()
     })
