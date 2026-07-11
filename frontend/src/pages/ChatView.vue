@@ -381,7 +381,7 @@
               :exporting="pptPreview.exporting"
               :annotatable="Boolean(pptPreview.resourceId)"
               :annotations="pptPreview.annotations || []"
-              :theme-id="pptGenThemeId"
+              :theme-id="pptPreview.themeId || pptGenThemeId"
               @create-note="createPptPreviewAnnotation($event)"
               @update-note="(id, payload) => updatePptPreviewAnnotation(id, payload)"
               @delete-note="deletePptPreviewAnnotation($event)"
@@ -648,7 +648,7 @@ const handlePptGenerate = ({ prompt, topic, themeId, requirements }) => {
 
   // Use ppt tool but with empty prompt to avoid double-prompt concatenation
   const pptTool = resourceTools.find(t => t.label === 'ppt')
-  selectedResourceTool.value = pptTool ? { ...pptTool, prompt: '' } : null
+  selectedResourceTool.value = pptTool ? { ...pptTool, prompt: '', pptThemeId: themeId } : null
 
   // Force-reset loading state in case it's stuck
   if (loading.value) {
@@ -1193,6 +1193,7 @@ const pptPreview = ref({
   loading: false,
   messageId: '',
   resourceId: '',
+  themeId: '',
   title: '',
   slides: [],
   annotations: []
@@ -1232,6 +1233,7 @@ const normalizeFileMessage = data => {
     annotations: Array.isArray(data.annotations) ? data.annotations : [],
     narration: data.narration || null,
     presentation: data.presentation || null,
+    pptThemeId: data.ppt_theme_id || data.pptThemeId || data.theme_id || data.themeId || '',
     fileId,
     resourceKind,
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.presentation_url || data.presentationUrl || data.file_url || data.fileUrl || data.preview || ''),
@@ -1645,6 +1647,7 @@ const hydratePptPreview = async message => {
     Object.assign(message, {
       content,
       slides,
+      pptThemeId: data.ppt_theme_id || data.pptThemeId || message.pptThemeId || '',
       narration: data.narration || message.narration || null
     })
 
@@ -1662,6 +1665,7 @@ const openPptPreview = async message => {
   // 生成中的占位卡片：直接从流式数据取 slides，跳过 API 请求
   if (message._generating) {
     const task = generationTasks.find((t: any) => t.id === message._taskId)
+    const themeId = message.pptThemeId || (task as any)?.tool?.pptThemeId || pptGenThemeId.value
     const streamSlides = ((task as any)?._pptStream?.slides || [])
       .map((s: any) => normalizeStreamSlide(s))
       .sort((a: any, b: any) => {
@@ -1676,6 +1680,7 @@ const openPptPreview = async message => {
       loading: false,
       messageId: message.id,
       resourceId: '',
+      themeId,
       title: message.filename || 'PPT 预览',
       slides: streamSlides,
       annotations: []
@@ -1688,6 +1693,7 @@ const openPptPreview = async message => {
     loading: true,
     messageId: message.id,
     resourceId,
+    themeId: message.pptThemeId || pptGenThemeId.value,
     title: message.filename || 'PPT 预览',
     slides: message.slides || [],
     annotations: message.annotations || []
@@ -1701,6 +1707,7 @@ const openPptPreview = async message => {
     pptPreview.value = {
       ...pptPreview.value,
       loading: false,
+      themeId: message.pptThemeId || pptPreview.value.themeId,
       slides: slides || [],
       annotations
     }
@@ -1721,6 +1728,7 @@ const closePptPreview = () => {
     loading: false,
     messageId: '',
     resourceId: '',
+    themeId: '',
     title: '',
     slides: [],
     annotations: []
@@ -2124,7 +2132,8 @@ const exportChatPptx = async slides => {
     await exportEditedPptx(resourceId, {
       title: pptPreview.value.title || '',
       filename: getPptxExportName(pptPreview.value.title),
-      slides
+      slides,
+      ppt_theme_id: pptPreview.value.themeId || target?.pptThemeId || ''
     })
   } catch (error) {
     console.error('[ChatView] export pptx failed:', error)
@@ -2438,7 +2447,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
   let doneHandled = false
 
   watch(
-    () => [task.progress, task.thinkingProcess, task.status, task.files.length, task.images.length, task.updatedAt, (task as any)._pptStream?.slides?.length, (task as any)._pptStream?._version, (task as any)._pptStream?._needsRebuild],
+    () => [task.progress, task.thinkingProcess, task.status, task.files.length, task.images.length, task.updatedAt, task.tool?.pptThemeId, (task as any)._pptStream?.slides?.length, (task as any)._pptStream?._version, (task as any)._pptStream?._needsRebuild],
     async () => {
       // 任务是否属于当前显示的对话：chatGroupId 未分配或未匹配时视为外来任务
       const taskChatId = task.chatGroupId
@@ -2502,6 +2511,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             type: 'file',
             fileType: 'ppt',
             filename: task.tool?.label || task.text?.slice(0, 30) || 'PPT 视频',
+            pptThemeId: task.tool?.pptThemeId || '',
             _generating: true,
             _taskId: task.id,
             time: getNowTime()
@@ -2564,7 +2574,10 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             ;(task as any)._pptPlaceholderId = null
           }
 
-          const result = await appendFileMessage(file)
+          const fileWithTheme = isPptFile(file)
+            ? { ...(file as Record<string, any>), ppt_theme_id: (file as any).ppt_theme_id || (file as any).pptThemeId || task.tool?.pptThemeId || '' }
+            : file
+          const result = await appendFileMessage(fileWithTheme)
           if (result.isNew) addedNewFiles = true
 
           // 将预览关联到真实文件卡片，记录 ID 供后续流式替换匹配
@@ -2574,18 +2587,20 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             if (pptPreview.value.visible && pptPreview.value.messageId === pptPlaceholderId) {
               pptPreview.value.messageId = newFileMsg.id
               pptPreview.value.resourceId = getFileResourceId(newFileMsg) || pptPreview.value.resourceId
+              pptPreview.value.themeId = newFileMsg.pptThemeId || pptPreview.value.themeId
             }
           }
 
-          if (isPptFile(file) && pptPreview.value.visible) {
-            const fullSlides = parsePptSlidesFromContent(file.content || file.text || '')
-            const resourceId = getFileResourceId(file)
+          if (isPptFile(fileWithTheme) && pptPreview.value.visible) {
+            const fullSlides = parsePptSlidesFromContent((fileWithTheme as any).content || (fileWithTheme as any).text || '')
+            const resourceId = getFileResourceId(fileWithTheme)
             pptPreview.value = {
               ...pptPreview.value,
               loading: false,
               resourceId: resourceId || pptPreview.value.resourceId,
+              themeId: (fileWithTheme as any).ppt_theme_id || (fileWithTheme as any).pptThemeId || pptPreview.value.themeId,
               slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
-              title: file.filename || pptPreview.value.title
+              title: (fileWithTheme as any).filename || pptPreview.value.title
             }
           }
         }
@@ -2880,6 +2895,7 @@ const sendMessage = async () => {
             ...pptPreview.value,
             loading: false,
             resourceId: resourceId || pptPreview.value.resourceId,
+            themeId: fileData.ppt_theme_id || fileData.pptThemeId || pptPreview.value.themeId,
             slides: fullSlides.length ? fullSlides : pptPreview.value.slides,
             title: fileData.filename || pptPreview.value.title
           }

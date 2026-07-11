@@ -12,7 +12,7 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
-from backend.src.utils.slide_schema import parse_markdown_slides
+from backend.src.utils.slide_schema import THEME_PALETTES as SLIDE_THEME_PALETTES, parse_markdown_slides
 
 
 # 颜色方案
@@ -25,16 +25,7 @@ WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 LIGHT_BG = RGBColor(0xF7, 0xF9, 0xFC)
 ACCENT_ORANGE = RGBColor(0xE8, 0x6C, 0x00)
 
-THEME_PALETTES = {
-    "academic_blue": ["#163f8f", "#2f80ed", "#44c2ff", "#f7fbff"],
-    "science_green": ["#11695f", "#28b487", "#a7f3d0", "#f6fffb"],
-    "warm_case": ["#93491f", "#e86c00", "#ffd166", "#fff8ed"],
-    "graphite": ["#17202a", "#566573", "#aeb6bf", "#f7f9fb"],
-    "aurora": ["#0f766e", "#22d3ee", "#a78bfa", "#f0fdfa"],
-    "coral": ["#9f1239", "#fb7185", "#fbbf24", "#fff1f2"],
-    "violet": ["#4c1d95", "#8b5cf6", "#38bdf8", "#f5f3ff"],
-    "sunlit": ["#854d0e", "#f59e0b", "#84cc16", "#fffbeb"],
-}
+THEME_PALETTES = dict(SLIDE_THEME_PALETTES)
 
 
 def _hex_to_rgb(value: str) -> tuple[int, int, int]:
@@ -676,9 +667,23 @@ def _add_notes(slide, slide_data: dict):
             logging.getLogger("pptx").warning("添加备注失败 slide_title=%s", slide_data.get("title", ""))
 
 
-def markdown_to_pptx(markdown: str) -> bytes:
+def _apply_theme_override(slides_data: list[dict], ppt_theme_id: str | None = None) -> list[dict]:
+    theme_id = str(ppt_theme_id or "").strip()
+    if theme_id not in THEME_PALETTES:
+        return slides_data
+    return [
+        {
+            **slide_data,
+            "theme": theme_id,
+            "palette": THEME_PALETTES[theme_id],
+        }
+        for slide_data in slides_data
+    ]
+
+
+def markdown_to_pptx(markdown: str, ppt_theme_id: str | None = None) -> bytes:
     """将 markdown 幻灯片内容转换为 .pptx 二进制数据"""
-    slides_data = _paginate_slides(_parse_slides(markdown))
+    slides_data = _apply_theme_override(_paginate_slides(_parse_slides(markdown)), ppt_theme_id)
     if not slides_data:
         return b""
 

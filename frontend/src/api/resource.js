@@ -17,6 +17,7 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
       chat_group_id: Number(data.chat_group_id || 0),
       bind_chat_history: Boolean(data.bind_chat_history),
       answers: data.answers || undefined,
+      ppt_theme_id: data.ppt_theme_id || data.pptThemeId || undefined,
       skip_review: Boolean(data.skip_review)
     })
   })
@@ -200,7 +201,8 @@ export async function exportEditedPptx(resourceId, data = {}) {
     }),
     body: JSON.stringify({
       title: data.title || '',
-      slides: Array.isArray(data.slides) ? data.slides : []
+      slides: Array.isArray(data.slides) ? data.slides : [],
+      ppt_theme_id: data.ppt_theme_id || data.pptThemeId || undefined
     })
   })
 
@@ -231,6 +233,7 @@ export function createResourceGenerationTask(data) {
       chat_group_id: Number(data.chat_group_id || 0),
       bind_chat_history: Boolean(data.bind_chat_history),
       answers: data.answers || undefined,
+      ppt_theme_id: data.ppt_theme_id || data.pptThemeId || undefined,
       skip_review: Boolean(data.skip_review),
     }
   })

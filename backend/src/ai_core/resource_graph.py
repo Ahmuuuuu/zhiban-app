@@ -58,6 +58,7 @@ class ResourceState(TypedDict):
     skip_review: NotRequired[bool]
     ppt_prompt_key: NotRequired[str]
     llm_priority: NotRequired[str]
+    ppt_theme_id: NotRequired[str]
 
 
 # ═══════════════════════════════════════
@@ -102,6 +103,7 @@ def build_resource_prompt(
     section: str = "",
     learning_objectives: str = "",
     formula_sheet: str = "",
+    ppt_theme_id: str = "",
 ) -> str:
     """构建单个资源类型的生成 prompt，可从 executor_node 或 generate_stream 直接调用"""
     custom_prompts = custom_prompts or {}
@@ -129,6 +131,7 @@ def build_resource_prompt(
         section=section,
         learning_objectives=learning_objectives or "暂无学习目标数据",
         formula_sheet=formula_sheet,
+        ppt_theme_id=ppt_theme_id or "",
     )
     return base + focus_guidance if focus_guidance else base
 
@@ -278,6 +281,7 @@ async def generate_ppt_parallel(
     user_id: int = 0,
     learning_objectives: str = "",
     skip_review_sections: bool = False,
+    ppt_theme_id: str = "",
 ) -> str:
     """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2-5 页），共 2N-5N 页 + 2 页画像学习引入"""
     _t_total = time.perf_counter()
@@ -521,6 +525,7 @@ async def generate_ppt_parallel(
             feedback=feedback, user_notes=user_notes, custom_prompts=custom_prompts,
             section=section_title, learning_objectives=_eff_lo,
             formula_sheet=formula_sheet,
+            ppt_theme_id=ppt_theme_id,
         )
 
         if is_portrait_section:
@@ -549,6 +554,13 @@ async def generate_ppt_parallel(
             )
         else:
             prompt_with_context = base_prompt
+
+        if ppt_theme_id:
+            prompt_with_context += (
+                f"\n\n## 用户选择的 PPT 模板\n"
+                f"用户选择的 PPT 模板为：{ppt_theme_id}。\n"
+                f"请生成适配该模板风格的 layout/theme/visual 元数据，并在每页标题后一行加入 `<!-- theme: {ppt_theme_id} -->`。"
+            )
 
         # ── 生成 + 审核循环（先展示后修改：初稿立即推送，审核在后台进行，修改后推送替换）──
         MAX_REVIEW_ROUNDS = 3
@@ -853,6 +865,7 @@ async def executor_node(state: ResourceState) -> dict:
             question_types=state.get("exam_question_types", "single_choice, multi_choice, true_false"),
             difficulty=state.get("exam_difficulty", "medium"),
             custom_prompts=custom_prompts, focus_guidance=focus_guidance,
+            ppt_theme_id=state.get("ppt_theme_id", ""),
         )
         for rt in thread_types
     }
@@ -896,6 +909,7 @@ async def executor_node(state: ResourceState) -> dict:
             llm_priority=llm_priority,
             user_id=user_id_int,
             skip_review_sections=bool(state.get("skip_review")),
+            ppt_theme_id=state.get("ppt_theme_id", ""),
         )
 
     async def _run_doc():
@@ -918,6 +932,7 @@ async def executor_node(state: ResourceState) -> dict:
             "image", topic, portrait=portrait, kb=kb, guidance=guidance,
             feedback=feedback, user_notes=user_notes,
             custom_prompts=custom_prompts, focus_guidance=focus_guidance,
+            ppt_theme_id=state.get("ppt_theme_id", ""),
         )
         try:
             response = await llm.ainvoke(img_prompt_text, priority=llm_priority, user_id=user_id_int, pool="thread")
