@@ -1,8 +1,8 @@
 from tortoise import Model, fields
 
 
-class Presentation(Model):
-    id = fields.IntField(pk=True, description="课件ID")
+class Video(Model):
+    id = fields.IntField(pk=True, description="视频ID")
     topic = fields.CharField(max_length=255, description="学习主题")
     status = fields.CharField(max_length=16, default="generating", description="generating / ready / failed")
     file_url = fields.CharField(max_length=512, null=True, description="HTML 文件路径")

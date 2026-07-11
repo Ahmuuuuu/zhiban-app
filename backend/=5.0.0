@@ -1,6 +1,0 @@
-Defaulting to user installation because normal site-packages is not writeable
-Collecting redis
-  Using cached redis-8.0.1-py3-none-any.whl.metadata (13 kB)
-Using cached redis-8.0.1-py3-none-any.whl (502 kB)
-Installing collected packages: redis
-Successfully installed redis-8.0.1

@@ -22,6 +22,7 @@ logging.basicConfig(
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from backend.src.utils.database import init_db, close_db
 
 logger = logging.getLogger("api")
@@ -40,13 +41,20 @@ from backend.src.router.path_router import router as path_router
 from backend.src.router.learning_path_router import router as learning_path_router
 from backend.src.router.video_router import router as video_router
 from backend.src.router.study_router import router as study_router
-from backend.src.router.presentation_router import router as presentation_router
 from backend.src.router.notification_router import router as notification_router
 from backend.src.router.annotation_router import router as annotation_router
 app = FastAPI(
     title="AI聊天后端",
     description="Swagger接口文档",
     swagger_ui_init_oauth={},
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 from backend.src.utils.exceptions import ServiceError
@@ -145,6 +153,5 @@ app.include_router(path_router)
 app.include_router(learning_path_router)
 app.include_router(video_router)
 app.include_router(study_router)
-app.include_router(presentation_router)
 app.include_router(notification_router)
 app.include_router(annotation_router)

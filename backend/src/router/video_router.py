@@ -1,64 +1,138 @@
-"""视频/语音旁白路由 — 支持 ppt/document/case/reading/mindmap 文字类资源 CRUD"""
-
+"""学习视频 HTML 生成路由 — CRUD + SSE 实时进度"""
+import json
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from backend.src.service.narration_service import narrate_resource, list_narrations, get_narration, delete_narration
-from backend.src.utils.tts_utils import VOICES, NARRATABLE_TYPES
+from backend.src.service.video_service import (
+    generate,
+    generate_questions,
+    preview,
+    get_presentation,
+    list_presentations,
+    delete_presentation,
+    _subscribe_sse,
+    _unsubscribe_sse,
+)
+from backend.src.utils.redis_client import replay_sse as _replay_pres_sse, check_rate_limit
 from backend.src.utils.jwt import get_user_id_from_token
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/video", tags=["视频生成"])
 
 
-class NarrateRequest(BaseModel):
-    resource_id: int = Field(description="文字类资源的 ID")
+class GenerateRequest(BaseModel):
+    topic: str = Field(description="学习话题，必须已通过 /resource/generate 生成过资源")
     voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="EdgeTTS 语音名称")
-    force_regenerate: bool = Field(default=False, description="是否强制重新生成")
+    chapters: list[str] | None = Field(default=None, description="要生成的章节列表，如 ['intro', 'ppt']，不传则全生成")
+    answers: dict | None = Field(default=None, description="用户作答 {question_id: value}，用于裁剪内容")
+    chat_group_id: int = Field(default=0, description="聊天组 ID，用于写入聊天历史")
+    video_mode: bool = Field(default=False, description="视频模式：跳过 HTML 文件生成，仅返回结构化数据")
 
 
-@router.post("/narrate")
-async def narrate_resource_endpoint(data: NarrateRequest, user_id: int = Depends(get_user_id_from_token)):
-    """对文字类资源逐段生成旁白语音"""
-    result = await narrate_resource(data.resource_id, data.voice, force_regenerate=data.force_regenerate)
+class PreviewRequest(BaseModel):
+    topic: str = Field(description="学习话题")
+
+
+class QuestionsRequest(BaseModel):
+    topic: str = Field(description="学习话题")
+    chat_group_id: int = Field(default=0, description="聊天组 ID，用于写入聊天历史")
+
+
+@router.post("/generate")
+async def generate_presentation(data: GenerateRequest, user_id: int = Depends(get_user_id_from_token)):
+    """生成动态 HTML 视频"""
+    if not await check_rate_limit("pres_gen", user_id, 5, 60):
+        raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
+    result = await generate(data.topic, user_id, voice=data.voice, chapters=data.chapters, answers=data.answers, chat_group_id=data.chat_group_id, video_mode=data.video_mode, background=True)
     return {"code": 200, "msg": "success", "data": result}
 
 
-@router.get("/narrations")
-async def list_all_narrations(user_id: int = Depends(get_user_id_from_token)):
-    """列出当前用户的所有旁白记录"""
-    result = await list_narrations(user_id)
+@router.post("/questions")
+async def get_questions(data: QuestionsRequest, user_id: int = Depends(get_user_id_from_token)):
+    """AI 分析资源内容，返回 2-3 个选择题帮助用户聚焦视频方向"""
+    result = await generate_questions(data.topic, user_id, chat_group_id=data.chat_group_id)
     return {"code": 200, "msg": "success", "data": result}
 
 
-@router.get("/narrations/{narration_id}")
-async def get_narration_detail(narration_id: int, user_id: int = Depends(get_user_id_from_token)):
-    """获取单个旁白详情（含每段音频）"""
-    result = await get_narration(narration_id, user_id)
+@router.get("/list")
+async def list_presentation(user_id: int = Depends(get_user_id_from_token)):
+    """列出当前用户的所有视频"""
+    items = await list_presentations(user_id)
+    return {"code": 200, "msg": "success", "data": items}
+
+
+@router.get("/{presentation_id}")
+async def get_presentation_detail(presentation_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """查询视频详情（含章节列表和状态）"""
+    result = await get_presentation(presentation_id, user_id)
     if not result:
-        raise HTTPException(status_code=404, detail="旁白记录不存在")
+        raise HTTPException(status_code=404, detail="视频不存在")
     return {"code": 200, "msg": "success", "data": result}
 
 
-@router.delete("/narrations/{narration_id}")
-async def delete_narration_record(narration_id: int, user_id: int = Depends(get_user_id_from_token)):
-    """删除旁白记录及音频文件"""
-    ok = await delete_narration(narration_id, user_id)
+@router.post("/preview")
+async def preview_presentation(data: PreviewRequest, user_id: int = Depends(get_user_id_from_token)):
+    """预览话题的可用章节，供用户选择"""
+    result = await preview(data.topic, user_id)
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.delete("/{presentation_id}")
+async def delete_presentation_endpoint(presentation_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """删除视频"""
+    ok = await delete_presentation(presentation_id, user_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="旁白记录不存在")
-    return {"code": 200, "msg": "已删除"}
+        raise HTTPException(status_code=404, detail="视频不存在")
+    return {"code": 200, "msg": "success"}
 
 
-@router.get("/narratable-types")
-async def list_narratable_types():
-    """列出支持旁白生成的资源类型"""
-    return {"code": 200, "msg": "success", "data": sorted(NARRATABLE_TYPES)}
+@router.get("/{presentation_id}/sse")
+async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """SSE 实时跟踪视频生成进度"""
+    # 先校验视频存在
+    result = await get_presentation(presentation_id, user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="视频不存在")
 
+    q = _subscribe_sse(presentation_id)
+    # 二次检查：订阅后再查一次，防止在初次检查和订阅之间已完成
+    refreshed = await get_presentation(presentation_id, user_id)
 
-@router.get("/voices")
-async def list_voices():
-    """列出可用的 EdgeTTS 中文语音"""
-    return {"code": 200, "msg": "success", "data": VOICES}
+    async def event_stream():
+        try:
+            yield f"data: {json.dumps(refreshed or result, ensure_ascii=False)}\n\n"
+            # 从 Redis Stream 回放历史进度（替换旧的 _progress_events 内存存储）
+            for evt in await _replay_pres_sse(f"pres:{presentation_id}"):
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+            current = refreshed or result
+            if current["status"] in ("ready", "failed"):
+                return
+
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=60)
+                    yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+                    if msg.get("status") in ("ready", "failed"):
+                        return
+                except asyncio.TimeoutError:
+                    current = await get_presentation(presentation_id, user_id)
+                    if current and current["status"] in ("ready", "failed"):
+                        yield f"data: {json.dumps(current, ensure_ascii=False)}\n\n"
+                        return
+                    yield f"data: {json.dumps({'status': 'keepalive'}, ensure_ascii=False)}\n\n"
+        finally:
+            _unsubscribe_sse(presentation_id, q)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

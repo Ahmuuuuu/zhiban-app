@@ -1,7 +1,7 @@
 import request from './request'
 import { API_BASE_URL, parseStreamEvent, requestFirstAvailable, resolveApiUrl } from './config'
 
-export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide, onStreamSectionReplace, onThinking } = {}) {
+export async function streamResourceGeneration(data, { onProgress, onDone, onError, onFile, onStreamStart, onStreamSlide, onStreamSlideStart, onStreamSlideDelta, onStreamSlideDone, onStreamSectionReplace, onThinking } = {}) {
   const url = `${API_BASE_URL}resource/generate/stream`
   const token = localStorage.getItem('token')
 
@@ -15,7 +15,9 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
       topic: data.topic,
       resource_types: data.resource_types,
       chat_group_id: Number(data.chat_group_id || 0),
-      bind_chat_history: Boolean(data.bind_chat_history)
+      bind_chat_history: Boolean(data.bind_chat_history),
+      answers: data.answers || undefined,
+      skip_review: Boolean(data.skip_review)
     })
   })
 
@@ -77,6 +79,21 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
 
         if (eventData.type === 'stream_slide') {
           onStreamSlide?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_slide_start') {
+          onStreamSlideStart?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_slide_delta') {
+          onStreamSlideDelta?.(eventData)
+          continue
+        }
+
+        if (eventData.type === 'stream_slide_done') {
+          onStreamSlideDone?.(eventData)
           continue
         }
 
@@ -214,6 +231,7 @@ export function createResourceGenerationTask(data) {
       chat_group_id: Number(data.chat_group_id || 0),
       bind_chat_history: Boolean(data.bind_chat_history),
       answers: data.answers || undefined,
+      skip_review: Boolean(data.skip_review),
     }
   })
 }

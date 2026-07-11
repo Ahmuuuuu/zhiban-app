@@ -60,6 +60,8 @@ export function getPortraitRadar(): Promise<unknown>;
 
 export function initPortrait(data: unknown): Promise<unknown>;
 
+export function initPortraitFromDialogue(data: { dialogue: Array<{ question: string; answer: string }> }): Promise<unknown>;
+
 export function uploadStudyMaterial(data: unknown): Promise<unknown>;
 
 export function getStudyResources(params?: Record<string, unknown>): Promise<unknown>;

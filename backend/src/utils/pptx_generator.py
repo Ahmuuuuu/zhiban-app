@@ -442,7 +442,7 @@ def _build_title_slide(prs, slide_data: dict):
     box = slide.shapes.add_textbox(Inches(1.5), Inches(2.0), Inches(10.3), Inches(2.5))
     tf = _fit_text_frame(box.text_frame)
     p = tf.paragraphs[0]
-    p.text = slide_data["title"] or "课件"
+    p.text = slide_data["title"] or "视频"
     p.text = _clean_ppt_text(p.text, 90)
     p.font.size = _fit_font_size(p.text, 44, 36, 30)
     p.font.bold = True

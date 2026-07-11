@@ -2,7 +2,7 @@ import request from './request'
 
 export function getPresentationQuestions(data) {
   return request({
-    url: '/presentation/questions',
+    url: '/video/questions',
     method: 'post',
     data: {
       topic: data.topic,
@@ -13,21 +13,22 @@ export function getPresentationQuestions(data) {
 
 export function generatePresentation(data) {
   return request({
-    url: '/presentation/generate',
+    url: '/video/generate',
     method: 'post',
     data: {
       topic: data.topic,
       voice: data.voice || 'zh-CN-XiaoxiaoNeural',
       chapters: data.chapters || undefined,
       answers: data.answers || undefined,
-      chat_group_id: data.chat_group_id || 0
+      chat_group_id: data.chat_group_id || 0,
+      video_mode: false
     }
   })
 }
 
 export function previewPresentation(data) {
   return request({
-    url: '/presentation/preview',
+    url: '/video/preview',
     method: 'post',
     data: {
       topic: data.topic
@@ -36,9 +37,9 @@ export function previewPresentation(data) {
 }
 
 export function getPresentations() {
-  return request.get('/presentation/list')
+  return request.get('/video/list')
 }
 
 export function getPresentation(presentationId) {
-  return request.get(`/presentation/${presentationId}`)
+  return request.get(`/video/${presentationId}`)
 }

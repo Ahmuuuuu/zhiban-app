@@ -10,7 +10,7 @@ import asyncio
 
 from backend.src.ai_core.llm_config import llm
 from backend.src.ai_core.path_graph import path_graph
-from backend.src.utils.constants import PRESENTATIONS_DIR
+from backend.src.utils.constants import VIDEOS_DIR
 
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
@@ -1063,7 +1063,7 @@ class PathService:
 
     @staticmethod
     async def generate_path_video(path_id: int, user_id: int) -> dict:
-        """为整条学习路径生成一个综合视频课件"""
+        """为整条学习路径生成一个综合视频视频"""
         path = await LearningPath.filter(id=path_id).prefetch_related("nodes").first()
         if not path:
             raise ValueError("路径不存在")
@@ -1075,13 +1075,13 @@ class PathService:
         node_outline = " → ".join(n.topic for n in nodes)
         video_topic = f"{path.subject} 学习路径（{node_outline}）"[:255]
 
-        # 已有有效的 HTML 课件 → 直接复用
+        # 已有有效的 HTML 视频 → 直接复用
         existing_html = await GeneratedResource.filter(
             user_id=user_id, topic=video_topic, resource_type="html"
         ).first()
         if existing_html:
             file_url = existing_html.file_url or ""
-            _html_path = PRESENTATIONS_DIR / (file_url.split("/")[-1] if file_url else "")
+            _html_path = VIDEOS_DIR / (file_url.split("/")[-1] if file_url else "")
             if _html_path.exists() and "template-version:visual-v6" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
                 content = {}
                 try:
@@ -1131,7 +1131,7 @@ class PathService:
 
         html_result = await _create_video_html(video_topic, user_id, ppt_record)
         if not html_result:
-            raise RuntimeError("路径视频课件生成失败")
+            raise RuntimeError("路径视频视频生成失败")
 
         return {
             "path_id": path_id,
@@ -1144,7 +1144,7 @@ class PathService:
 
     @staticmethod
     async def get_path_video(path_id: int, user_id: int) -> dict | None:
-        """获取路径已生成的视频课件（如有）"""
+        """获取路径已生成的视频视频（如有）"""
         path = await LearningPath.filter(id=path_id).prefetch_related("nodes").first()
         if not path:
             return None
@@ -1552,13 +1552,13 @@ async def _create_video_html_and_update_progress(topic: str, user_id: int, ppt_r
                 progress.resource_ids = json.dumps(current_ids, ensure_ascii=False)
                 await progress.save()
     except Exception:
-        logger.exception("后台动态课件生成失败 topic=%s ppt_id=%s", topic, ppt_record.id)
+        logger.exception("后台学习视频生成失败 topic=%s ppt_id=%s", topic, ppt_record.id)
 
 
 async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | None:
-    """通过已有的 presentation_service 创建动态课件（含骨架→后台补音频→状态轮询）。
+    """通过已有的 video_service 创建学习视频（含骨架→后台补音频→状态轮询）。
     返回 {"html_id": int, "presentation_id": int, "file_url": str} 或 None。"""
-    from backend.src.service.presentation_service import generate as generate_presentation
+    from backend.src.service.video_service import generate as generate_presentation
     from backend.src.models.resource_model import GeneratedResource
 
     # 已有 HTML GeneratedResource 且是交互模板 → 复用；否则删旧重建
@@ -1572,7 +1572,7 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
             content = {}
         pres_id = content.get("presentation_id", 0)
         file_url = existing_html.file_url or ""
-        _html_path = PRESENTATIONS_DIR / (file_url.split("/")[-1] if file_url else "")
+        _html_path = VIDEOS_DIR / (file_url.split("/")[-1] if file_url else "")
         if _html_path.exists() and "template-version:visual-v6" in _html_path.read_text(encoding="utf-8", errors="ignore")[:300]:
             return {"html_id": existing_html.id, "presentation_id": pres_id, "file_url": file_url}
         logger.info("旧 HTML 非交互模板，重建 presentation html_id=%s", existing_html.id)
@@ -1586,7 +1586,7 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
 
     pres = await generate_presentation(topic, user_id, video_mode=False)
     if not pres or "error" in pres:
-        logger.error("课件生成失败 topic=%s error=%s", topic, pres.get("error") if pres else "unknown")
+        logger.error("视频生成失败 topic=%s error=%s", topic, pres.get("error") if pres else "unknown")
         return None
 
     html = await GeneratedResource.create(
@@ -1598,7 +1598,7 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
         }, ensure_ascii=False),
         file_url=pres["file_url"],
     )
-    logger.info("动态课件已创建 html_id=%s presentation_id=%s", html.id, pres["id"])
+    logger.info("学习视频已创建 html_id=%s presentation_id=%s", html.id, pres["id"])
     return {"html_id": html.id, "presentation_id": pres["id"], "file_url": pres["file_url"]}
 
 
