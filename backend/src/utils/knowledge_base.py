@@ -7,9 +7,6 @@ import json
 import hashlib
 import asyncio
 from pathlib import Path
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 HF_ENDPOINT = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
 if HF_ENDPOINT:
@@ -45,10 +42,32 @@ async def _get_embed_model_async():
 
 
 async def _encode_async(text: str):
-    """异步编码文本为向量（在线程池中执行）"""
+    """异步编码文本为向量（Redis 缓存 + 线程池降级）"""
     import numpy as np
+
+    # Redis 缓存：相同文本 24 小时内不重复计算向量
+    if text and len(text.strip()) > 2:
+        try:
+            from backend.src.utils.redis_client import cache_get, cache_set, _cache_key, _text_hash
+            from backend.src.utils.constants import EMBED_CACHE_TTL
+            _ck = _cache_key("embed", _text_hash(text.strip()))
+            cached = await cache_get(_ck)
+            if cached is not None and isinstance(cached, list):
+                return np.array(cached, dtype=np.float32)
+        except Exception:
+            pass
+
     model = await _get_embed_model_async()
-    return await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
+    vector = await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
+
+    # 异步回填缓存（不阻塞返回）
+    if text and len(text.strip()) > 2:
+        try:
+            await cache_set(_ck, vector.tolist(), EMBED_CACHE_TTL)
+        except Exception:
+            pass
+
+    return vector
 
 
 async def search(query: str, top_k: int = 5, user_id: int = None, category: str = None) -> str:

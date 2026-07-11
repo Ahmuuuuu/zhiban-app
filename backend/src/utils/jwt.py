@@ -1,15 +1,12 @@
 import os
-from pathlib import Path
 from jose import jwt, JWTError
 from fastapi import HTTPException, Header, Depends, Request
-from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 
-load_dotenv(Path(__file__).parent.parent.parent / ".env")
 JWT_KEY = os.getenv("JWT_KEY") or "zhiban-jwt-secret-key-change-in-production"
 ALGORITHM = os.getenv("ALGORITHM") or "HS256"
 
-if not os.getenv("JWT_KEY"):
+if not JWT_KEY:
     import warnings
     warnings.warn("JWT_KEY 未在 .env 中配置，使用了默认密钥，生产环境请务必更换！")
 

@@ -1,6 +1,7 @@
 """EdgeTTS 工具 — 文本转语音、幻灯片/文档章节解析"""
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -222,10 +223,28 @@ async def generate_audio_with_timestamps(text: str, output_path: str, voice: str
 
 
 async def _generate_audio_impl(text: str, output_path: str, voice: str, rate: str, capture_words: bool = False):
-    """EdgeTTS 统一实现：支持普通模式和词级时间戳模式"""
+    """EdgeTTS 统一实现：支持普通模式和词级时间戳模式（带 Redis 缓存）"""
     import edge_tts
 
+    # Redis 缓存：相同文本相同语音 7 天内不重复生成（仅限无时间戳模式）
+    _cache_hit = False
+    _tts_ck = None
+    if not capture_words and text and voice:
+        try:
+            from backend.src.utils.redis_client import cache_get, cache_set, _cache_key, _text_hash
+            from backend.src.utils.constants import TTS_CACHE_TTL
+            _tts_ck = _cache_key("tts", _text_hash(text.strip()), voice, rate)
+            _cached_path = await cache_get(_tts_ck)
+            if _cached_path and os.path.isfile(_cached_path):
+                output_path = _cached_path
+                _cache_hit = True
+        except Exception:
+            logger.debug("TTS 缓存读取失败，跳过缓存（降级运行）")
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    if _cache_hit:
+        return output_path, []
 
     try:
         _tts_timeout = 120
@@ -233,6 +252,12 @@ async def _generate_audio_impl(text: str, output_path: str, voice: str, rate: st
 
         if not capture_words:
             await asyncio.wait_for(communicate.save(output_path), timeout=_tts_timeout)
+            # 缓存生成的音频路径
+            if text and voice and _tts_ck:
+                try:
+                    await cache_set(_tts_ck, output_path, TTS_CACHE_TTL)
+                except Exception:
+                    logger.debug("TTS 缓存写入失败（降级运行）")
             return output_path, []
 
         # stream 模式：启用 WordBoundary 收集词级时间戳

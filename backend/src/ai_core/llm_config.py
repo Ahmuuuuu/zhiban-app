@@ -1,8 +1,11 @@
 """LLM 配置 + 优先级限流 — 前台请求优先于后台预生成，每用户每池独立并发"""
 import asyncio
+import hashlib
+import json as _json
 import threading
 from pathlib import Path
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import AIMessage
 from dotenv import load_dotenv
 import os
 
@@ -73,15 +76,43 @@ def _get_user_sync_sem(user_id: int, pool: str = "default") -> threading.Bounded
 
 
 class _PriorityLLM:
-    """LLM 代理：每用户每池独立并发 + 全局优先级限流。"""
+    """LLM 代理：每用户每池独立并发 + 全局优先级限流 + 可选的 Redis 响应缓存。"""
 
-    def __init__(self, raw_llm=None):
+    def __init__(self, raw_llm=None, cache_ttl: int = 0):
         self._raw = raw_llm or _raw_llm
+        self._cache_ttl = cache_ttl  # 0=不缓存；>0 缓存秒数（如 3600=1h）
 
     def __getattr__(self, name):
         return getattr(self._raw, name)
 
+    @staticmethod
+    def _prompt_to_key(prompt) -> str | None:
+        """将 prompt 转为 SHA256 缓存 key（仅纯文本 prompt 可缓存）"""
+        try:
+            raw = str(prompt)
+            if len(raw) < 10:
+                return None
+            return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        except Exception:
+            return None
+
     async def ainvoke(self, prompt, priority: str = "high", user_id: int = 0, pool: str = "default"):
+        # 计算缓存 key（仅在 cache_ttl > 0 时）
+        _cache_key_str = self._prompt_to_key(prompt) if self._cache_ttl else None
+
+        # 缓存快速通道：命中直接返回，不走 semaphore
+        if _cache_key_str:
+            try:
+                from backend.src.utils.redis_client import cache_get as _cg, _cache_key as _ck
+                _cached = await _cg(_ck("llm", _cache_key_str))
+                if _cached is not None and isinstance(_cached, dict) and "content" in _cached:
+                    return AIMessage(
+                        content=_cached["content"],
+                        response_metadata=_cached.get("response_metadata", {}),
+                    )
+            except Exception:
+                pass
+
         user_sem = None
         if user_id:
             key = (user_id, pool)
@@ -95,9 +126,21 @@ class _PriorityLLM:
         async def _call():
             if user_sem:
                 async with user_sem:
-                    return await self._raw.ainvoke(prompt)
+                    resp = await self._raw.ainvoke(prompt)
             else:
-                return await self._raw.ainvoke(prompt)
+                resp = await self._raw.ainvoke(prompt)
+            # 异步回填缓存（仅非流式结果）
+            if _cache_key_str and resp and resp.content and len(str(resp.content).strip()) > 5:
+                try:
+                    from backend.src.utils.redis_client import cache_set as _cs, _cache_key as _ck2
+                    _meta = getattr(resp, "response_metadata", {}) or {}
+                    await _cs(_ck2("llm", _cache_key_str), {
+                        "content": resp.content,
+                        "response_metadata": {k: str(v) for k, v in _meta.items() if isinstance(v, (str, int, float))},
+                    }, self._cache_ttl)
+                except Exception:
+                    pass
+            return resp
 
         global _async_high_active
         if priority == "high":
@@ -146,5 +189,8 @@ class _PriorityLLM:
                 return _call()
 
 
-llm = _PriorityLLM()
-llm_vision = _PriorityLLM(_vision_llm)
+# 环境变量 LLM_CACHE_TTL 控制 LLM 缓存秒数（默认 0=关闭，设置如 300=5分钟）
+_DEFAULT_CACHE_TTL = int(os.getenv("LLM_CACHE_TTL", "0"))
+
+llm = _PriorityLLM(cache_ttl=_DEFAULT_CACHE_TTL)
+llm_vision = _PriorityLLM(_vision_llm, cache_ttl=_DEFAULT_CACHE_TTL)

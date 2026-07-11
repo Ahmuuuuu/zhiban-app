@@ -30,6 +30,7 @@
       :variant="variant"
       :tone="backgroundTone"
       :layout-seed="contentLayoutSeed"
+      :timed-words="timedWords"
     />
 
     <VideoWaveform
@@ -77,6 +78,10 @@ const props = defineProps({
   backgroundUrl: {
     type: String,
     default: ''
+  },
+  timedWords: {
+    type: Array,
+    default: () => []
   }
 })
 

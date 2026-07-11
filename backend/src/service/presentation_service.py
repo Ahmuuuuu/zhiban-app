@@ -16,10 +16,11 @@ from backend.src.ai_core.llm_config import llm
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.utils.exceptions import ServiceError
 from backend.src.utils.chat_utils import allocate_chat_group_id
+from backend.src.utils.redis_client import notify_sse as _redis_notify_sse, subscribe_sse, unsubscribe_sse
+from backend.src.utils.constants import PRESENTATIONS_DIR
 
 logger = logging.getLogger(__name__)
 
-PRESENTATION_DIR = Path(__file__).parent.parent.parent / "static" / "presentations"
 TEMPLATE_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template.html"
 TEMPLATE_VIDEO_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template_video.html"
 PRESENTATION_TEMPLATE_VERSION = "visual-v6"
@@ -397,12 +398,31 @@ def _trim_content_depth(content: str, depth: str, is_ppt: bool = False) -> str:
         trimmed.append("\n".join(kept_lines))
     return sep.join(trimmed)
 _sse_queues: dict[int, list[asyncio.Queue]] = {}
-_progress_events: dict[int, list[dict]] = {}  # 存储进度事件历史，供迟到 SSE 订阅者回放
+_sse_forward_tasks: dict[int, asyncio.Task] = {}
 
 
 def _subscribe_sse(presentation_id: int) -> asyncio.Queue:
+    """订阅课件 SSE（返回 asyncio.Queue，兼容现有路由）。
+    同时在 redis_client 注册订阅，跨进程消息通过转发器到达本地队列。"""
     q = asyncio.Queue()
     _sse_queues.setdefault(presentation_id, []).append(q)
+
+    # 注册 redis_client 统一订阅，使跨进程消息能转发到此队列
+    _rq = subscribe_sse(f"pres:{presentation_id}")
+    _chan = f"pres:{presentation_id}"
+
+    async def _forward_loop():
+        """将 redis_client 订阅队列中的消息转发到 asyncio.Queue"""
+        try:
+            while _chan in {c: qs for c, qs in _sse_queues.items() if q in qs}:
+                while _rq:
+                    msg = _rq.pop(0)
+                    q.put_nowait(msg)
+                await asyncio.sleep(0.2)
+        except Exception:
+            logger.debug("SSE 转发结束 presentation_id=%s", presentation_id)
+
+    _sse_forward_tasks[presentation_id] = asyncio.ensure_future(_forward_loop())
     return q
 
 
@@ -412,26 +432,23 @@ def _unsubscribe_sse(presentation_id: int, q: asyncio.Queue):
         queues.remove(q)
     if not queues:
         _sse_queues.pop(presentation_id, None)
-        # 所有订阅者都断开后延迟清理进度历史
-        _progress_events.pop(presentation_id, None)
+        # 清理 redis_client 订阅
+        unsubscribe_sse(f"pres:{presentation_id}", q)
+    # 取消转发任务
+    task = _sse_forward_tasks.pop(presentation_id, None)
+    if task and not task.done():
+        task.cancel()
 
 
 async def _notify_sse(presentation_id: int, data: dict):
-    for q in _sse_queues.get(presentation_id, []):
-        q.put_nowait(data)
+    """统一走 redis_client 通知（本地队列 + Redis Pub/Sub + Stream）"""
+    await _redis_notify_sse(f"pres:{presentation_id}", data)
 
 
 def _push_progress(presentation_id: int, step: str, label: str, status: str = "running", elapsed_ms: int | None = None):
-    """同步推送生成进度到 SSE 队列 + 存储事件历史"""
+    """推送生成进度（统一走 redis_client，异步 fire-and-forget）"""
     event = {"type": "progress", "step": step, "label": label, "status": status, "elapsed_ms": elapsed_ms}
-    _progress_events.setdefault(presentation_id, []).append(event)
-    for q in _sse_queues.get(presentation_id, []):
-        try:
-            q.put_nowait(event)
-        except asyncio.QueueFull:
-            logger.warning("SSE 队列已满 presentation_id=%s", presentation_id)
-        except Exception:
-            logger.exception("SSE 进度推送异常 presentation_id=%s", presentation_id)
+    asyncio.ensure_future(_redis_notify_sse(f"pres:{presentation_id}", event))
 
 
 # ═══════════════════════════════════════════════
@@ -538,10 +555,10 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
             if not video_mode:
                 t0 = _time.perf_counter()
                 _push_progress(pid, "render_html", "正在渲染课件…", "running")
-                PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
+                PRESENTATIONS_DIR.mkdir(parents=True, exist_ok=True)
                 html = _render_html(topic, chapters_list, template_path=None)
                 filename = f"{_safe_filename(topic)}_{uuid.uuid4().hex[:8]}.html"
-                file_path = PRESENTATION_DIR / filename
+                file_path = PRESENTATIONS_DIR / filename
                 file_path.write_text(html, encoding="utf-8")
                 file_url = f"/static/presentations/{filename}"
                 _push_progress(pid, "render_html", "课件渲染完毕", "done", int((_time.perf_counter() - t0) * 1000))
@@ -928,7 +945,7 @@ async def _flush(record, topic: str, chapters: list, status: str, segments: list
         except Exception:
             logger.warning("读取 HTML 模板版本失败，使用默认模板 record=%s", record.id)
         html = _render_html(topic, chapters, segments or [], template_path=_tp)
-        PRESENTATION_DIR.mkdir(parents=True, exist_ok=True)
+        PRESENTATIONS_DIR.mkdir(parents=True, exist_ok=True)
         file_path.write_text(html, encoding="utf-8")
 
     record = await Presentation.filter(id=record.id).first()
@@ -1379,7 +1396,7 @@ def _presentation_file_path(url: str | None) -> Path | None:
     fname = str(url).split("?", 1)[0].rsplit("/", 1)[-1]
     if not fname:
         return None
-    return PRESENTATION_DIR / fname
+    return PRESENTATIONS_DIR / fname
 
 
 def _presentation_file_matches_template(url: str | None, expected_tag: str | None = None) -> bool:

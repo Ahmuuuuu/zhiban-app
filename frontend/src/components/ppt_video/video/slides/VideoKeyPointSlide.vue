@@ -1,0 +1,474 @@
+<template>
+  <section
+    class="video-keypoint-slide"
+    :class="[`layout-${layoutSeed}`, { 'is-dense': displayItems.length > 4 }]"
+  >
+    <div class="video-keypoint-slide__hero">
+      <span>{{ slide.chapterTitle }}</span>
+      <h2>{{ slide.title }}</h2>
+      <p>{{ slide.summary }}</p>
+    </div>
+
+    <div class="video-keypoint-slide__cards">
+      <article
+        v-for="(item, index) in displayItems"
+        :key="`${index}-${item}`"
+        :style="{ '--delay': index }"
+        :class="{ featured: index === 0 }"
+      >
+        <b>{{ index + 1 }}</b>
+        <span v-html="karaokeItems[index]"></span>
+      </article>
+    </div>
+
+    <div class="video-keypoint-slide__visual">
+      <div class="visual-focus">
+        <span
+          v-for="index in 4"
+          :key="index"
+          :style="{ '--line': index }"
+        ></span>
+      </div>
+      <div class="term-cloud">
+        <b
+          v-for="(term, index) in terms"
+          :key="term"
+          :style="{ '--delay': index }"
+        >{{ term }}</b>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script setup>
+import { computed } from 'vue'
+import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
+import { getSlideTerms } from './videoSlideClassifier'
+
+const props = defineProps({
+  slide: {
+    type: Object,
+    required: true
+  },
+  layoutSeed: {
+    type: Number,
+    default: 0
+  },
+  timedWords: {
+    type: Array,
+    default: () => []
+  }
+})
+
+const displayItems = computed(() => {
+  const items = Array.isArray(props.slide.items) ? props.slide.items : []
+  return items.length ? items : [props.slide.summary].filter(Boolean)
+})
+
+const terms = computed(() => getSlideTerms(props.slide))
+
+// 逐词 karaoke：TTS word_timestamps 覆盖 title + items + notes 全文，
+// 但 title/summary 不以 karaoke 渲染，因此先跳过它们占用的词，再对齐 items。
+const karaokeItems = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return displayItems.value.map(item => renderMath(item))
+  let offset = 0
+  // 跳过 title（普通渲染，不参与 karaoke）
+  offset += renderKaraokeHTML(props.slide.title || '', words, offset).consumed
+  // 跳过 summary（当 summary 与 items 来源不同时需跳过；若与 items 重叠则不跳过）
+  const summaryText = props.slide.summary || ''
+  const itemsText = displayItems.value.join(' ')
+  if (summaryText && !itemsText.includes(summaryText.slice(0, 10))) {
+    offset += renderKaraokeHTML(summaryText, words, offset).consumed
+  }
+  return displayItems.value.map(item => {
+    const { html, consumed } = renderKaraokeHTML(item, words, offset)
+    offset += consumed
+    return html
+  })
+})
+</script>
+
+<style scoped>
+.video-keypoint-slide {
+  position: absolute;
+  inset: 82px 54px 104px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
+  grid-template-rows: minmax(0, 0.72fr) minmax(160px, 0.9fr);
+  grid-template-areas:
+    "hero visual"
+    "cards visual";
+  gap: 22px 28px;
+  color: var(--video-text);
+}
+
+.video-keypoint-slide *,
+.video-keypoint-slide *::before,
+.video-keypoint-slide *::after {
+  box-sizing: border-box;
+}
+
+.video-keypoint-slide.is-dense {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "hero"
+    "cards";
+  gap: 18px;
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__visual {
+  display: none;
+}
+
+.video-keypoint-slide.layout-1 {
+  grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+  grid-template-areas:
+    "visual hero"
+    "visual cards";
+}
+
+.video-keypoint-slide.layout-2 {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(120px, 0.52fr) minmax(180px, 0.72fr);
+  grid-template-areas:
+    "hero"
+    "visual"
+    "cards";
+}
+
+.video-keypoint-slide.layout-3 {
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas:
+    "hero cards"
+    "visual cards";
+}
+
+.video-keypoint-slide.layout-4 {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "hero hero"
+    "cards visual";
+}
+
+.video-keypoint-slide.layout-3 .video-keypoint-slide__cards {
+  grid-template-columns: 1fr;
+  align-content: center;
+}
+
+.video-keypoint-slide.layout-4 .video-keypoint-slide__cards {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+}
+
+.video-keypoint-slide__hero {
+  grid-area: hero;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  gap: 14px;
+  animation: slide-rise 0.64s ease both;
+}
+
+.video-keypoint-slide__hero > span {
+  width: fit-content;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  display: inline-flex;
+  align-items: center;
+  color: var(--video-soft);
+  font-size: 12px;
+  font-weight: 900;
+  backdrop-filter: blur(10px);
+}
+
+.video-keypoint-slide h2 {
+  max-width: 760px;
+  margin: 0;
+  font-size: clamp(30px, 3.8vw, 56px);
+  line-height: 1.12;
+  text-shadow: 0 4px 24px var(--video-shadow);
+}
+
+.video-keypoint-slide.is-dense h2 {
+  max-width: 100%;
+  font-size: clamp(26px, 3vw, 44px);
+}
+
+.video-keypoint-slide h2::after {
+  content: "";
+  display: block;
+  width: min(520px, 70%);
+  height: 4px;
+  margin-top: 20px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--video-accent, #2f7de1), var(--video-warm, #ffd166));
+}
+
+.video-keypoint-slide__hero p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--video-muted);
+  font-size: clamp(13px, 1.05vw, 18px);
+  line-height: 1.58;
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__hero p {
+  max-width: 100%;
+  font-size: clamp(12px, 0.94vw, 16px);
+  line-height: 1.45;
+}
+
+.video-keypoint-slide__cards {
+  grid-area: cards;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  min-height: 0;
+  align-content: center;
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__cards {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.video-keypoint-slide__cards article {
+  min-height: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--video-card-border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--video-accent, #2f7de1) 14%, transparent), transparent 52%),
+    var(--video-card-bg);
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 18px 42px var(--video-shadow);
+  animation: card-pop 0.52s ease both;
+  animation-delay: calc(var(--delay) * 0.09s + 0.12s);
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__cards article {
+  padding: 11px 12px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.video-keypoint-slide.layout-1 .video-keypoint-slide__cards article {
+  border-radius: 999px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+}
+
+.video-keypoint-slide.layout-2 .video-keypoint-slide__cards article {
+  border-radius: 8px 32px 8px 32px;
+}
+
+.video-keypoint-slide.layout-3 .video-keypoint-slide__cards article {
+  border-radius: 6px;
+  clip-path: polygon(0 0, 96% 0, 100% 22%, 100% 100%, 4% 100%, 0 78%);
+}
+
+.video-keypoint-slide.layout-4 .video-keypoint-slide__cards article {
+  min-height: 126px;
+  border-radius: 50%;
+  aspect-ratio: 1.18;
+  grid-template-columns: 1fr;
+  place-items: center;
+  text-align: center;
+}
+
+.video-keypoint-slide.layout-4.is-dense .video-keypoint-slide__cards article {
+  min-height: 0;
+  aspect-ratio: auto;
+  border-radius: 18px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  place-items: start;
+  text-align: left;
+}
+
+.video-keypoint-slide__cards article.featured {
+  background: var(--video-card-strong);
+}
+
+.video-keypoint-slide__cards b {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--video-number-bg);
+  color: var(--video-number-text);
+  display: grid;
+  place-items: center;
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__cards b {
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
+
+.video-keypoint-slide.layout-4 .video-keypoint-slide__cards b {
+  width: 42px;
+  height: 42px;
+}
+
+.video-keypoint-slide__cards span {
+  color: var(--video-muted);
+  font-size: clamp(12px, 0.94vw, 17px);
+  line-height: 1.36;
+}
+
+.video-keypoint-slide.is-dense .video-keypoint-slide__cards span {
+  font-size: clamp(11px, 0.82vw, 14px);
+  line-height: 1.34;
+}
+
+.video-keypoint-slide__visual {
+  grid-area: visual;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--video-card-border);
+  border-radius: 8px;
+  background: var(--video-card-bg);
+  box-shadow: 0 20px 52px var(--video-shadow);
+  backdrop-filter: blur(14px);
+  animation: panel-in 0.72s ease both;
+}
+
+.video-keypoint-slide.layout-1 .video-keypoint-slide__visual {
+  border-radius: 34px 8px 34px 8px;
+}
+
+.video-keypoint-slide.layout-2 .video-keypoint-slide__visual {
+  border-radius: 999px;
+}
+
+.video-keypoint-slide.layout-3 .video-keypoint-slide__visual {
+  clip-path: polygon(6% 0, 100% 0, 94% 100%, 0 100%);
+}
+
+.video-keypoint-slide.layout-4 .video-keypoint-slide__visual {
+  border-radius: 50%;
+}
+
+.visual-focus {
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  top: 36px;
+  height: 46%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: inherit;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+  background-size: 22px 22px;
+  overflow: hidden;
+}
+
+.visual-focus::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+  opacity: 0.14;
+  transform: translateX(-82%);
+  animation: visual-scan 4.6s ease-in-out infinite;
+}
+
+.visual-focus span {
+  position: absolute;
+  left: 20px;
+  right: calc(18px + var(--line) * 34px);
+  top: calc(18px + var(--line) * 30px);
+  height: 4px;
+  border-radius: 999px;
+  background: var(--video-line);
+  animation: visual-line 3s ease-in-out infinite;
+  animation-delay: calc(var(--line) * -0.28s);
+}
+
+.term-cloud {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.term-cloud b {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--video-card-border);
+  border-radius: 999px;
+  background: var(--video-chip-bg);
+  color: var(--video-chip-text);
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  animation: term-float 3.2s ease-in-out infinite;
+  animation-delay: calc(var(--delay) * -0.18s);
+}
+
+@keyframes slide-rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes card-pop {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes panel-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes term-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes visual-scan {
+  0%, 25% { transform: translateX(-82%); }
+  70%, 100% { transform: translateX(82%); }
+}
+
+@keyframes visual-line {
+  0%, 100% { opacity: 0.42; transform: scaleX(0.86); transform-origin: left; }
+  50% { opacity: 0.9; transform: scaleX(1); transform-origin: left; }
+}
+
+@media (max-width: 980px) {
+  .video-keypoint-slide {
+    inset: 72px 24px 104px;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(160px, 1fr);
+    grid-template-areas:
+      "hero"
+      "cards"
+      "visual";
+  }
+}
+</style>

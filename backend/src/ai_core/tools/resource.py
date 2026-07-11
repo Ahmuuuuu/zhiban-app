@@ -13,6 +13,7 @@ _TYPE_LABELS = {
     "document": "文档", "ppt": "PPT", "exercise": "习题",
     "mindmap": "思维导图", "image": "图片", "case": "案例分析",
     "reading": "阅读材料",
+    "external_video": "视频推荐",
 }
 
 # 明确的资源生成意图模式 — 只有匹配这些才允许执行

@@ -11,6 +11,7 @@ import shutil
 
 from backend.src.utils.tts_utils import parse_by_type, generate_audio_with_timestamps, NARRATABLE_TYPES
 from backend.src.utils.exceptions import ServiceError
+from backend.src.utils.constants import AUDIO_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ async def narrate_content(content: str, resource_type: str, voice: str, resource
     if not sections:
         return {"sections": []}
 
-    base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+    base_dir = AUDIO_DIR / str(resource_id)
     base_dir.mkdir(parents=True, exist_ok=True)
 
     results = await _generate_sections_audio(sections, voice, base_dir, resource_id)
@@ -65,7 +66,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     if force_regenerate:
         existing = await Narration.filter(resource_id=resource_id, voice=voice).first()
         if existing:
-            audio_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+            audio_dir = AUDIO_DIR / str(resource_id)
             if audio_dir.exists():
                 shutil.rmtree(audio_dir)
             await existing.delete()
@@ -85,7 +86,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     if not sections:
         raise ServiceError("无法解析内容，资源可能为空")
 
-    base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+    base_dir = AUDIO_DIR / str(resource_id)
     base_dir.mkdir(parents=True, exist_ok=True)
 
     results = await _generate_sections_audio(sections, voice, base_dir, resource_id)
@@ -148,21 +149,11 @@ async def _generate_tts(text: str, voice: str, output_path: str) -> list[dict] |
         part_results.append(r)
     part_results.sort(key=lambda x: x[0])
 
-    # 按序拼接 MP3 + 合并时间戳
-    all_timestamps: list[dict] = []
-    offset_ms = 0
+    # 按序拼接 MP3 + 合并时间戳（同步 IO 放入线程避免阻塞事件循环）
     try:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "wb") as out:
-            for _, part_path, timestamps in part_results:
-                with open(part_path, "rb") as inp:
-                    out.write(inp.read())
-                for ts in timestamps:
-                    ts["offset_ms"] = ts.get("offset_ms", 0) + offset_ms
-                all_timestamps.extend(timestamps)
-                if timestamps:
-                    last = timestamps[-1]
-                    offset_ms += last.get("offset_ms", 0) + last.get("duration_ms", 0)
+        all_timestamps = await asyncio.to_thread(
+            _concat_mp3_and_timestamps, output_path, json_path, part_results
+        )
     except IOError:
         logger.exception("MP3 拼接失败 output=%s", output_path)
         return None
@@ -173,13 +164,6 @@ async def _generate_tts(text: str, voice: str, output_path: str) -> list[dict] |
                     os.remove(f)
                 except OSError:
                     pass
-
-    try:
-        os.makedirs(os.path.dirname(json_path), exist_ok=True)
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(all_timestamps, f, ensure_ascii=False)
-    except IOError:
-        pass
 
     return all_timestamps
 
@@ -214,9 +198,7 @@ async def _generate_tts_one(text: str, voice: str, output_path: str, json_path: 
         cost = _time.perf_counter() - t0
 
     try:
-        os.makedirs(os.path.dirname(json_path), exist_ok=True)
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(word_timestamps, f, ensure_ascii=False)
+        await asyncio.to_thread(_dump_json, json_path, word_timestamps)
     except IOError:
         pass
 
@@ -230,6 +212,38 @@ async def _generate_tts_one(text: str, voice: str, output_path: str, json_path: 
 
 
 _MAX_TTS_CHARS = 800  # 单次 TTS 文本上限，切成小段降低超时风险
+
+def _concat_mp3_and_timestamps(output_path: str, json_path: str, part_results: list) -> list[dict]:
+    """同步拼接 MP3 片段并合并时间戳（在线程中执行，避免阻塞事件循环）"""
+    all_timestamps: list[dict] = []
+    offset_ms = 0
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "wb") as out:
+        for _, part_path, timestamps in part_results:
+            with open(part_path, "rb") as inp:
+                out.write(inp.read())
+            for ts in timestamps:
+                ts["offset_ms"] = ts.get("offset_ms", 0) + offset_ms
+            all_timestamps.extend(timestamps)
+            if timestamps:
+                last = timestamps[-1]
+                offset_ms += last.get("offset_ms", 0) + last.get("duration_ms", 0)
+    os.makedirs(os.path.dirname(json_path), exist_ok=True)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(all_timestamps, f, ensure_ascii=False)
+    return all_timestamps
+
+
+def _dump_json(path: str, data: object) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def _load_json(path: str) -> list[dict]:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
 
 def _split_long_text(text: str, max_chars: int = _MAX_TTS_CHARS) -> list[str]:
     """将长文本按句子边界拆分为适合 TTS 的短片段"""
@@ -271,8 +285,7 @@ async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: P
 
         if os.path.exists(output_path) and os.path.exists(json_path):
             try:
-                with open(json_path, "r", encoding="utf-8") as f:
-                    word_timestamps = json.load(f)
+                word_timestamps = await asyncio.to_thread(_load_json, json_path)
                 real_dur = _real_duration_from_timestamps(word_timestamps, section["duration_ms"])
                 async with _hits_lock:
                     cache_hits += 1
@@ -386,7 +399,7 @@ async def delete_narration(narration_id: int, user_id: int) -> bool:
     # 检查该 resource 是否有其他 voice 的旁白，没有才删文件夹
     others = await Narration.filter(resource_id=resource_id).exclude(id=narration_id).count()
     if others == 0:
-        audio_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+        audio_dir = AUDIO_DIR / str(resource_id)
         if audio_dir.exists():
             shutil.rmtree(audio_dir)
 

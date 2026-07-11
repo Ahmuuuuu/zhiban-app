@@ -11,10 +11,9 @@ from backend.src.service.image_service import ImageService
 from backend.src.models.image_model import GeneratedImage
 from backend.src.schemas.image import GenerateImageRequest
 from backend.src.utils.jwt import get_user_id_from_token
+from backend.src.utils.constants import IMAGES_DIR
 
 router = APIRouter(prefix="/image", tags=["AI 图片生成"])
-
-IMAGES_DIR = Path(__file__).parent.parent.parent / "static" / "images"
 
 
 class ImageVisibilityRequest(BaseModel):

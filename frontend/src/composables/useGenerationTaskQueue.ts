@@ -260,14 +260,40 @@ const pollBackendTask = (task: GenerationTask) => {
 const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
   if (!eventData || eventData.type === '__close__') return
 
+  // 外部视频搜索结果（在 graph 完成前提前推送）
+  if (eventData.type === 'external_videos' && Array.isArray(eventData.external_videos)) {
+    if (!(task as any).externalVideos) {
+      ;(task as any).externalVideos = []
+    }
+    ;(task as any).externalVideos.push(...eventData.external_videos)
+    if (eventData.progress_msg) {
+      task.progress = eventData.progress_msg
+    }
+    task.updatedAt = Date.now()
+    persistTasks()
+    return
+  }
+
   if (eventData.type === 'stream_start') {
     ;(task as any)._pptStream = { slides: [] }
   }
 
+  if (eventData.type === 'stream_section_replace' && eventData.section_idx != null) {
+    const stream = (task as any)._pptStream || { slides: [] }
+    stream.slides = stream.slides.filter((s: any) => {
+      const si = typeof s === 'object' ? s.section_idx : null
+      return si !== eventData.section_idx
+    })
+    stream._needsRebuild = true
+    ;(task as any)._pptStream = stream
+  }
+
   if (eventData.type === 'stream_slide' && eventData.content) {
     const stream = (task as any)._pptStream || { slides: [] }
-    stream.slides.push(eventData.content)
+    stream.slides.push({ content: eventData.content, section_idx: eventData.section_idx })
     ;(task as any)._pptStream = stream
+    console.log('[GenerationTask] stream_slide taskId=%s section_idx=%s slides=%d',
+      task.backendTaskId?.slice(0, 12) || task.id, eventData.section_idx, stream.slides.length)
   }
 
   const thinking = getBackendThinking(eventData)

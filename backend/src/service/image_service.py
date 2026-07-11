@@ -7,12 +7,11 @@ import hmac
 import hashlib
 import uuid
 import asyncio
+import time as _time
 from datetime import datetime
 from time import mktime
 from wsgiref.handlers import format_date_time
-from pathlib import Path
 from urllib.parse import urlencode
-from dotenv import load_dotenv
 import httpx
 
 from backend.src.models.chat_history_model import ChatHistory
@@ -83,10 +82,16 @@ _logger = logging.getLogger("image_service")
 
 _task_status: dict[str, dict] = {}
 
+# ─── 讯飞并发控制 ───
+# 免费版仅 1 路并发，10006/10007/11203 都是并发超限
+_xf_submit_lock = asyncio.Lock()
+_xf_last_submit: float = 0.0
+_RETRYABLE_CODES = {10006, 10007, 11203, 10008, 401}
+_MAX_RETRIES = 3
+_MIN_SUBMIT_INTERVAL = 1.5  # 两次提交最小间隔（秒）
+
 
 def _load_env():
-    env_file = Path(__file__).parent.parent.parent / ".env"
-    load_dotenv(env_file)
     app_id = os.getenv("XF_APP_ID", "")
     api_key = os.getenv("XF_API_KEY", "")
     api_secret = os.getenv("XF_API_SECRET", "")
@@ -96,6 +101,7 @@ def _load_env():
 
 
 def _make_auth_url(path: str, api_key: str, api_secret: str) -> str:
+    """生成带鉴权的请求 URL（标准 讯飞 HMAC-SHA256 签名）"""
     cur_time = datetime.now()
     date = format_date_time(mktime(cur_time.timetuple()))
     signature_origin = f"host: {HOST}\ndate: {date}\nPOST {path} HTTP/1.1"
@@ -108,7 +114,9 @@ def _make_auth_url(path: str, api_key: str, api_secret: str) -> str:
     })
 
 
-SAVE_DIR = Path(__file__).parent.parent.parent / "static" / "images"
+from backend.src.utils.constants import IMAGES_DIR
+
+SAVE_DIR = IMAGES_DIR
 
 
 
@@ -149,7 +157,7 @@ class ImageService:
 
     @staticmethod
     async def submit(prompt: str, user_id: int, aspect_ratio: str = "1:1", img_count: int = 1, chat_group_id: int = 0) -> dict:
-        """提交生成任务到讯飞，立即返回 task_id"""
+        """提交生成任务到讯飞，带并发控制 + 自动重试"""
         app_id, api_key, api_secret = _load_env()
 
         user = await User.filter(id=user_id).first()
@@ -158,9 +166,6 @@ class ImageService:
 
         chat_group_id = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
         _logger.info(f"submit user_id={user_id} chat_group_id={chat_group_id}")
-        debug_log = SAVE_DIR.parent.parent / "image_debug.log"
-        with open(debug_log, "a", encoding="utf-8") as f:
-            f.write(f"[submit发送星火] prompt: {prompt}\n")
 
         prompt_json = json.dumps({
             "image": [],
@@ -171,52 +176,85 @@ class ImageService:
         })
         text_base64 = base64.b64encode(prompt_json.encode()).decode()
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=60.0)) as client:
-            create_body = {
-                "header": {
-                    "app_id": app_id, "status": 3,
-                    "channel": "default", "callback_url": "default",
-                },
-                "parameter": {
-                    "oig": {"result": {"encoding": "utf8", "compress": "raw", "format": "json"}}
-                },
-                "payload": {
-                    "oig": {
-                        "encoding": "utf8", "compress": "raw", "format": "json",
-                        "status": 3, "text": text_base64,
-                    }
-                },
-            }
-            resp = await client.post(
-                _make_auth_url(CREATE_PATH, api_key, api_secret),
-                json=create_body,
-                headers={"Content-Type": "application/json"},
-            )
-            if resp.status_code != 200:
-                _logger.error(f"submit 创建任务 HTTP {resp.status_code}: {resp.text[:500]}")
-                raise RuntimeError(f"创建任务失败 (HTTP {resp.status_code}): {resp.text[:300]}")
-            data = resp.json()
-            _logger.info(f"submit 响应: {json.dumps(data, ensure_ascii=False)[:1000]}")
-            header = data.get("header", {})
-            if header.get("code") != 0:
-                _logger.error(f"submit 失败 code={header.get('code')} msg={header.get('message')} 完整响应: {json.dumps(data, ensure_ascii=False)[:1000]}")
-                raise RuntimeError(f"创建任务失败: {header.get('message')} (code={header.get('code')})")
-            task_id = header.get("task_id")
-            if not task_id:
-                raise RuntimeError("未获取到 task_id")
-
-        _task_status[task_id] = {
-            "status": "processing",
-            "prompt": prompt,
-            "user_id": user_id,
-            "chat_group_id": chat_group_id,
-            "aspect_ratio": aspect_ratio,
-            "img_count": img_count,
-            "created_at": str(datetime.now()),
+        create_body = {
+            "header": {
+                "app_id": app_id, "status": 3,
+                "channel": "default", "callback_url": "default",
+            },
+            "parameter": {
+                "oig": {"result": {"encoding": "utf8", "compress": "raw", "format": "json"}}
+            },
+            "payload": {
+                "oig": {
+                    "encoding": "utf8", "compress": "raw", "format": "json",
+                    "status": 3, "text": text_base64,
+                }
+            },
         }
 
-        _logger.info(f"图片任务已提交 task_id={task_id}")
-        return {"task_id": task_id, "status": "processing", "chat_group_id": chat_group_id}
+        # ═══ 串行化提交：全局锁 + 最小间隔 + 重试 ═══
+        async with _xf_submit_lock:
+            # 保证两次提交至少间隔 _MIN_SUBMIT_INTERVAL
+            global _xf_last_submit
+            now = _time.time()
+            gap = _MIN_SUBMIT_INTERVAL - (now - _xf_last_submit)
+            if gap > 0:
+                await asyncio.sleep(gap)
+
+            last_err = None
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    url = _make_auth_url(CREATE_PATH, api_key, api_secret)
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=60.0)) as client:
+                        resp = await client.post(
+                            url, json=create_body,
+                            headers={"Content-Type": "application/json"},
+                        )
+                        if resp.status_code != 200:
+                            raise RuntimeError(f"创建任务失败 (HTTP {resp.status_code}): {resp.text[:300]}")
+
+                        data = resp.json()
+                        header = data.get("header", {})
+                        code = header.get("code", 0)
+                        msg = header.get("message", "")
+
+                        if code == 0:
+                            task_id = header.get("task_id")
+                            if not task_id:
+                                raise RuntimeError("未获取到 task_id")
+
+                            _xf_last_submit = _time.time()
+                            _task_status[task_id] = {
+                                "status": "processing", "prompt": prompt,
+                                "user_id": user_id, "chat_group_id": chat_group_id,
+                                "aspect_ratio": aspect_ratio, "img_count": img_count,
+                                "created_at": str(datetime.now()),
+                            }
+                            _logger.info(f"图片任务已提交 task_id={task_id}")
+                            return {"task_id": task_id, "status": "processing", "chat_group_id": chat_group_id}
+
+                        # 可重试：并发超限 / 服务容量不足 / 鉴权失败
+                        if code in _RETRYABLE_CODES and attempt < _MAX_RETRIES - 1:
+                            wait = 2 ** attempt * 2  # 2s, 4s, 8s
+                            _logger.warning(f"submit 可重试 code={code} msg={msg} attempt={attempt+1}/{_MAX_RETRIES} wait={wait}s")
+                            await asyncio.sleep(wait)
+                            last_err = f"{msg} (code={code})"
+                            continue
+
+                        # 不可重试
+                        raise RuntimeError(f"创建任务失败: {msg} (code={code})")
+
+                except httpx.TimeoutException as e:
+                    if attempt < _MAX_RETRIES - 1:
+                        wait = 2 ** attempt * 2
+                        _logger.warning(f"submit 超时 attempt={attempt+1}/{_MAX_RETRIES} wait={wait}s")
+                        await asyncio.sleep(wait)
+                        last_err = str(e)
+                        continue
+                    raise RuntimeError(f"创建任务超时 (已重试{_MAX_RETRIES}次)")
+
+            # 所有重试用尽
+            raise RuntimeError(f"创建任务失败 (已重试{_MAX_RETRIES}次): {last_err}")
 
     @staticmethod
     async def poll_once(task_id: str, save_history: bool = True) -> dict | None:
@@ -242,13 +280,13 @@ class ImageService:
                     return dict(info)
 
                 qdata = resp.json()
-                _logger.info(f"task_id={task_id} 查询完整响应: {json.dumps(qdata, ensure_ascii=False)[:2000]}")
+                _logger.info(f"task_id={task_id} 查询响应 code={qdata.get('header', {}).get('code')} task_status={qdata.get('header', {}).get('task_status')}")
                 qheader = qdata.get("header", {})
                 code = qheader.get("code", 0)
                 if code != 0:
-                    _task_status[task_id] = {**info, "status": "failed", "error": f"查询失败: {qheader.get('message')}"}
-                    _logger.error(f"task_id={task_id} 查询失败 code={code} msg={qheader.get('message')}")
-                    return _task_status[task_id]
+                    # 非 0 多为瞬时错误（限流/服务忙），不判死，下轮重试
+                    _logger.warning(f"查询 task_id={task_id} 非零 code={code} msg={qheader.get('message')}（非致命，下轮重试）")
+                    return dict(info)
 
                 task_status_code = qheader.get("task_status", "")
                 if task_status_code == "5":
@@ -257,8 +295,10 @@ class ImageService:
                     _logger.error(f"task_id={task_id} 任务失败 task_status=5 msg={qheader.get('message')}")
                     return _task_status[task_id]
                 if task_status_code != "4":
-                    _logger.info(f"task_id={task_id} 仍在处理中 task_status={task_status_code}")
-                    return dict(info)
+                    # 从查询响应中提取进度百分比
+                    _progress = qheader.get("task_completion", 0) or 0
+                    _logger.info(f"task_id={task_id} 生成中 task_status={task_status_code} progress={_progress}%")
+                    return {**info, "status": "processing", "progress": int(_progress)}
 
                 _logger.info(f"task_id={task_id} 任务完成，开始下载")
                 payload = qdata.get("payload", {})
@@ -266,7 +306,8 @@ class ImageService:
                 result = payload.get("result", {}) or oig.get("result", {})
                 result_text = result.get("text", "")
                 if not result_text:
-                    _logger.warning(f"task_id={task_id} 任务完成但 result_text 为空")
+                    # 偶尔 result_text 延迟到达，不判死
+                    _logger.warning(f"task_id={task_id} result_text 为空，下轮重试")
                     return dict(info)
 
                 # 下载图片并存库
@@ -340,17 +381,29 @@ class ImageService:
     @staticmethod
     async def generate(prompt: str, user_id: str, aspect_ratio: str = "1:1", img_count: int = 1, chat_group_id: int = 0, save_history: bool = True) -> list[dict]:
         """同步生成（供 tool 使用，阻塞等待结果）。
-        save_history=False 时跳过聊天记录写入（资源整合流程已有统一记录）。"""
+        save_history=False 时跳过聊天记录写入（资源整合流程已有统一记录）。
+
+        最多等待 _MAX_POLL * _POLL_INTERVAL ≈ 300 秒（5 分钟），
+        每次 poll 耗时超过间隔时会自动跳过本次睡眠。
+        """
         prompt = await _ensure_prompt_quality(prompt)
         result = await ImageService.submit(prompt, int(user_id), aspect_ratio, img_count, chat_group_id=chat_group_id)
         task_id = result["task_id"]
 
-        for _ in range(60):
-            await asyncio.sleep(2)
+        _POLL_INTERVAL = 2
+        _MAX_POLL = 150
+
+        for i in range(_MAX_POLL):
+            _t_start = _time.monotonic()
             status = await ImageService.poll_once(task_id, save_history=save_history)
             if status["status"] == "done":
                 return status.get("images", [])
             if status["status"] == "failed":
                 raise RuntimeError(status.get("error", "图片生成失败"))
 
-        raise TimeoutError("图片生成超时（已等待120秒）")
+            elapsed = _time.monotonic() - _t_start
+            wait = _POLL_INTERVAL - elapsed
+            if wait > 0:
+                await asyncio.sleep(wait)
+
+        raise TimeoutError(f"图片生成超时（已等待 {_MAX_POLL * _POLL_INTERVAL} 秒，实际因 API 响应时间可能更长）")

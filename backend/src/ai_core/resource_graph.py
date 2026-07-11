@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 PROMPT_MAP = {
     "document": "resource/document",
     "ppt": "resource/ppt",
-    "ppt_video": "resource/ppt_video",
     "mindmap": "resource/mindmap",
     "exercise": "resource/exam",
     "case": "resource/document",
@@ -135,20 +134,20 @@ def build_resource_prompt(
 
 
 # PPT 并行生成参数
-PPT_PAGES_PER_SECTION = 2    # 每个章节 2-5 页（AI 按内容复杂度自行决定）
-PPT_DEFAULT_SECTIONS = 10    # 默认 10 章节（20-50 页）
+PPT_PAGES_PER_SECTION = 2    # 每个章节 1-3 页（AI 按内容复杂度自行决定）
+PPT_DEFAULT_SECTIONS = 6     # 默认 6 章节（视频模式下 12 页左右，5-8 分钟）
 PPT_SECTION_COUNT_BY_DEPTH = {
-    "overview": 5,            # 快速概览 → 10-25 页
-    "standard": 10,           # 标准讲解 → 20-50 页
-    "deep": 15,              # 逐页详解 → 30-75 页
+    "overview": 3,            # 快速概览 → 6 页左右
+    "standard": 6,           # 标准讲解 → 12 页左右
+    "deep": 10,              # 逐页详解 → 20 页左右
 }
 
 # 文档并行生成参数
-DOC_DEFAULT_SECTIONS = 10    # 默认 10 章节，与 PPT 对齐
+DOC_DEFAULT_SECTIONS = 6    # 默认 6 章节，与 PPT 对齐
 DOC_SECTION_COUNT_BY_DEPTH = {
-    "overview": 5,            # 与 PPT 对齐
-    "standard": 10,
-    "deep": 15,
+    "overview": 3,            # 与 PPT 对齐
+    "standard": 6,
+    "deep": 10,
 }
 
 
@@ -286,14 +285,14 @@ async def generate_ppt_parallel(
         try:
             stream_writer({"type": "stream_start", "file_type": "ppt"})
         except Exception:
-            stream_writer = None
+            logger.exception("[PPT-Parallel] stream_start 推送异常")
 
     if sections is None:
         if stream_writer:
             try:
                 stream_writer({"type": "stream_progress", "file_type": "ppt", "message": "正在规划课程大纲..."})
             except Exception:
-                stream_writer = None
+                logger.exception("[PPT-Parallel] stream_progress 推送异常")
         outline_task = generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority, user_id=user_id)
         formula_task = generate_formula_sheet(topic, kb=kb, guidance=guidance, llm_priority=llm_priority, user_id=user_id)
         sections, formula_sheet = await asyncio.gather(outline_task, formula_task)
@@ -363,23 +362,71 @@ async def generate_ppt_parallel(
         return True
 
 
+    def _trim_section_context(
+        full_portrait: str,
+        full_lo: str,
+        full_guidance: str,
+        section_title: str,
+        idx: int,
+        total_sections: int,
+    ) -> tuple[str, str, str]:
+        """根据章节动态裁剪画像/学习目标/指导语，减少重复 token 注入
+
+        首章（含引入页）返回完整内容，后续章节只保留章节定位等精简信息。
+        非首章每章可节省约 1100 字 input token。
+
+        Returns:
+            (trimmed_portrait, trimmed_lo, trimmed_guidance)
+        """
+        if idx == 0:
+            return full_portrait, full_lo, full_guidance
+
+        # 后续章节：画像压缩为一行定位提示
+        trimmed_portrait = (
+            f"（用户画像要点见首章引入页。当前第{idx + 1}章「{section_title}」，请参考前文画像信息调整难度与侧重点。）"
+            if full_portrait and full_portrait != "暂无画像数据"
+            else ""
+        )
+
+        # 学习目标压缩为章节定位
+        trimmed_lo = (
+            f"本课程共{total_sections}章，当前第{idx + 1}章「{section_title}」。"
+            f"整体学习目标见首章引入页，本节聚焦该章节核心知识点展开。"
+            if full_lo and full_lo != "暂无学习目标数据"
+            else ""
+        )
+
+        # 指导语截取核心要求（保留前120字）
+        if full_guidance:
+            trimmed_guidance = full_guidance[:120]
+            if len(full_guidance) > 120:
+                trimmed_guidance += "…（完整要求见首章）"
+        else:
+            trimmed_guidance = ""
+
+        return trimmed_portrait, trimmed_lo, trimmed_guidance
+
+
+
+
+
 
 
     total = len(sections)
     _results: list[dict] = [{} for _ in range(total)]
 
-    def _push_section(idx: int, content: str):
+    def _push_section(_idx: int, _content: str):
         """将章节的幻灯片逐页推送给前端"""
         if stream_writer:
             try:
-                for slide in content.split("\n---\n"):
+                for slide in _content.split("\n---\n"):
                     slide = slide.strip()
                     if slide:
                         if slide.startswith("<!-- layout:"):
                             slide = slide.replace("\n# ", "\n## ", 1)
                         elif slide.startswith("# ") and not slide.startswith("## "):
                             slide = slide.replace("# ", "## ", 1)
-                        stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide})
+                        stream_writer({"type": "stream_slide", "file_type": "ppt", "content": slide, "section_idx": _idx})
                 done = sum(1 for r in _results if r.get("content"))
                 stream_writer({
                     "type": "stream_progress",
@@ -389,10 +436,32 @@ async def generate_ppt_parallel(
                     "total": total,
                 })
             except Exception:
-                logger.exception("[PPT-Parallel] 章节 %d 推送异常", idx)
+                logger.exception("[PPT-Parallel] 章节 %d 推送异常", _idx)
+
+    async def _review_ppt_section(content: str, section_title: str, format_checked: bool = False) -> dict:
+        """调用 reviewer 审核单个章节，返回 {passed, score, feedback}
+
+        Args:
+            format_checked: 若 True，表示格式层（layout/分隔符/公式配对/禁用词/字数）
+                已由 _quick_check_ppt 通过，reviewer 只需审核语义质量（prompt 更短）。
+        """
+        try:
+            # 根据是否已做格式预检选择不同模板
+            template_key = "agent/reviewer_ppt_semantic" if format_checked else "agent/reviewer_ppt"
+            reviewer_prompt = load_prompt(template_key)
+            prompt_text = fill_prompt(
+                reviewer_prompt,
+                content=content[:3000],
+                topic=topic,
+            )
+            response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id, pool="reviewer")
+            return _parse_review_response(response.content)
+        except Exception as e:
+            logger.exception("[PPT-Review] section=%s 审核异常", section_title)
+            return {"passed": True, "score": 0, "feedback": f"审核异常: {e}"}
 
     async def _gen_section(idx: int, section_title: str) -> None:
-        """单章节：生成 → 快检日志 → 立即推送"""
+        """单章节：生成 → 审核 → 反馈重生成（最多 3 轮） → 推送"""
         if stream_writer:
             try:
                 stream_writer({
@@ -403,13 +472,19 @@ async def generate_ppt_parallel(
             except Exception:
                 pass
 
+        is_portrait_section = has_portrait and idx == 0
+
+        # 根据章节位置动态裁剪上下文，减少重复 token 注入
+        _eff_portrait, _eff_lo, _eff_guidance = _trim_section_context(
+            portrait, learning_objectives, guidance,
+            section_title, idx, total,
+        )
         base_prompt = build_resource_prompt(
-            ppt_prompt_key, topic, portrait=portrait, kb=kb, guidance=guidance,
+            ppt_prompt_key, topic, portrait=_eff_portrait, kb=kb, guidance=_eff_guidance,
             feedback=feedback, user_notes=user_notes, custom_prompts=custom_prompts,
-            section=section_title, learning_objectives=learning_objectives,
+            section=section_title, learning_objectives=_eff_lo,
             formula_sheet=formula_sheet,
         )
-        is_portrait_section = has_portrait and idx == 0
 
         if is_portrait_section:
             parts: list[str] = []
@@ -438,34 +513,112 @@ async def generate_ppt_parallel(
         else:
             prompt_with_context = base_prompt
 
-        # ── Step 1: 生成（连接错误重试一次）──
-        t0 = time.perf_counter()
+        # ── 生成 + 审核循环（先展示后修改：初稿立即推送，审核在后台进行，修改后推送替换）──
+        MAX_REVIEW_ROUNDS = 3
         content = ""
-        for attempt in range(2):
-            try:
-                response = await llm.ainvoke(prompt_with_context, priority=llm_priority, user_id=user_id, pool="ppt")
-                content = response.content
-                break
-            except Exception as e:
-                elapsed = time.perf_counter() - t0
-                is_conn_error = "RemoteProtocolError" in type(e).__name__ or "ConnectError" in type(e).__name__ or "Timeout" in type(e).__name__ or "timeout" in str(e).lower() or "incomplete" in str(e).lower()
-                if attempt == 0 and is_conn_error:
-                    logger.warning("[PPT-Gen] idx=%d section=%s 连接异常，重试中... err=%s", idx, section_title, str(e)[:120])
-                    await asyncio.sleep(1.5)
-                    continue
-                logger.exception("[PPT-Gen] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
+        review_feedback = ""
+        final_passed = False
+
+        def _push_section_replace(_idx: int, _content: str, _title: str):
+            """推送章节替换事件 + 新的幻灯片内容"""
+            if stream_writer:
+                try:
+                    stream_writer({
+                        "type": "stream_section_replace",
+                        "file_type": "ppt",
+                        "section_idx": _idx,
+                        "section_title": _title,
+                    })
+                except Exception:
+                    pass
+            _push_section(_idx, _content)
+
+        for round_idx in range(MAX_REVIEW_ROUNDS):
+            is_first_round = (round_idx == 0)
+
+            if stream_writer and not is_first_round:
+                try:
+                    stream_writer({
+                        "type": "stream_progress", "file_type": "ppt",
+                        "message": f"「{section_title}」审核未通过，正在修改...（第{round_idx + 1}轮）",
+                        "current": idx + 1, "total": total,
+                    })
+                except Exception:
+                    pass
+
+            # 拼接审核反馈到 prompt
+            if not is_first_round and review_feedback:
+                prompt_with_context = (
+                    f"{prompt_with_context}\n\n"
+                    f"## 上一轮审核未通过，请根据以下意见修改\n"
+                    f"{review_feedback}\n\n"
+                    f"请重新生成完整内容。"
+                )
+
+            # Step A: 生成（连接错误重试一次）
+            t0 = time.perf_counter()
+            gen_ok = False
+            for attempt in range(2):
+                try:
+                    response = await llm.ainvoke(prompt_with_context, priority=llm_priority, user_id=user_id, pool="ppt")
+                    content = response.content
+                    gen_ok = True
+                    break
+                except Exception as e:
+                    elapsed = time.perf_counter() - t0
+                    is_conn_error = "RemoteProtocolError" in type(e).__name__ or "ConnectError" in type(e).__name__ or "Timeout" in type(e).__name__ or "timeout" in str(e).lower() or "incomplete" in str(e).lower()
+                    if attempt == 0 and is_conn_error:
+                        logger.warning("[PPT-Gen] idx=%d section=%s 连接异常，重试中... err=%s", idx, section_title, str(e)[:120])
+                        await asyncio.sleep(1.5)
+                        continue
+                    logger.exception("[PPT-Gen] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
+                    _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
+                    _push_section(idx, _results[idx]["content"])
+                    return
+
+            if not gen_ok:
                 _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
                 _push_section(idx, _results[idx]["content"])
                 return
-        elapsed = time.perf_counter() - t0
 
-        if not is_portrait_section:
-            ok = _quick_check_ppt(content)
-            logger.info("[PPT-Gen] idx=%d section=%s %s 耗时=%.2fs",
-                        idx, section_title, "快检通过" if ok else "快检未通过", elapsed)
+            elapsed = time.perf_counter() - t0
 
-        _results[idx] = {"idx": idx, "content": content}
-        _push_section(idx, content)
+            # Step B: 快检
+            quick_ok = False
+            if not is_portrait_section:
+                quick_ok = _quick_check_ppt(content)
+                logger.info("[PPT-Gen] idx=%d section=%s round=%d %s 耗时=%.2fs",
+                            idx, section_title, round_idx + 1, "快检通过" if quick_ok else "快检未通过", elapsed)
+
+            # Step C: 初稿立即推送（不等审核），后续轮次推送替换
+            if is_first_round:
+                _results[idx] = {"idx": idx, "content": content}
+                _push_section(idx, content)
+                if is_portrait_section:
+                    return
+            # 非首轮：更新 _results 后推送替换
+            else:
+                _results[idx] = {"idx": idx, "content": content}
+                _push_section_replace(idx, content, section_title)
+
+            # Step D: 审核（画像引入页已在上面 return）
+            review_result = await _review_ppt_section(content, section_title, format_checked=quick_ok)
+            if review_result.get("passed"):
+                final_passed = True
+                logger.info("[PPT-Review] idx=%d section=%s round=%d 审核通过 score=%s",
+                            idx, section_title, round_idx + 1, review_result.get("score"))
+                break
+
+            review_feedback = review_result.get("feedback", "")
+            # 截断反馈防止多轮累积导致 prompt 膨胀
+            if len(review_feedback) > 400:
+                review_feedback = review_feedback[:400] + "…"
+            logger.warning("[PPT-Review] idx=%d section=%s round=%d 审核未通过: %s",
+                           idx, section_title, round_idx + 1, review_feedback[:120])
+
+        if not final_passed and not is_portrait_section:
+            logger.warning("[PPT-Review] idx=%d section=%s 达最大轮次 %d，接受当前版本",
+                           idx, section_title, MAX_REVIEW_ROUNDS)
 
     # ── 所有章节同时启动（asyncio.gather 天然并行）──
     await asyncio.gather(*[_gen_section(i, s) for i, s in enumerate(sections)])
@@ -547,14 +700,14 @@ async def generate_document_parallel(
         try:
             stream_writer({"type": "stream_start", "file_type": "document"})
         except Exception:
-            stream_writer = None
+            logger.exception("[Doc-Parallel] stream_start 推送异常")
 
     if sections is None:
         if stream_writer:
             try:
                 stream_writer({"type": "stream_progress", "file_type": "document", "message": "正在规划文档大纲..."})
             except Exception:
-                stream_writer = None
+                logger.exception("[Doc-Parallel] stream_progress 推送异常")
         sections = await generate_doc_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority, user_id=user_id)
 
     outline_lines = [f"第{i+1}章「{s}」" for i, s in enumerate(sections)]
@@ -861,7 +1014,7 @@ async def reviewer_node(state: ResourceState) -> dict:
     user_id_int = int(state.get("user_id", 0))
 
     async def review_one(rt: str, content: str) -> dict:
-        # PPT / 文档 已在 generate_*_parallel 内部按章节生成，质量足够，跳过审核
+        # PPT / 文档 已在 generate_*_parallel 内部逐章节审核（生成→审核→重生成循环），跳过全局审核
         if rt in ("ppt", "document", "case", "reading"):
             return {"passed": True, "score": 100, "feedback": ""}
         # API 生成的图片跳过文本审核
