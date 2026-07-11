@@ -1,4 +1,4 @@
-import { ref, watchEffect } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 
 const STORAGE_KEY = 'zhiban-theme'
 const theme = ref(localStorage.getItem(STORAGE_KEY) || '')
@@ -25,14 +25,18 @@ watchEffect(() => {
   }
 })
 
-export function useTheme() {
-  const isDark = () => {
-    const attr = document.documentElement.getAttribute('data-theme')
-    if (attr === 'dark') return true
-    if (attr === 'light') return false
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-  }
+// reactive — re-evaluates when theme ref or DOM attribute changes
+const isDark = computed(() => {
+  // trigger re-compute by reading theme ref
+  const val = theme.value
+  if (val === 'dark') return true
+  if (val === 'light') return false
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+})
 
+const currentTheme = computed(() => theme.value || (isDark.value ? 'dark' : 'light'))
+
+export function useTheme() {
   const toggle = () => {
     // Add transition class for smooth colour change
     document.documentElement.classList.add('theme-transition')
@@ -40,11 +44,8 @@ export function useTheme() {
       document.documentElement.classList.remove('theme-transition')
     }, 400)
 
-    const dark = isDark()
-    theme.value = dark ? 'light' : 'dark'
+    theme.value = isDark.value ? 'light' : 'dark'
   }
-
-  const currentTheme = () => theme.value || (isDark() ? 'dark' : 'light')
 
   return { theme, toggle, isDark, currentTheme }
 }

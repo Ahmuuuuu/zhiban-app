@@ -35,7 +35,7 @@
       <!-- 右侧操作区 -->
       <div class="nav-actions">
         <button class="theme-toggle" type="button" :aria-label="themeLabel" :title="themeLabel" @click="toggleTheme">
-          <Sun v-if="isThemeDark" :size="18" />
+          <Sun v-if="!isThemeDark" :size="18" />
           <Moon v-else :size="18" />
         </button>
 
@@ -71,7 +71,7 @@ let pollTimer = null
 const { narrationState, toggleCurrentAudio, stopCurrentAudio } = useResourceNarration()
 const { toggle: toggleTheme, isDark: isThemeDark } = useTheme()
 
-const themeLabel = computed(() => isThemeDark() ? '切换亮色模式' : '切换暗色模式')
+const themeLabel = computed(() => isThemeDark.value ? '切换亮色模式' : '切换暗色模式')
 
 const isResourceSection = computed(() => {
   return route.path === '/resources' || route.path === '/learning-resources'

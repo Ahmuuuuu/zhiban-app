@@ -132,3 +132,446 @@ body::before {
   background-size: 18px 18px;
   mix-blend-mode: multiply;
 }
+
+/* ============================================================
+   🌙 Dark mode — global page overrides
+   ============================================================ */
+
+/* --- page wrappers --- */
+html[data-theme="dark"] .study-panel,
+html[data-theme="dark"] .chat-page,
+html[data-theme="dark"] .resource-center-page,
+html[data-theme="dark"] .resource-page,
+html[data-theme="dark"] .my-full-page,
+html[data-theme="dark"] .profile-page,
+html[data-theme="dark"] .question-bank-page,
+html[data-theme="dark"] .quiz-runner-page,
+html[data-theme="dark"] .import-page,
+html[data-theme="dark"] .presentation-player,
+html[data-theme="dark"] .admin-page,
+html[data-theme="dark"] .home-cover {
+  background: #0f1724 !important;
+  color: #c8d6e5 !important;
+}
+
+/* --- panel cards --- */
+html[data-theme="dark"] .panel-card,
+html[data-theme="dark"] .profile-panel,
+html[data-theme="dark"] .duration-panel,
+html[data-theme="dark"] .tag-panel,
+html[data-theme="dark"] .accuracy-panel,
+html[data-theme="dark"] .current-path-panel,
+html[data-theme="dark"] .path-panel,
+html[data-theme="dark"] .weak-panel,
+html[data-theme="dark"] .suggestion-panel,
+html[data-theme="dark"] .feedback-panel {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* --- section headings --- */
+html[data-theme="dark"] .section-title,
+html[data-theme="dark"] .section-title h2,
+html[data-theme="dark"] .panel-header h1,
+html[data-theme="dark"] .eyebrow {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .eyebrow {
+  color: #7a8ba0 !important;
+}
+
+html[data-theme="dark"] .panel-header p:last-child {
+  color: #8a94a6 !important;
+}
+
+/* --- cards inner --- */
+html[data-theme="dark"] .path-list li,
+html[data-theme="dark"] .feedback-summary div,
+html[data-theme="dark"] .feedback-bar,
+html[data-theme="dark"] .tag-list span {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .path-list li:hover,
+html[data-theme="dark"] .tag-list span:hover {
+  background: #1f2c3d !important;
+  border-color: #3a4556 !important;
+}
+
+/* --- text --- */
+html[data-theme="dark"] .panel-card,
+html[data-theme="dark"] .panel-card p,
+html[data-theme="dark"] .path-list strong,
+html[data-theme="dark"] .weak-row strong,
+html[data-theme="dark"] .suggestion-panel ul,
+html[data-theme="dark"] .suggestion-panel li {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .path-list .path-meta,
+html[data-theme="dark"] .weak-row span,
+html[data-theme="dark"] .path-empty {
+  color: #8a94a6 !important;
+}
+
+/* --- progress bars --- */
+html[data-theme="dark"] .path-progress,
+html[data-theme="dark"] .weak-bar {
+  background: #2a3546 !important;
+}
+
+html[data-theme="dark"] .path-progress span,
+html[data-theme="dark"] .weak-bar span {
+  background: #52b86f !important;
+}
+
+html[data-theme="dark"] .path-link > span {
+  background: #2f6b2f !important;
+  color: #fff !important;
+}
+
+/* --- avatar, duration ring --- */
+html[data-theme="dark"] .avatar-frame,
+html[data-theme="dark"] .duration-ring {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .duration-ring strong,
+html[data-theme="dark"] .duration-ring span,
+html[data-theme="dark"] .feedback-summary strong,
+html[data-theme="dark"] .duration-panel p,
+html[data-theme="dark"] .feedback-panel p {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .feedback-summary span {
+  color: #8a94a6 !important;
+}
+
+/* --- deco backgrounds --- */
+html[data-theme="dark"] .page-bg-deco,
+html[data-theme="dark"] .page-bg-deco::before,
+html[data-theme="dark"] .page-bg-deco::after,
+html[data-theme="dark"] .sweep {
+  background: #0f1724 !important;
+}
+
+html[data-theme="dark"] .page-bg-deco::before,
+html[data-theme="dark"] .page-bg-deco::after,
+html[data-theme="dark"] .sweep-one,
+html[data-theme="dark"] .sweep-two {
+  background: #161f2e !important;
+}
+
+/* --- SVG charts --- */
+html[data-theme="dark"] .radar-wrap text,
+html[data-theme="dark"] .line-chart text,
+html[data-theme="dark"] .radar-wrap .radar-label-en {
+  fill: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .radar-wrap .radar-value {
+  fill: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .radar-grid,
+html[data-theme="dark"] .radar-axis {
+  stroke: #2a3546 !important;
+}
+
+html[data-theme="dark"] .radar-score {
+  fill: rgba(82, 184, 111, 0.18) !important;
+  stroke: #52b86f !important;
+}
+
+html[data-theme="dark"] .line-chart polyline,
+html[data-theme="dark"] .line-chart .chart-point-dot {
+  stroke: #52b86f !important;
+  fill: #52b86f !important;
+}
+
+html[data-theme="dark"] .line-chart line,
+html[data-theme="dark"] .line-chart .chart-tick line,
+html[data-theme="dark"] .line-chart .chart-axis {
+  stroke: #2a3546 !important;
+}
+
+/* --- home pill --- */
+html[data-theme="dark"] .home-pill {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+/* --- feedback summary --- */
+html[data-theme="dark"] .feedback-summary div {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+}
+
+/* --- accuracy summary --- */
+html[data-theme="dark"] .accuracy-summary {
+  color: #8a94a6 !important;
+}
+
+/* --- mini donut chart border --- */
+html[data-theme="dark"] .mini-donut {
+  border-color: #2a3546 !important;
+}
+
+/* --- dark color-scheme for form elements --- */
+html[data-theme="dark"] .study-panel,
+html[data-theme="dark"] .chat-page,
+html[data-theme="dark"] .admin-page {
+  color-scheme: dark;
+}
+
+/* ============================================================
+   🏠 Home page dark mode
+   ============================================================ */
+html[data-theme="dark"] .hero-background {
+  background: #0f1724 !important;
+}
+
+html[data-theme="dark"] .hero-background::before,
+html[data-theme="dark"] .hero-background::after,
+html[data-theme="dark"] .hero-background .sweep {
+  background: #161f2e !important;
+}
+
+html[data-theme="dark"] .center-title h1 span,
+html[data-theme="dark"] .center-title h1 {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .center-title .eyebrow,
+html[data-theme="dark"] .quick-panel span,
+html[data-theme="dark"] .tile-copy small {
+  color: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .feature-tile {
+  background: rgba(26, 37, 53, 0.88) !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .feature-tile strong {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .quick-panel a {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .quick-panel a strong {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .quick-panel a span {
+  color: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .primary-action {
+  background: #2f6b2f !important;
+  color: #fff !important;
+}
+
+html[data-theme="dark"] .sun-mark {
+  background: #2f6b2f !important;
+}
+
+html[data-theme="dark"] .feature-tile.tile-chat,
+html[data-theme="dark"] .feature-tile.tile-resource,
+html[data-theme="dark"] .feature-tile.tile-path,
+html[data-theme="dark"] .feature-tile.tile-situation,
+html[data-theme="dark"] .feature-tile.tile-pet {
+  background: rgba(26, 37, 53, 0.88) !important;
+}
+
+html[data-theme="dark"] .tile-copy {
+  background: rgba(26, 37, 53, 0.92) !important;
+}
+
+html[data-theme="dark"] .tile-copy strong {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .tile-copy small {
+  color: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .center-title h1 {
+  color: #c8d6e5 !important;
+  -webkit-text-stroke-color: #c8d6e5 !important;
+  text-shadow:
+    0.8px 0 #0f1724,
+    -0.8px 0 #0f1724,
+    0 0.8px #0f1724,
+    0 -0.8px #0f1724 !important;
+}
+
+html[data-theme="dark"] .center-title h1 span {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .center-title .eyebrow {
+  color: #7a8ba0 !important;
+}
+
+html[data-theme="dark"] .home-cover {
+  color: #c8d6e5 !important;
+}
+
+/* ============================================================
+   💬 Chat / AI 对话 page dark mode
+   ============================================================ */
+html[data-theme="dark"] .chat-page {
+  background: #0f1724 !important;
+}
+
+html[data-theme="dark"] .chat-bg-deco,
+html[data-theme="dark"] .chat-bg-deco::before,
+html[data-theme="dark"] .chat-bg-deco::after {
+  background: #0f1724 !important;
+}
+
+html[data-theme="dark"] .chat-bg-deco .sweep,
+html[data-theme="dark"] .chat-bg-deco .sweep-one,
+html[data-theme="dark"] .chat-bg-deco .sweep-two {
+  background: #161f2e !important;
+}
+
+/* Sidebar / history */
+html[data-theme="dark"] .history-panel {
+  background: #161f2e !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .history-panel .recent-item {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .history-panel .recent-item:hover,
+html[data-theme="dark"] .history-panel .recent-item.active {
+  background: #1f2c3d !important;
+}
+
+html[data-theme="dark"] .history-panel .recent-title,
+html[data-theme="dark"] .history-panel .recent-desc,
+html[data-theme="dark"] .history-panel .recent-time,
+html[data-theme="dark"] .history-panel .section-title span,
+html[data-theme="dark"] .history-panel .empty-history {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .new-chat-btn {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+/* Top bar */
+html[data-theme="dark"] .sketch-topbar {
+  background: #0f1724 !important;
+  border-color: #2a3546 !important;
+}
+
+/* Input area */
+html[data-theme="dark"] .chat-page textarea,
+html[data-theme="dark"] .chat-page input[type="text"],
+html[data-theme="dark"] .chat-page input[type="search"] {
+  background: #1a2535 !important;
+  color: #e4e6ed !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .chat-page textarea::placeholder,
+html[data-theme="dark"] .chat-page input::placeholder {
+  color: #5a6578 !important;
+}
+
+/* Main chat area */
+html[data-theme="dark"] .main {
+  background: #0f1724 !important;
+}
+
+/* Empty state hero cards */
+html[data-theme="dark"] .hero-card,
+html[data-theme="dark"] .hero-card--left,
+html[data-theme="dark"] .hero-card--center,
+html[data-theme="dark"] .hero-card--right {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .hero-card strong {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .hero-card p {
+  color: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .empty-chat h1 {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .empty-chat__sub {
+  color: #7a8ba0 !important;
+}
+
+/* Message bubbles — quiz / file */
+html[data-theme="dark"] .quiz-bubble,
+html[data-theme="dark"] .file-bubble,
+html[data-theme="dark"] .file-head,
+html[data-theme="dark"] .file-placeholder,
+html[data-theme="dark"] .ext-video-card {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .file-title strong {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .file-title span {
+  color: #8a94a6 !important;
+}
+
+/* Bottom input bar — the most visible white element */
+html[data-theme="dark"] .input-area,
+html[data-theme="dark"] .input-box {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+}
+
+html[data-theme="dark"] .input-actions {
+  background: transparent !important;
+}
+
+html[data-theme="dark"] .send-btn {
+  background: #2f6b2f !important;
+  color: #fff !important;
+}
+
+/* Message time */
+html[data-theme="dark"] .message-time {
+  color: #5a6578 !important;
+}
+
+/* Chat text — headings */
+html[data-theme="dark"] .chat-page h1,
+html[data-theme="dark"] .chat-page h2,
+html[data-theme="dark"] .chat-page h3,
+html[data-theme="dark"] .chat-page h4,
+html[data-theme="dark"] .chat-page strong {
+  color: #c8d6e5 !important;
+}
