@@ -1,9 +1,15 @@
 import axios from 'axios'
 
-const apiBaseURL = import.meta.env.VITE_API_BASE_URL?.trim() || ''
+const DEFAULT_API_BASE_URL = 'https://compel-dividable-unfasten.ngrok-free.dev'
+const apiBaseURL = import.meta.env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL
+
+export const isBackendUnavailableError = error => {
+  const status = error?.response?.status
+  return !error?.response || [502, 503, 504].includes(status)
+}
 
 const request = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL,
+  baseURL: apiBaseURL,
   timeout: 300000
 })
 
