@@ -8,7 +8,7 @@ export const isBackendUnavailableError = error => {
 }
 
 const request = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL,
+  baseURL: apiBaseURL,
   timeout: 300000
 })
 
