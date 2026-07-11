@@ -28,27 +28,53 @@ LAYOUTS = {
     "content_cards",
 }
 
-THEMES = {
-    "academic_blue",
-    "science_green",
-    "warm_case",
-    "graphite",
-    "aurora",
-    "coral",
-    "violet",
-    "sunlit",
-}
-
 THEME_PALETTES = {
     "academic_blue": ["#163f8f", "#2f80ed", "#44c2ff", "#f7fbff"],
     "science_green": ["#11695f", "#28b487", "#a7f3d0", "#f6fffb"],
     "warm_case": ["#93491f", "#e86c00", "#ffd166", "#fff8ed"],
     "graphite": ["#17202a", "#566573", "#aeb6bf", "#f7f9fb"],
-    "aurora": ["#0f766e", "#22d3ee", "#a78bfa", "#f0fdfa"],
     "coral": ["#9f1239", "#fb7185", "#fbbf24", "#fff1f2"],
     "violet": ["#4c1d95", "#8b5cf6", "#38bdf8", "#f5f3ff"],
     "sunlit": ["#854d0e", "#f59e0b", "#84cc16", "#fffbeb"],
+    "minimal-white": ["#111216", "#3b3f4a", "#6b6f7a", "#ffffff"],
+    "academic-paper": ["#1a3a7a", "#0a0a0a", "#8a1a1a", "#fdfcf8"],
+    "arctic-cool": ["#1e6fb0", "#17b1b1", "#6f8aa6", "#f2f6fb"],
+    "aurora": ["#5ef2c6", "#7aa2ff", "#c984ff", "#06091c"],
+    "bauhaus": ["#e03c27", "#f4c430", "#1d4eaf", "#f4efe3"],
+    "blueprint": ["#ffffff", "#aee1ff", "#ffd27a", "#0b3a6f"],
+    "catppuccin-latte": ["#8839ef", "#1e66f5", "#ea76cb", "#eff1f5"],
+    "catppuccin-mocha": ["#cba6f7", "#89b4fa", "#f5c2e7", "#1e1e2e"],
+    "corporate-clean": ["#0a2540", "#1d4ed8", "#64748b", "#ffffff"],
+    "cyberpunk-neon": ["#ff2bd6", "#00f0ff", "#f9f871", "#000000"],
+    "dracula": ["#bd93f9", "#ff79c6", "#8be9fd", "#282a36"],
+    "editorial-serif": ["#8a2a1c", "#c97a4a", "#1b1410", "#faf7f2"],
+    "engineering-whiteprint": ["#0a1e46", "#1e5ac4", "#c42a10", "#ffffff"],
+    "glassmorphism": ["#7dd3fc", "#c084fc", "#f0abfc", "#0b1024"],
+    "gruvbox-dark": ["#fe8019", "#fabd2f", "#b8bb26", "#282828"],
+    "japanese-minimal": ["#d93a2a", "#1a1a18", "#c9a961", "#fafaf5"],
+    "magazine-bold": ["#ea5a1a", "#0a0a0a", "#c42a10", "#f5efe2"],
+    "memphis-pop": ["#ff3d8b", "#37c2d7", "#ffcc00", "#fef6e8"],
+    "midcentury": ["#d4902a", "#2a7a7f", "#c7502a", "#f3ead8"],
+    "neo-brutalism": ["#ffd400", "#ff5ca8", "#3a7cff", "#fffef0"],
+    "news-broadcast": ["#e11d2d", "#0a0a0a", "#ffd100", "#ffffff"],
+    "nord": ["#88c0d0", "#81a1c1", "#b48ead", "#2e3440"],
+    "pitch-deck-vc": ["#0070f3", "#7928ca", "#ff4ecb", "#ffffff"],
+    "rainbow-gradient": ["#ff4d8b", "#7a5cff", "#36b6ff", "#ffffff"],
+    "retro-tv": ["#c73a1f", "#e67e14", "#f2b544", "#f5ecd7"],
+    "rose-pine": ["#ebbcba", "#c4a7e7", "#9ccfd8", "#191724"],
+    "sharp-mono": ["#000000", "#000000", "#ff2200", "#ffffff"],
+    "soft-pastel": ["#f49bb8", "#b5d5f0", "#f7d08a", "#fdf7fb"],
+    "solarized-light": ["#268bd2", "#2aa198", "#d33682", "#fdf6e3"],
+    "sunset-warm": ["#d94860", "#e36a2d", "#f2a341", "#fff7ef"],
+    "swiss-grid": ["#d6001c", "#111111", "#888888", "#ffffff"],
+    "terminal-green": ["#00ff88", "#67ffd0", "#b6ff6b", "#030a04"],
+    "tokyo-night": ["#7aa2f7", "#bb9af7", "#7dcfff", "#1a1b26"],
+    "vaporwave": ["#ff6ec7", "#00f5ff", "#ffd166", "#1a0938"],
+    "xiaohongshu-white": ["#ff2742", "#ff7a90", "#ffb38a", "#fffdfb"],
+    "y2k-chrome": ["#8a5cff", "#3ccfd8", "#ff84c4", "#dfe4ec"],
 }
+
+THEMES = set(THEME_PALETTES.keys())
 
 
 def _clean_text(value: Any) -> str:

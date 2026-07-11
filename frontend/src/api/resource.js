@@ -1,5 +1,5 @@
 import request from './request'
-import { API_BASE_URL, parseStreamEvent, requestFirstAvailable, resolveApiUrl } from './config'
+import { API_BASE_URL, apiFetchHeaders, parseStreamEvent, requestFirstAvailable, resolveApiUrl } from './config'
 
 const buildFetchHeaders = (extra = {}) => {
   const token = localStorage.getItem('token')
@@ -15,13 +15,17 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: buildFetchHeaders({ 'Content-Type': 'application/json' }),
+    headers: apiFetchHeaders({
+      'Content-Type': 'application/json',
+      ...(token ? { token } : {})
+    }),
     body: JSON.stringify({
       topic: data.topic,
       resource_types: data.resource_types,
       chat_group_id: Number(data.chat_group_id || 0),
       bind_chat_history: Boolean(data.bind_chat_history),
       answers: data.answers || undefined,
+      ppt_theme_id: data.ppt_theme_id || data.pptThemeId || undefined,
       skip_review: Boolean(data.skip_review)
     })
   })
@@ -199,10 +203,14 @@ export async function exportEditedPptx(resourceId, data = {}) {
   const href = targetUrl.toString()
   const response = await fetch(href, {
     method: 'POST',
-    headers: buildFetchHeaders({ 'Content-Type': 'application/json' }),
+    headers: apiFetchHeaders({
+      'Content-Type': 'application/json',
+      ...(token ? { token } : {})
+    }),
     body: JSON.stringify({
       title: data.title || '',
-      slides: Array.isArray(data.slides) ? data.slides : []
+      slides: Array.isArray(data.slides) ? data.slides : [],
+      ppt_theme_id: data.ppt_theme_id || data.pptThemeId || undefined
     })
   })
 
@@ -233,6 +241,7 @@ export function createResourceGenerationTask(data) {
       chat_group_id: Number(data.chat_group_id || 0),
       bind_chat_history: Boolean(data.bind_chat_history),
       answers: data.answers || undefined,
+      ppt_theme_id: data.ppt_theme_id || data.pptThemeId || undefined,
       skip_review: Boolean(data.skip_review),
     }
   })
@@ -249,7 +258,9 @@ export function getResourceGenerationTasks() {
 export async function streamResourceGenerationTask(taskId, { onEvent, onDone, onError } = {}) {
   const url = `${API_BASE_URL}resource/generate/task/${encodeURIComponent(taskId)}/stream`
   const response = await fetch(url, {
-    headers: buildFetchHeaders()
+    headers: apiFetchHeaders({
+      ...(token ? { token } : {})
+    })
   })
 
   if (!response.ok || !response.body) {

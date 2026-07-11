@@ -1,11 +1,6 @@
 import axios from 'axios'
 
-export const DEFAULT_API_BASE_URL = ''
-
-export const isBackendUnavailableError = error => {
-  const status = Number(error?.response?.status || error?.status || 0)
-  return status === 502 || status === 503 || status === 504
-}
+const apiBaseURL = import.meta.env.VITE_API_BASE_URL?.trim() || ''
 
 const request = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL,

@@ -2,10 +2,12 @@
 
 export interface ResourceToolConfig {
   label: string
+  prompt?: string
   generateMode: 'resource' | 'image' | 'video'
   resourceTypes?: string[]
   aspectRatio?: string
   imageCount?: number
+  pptThemeId?: string
 }
 
 export const resourceTools: ResourceToolConfig[] = [
@@ -235,6 +237,7 @@ export async function executeGeneration(
           resource_types: resourceTypes,
           chat_group_id: Number(chatGroupId || 0),
           bind_chat_history: true,
+          ppt_theme_id: tool.pptThemeId || undefined,
           skip_review: true,
         },
         {
@@ -332,6 +335,7 @@ export async function executeGeneration(
         resource_types: resourceTypes,
         chat_group_id: Number(chatGroupId || 0),
         bind_chat_history: true,
+        ppt_theme_id: tool.pptThemeId || undefined,
         skip_review: Boolean((tool as any).skipReview),
       },
       {

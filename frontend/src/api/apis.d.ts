@@ -85,6 +85,11 @@ export function streamResourceGeneration(
     topic: string;
     resource_types: string[];
     chat_group_id?: number | string | null;
+    bind_chat_history?: boolean;
+    answers?: Record<string, unknown>;
+    skip_review?: boolean;
+    ppt_theme_id?: string;
+    pptThemeId?: string;
   },
   handlers?: {
     onProgress?: (eventData: unknown) => void;
@@ -146,6 +151,8 @@ export function exportEditedPptx(
     title?: string;
     filename?: string;
     slides?: Array<Record<string, unknown>>;
+    ppt_theme_id?: string;
+    pptThemeId?: string;
   },
 ): Promise<void>;
 
@@ -153,6 +160,11 @@ export function createResourceGenerationTask(data: {
   topic: string;
   resource_types: string[];
   chat_group_id?: number | string | null;
+  bind_chat_history?: boolean;
+  answers?: Record<string, unknown>;
+  skip_review?: boolean;
+  ppt_theme_id?: string;
+  pptThemeId?: string;
 }): Promise<unknown>;
 
 export function getResourceGenerationTask(taskId: number | string): Promise<unknown>;

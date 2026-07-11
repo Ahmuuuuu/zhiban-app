@@ -1,4 +1,5 @@
 import request from './request'
+import { apiFetchHeaders } from './config'
 
 export function getCurrentLearningPath() {
   return request.get('/learning_path/current')
@@ -72,10 +73,10 @@ export async function generatePathNodeResourcesStream(pathId, nodeId, onResource
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
+      headers: apiFetchHeaders({
         'Content-Type': 'application/json',
         ...(token ? { token } : {})
-      }
+      })
     })
 
     if (!response.ok) {

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 import uuid
 
@@ -51,6 +52,33 @@ _FILE_EXT_MAP = {
     "video": "html",
     "external_video": "url",
 }
+
+_PPT_THEME_RE = re.compile(r"^\s*<!--\s*theme\s*:\s*([A-Za-z0-9_-]{1,64})\s*-->\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _normalize_ppt_theme_id(ppt_theme_id: str | None) -> str:
+    theme_id = str(ppt_theme_id or "").strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", theme_id):
+        return theme_id
+    return ""
+
+
+def _extract_ppt_theme_id(content: str | None) -> str:
+    match = _PPT_THEME_RE.search(content or "")
+    return match.group(1) if match else ""
+
+
+def _apply_ppt_theme_to_content(content: str | None, ppt_theme_id: str | None) -> str | None:
+    theme_id = _normalize_ppt_theme_id(ppt_theme_id)
+    if not content or not theme_id:
+        return content
+
+    blocks = re.split(r"\n\s*---+\s*\n", str(content).strip())
+    themed_blocks: list[str] = []
+    for block in blocks:
+        clean_block = _PPT_THEME_RE.sub("", block).strip()
+        themed_blocks.append(f"<!-- theme: {theme_id} -->\n{clean_block}".strip())
+    return "\n---\n".join(themed_blocks)
 
 
 async def _generate_resource_title(topic: str, type_names: list[str]) -> str:
@@ -186,7 +214,7 @@ async def _save_generation_to_history(user_id: int, chat_group_id: int, req: str
         logger.exception("保存资源生成历史失败 user_id=%s chat_group_id=%s", user_id, chat_group_id)
 
 
-async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high") -> dict:
+async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", answers: dict | None = None, skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", ppt_theme_id: str | None = None) -> dict:
     t0 = time.perf_counter()
     chat_group_id = await _ensure_chat_group_id(user_id, chat_group_id)
     t_init = time.perf_counter()
@@ -281,6 +309,7 @@ async def _make_state(topic: str, user_id: int, resource_types: list[str], chat_
         "user_notes": user_notes,
         "ppt_prompt_key": ppt_prompt_key,
         "llm_priority": llm_priority,
+        "ppt_theme_id": _normalize_ppt_theme_id(ppt_theme_id),
     }
 
 
@@ -324,6 +353,8 @@ async def _resource_to_dict(record: GeneratedResource, current_user_id: int | No
         "owner_user_id": record.user_id,
         "is_owner": bool(current_user_id and record.user_id == current_user_id),
     }
+    if record.resource_type == "ppt":
+        item["ppt_theme_id"] = _extract_ppt_theme_id(record.content)
     if include_content:
         item["content"] = content
         item["retry_count"] = record.retry_count
@@ -343,7 +374,7 @@ async def _resource_to_dict(record: GeneratedResource, current_user_id: int | No
 
 
 async def _save_resources(topic: str, user_id: int, generated: dict, review_passed: bool, retry_count: int,
-                          file_urls: dict | None = None) -> list[dict]:
+                          file_urls: dict | None = None, ppt_theme_id: str | None = None) -> list[dict]:
     """存库并返回记录列表（事务包裹，一条失败则全部回滚）"""
     from tortoise.transactions import in_transaction
 
@@ -355,10 +386,11 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
 
     async with in_transaction():
         for rt, content in generated.items():
+            item_content = _apply_ppt_theme_to_content(content, ppt_theme_id) if rt == "ppt" else content
             record = await GeneratedResource.create(
                 topic=topic,
                 resource_type=rt,
-                content=content,
+                content=item_content,
                 review_passed=review_passed,
                 retry_count=retry_count,
                 file_url=file_urls.get(rt),
@@ -378,18 +410,20 @@ async def _save_resources(topic: str, user_id: int, generated: dict, review_pass
                 "cover_url": cover_url,
                 "visibility": record.visibility or "private",
             })
+            if rt == "ppt":
+                saved[-1]["ppt_theme_id"] = _extract_ppt_theme_id(record.content)
     return saved
 
 
 class ResourceService:
 
     @staticmethod
-    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", skip_review: bool = False, bind_chat_history: bool = False) -> list[dict]:
+    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", skip_review: bool = False, bind_chat_history: bool = False, ppt_theme_id: str | None = None) -> list[dict]:
         import time as _time
         _t_total = _time.perf_counter()
         chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
 
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority, skip_review=skip_review)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority, skip_review=skip_review, ppt_theme_id=ppt_theme_id)
         topic = initial_state["topic"]
 
         result = await resource_graph.ainvoke(initial_state)
@@ -400,6 +434,7 @@ class ResourceService:
             result.get("review_passed", False),
             result.get("retry_count", 0),
             file_urls=result.get("file_urls"),
+            ppt_theme_id=ppt_theme_id,
         )
         if chat_group_id > 0:
             await _save_generation_to_history(user_id, chat_group_id, topic, saved)
@@ -440,7 +475,7 @@ class ResourceService:
         return saved
 
     @staticmethod
-    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", bind_chat_history: bool = False, answers: dict | None = None):
+    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", bind_chat_history: bool = False, answers: dict | None = None, ppt_theme_id: str | None = None):
         """astream(stream_mode=["values", "custom"]) — PPT 通过 custom 事件逐页推送，其他类型通过 values 事件推送"""
         import time as _time
         _t_total = _time.perf_counter()
@@ -456,11 +491,14 @@ class ResourceService:
                     event_content = parse_mindmap_text(content)
                 except Exception:
                     logger.exception("SSE 思维导图 JSON 转换失败")
-            return f"data: {json.dumps({'type': 'file', 'file_type': rt, 'filename': filename, 'content': event_content, 'resource_id': resource_id, 'download_url': download_url}, ensure_ascii=False)}\n\n"
+            payload = {'type': 'file', 'file_type': rt, 'filename': filename, 'content': event_content, 'resource_id': resource_id, 'download_url': download_url}
+            if rt == "ppt":
+                payload["ppt_theme_id"] = _extract_ppt_theme_id(content) or _normalize_ppt_theme_id(ppt_theme_id)
+            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         user = await User.filter(id=user_id).first()
 
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, answers=answers, skip_review=skip_review, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, exam_question_types, exam_count, exam_difficulty, answers=answers, skip_review=skip_review, user_notes=user_notes, ppt_prompt_key=ppt_prompt_key, llm_priority=llm_priority, ppt_theme_id=ppt_theme_id)
         topic = initial_state["topic"]
 
         final_passed = False
@@ -478,8 +516,9 @@ class ResourceService:
                 if resources:
                     for rt, content in resources.items():
                         if rt not in yielded_types and user:
+                            item_content = _apply_ppt_theme_to_content(content, ppt_theme_id) if rt == "ppt" else content
                             record = await GeneratedResource.create(
-                                topic=topic, resource_type=rt, content=content,
+                                topic=topic, resource_type=rt, content=item_content,
                                 review_passed=False, retry_count=0,
                                 file_url=chunk.get("file_urls", {}).get(rt),
                                 user=user,
@@ -489,13 +528,15 @@ class ResourceService:
                                 await GeneratedResource.filter(id=record.id).update(cover_url=cover_url)
                             saved_resources.append({
                                 "resource_id": record.id, "topic": topic,
-                                "resource_type": rt, "content": content,
+                                "resource_type": rt, "content": item_content,
                                 "review_passed": False, "retry_count": 0,
                                 "visibility": record.visibility or "private",
                             })
+                            if rt == "ppt":
+                                saved_resources[-1]["ppt_theme_id"] = _extract_ppt_theme_id(item_content)
                             logger.info("[SSE] 即时存库 %s id=%s topic=%s", rt, record.id, topic)
                             yielded_types.add(rt)
-                            yield _make_file_event(topic, rt, content, resource_id=record.id, download_url=f"/resource/{record.id}/download")
+                            yield _make_file_event(topic, rt, item_content, resource_id=record.id, download_url=f"/resource/{record.id}/download")
                 final_passed = chunk.get("review_passed", False)
                 final_retry = chunk.get("retry_count", 0)
 
@@ -521,6 +562,7 @@ class ResourceService:
                     "file_type": r["resource_type"],
                     "topic": r["topic"],
                     "download_url": f"/resource/{r['resource_id']}/download",
+                    **({"ppt_theme_id": r.get("ppt_theme_id")} if r["resource_type"] == "ppt" else {}),
                 }
                 for r in saved_resources
             ],
@@ -823,7 +865,7 @@ class ResourceService:
             except ImportError:
                 raise ImportError("PPT 导出需要安装 python-pptx 依赖")
 
-            content_bytes = markdown_to_pptx(record.content)
+            content_bytes = markdown_to_pptx(record.content, _extract_ppt_theme_id(record.content))
             media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             return content_bytes, f"{record.topic}_ppt.pptx", media_type
         else:
@@ -842,14 +884,15 @@ class ResourceService:
     # ═══════════════════════════════════════════
 
     @staticmethod
-    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None, bind_chat_history: bool = False, skip_review: bool = False) -> dict:
+    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None, bind_chat_history: bool = False, skip_review: bool = False, ppt_theme_id: str | None = None) -> dict:
         """创建生成任务（带 Redis 并发锁，防止重复提交）"""
         from backend.src.models.task_model import GenerationTask
 
         # Redis 并发锁：同一用户同一话题 30s 内不重复创建
         if topic and user_id:
             try:
-                _lk = f"lock:task:{user_id}:{hashlib.md5(topic.strip().lower().encode()).hexdigest()}"
+                lock_seed = f"{topic.strip().lower()}::{_normalize_ppt_theme_id(ppt_theme_id)}"
+                _lk = f"lock:task:{user_id}:{hashlib.md5(lock_seed.encode()).hexdigest()}"
                 r = await _get_redis()
                 locked = await r.setnx(_lk, "1")
                 if not locked:
@@ -875,7 +918,7 @@ class ResourceService:
             chat_group_id=chat_group_id,
             status="pending",
         )
-        asyncio.ensure_future(_run_generation_task(task.id, tid, answers, skip_review=skip_review))
+        asyncio.ensure_future(_run_generation_task(task.id, tid, answers, skip_review=skip_review, ppt_theme_id=ppt_theme_id))
         return {"task_id": tid, "status": "pending", "chat_group_id": chat_group_id}
 
     @staticmethod
@@ -954,7 +997,7 @@ class ResourceService:
 #  后台任务执行
 # ═══════════════════════════════════════════════
 
-async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = None, skip_review: bool = False):
+async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = None, skip_review: bool = False, ppt_theme_id: str | None = None):
     """后台运行资源生成任务，更新 DB 进度并推送 SSE"""
     import time as _time
     _t_total = _time.perf_counter()
@@ -988,7 +1031,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
             ))
 
         # 构建 graph 初始状态
-        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, answers=answers, ppt_prompt_key="ppt", skip_review=skip_review)
+        initial_state = await _make_state(topic, user_id, resource_types, chat_group_id, answers=answers, ppt_prompt_key="ppt", skip_review=skip_review, ppt_theme_id=ppt_theme_id)
         topic = initial_state["topic"]
 
         # 更新 topic（可能从聊天记录提取）
@@ -1065,7 +1108,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": 85, "progress_msg": "正在保存…", "user_id": user_id}))
 
         saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry,
-                                      file_urls=final_file_urls)
+                                      file_urls=final_file_urls, ppt_theme_id=ppt_theme_id)
 
         # 后台预生成旁白音频（PPT/文档等文字类资源），播放时秒开
         # 保存到聊天历史
@@ -1078,6 +1121,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
                 "file_type": r["resource_type"],
                 "topic": r["topic"],
                 "download_url": f"/resource/{r['resource_id']}/download",
+                **({"ppt_theme_id": r.get("ppt_theme_id")} if r["resource_type"] == "ppt" else {}),
             }
             for r in saved
         ]

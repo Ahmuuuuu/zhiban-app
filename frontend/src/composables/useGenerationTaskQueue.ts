@@ -676,6 +676,7 @@ export function useGenerationTaskQueue() {
       // 视频模式：中间资源不写入聊天记录，最终视频卡片才是用户想看到的
       bind_chat_history: task.tool.generateMode !== 'video',
       answers: (task as any)._answers || undefined,
+      ppt_theme_id: task.tool.pptThemeId || undefined,
       skip_review: Boolean((task as any).skipReview || task.tool.generateMode === 'video'),
     }).then(result => {
       const data = unwrapResponseData(result)

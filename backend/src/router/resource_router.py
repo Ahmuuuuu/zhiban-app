@@ -24,6 +24,7 @@ router = APIRouter(prefix = "/resource", tags = ["学习资源生成"])
 class ExportPptxRequest(BaseModel):
     title: str = Field(default="")
     slides: list[dict] = Field(default_factory=list)
+    ppt_theme_id: str | None = Field(default=None)
 
 
 class ResourceVisibilityRequest(BaseModel):
@@ -94,7 +95,7 @@ async def generate_resource(
     if not await check_rate_limit("resource_gen", user_id, 5, 60):
         raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     try :
-        result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history)
+        result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history, ppt_theme_id=data.ppt_theme_id)
         return {"code" : 200, "msg" : "success", "data" : result}
     except HTTPException :
         raise
@@ -118,6 +119,7 @@ async def generate_resource_stream(
             bind_chat_history=data.bind_chat_history,
             skip_review=data.skip_review,
             answers=data.answers,
+            ppt_theme_id=data.ppt_theme_id,
         ),
         media_type = "text/event-stream",
         headers = {
@@ -140,7 +142,7 @@ async def create_generation_task(
     if not await check_rate_limit("resource_task", user_id, 5, 60):
         raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     try:
-        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers, bind_chat_history=data.bind_chat_history, skip_review=data.skip_review)
+        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers, bind_chat_history=data.bind_chat_history, skip_review=data.skip_review, ppt_theme_id=data.ppt_theme_id)
         if result.get("duplicated"):
             return {"code": 200, "msg": "该话题已在生成中", "data": result}
         return {"code": 200, "msg": "success", "data": result}
@@ -381,7 +383,8 @@ async def export_edited_pptx(
         except ImportError:
             raise HTTPException(500, "PPT 导出需要安装 python-pptx 依赖")
 
-        content = await asyncio.to_thread(markdown_to_pptx, markdown)
+        effective_theme_id = data.ppt_theme_id or resource.get("ppt_theme_id")
+        content = await asyncio.to_thread(markdown_to_pptx, markdown, effective_theme_id)
         if not content:
             raise HTTPException(400, "PPT 内容为空，无法导出")
 
