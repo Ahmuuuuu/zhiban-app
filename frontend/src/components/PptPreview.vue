@@ -997,7 +997,7 @@ watch(
 
 .process-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   grid-auto-rows: minmax(0, auto);
   gap: 12px;
   align-items: start;
@@ -1006,10 +1006,22 @@ watch(
   height: 100%;
 }
 
+.process-strip--count-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.process-strip--count-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.process-strip--count-5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .process-step {
   position: relative;
   min-height: 0;
-  padding: 36px 12px 14px;
+  padding: 14px 12px 14px;
   border: 1px solid rgba(95, 143, 195, 0.18);
   border-radius: 8px;
   background: #ffffff;
@@ -1022,18 +1034,17 @@ watch(
 }
 
 .process-step b {
-  position: absolute;
-  top: -18px;
-  left: 50%;
-  width: 42px;
-  height: 42px;
-  transform: translateX(-50%);
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  margin: 0 0 8px;
   border-radius: 50%;
   background: var(--slide-secondary, #e86c00);
   color: #ffffff;
   display: grid;
   place-items: center;
-  font-size: 18px;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .process-step span {
@@ -1224,7 +1235,14 @@ watch(
 }
 
 .ppt-slide.is-dense .process-strip {
-  grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+
+.ppt-slide.is-dense .process-strip--count-4,
+.ppt-slide.is-dense .process-strip--count-5,
+.ppt-slide.is-very-dense .process-strip--count-4,
+.ppt-slide.is-very-dense .process-strip--count-5 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .ppt-slide.is-dense .content-card-grid {
@@ -1425,8 +1443,8 @@ watch(
 
 .ppt-slide__notes {
   flex: 0 0 auto;
-  max-height: 58px;
-  padding: 6px 8px;
+  max-height: 96px;
+  padding: 8px 10px;
   border-radius: 8px;
   background: rgba(201, 220, 233, 0.24);
   color: rgba(22, 63, 143, 0.72);
@@ -1441,10 +1459,10 @@ watch(
 
 .ppt-slide__notes p {
   margin: 2px 0 0;
-  line-height: 1.35;
-  font-size: 12px;
+  line-height: 1.42;
+  font-size: 13px;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1514,7 +1532,7 @@ watch(
 
   .process-step {
     min-height: auto;
-    padding-top: 34px;
+    padding-top: 14px;
   }
 
   .visual-panel {

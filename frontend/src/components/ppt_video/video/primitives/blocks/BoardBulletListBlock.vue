@@ -6,7 +6,7 @@
       :style="{ '--delay': index }"
     >
       <ChalkNumber :value="index + 1" />
-      <span v-html="renderMath(item)"></span>
+      <span v-html="renderedItems[index] || renderMath(item)"></span>
     </article>
   </div>
 </template>
@@ -18,6 +18,10 @@ import ChalkNumber from '../atoms/ChalkNumber.vue'
 
 const props = defineProps({
   items: {
+    type: Array,
+    default: () => []
+  },
+  renderedItems: {
     type: Array,
     default: () => []
   }

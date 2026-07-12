@@ -252,6 +252,7 @@ class PathService:
                     group_topics = json.dumps(
                         [
                             {
+                                **n,
                                 "order_index": group_start + j,
                                 "topic": n["topic"],
                                 "cognitive_level": n.get("cognitive_level", "理解"),

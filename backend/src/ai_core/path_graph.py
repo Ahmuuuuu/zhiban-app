@@ -116,8 +116,15 @@ async def executor_node(state: PathState) -> dict:
         group_start = group_idx * _GROUP_SIZE + 1
         group_end = group_start + len(group) - 1
         group_topics = json.dumps(
-            [{"order_index": group_start + j, "topic": n["topic"], "cognitive_level": n.get("cognitive_level", "理解")}
-             for j, n in enumerate(group)],
+            [
+                {
+                    **n,
+                    "order_index": group_start + j,
+                    "topic": n["topic"],
+                    "cognitive_level": n.get("cognitive_level", "理解"),
+                }
+                for j, n in enumerate(group)
+            ],
             ensure_ascii=False,
         )
         outline_json = json.dumps(topic_outline, ensure_ascii=False)

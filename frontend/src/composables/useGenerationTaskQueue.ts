@@ -1049,13 +1049,41 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.backendTaskId = submitData?.task_id || submitData?.taskId || submitData?.id || task.backendTaskId
       task.chatGroupId = submitData?.chat_group_id || submitData?.chatGroupId || task.chatGroupId
       const thinking = getBackendThinking(submitData)
-      appendTaskThinking(task, thinking)
+      if (thinking) {
+        task.thinkingProcess = formatTaskThinking(thinking)
+      }
+      upsertAgentFlowNode(task, {
+        type: 'agent_event',
+        agent_id: 'leader',
+        agent_name: 'LeaderAgent',
+        phase: 'leader',
+        status: 'done',
+        message: '需求分析完成',
+      })
+      upsertAgentFlowNode(task, {
+        type: 'agent_event',
+        agent_id: 'executor:image',
+        agent_name: RESOURCE_AGENT_LABELS.image || '图片生成智能体',
+        phase: 'executor',
+        status: 'running',
+        message: task.progress || '正在生成图片',
+        resource_type: 'image',
+      })
       task.updatedAt = Date.now()
       persistTasks()
     },
     onProgress: msg => {
       task.progress = msg
-      appendTaskThinking(task, msg)
+      task.thinkingProcess = formatTaskThinking(msg)
+      upsertAgentFlowNode(task, {
+        type: 'agent_event',
+        agent_id: 'executor:image',
+        agent_name: RESOURCE_AGENT_LABELS.image || '图片生成智能体',
+        phase: 'executor',
+        status: 'running',
+        message: msg,
+        resource_type: 'image',
+      })
       task.updatedAt = Date.now()
       persistTasks()
     },
@@ -1071,6 +1099,15 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
     },
     onImage: imageData => {
       task.images.push(imageData)
+      upsertAgentFlowNode(task, {
+        type: 'agent_event',
+        agent_id: 'saver',
+        agent_name: 'ResourceService',
+        phase: 'saver',
+        status: 'saving',
+        message: '正在保存图片资源',
+        resource_type: 'image',
+      })
       task.updatedAt = Date.now()
       persistTasks()
     },
@@ -1089,6 +1126,11 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.doneEvent = eventData || null
       task.chatGroupId = (eventData as any)?.chat_group_id || (eventData as any)?.chatGroupId || task.chatGroupId
       task.status = 'done'
+      if (task.tool.generateMode === 'image') {
+        task.progress = '图片生成完成'
+        task.thinkingProcess = formatTaskThinking('图片生成完成')
+      }
+      finishAgentFlow(task, false)
       task.progress = task.progress || '资源已生成'
       task.updatedAt = Date.now()
       persistTasks()
@@ -1099,6 +1141,7 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.error = err || '资源生成失败，请稍后再试。'
       task.status = 'failed'
       task.progress = task.error
+      finishAgentFlow(task, true)
       task.updatedAt = Date.now()
       persistTasks()
       console.log('[GenerationTask] legacy 任务失败，发送通知刷新事件', { taskId: task.backendTaskId })
@@ -1108,6 +1151,7 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
     task.error = error?.message || '资源生成失败，请稍后再试。'
     task.status = 'failed'
     task.progress = task.error
+    finishAgentFlow(task, true)
     task.updatedAt = Date.now()
     persistTasks()
     console.log('[GenerationTask] legacy 任务异常，发送通知刷新事件', { taskId: task.backendTaskId })

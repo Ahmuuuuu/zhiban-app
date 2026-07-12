@@ -13,6 +13,7 @@
     <BoardBulletListBlock
       class="blackboard-keypoint-template__body"
       :items="displayItems"
+      :rendered-items="karaokeItems"
     />
 
     <BoardVisualBlock
@@ -24,6 +25,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { renderMath, renderKaraokeHTML } from '../../../../utils/renderMath'
 import { getSlideTerms } from '../logic/videoSlideClassifier'
 import BoardBulletListBlock from '../primitives/blocks/BoardBulletListBlock.vue'
 import BoardHeaderBlock from '../primitives/blocks/BoardHeaderBlock.vue'
@@ -37,6 +39,10 @@ const props = defineProps({
   layoutSeed: {
     type: Number,
     default: 0
+  },
+  timedWords: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -47,6 +53,26 @@ const displayItems = computed(() => {
 
 const terms = computed(() => getSlideTerms(props.slide))
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
+
+const karaokeItems = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return displayItems.value.map(item => renderMath(item))
+
+  let offset = 0
+  offset += renderKaraokeHTML(props.slide.title || '', words, offset).consumed
+
+  const summaryText = props.slide.summary || ''
+  const itemsText = displayItems.value.join(' ')
+  if (summaryText && !itemsText.includes(summaryText.slice(0, 10))) {
+    offset += renderKaraokeHTML(summaryText, words, offset).consumed
+  }
+
+  return displayItems.value.map(item => {
+    const { html, consumed } = renderKaraokeHTML(item, words, offset)
+    offset += consumed
+    return html
+  })
+})
 </script>
 
 <style scoped>

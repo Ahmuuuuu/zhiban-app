@@ -2311,6 +2311,23 @@ const appendFileMessage = async fileData => {
 
   const fileMessage = normalizeFileMessage(fileData)
   let existingIndex = findDuplicateFileIndex(fileMessage)
+
+  if (existingIndex !== -1) {
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const item = messages.value[i]
+      if (
+        i !== existingIndex &&
+        item?.type === 'file' &&
+        item?._generating &&
+        !item?.fileId &&
+        sameLooseFileKind(item, fileMessage)
+      ) {
+        messages.value.splice(i, 1)
+        if (i < existingIndex) existingIndex -= 1
+      }
+    }
+  }
+
   const fallbackIndex = existingIndex === -1 && fileMessage.fileType
     ? messages.value.findIndex(item => item.type === 'file' && !item.fileId && sameLooseFileKind(item, fileMessage))
     : existingIndex
@@ -3184,6 +3201,12 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             await loadConversationList()
             window.dispatchEvent(new CustomEvent('zhiban:notification-update'))
           } else {
+            const pptPlaceholderId = (task as any)._pptPlaceholderId
+            if (pptPlaceholderId) {
+              const placeholderIdx = messages.value.findIndex(m => m.id === pptPlaceholderId)
+              if (placeholderIdx !== -1) messages.value.splice(placeholderIdx, 1)
+              ;(task as any)._pptPlaceholderId = null
+            }
             await handleGenerationDone(doneEvent)
           }
         }

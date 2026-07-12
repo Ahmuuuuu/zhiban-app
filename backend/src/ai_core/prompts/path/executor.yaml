@@ -24,13 +24,15 @@ system: |
 
   ## 任务
   为上述「本组需生成的节点」生成详细信息：knowledge_tags、prerequisites、resource_types、quiz_config。
+  topic_outline 中可能包含 module、learning_goal、prerequisite_topics、key_points、micro_example 等规划字段；你必须继承这些字段的教学意图，不要重新发散成另一套路径。
 
   ## 约束
   1. knowledge_tags：每个节点 2-4 个知识点标签，**全路径所有节点的 knowledge_tags 不可重复**
-  2. prerequisites：依赖的前置节点 order_index 列表，第一个节点的 prerequisites 为空数组 []
-  3. resource_types：根据节点特性选择，可选 document/ppt/mindmap/video/exercise/case/reading
+  2. prerequisites：依赖的前置节点 order_index 列表，第一个节点的 prerequisites 为空数组 []；如果 PathPlanner 给了 prerequisite_topics，要映射到对应 order_index
+  3. resource_types：根据节点特性选择，可选 document/ppt/mindmap/video/exercise/case/reading；概念/规则适合 document+mindmap，流程/对比/讲解适合 ppt，操作/案例适合 case，检查掌握适合 exercise
   4. quiz_config：count 默认 3、threshold 默认 0.7
   5. order_index 必须与 topic_outline 中的位置一致
+  6. 节点不能只有标题：标签、资源类型和测验配置要体现该节点的 learning_goal 和 micro_example
 
   ## 输出格式
   纯 JSON，第一个字符 `[`，最后一个字符 `]`。禁止代码块包裹。

@@ -247,12 +247,50 @@ def build_resource_prompt(
 
 # PPT 并行生成参数
 PPT_PAGES_PER_SECTION = 2    # 每个章节 1-3 页（AI 按内容复杂度自行决定）
-PPT_DEFAULT_SECTIONS = 6     # 默认 6 章节（视频模式下 12 页左右，5-8 分钟）
+PPT_DEFAULT_SECTIONS = 11    # 默认 11 章节（22 页左右，更接近完整学习课件）
 PPT_SECTION_COUNT_BY_DEPTH = {
-    "overview": 3,            # 快速概览 → 6 页左右
-    "standard": 6,           # 标准讲解 → 12 页左右
-    "deep": 10,              # 逐页详解 → 20 页左右
+    "overview": 7,            # 快速概览 → 14 页左右
+    "standard": 11,           # 标准讲解 → 22 页左右
+    "deep": 14,               # 逐页详解 → 28 页左右
 }
+PPT_SECTION_COUNT_BOUNDS = {
+    "overview": (7, 9),
+    "standard": (11, 14),
+    "deep": (14, 18),
+}
+
+
+def estimate_ppt_section_count(topic: str, depth: str = "standard") -> int:
+    """根据课程主题广度估算 PPT 章节数，避免学科型主题页数过薄。"""
+    base = PPT_SECTION_COUNT_BY_DEPTH.get(depth, PPT_DEFAULT_SECTIONS)
+    low, high = PPT_SECTION_COUNT_BOUNDS.get(depth, (10, 13))
+    text = str(topic or "").strip()
+    normalized = text.lower()
+
+    broad_patterns = [
+        r"导论|概论|基础|入门|体系|全景|综述|历史|发展|原理|课程",
+        r"线性代数|高等数学|概率论|统计学|机器学习|人工智能|数据结构|操作系统|计算机网络|组成原理",
+        r"数据库|编译原理|软件工程|数字电路|模拟电路|微机原理|信号与系统",
+    ]
+    narrow_patterns = [
+        r"单页|快速|速览|复习|小结|清单|一个例子|一道题|某一步|某个",
+        r"定义|概念辨析|公式推导|例题|实现|代码|步骤|算法",
+    ]
+
+    score = 0
+    if len(text) >= 10:
+        score += 1
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in broad_patterns):
+        score += 2
+    if any(token in normalized for token in ("chapter", "course", "overview", "intro")):
+        score += 1
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in narrow_patterns):
+        score -= 1
+    if re.search(r"[、,，/]|与|和|及|到", text):
+        score += 1
+
+    estimated = base + score
+    return max(low, min(high, estimated))
 
 # 文档并行生成参数
 DOC_DEFAULT_SECTIONS = 6    # 默认 6 章节，与 PPT 对齐
@@ -263,37 +301,188 @@ DOC_SECTION_COUNT_BY_DEPTH = {
 }
 
 
-async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", count: int = PPT_DEFAULT_SECTIONS, llm_priority: str = "high", user_id: int = 0) -> list[str]:
-    """快速生成 PPT 章节大纲，默认 {count} 章节"""
+async def generate_ppt_outline(topic: str, kb: str = "", guidance: str = "", count: int = PPT_DEFAULT_SECTIONS, llm_priority: str = "high", user_id: int = 0) -> tuple[list[str], dict[str, str], str]:
+    """生成 PPT 课程地图与章节大纲。
+
+    不依赖 RAG 时，planner 也要像老师备课一样先排学科结构，再下发给章节 executor。
+    """
     total_pages = count * PPT_PAGES_PER_SECTION
-    prompt = f"""你是一个课程规划师。为以下主题设计PPT章节大纲。
+    prompt = f"""你是一个资深学科课程设计师和 PPT 总导演。请为以下主题设计一份可直接下发给并行章节生成器的课程地图。
 
 主题：{topic}
 学习指导：{guidance}
+知识库参考：{kb[:1200] if kb and "暂无" not in kb else "无；请使用你作为教师的通用学科知识进行规划，但不要编造具体来源"}
 
-要求：
-- 固定 {count} 个章节（必须恰好 {count} 个），每个章节生成 2-5 页幻灯片，总共约 {total_pages}-{count * 5} 页
-- 章节标题简洁（10 字以内），由浅入深，逻辑连贯，形成完整的课程体系
-- 覆盖主题的：定义概念 → 原理推导 → 分类对比 → 典型案例 → 应用实践 → 误区辨析 → 总结回顾
-- 每章内容要足够展开（含对比表格、流程图、例题、练习），不是概念名称的简单罗列
-- 只返回 JSON 字符串数组，不要任何其他文字
+## 课程规划原则
+- 固定 {count} 个章节（必须恰好 {count} 个），每章后续生成 2 页幻灯片，总共约 {total_pages} 页。
+- 章节数是根据课程内容广度估算的，不要主动压缩；如果主题是完整学科或课程导论，必须覆盖足够多的核心模块，不能只做 5-8 页式速览。
+- 即使没有知识库，也要按该学科的经典教学顺序规划：先修概念 → 核心定义 → 基本规则/原理 → 方法步骤 → 小例题 → 应用场景 → 易错辨析 → 总结迁移。
+- 不要平均分配“概念名”；每章必须有明确教学角色，例如：概念奠基、规则推导、方法操作、对比辨析、案例应用、综合检查。
+- 数学/计算机/工程类主题必须安排最小例子或维度/条件检查；人文社科类主题必须安排时间线、概念对比、文本/案例分析或观点辨析。
+- 章节标题简洁（建议 6-14 字），但不要为了短而丢掉学科对象。
 
-返回示例：["中断的基本概念", "中断处理流程与向量表", "INTR与NMI的对比", "DMA与中断方式比较", "8259A中断控制器", "中断嵌套与优先级", "综合例题与练习", "章节小结与回顾"]
+## 输出格式
+你的回复必须是纯 JSON，第一个字符是 `{{`，最后一个字符是 `}}`。禁止 markdown 代码块、禁止说明文字。
+
+{{
+  "course_type": "学科类型，例如 math_foundation/cs_core/history_survey/general",
+  "course_goal": "整套 PPT 学完后学习者应能完成的任务，40-80字",
+  "prerequisite_chain": ["最必要的前置知识1", "最必要的前置知识2"],
+  "section_outline": [
+    {{
+      "title": "章节标题",
+      "role": "概念奠基/规则推导/方法操作/对比辨析/案例应用/误区检查/总结迁移",
+      "learning_goal": "本章学完能做什么，必须可验证",
+      "prerequisites": ["本章依赖的前置概念"],
+      "key_points": ["必须讲的知识点1", "必须讲的知识点2", "必须讲的知识点3"],
+      "micro_example": "本章建议使用的最小例子、案例或检查任务",
+      "assessment": "本章自查标准",
+      "bloom": "记忆/理解/应用/分析/评价/创造"
+    }}
+  ]
+}}
 """
+    defaults = [
+        {
+            "title": "核心概念入门",
+            "role": "概念奠基",
+            "learning_goal": "说清主题中的核心对象、基本问题和学习边界。",
+            "prerequisites": [],
+            "key_points": ["核心对象", "基本定义", "适用场景"],
+            "micro_example": "用一个最小场景说明概念解决什么问题。",
+            "assessment": "能用自己的话解释本章概念并举出一个例子。",
+            "bloom": "理解",
+        },
+        {
+            "title": "基本原理推导",
+            "role": "规则推导",
+            "learning_goal": "解释核心规则为什么成立，并知道使用前提。",
+            "prerequisites": ["核心概念入门"],
+            "key_points": ["关键规则", "成立条件", "变量含义"],
+            "micro_example": "用小规模例子逐步验证规则。",
+            "assessment": "能指出规则适用和不适用的情况。",
+            "bloom": "理解",
+        },
+        {
+            "title": "关键方法解析",
+            "role": "方法操作",
+            "learning_goal": "按步骤完成一个典型任务，并能检查每一步。",
+            "prerequisites": ["基本原理"],
+            "key_points": ["操作步骤", "中间结果", "检查标准"],
+            "micro_example": "完成一道最小例题或流程演示。",
+            "assessment": "能复述方法流程并发现常见错误。",
+            "bloom": "应用",
+        },
+        {
+            "title": "典型案例分析",
+            "role": "案例应用",
+            "learning_goal": "把方法应用到具体案例，并解释选择该方法的原因。",
+            "prerequisites": ["关键方法"],
+            "key_points": ["案例输入", "方法选择", "结果解释"],
+            "micro_example": "分析一个短案例或小数据例子。",
+            "assessment": "能从题目信息判断使用哪种方法。",
+            "bloom": "应用",
+        },
+        {
+            "title": "常见误区辨析",
+            "role": "误区检查",
+            "learning_goal": "识别常见错误，并说明错误发生的原因。",
+            "prerequisites": ["案例应用"],
+            "key_points": ["错误条件", "对比判断", "修正方法"],
+            "micro_example": "对比一个正确做法和一个错误做法。",
+            "assessment": "能用检查清单排除至少两类错误。",
+            "bloom": "分析",
+        },
+        {
+            "title": "总结迁移练习",
+            "role": "总结迁移",
+            "learning_goal": "串联全课知识，并迁移到一个新任务。",
+            "prerequisites": ["前面章节"],
+            "key_points": ["知识链路", "迁移场景", "复习策略"],
+            "micro_example": "完成一个综合判断或小练习。",
+            "assessment": "能画出知识链路并说明下一步学习方向。",
+            "bloom": "评价",
+        },
+    ]
+
+    def _normalize_section(item, idx: int) -> dict:
+        base = defaults[idx % len(defaults)]
+        if not isinstance(item, dict):
+            item = {"title": str(item or base["title"])}
+        title = re.sub(r"[#<>`$]", "", str(item.get("title") or base["title"])).strip() or base["title"]
+        return {
+            **base,
+            **item,
+            "title": title[:24],
+            "key_points": item.get("key_points") if isinstance(item.get("key_points"), list) else base["key_points"],
+            "prerequisites": item.get("prerequisites") if isinstance(item.get("prerequisites"), list) else base["prerequisites"],
+        }
+
+    def _pack_plan(data) -> tuple[list[str], dict[str, str], str]:
+        if isinstance(data, list):
+            section_items = [_normalize_section(item, i) for i, item in enumerate(data)]
+            course_goal = f"围绕「{topic}」建立从概念、规则、方法到应用检查的完整学习链条。"
+            prerequisite_chain = []
+            course_type = "general"
+        elif isinstance(data, dict):
+            raw_sections = data.get("section_outline") or data.get("sections") or data.get("outline") or []
+            section_items = [_normalize_section(item, i) for i, item in enumerate(raw_sections)]
+            course_goal = str(data.get("course_goal") or f"围绕「{topic}」建立从概念到应用的学习链条。").strip()
+            prerequisite_chain = data.get("prerequisite_chain") if isinstance(data.get("prerequisite_chain"), list) else []
+            course_type = str(data.get("course_type") or "general").strip()
+        else:
+            section_items = []
+            course_goal = f"围绕「{topic}」建立从概念到应用的学习链条。"
+            prerequisite_chain = []
+            course_type = "general"
+
+        while len(section_items) < count:
+            section_items.append(_normalize_section(defaults[len(section_items) % len(defaults)], len(section_items)))
+        section_items = section_items[:count]
+        titles = [item["title"] for item in section_items]
+
+        guidance_map: dict[str, str] = {}
+        for i, item in enumerate(section_items):
+            key_points = "、".join(str(x) for x in item.get("key_points", [])[:5])
+            prereqs = "、".join(str(x) for x in item.get("prerequisites", [])[:4]) or "无特殊前置"
+            guidance_map[item["title"]] = (
+                f"## 本章教学规划\n"
+                f"- 课程类型：{course_type}\n"
+                f"- 章节位置：第 {i + 1}/{count} 章\n"
+                f"- 教学角色：{item.get('role', '')}\n"
+                f"- 学习目标：{item.get('learning_goal', '')}\n"
+                f"- 前置依赖：{prereqs}\n"
+                f"- 必讲要点：{key_points}\n"
+                f"- 最小例子：{item.get('micro_example', '')}\n"
+                f"- 自查标准：{item.get('assessment', '')}\n"
+                f"- Bloom 层级：{item.get('bloom', '')}"
+            )
+
+        sequence = "\n".join(
+            f"{i + 1}. {item['title']}｜{item.get('role', '')}｜{item.get('learning_goal', '')}"
+            for i, item in enumerate(section_items)
+        )
+        prereq_text = "、".join(str(x) for x in prerequisite_chain[:6]) or "无特殊前置"
+        course_plan = (
+            f"【课程地图】\n"
+            f"课程类型：{course_type}\n"
+            f"课程目标：{course_goal}\n"
+            f"先修链：{prereq_text}\n"
+            f"章节序列：\n{sequence}"
+        )
+        return titles, guidance_map, course_plan
+
     try:
         t0 = time.perf_counter()
         response = await llm.ainvoke(prompt, priority=llm_priority, user_id=user_id, pool="ppt")
-        sections = parse_llm_json(response.content)
-        if isinstance(sections, list) and len(sections) >= 1:
-            defaults = ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "与其他知识的联系", "综合练习与思考", "课程总结与回顾"]
-            while len(sections) < count:
-                sections.append(defaults[len(sections) % len(defaults)])
-            sections = sections[:count]
+        plan = parse_llm_json(response.content)
+        sections, guidance_map, course_plan = _pack_plan(plan)
+        if sections:
             logger.info("[PPT-Outline] 大纲生成 章节数=%d 耗时=%.2fs", len(sections), time.perf_counter() - t0)
-            return sections
+            return sections, guidance_map, course_plan
     except Exception:
         logger.exception("[PPT-Outline] 大纲生成失败，使用默认章节")
-    return ["核心概念入门", "基本原理推导", "关键方法解析", "典型案例分析", "进阶知识拓展", "实际应用场景", "常见误区辨析", "与其他知识的联系", "综合练习与思考", "课程总结与回顾"][:count]
+    return _pack_plan(defaults)
 
 
 async def generate_formula_sheet(
@@ -405,6 +594,9 @@ async def generate_ppt_parallel(
         except Exception:
             logger.exception("[PPT-Parallel] stream_start 推送异常")
 
+    section_guidance_map: dict[str, str] = {}
+    course_plan_text = ""
+
     if sections is None:
         if stream_writer:
             try:
@@ -414,7 +606,10 @@ async def generate_ppt_parallel(
                 logger.exception("[PPT-Parallel] stream_progress 推送异常")
         outline_task = generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority, user_id=user_id)
         formula_task = generate_formula_sheet(topic, kb=kb, guidance=guidance, llm_priority=llm_priority, user_id=user_id)
-        sections, formula_sheet = await asyncio.gather(outline_task, formula_task)
+        outline_result, formula_sheet = await asyncio.gather(outline_task, formula_task)
+        sections, section_guidance_map, course_plan_text = outline_result
+        if not learning_objectives:
+            learning_objectives = course_plan_text
         _push_agent_event(stream_writer, "executor:ppt", "PPT生成智能体", "executor", "running", f"大纲规划完成，共 {len(sections)} 章", resource_type="ppt", total=len(sections))
     else:
         formula_sheet = ""
@@ -454,6 +649,30 @@ async def generate_ppt_parallel(
         normalized = re.sub(r"\s*```$", "", normalized)
         if not normalized:
             return False, "empty_content"
+        if re.search(r"(生成失败|无法生成|生成出错|failed to generate|generation failed)", normalized[:800], re.IGNORECASE):
+            return False, "generation_failure_marker"
+
+        hollow_labels = (
+            "学习目标", "核心规则", "最小例子", "自查提醒", "承接目标", "操作示范",
+            "条件边界", "迁移检查", "要点", "步骤", "第一步", "第二步", "第三步",
+            "第四步", "第五步",
+        )
+
+        def _content_len(text: str) -> int:
+            clean = re.sub(r"`([^`]+)`", r"\1", text)
+            clean = re.sub(r"\$[^$]*\$", "", clean)
+            return len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", clean))
+
+        def _is_hollow_item(text: str) -> bool:
+            item = re.sub(r"^\s*(?:[-*+]|\d+[.)、])\s*", "", text).strip()
+            item = re.sub(r"^\s*(?:\*\*)?(.+?)(?:\*\*)?\s*$", r"\1", item).strip()
+            match = re.match(r"^([^：:]{1,12})[：:]\s*(.*)$", item)
+            if not match:
+                return _content_len(item) < 8
+            label, body = match.group(1).strip(), match.group(2).strip()
+            if any(label.startswith(name) or name in label for name in hollow_labels):
+                return _content_len(body) < 12
+            return _content_len(item) < 12
 
         slides = re.split(r"\n\s*---+\s*\n", normalized)
         checked_slides = 0
@@ -481,9 +700,158 @@ async def generate_ppt_parallel(
                 return False, "ellipsis_placeholder"
             if re.search(r'(同上|以此类推|依此类推|类似可得|不再赘述|此处不再展开|（略）|证明略|过程略|推导略|步骤略)', text_no_math):
                 return False, "omitted_content"
+            if not re.search(r'(?m)^>\s*(?:讲稿|speaker notes?|notes?)\s*[:：]', slide, re.IGNORECASE):
+                return False, "missing_speaker_notes"
+            visible_lines = []
+            for line in text_no_math.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith(("<!--", "#", ">")):
+                    continue
+                if re.match(r"^\s*(?:[-*+]|\d+[.)、])\s*", stripped):
+                    if _is_hollow_item(stripped):
+                        return False, "hollow_bullet_or_step"
+                    visible_lines.append(stripped)
+            visible_text = "\n".join(visible_lines)
+            if _content_len(visible_text) < 60:
+                return False, "too_sparse_visible_content"
         if checked_slides <= 0:
             return False, "missing_slide_title"
         return True, ""
+
+    def _repair_ppt_content(content: str, section_title: str) -> str:
+        """修补非致命空槽，降低无意义重试率。"""
+        normalized = str(content or "").strip()
+        if not normalized:
+            return normalized
+
+        def _content_len(text: str) -> int:
+            clean = re.sub(r"`([^`]+)`", r"\1", text)
+            clean = re.sub(r"\$[^$]*\$", "", clean)
+            return len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", clean))
+
+        def _repair_line(line: str) -> str:
+            match = re.match(r"^(\s*(?:[-*+]|\d+[.)、])\s*)([^：:]{1,12})[：:]\s*(.*)$", line)
+            if not match:
+                return line
+            prefix, label, body = match.group(1), match.group(2).strip(), match.group(3).strip()
+            if _content_len(body) >= 8:
+                return line
+            fallback = (
+                f"围绕「{section_title}」补充具体说明：说明本步骤要解决的问题、"
+                "使用时需要满足的条件，以及学习者可以立即检查的结果。"
+            )
+            return f"{prefix}{label}：{fallback}"
+
+        repaired_slides: list[str] = []
+        for raw_slide in re.split(r"\n\s*---+\s*\n", normalized):
+            slide = raw_slide.strip()
+            if not slide:
+                continue
+            lines = [_repair_line(line) for line in slide.splitlines()]
+            repaired = "\n".join(lines).strip()
+            notes_match = re.search(r'(?m)^>\s*(?:讲稿|speaker notes?|notes?)\s*[:：].*$', repaired, re.IGNORECASE)
+            notes_line = notes_match.group(0) if notes_match else (
+                f"> 讲稿：本页围绕「{section_title}」展开讲解。请先说明本页学习目标，"
+                "再用一个小例子或检查动作帮助学习者确认自己是否真正理解。"
+            )
+            if notes_match:
+                repaired = (repaired[:notes_match.start()] + repaired[notes_match.end():]).strip()
+            visible_text = "\n".join(
+                line.strip()
+                for line in repaired.splitlines()
+                if line.strip() and not line.strip().startswith(("<!--", "#", ">"))
+            )
+            if _content_len(visible_text) < 60:
+                repaired += (
+                    f"\n- 学习提示：本页用于承接「{section_title}」的核心任务，"
+                    "至少要说清对象、条件、操作和自查标准，避免只停留在标题式概念。"
+                )
+            repaired = f"{repaired}\n{notes_line}".strip()
+            repaired_slides.append(repaired)
+        return "\n---\n".join(repaired_slides)
+
+    def _normalize_ppt_content(raw: str, section_title: str) -> str:
+        """兼容外部/结构化 PPT 生成器输出，统一转成现有 PPT Markdown。"""
+        content = str(raw or "").strip()
+        content = re.sub(r"^```(?:markdown|md)?\s*", "", content, flags=re.IGNORECASE)
+        content = re.sub(r"\s*```$", "", content)
+        if not content:
+            return ""
+
+        def _as_list(value):
+            return value if isinstance(value, list) else []
+
+        def _text(value) -> str:
+            return str(value or "").strip()
+
+        def _coerce_slide(item: dict, index: int) -> dict:
+            blocks = item.get("blocks") if isinstance(item.get("blocks"), list) else []
+            bullet_source = (
+                item.get("bullets")
+                or item.get("points")
+                or item.get("items")
+                or item.get("key_points")
+                or []
+            )
+            bullets: list[str] = []
+            for block in list(blocks) + _as_list(bullet_source):
+                if isinstance(block, dict):
+                    text = _text(block.get("text") or block.get("content") or block.get("value"))
+                else:
+                    text = _text(block)
+                if text:
+                    bullets.append(text)
+
+            layout = _text(item.get("layout") or item.get("type"))
+            layout_alias = {
+                "process": "process_steps",
+                "steps": "process_steps",
+                "formula": "formula_focus",
+                "compare": "comparison",
+                "cards": "content_cards",
+                "concept": "concept_visual",
+            }
+            layout = layout_alias.get(layout, layout)
+
+            return {
+                "index": index,
+                "title": _text(item.get("title") or item.get("heading") or f"{section_title} {index + 1}"),
+                "layout": layout,
+                "theme": _text(item.get("theme") or ppt_theme_id),
+                "bullets": bullets,
+                "text": "\n".join(bullets) or _text(item.get("text") or item.get("content")),
+                "notes": _text(item.get("notes") or item.get("speaker_notes")),
+                "visual": item.get("visual") if isinstance(item.get("visual"), dict) else {},
+            }
+
+        if content[:1] in "{[":
+            try:
+                data = parse_llm_json(content)
+                raw_slides = data if isinstance(data, list) else (
+                    data.get("slides")
+                    or data.get("pages")
+                    or (data.get("deck") or {}).get("slides")
+                    or []
+                )
+                slides = [
+                    _coerce_slide(item, i)
+                    for i, item in enumerate(raw_slides)
+                    if isinstance(item, dict)
+                ]
+                if slides:
+                    from backend.src.utils.slide_schema import slides_to_markdown
+                    return _repair_ppt_content(slides_to_markdown(section_title, slides).strip(), section_title)
+            except Exception:
+                logger.debug("[PPT-Gen] structured output normalization failed", exc_info=True)
+
+        first_title = re.search(r"(?m)^\s{0,3}#{1,2}\s+\S+", content)
+        if first_title and first_title.start() > 0:
+            prefix = content[:first_title.start()].strip()
+            if not prefix or re.search(r"^(好的|收到|以下|根据|这里是)", prefix):
+                content = content[first_title.start():].strip()
+        return _repair_ppt_content(content, section_title)
 
     def _fallback_ppt_section(section_title: str) -> str:
         safe_title = re.sub(r"[#<>`$]", "", section_title or topic).strip() or "核心知识点"
@@ -494,6 +862,7 @@ async def generate_ppt_parallel(
             f"- 学习时先确认本章节讨论的对象、条件和目标，再进入具体例子；这样可以把「{safe_title}」放回完整知识链条中理解。\n"
             "- 对公式密集内容，优先用小规模例子验证含义，再推广到一般情形；每一步都应说明变量来源、运算规则和适用前提。\n"
             "- 如果后续需要更精细的推导，可以重新生成本章节或改用文档资源承载长公式，避免在幻灯片里塞入过长表达式。\n"
+            f"> 讲稿：本页先把「{safe_title}」放回完整学习链条中讲清楚。学习者需要先确认对象、条件和目标，再用一个最小例子验证概念含义；如果涉及公式，应优先检查变量来源和适用前提，而不是直接套用结论。\n"
             "\n---\n"
             f"## {safe_title}：应用检查清单\n"
             "<!-- layout: process_steps -->\n"
@@ -501,6 +870,7 @@ async def generate_ppt_parallel(
             "- 第二步：选择一个最小例子进行手算或口头推演，重点观察每一步为什么成立，而不是直接跳到最后答案。\n"
             "- 第三步：对比常见错误做法，尤其关注符号位置、维度匹配、条件遗漏和把结论套用到不适用场景的问题。\n"
             "- 第四步：完成一道同类型练习后复述解题路径，确认能从题目信息推出所用方法，而不是依赖题目标题提示。\n"
+            f"> 讲稿：这一页用于把「{safe_title}」转化成可执行的学习动作。不要只看自己能否记住定义，而要看能否说出使用条件、完成一个最小例子，并解释错误做法为什么不成立；能复述路径，才算真正掌握。\n"
         )
 
 
@@ -556,6 +926,17 @@ async def generate_ppt_parallel(
 
     total = len(sections)
     _results: list[dict] = [{} for _ in range(total)]
+    gen_sem = asyncio.Semaphore(min(4, max(1, total)))
+    review_sem = asyncio.Semaphore(2)
+    soft_quick_reasons = {"missing_speaker_notes", "hollow_bullet_or_step", "too_sparse_visible_content"}
+    first_pass_done = [False] * total
+    first_pass_event = asyncio.Event()
+
+    def _mark_first_pass_done(_idx: int):
+        if 0 <= _idx < total and not first_pass_done[_idx]:
+            first_pass_done[_idx] = True
+            if all(first_pass_done):
+                first_pass_event.set()
 
     def _slide_stream_meta(_idx: int, slide_idx: int, _section_title: str) -> dict:
         return {
@@ -632,14 +1013,15 @@ async def generate_ppt_parallel(
                 content=content[:3000],
                 topic=topic,
             )
-            response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id, pool="reviewer")
+            async with review_sem:
+                response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id, pool="reviewer")
             return _parse_review_response(response.content)
         except Exception as e:
             logger.exception("[PPT-Review] section=%s 审核异常", section_title)
             return {"passed": True, "score": 0, "feedback": f"审核异常: {e}"}
 
     async def _gen_section(idx: int, section_title: str) -> None:
-        """单章节：生成 → 审核 → 反馈重生成（最多 3 轮） → 推送"""
+        """单章节：先推首轮草稿，再给足 3 次 reviewer 语义审核机会。"""
         section_agent_id = f"executor:ppt:section-{idx}"
         _push_agent_event(
             stream_writer,
@@ -688,7 +1070,8 @@ async def generate_ppt_parallel(
             prompt_with_context = (
                 f"你是一个贴心的学习导师。为课程「{topic}」撰写 2 页学习引入幻灯片。"
                 f"\n\n## 输出格式"
-                f"\n直接输出 PPT Markdown，第一个字符必须是 #。用 --- 分隔两页。每页 4-6 条要点，每条 40-80 字，整页正文不低于 280 字。"
+                f"\n直接输出 PPT Markdown，第一个字符必须是 #。用 --- 分隔两页。每页 4-6 条要点，每条 50-90 字，整页可见正文不低于 320 字。"
+                f"\n每页最后必须追加一行 `> 讲稿：...`，讲稿 120-220 个中文字符，用于补足课堂讲解和视频朗读。"
                 f"\n\n## 第1页：为什么这门课对你很重要"
                 f"\n- 用画像中的具体信息（专业、年级等）解释这门课和你的关联"
                 f"\n- 让你感受到'这课是为我准备的'"
@@ -704,6 +1087,14 @@ async def generate_ppt_parallel(
         else:
             prompt_with_context = base_prompt
 
+        section_plan = section_guidance_map.get(section_title, "")
+        if section_plan:
+            prompt_with_context += (
+                f"\n\n## 本章节来自课程地图的下发规划（必须遵守）\n"
+                f"{section_plan}\n"
+                f"- 本章只讲规划中的核心任务，不要抢讲后续章节，也不要退回泛泛概念介绍。"
+            )
+
         if ppt_theme_id:
             prompt_with_context += (
                 f"\n\n## 用户选择的 PPT 模板\n"
@@ -711,11 +1102,14 @@ async def generate_ppt_parallel(
                 f"请生成适配该模板风格的 layout/theme/visual 元数据，并在每页标题后一行加入 `<!-- theme: {ppt_theme_id} -->`。"
             )
 
-        # ── 生成 + 审核循环：通过格式快检和 reviewer 后再推送，避免未审坏稿进入前端 ──
-        MAX_REVIEW_ROUNDS = 3
+        # ── 生成 + 审核循环：第一轮先推草稿，等所有章节首轮完成后再进入 reviewer ──
+        MAX_REVIEW_CHECKS = 3
+        MAX_GENERATION_ROUNDS = MAX_REVIEW_CHECKS + 2
         content = ""
         review_feedback = ""
         final_passed = False
+        draft_pushed = False
+        review_checks = 0
 
         def _push_section_replace(_idx: int, _content: str, _title: str):
             """推送章节替换事件 + 新的幻灯片内容"""
@@ -731,7 +1125,8 @@ async def generate_ppt_parallel(
                     pass
             _push_section(_idx, _content, _title)
 
-        for round_idx in range(MAX_REVIEW_ROUNDS):
+        round_idx = 0
+        while round_idx < MAX_GENERATION_ROUNDS and review_checks < MAX_REVIEW_CHECKS:
             is_first_round = (round_idx == 0)
 
             if stream_writer and not is_first_round:
@@ -769,8 +1164,9 @@ async def generate_ppt_parallel(
             gen_ok = False
             for attempt in range(2):
                 try:
-                    response = await llm.ainvoke(prompt_with_context, priority=llm_priority, user_id=user_id, pool="ppt")
-                    content = response.content
+                    async with gen_sem:
+                        response = await llm.ainvoke(prompt_with_context, priority=llm_priority, user_id=user_id, pool="ppt")
+                    content = _normalize_ppt_content(response.content, section_title)
                     gen_ok = True
                     break
                 except Exception as e:
@@ -781,35 +1177,41 @@ async def generate_ppt_parallel(
                         await asyncio.sleep(1.5)
                         continue
                     logger.exception("[PPT-Gen] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
-                    _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
+                    fallback_content = _fallback_ppt_section(section_title)
+                    _results[idx] = {"idx": idx, "content": fallback_content}
+                    if is_first_round:
+                        _mark_first_pass_done(idx)
                     _push_agent_event(
                         stream_writer,
                         section_agent_id,
                         f"PPT第 {idx + 1} 章",
                         "executor",
-                        "failed",
-                        f"「{section_title}」生成失败",
+                        "done",
+                        f"「{section_title}」使用兜底内容",
                         resource_type="ppt",
                         current=idx + 1,
                         total=total,
                     )
-                    _push_section(idx, _results[idx]["content"], section_title)
+                    _push_section(idx, fallback_content, section_title)
                     return
 
             if not gen_ok:
-                _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
+                fallback_content = _fallback_ppt_section(section_title)
+                _results[idx] = {"idx": idx, "content": fallback_content}
+                if is_first_round:
+                    _mark_first_pass_done(idx)
                 _push_agent_event(
                     stream_writer,
                     section_agent_id,
                     f"PPT第 {idx + 1} 章",
                     "executor",
-                    "failed",
-                    f"「{section_title}」生成失败",
+                    "done",
+                    f"「{section_title}」使用兜底内容",
                     resource_type="ppt",
                     current=idx + 1,
                     total=total,
                 )
-                _push_section(idx, _results[idx]["content"], section_title)
+                _push_section(idx, fallback_content, section_title)
                 return
 
             elapsed = time.perf_counter() - t0
@@ -821,10 +1223,23 @@ async def generate_ppt_parallel(
                 quick_ok, quick_reason = _quick_check_ppt(content)
                 logger.info("[PPT-Gen] idx=%d section=%s round=%d %s reason=%s 耗时=%.2fs",
                             idx, section_title, round_idx + 1, "快检通过" if quick_ok else "快检未通过", quick_reason or "-", elapsed)
+            format_safe = quick_ok or quick_reason in soft_quick_reasons
+
+            if is_first_round and format_safe and not draft_pushed:
+                draft_pushed = True
+                _results[idx] = {"idx": idx, "content": content, "draft": True}
+                _push_section(idx, content, section_title)
+            elif is_first_round and not format_safe and not is_portrait_section and not draft_pushed:
+                fallback_draft = _fallback_ppt_section(section_title)
+                draft_pushed = True
+                _results[idx] = {"idx": idx, "content": fallback_draft, "draft": True}
+                _push_section(idx, fallback_draft, section_title)
 
             # 画像引入页不走严格章节 reviewer，但仍只在生成完成后推送。
             if is_portrait_section:
                 _results[idx] = {"idx": idx, "content": content}
+                if is_first_round:
+                    _mark_first_pass_done(idx)
                 _push_section(idx, content, section_title)
                 _push_agent_event(
                     stream_writer,
@@ -839,30 +1254,48 @@ async def generate_ppt_parallel(
                 )
                 return
 
-            # Step D: 审核（画像引入页已在上面 return）
-            _push_agent_event(
-                stream_writer,
-                section_agent_id,
-                f"PPT第 {idx + 1} 章",
-                "reviewer",
-                "reviewing",
-                f"正在审核「{section_title}」",
-                resource_type="ppt",
-                current=idx + 1,
-                total=total,
-            )
-            if not quick_ok:
+            if is_first_round:
+                _mark_first_pass_done(idx)
+                await first_pass_event.wait()
+
+            if not format_safe:
+                _push_agent_event(
+                    stream_writer,
+                    section_agent_id,
+                    f"PPT第 {idx + 1} 章",
+                    "reviewer",
+                    "reviewing",
+                    f"「{section_title}」格式快检未通过，准备重写",
+                    resource_type="ppt",
+                    current=idx + 1,
+                    total=total,
+                )
                 review_result = {
                     "passed": False,
                     "score": 0,
-                    "feedback": f"系统格式快检未通过（{quick_reason or 'format_error'}）：请输出完整 PPT Markdown，修复结构、公式闭合、空公式块、HTML/KaTeX 标签泄漏或省略占位问题。",
+                    "feedback": f"系统格式快检未通过（{quick_reason or 'format_error'}）：请输出完整 PPT Markdown，修复结构、公式闭合、空公式块、HTML/KaTeX 标签泄漏、省略占位、空要点或缺少 `> 讲稿：...` 的问题。每条要点冒号后必须有实质内容。",
                 }
             else:
+                review_checks += 1
+                _push_agent_event(
+                    stream_writer,
+                    section_agent_id,
+                    f"PPT第 {idx + 1} 章",
+                    "reviewer",
+                    "reviewing",
+                    f"正在审核「{section_title}」（第 {review_checks}/{MAX_REVIEW_CHECKS} 次）",
+                    resource_type="ppt",
+                    current=idx + 1,
+                    total=total,
+                )
                 review_result = await _review_ppt_section(content, section_title, format_checked=True)
             if review_result.get("passed"):
                 final_passed = True
                 _results[idx] = {"idx": idx, "content": content}
-                _push_section(idx, content, section_title)
+                if draft_pushed:
+                    _push_section_replace(idx, content, section_title)
+                else:
+                    _push_section(idx, content, section_title)
                 _push_agent_event(
                     stream_writer,
                     section_agent_id,
@@ -885,13 +1318,17 @@ async def generate_ppt_parallel(
                 review_feedback = review_feedback[:400] + "…"
             logger.warning("[PPT-Review] idx=%d section=%s round=%d 审核未通过: %s",
                            idx, section_title, round_idx + 1, review_feedback[:120])
+            round_idx += 1
 
         if not final_passed and not is_portrait_section:
             fallback_content = _fallback_ppt_section(section_title)
             _results[idx] = {"idx": idx, "content": fallback_content}
-            _push_section(idx, fallback_content, section_title)
-            logger.warning("[PPT-Review] idx=%d section=%s 达最大轮次 %d，使用安全兜底版本",
-                           idx, section_title, MAX_REVIEW_ROUNDS)
+            if draft_pushed:
+                _push_section_replace(idx, fallback_content, section_title)
+            else:
+                _push_section(idx, fallback_content, section_title)
+            logger.warning("[PPT-Review] idx=%d section=%s 达最大审核次数 %d/生成轮次 %d，使用安全兜底版本",
+                           idx, section_title, review_checks, round_idx)
             _push_agent_event(
                 stream_writer,
                 section_agent_id,
@@ -1152,7 +1589,7 @@ async def executor_node(state: ResourceState) -> dict:
     # 章节数：根据追问答案的 depth 决定
     answers = state.get("answers", {}) or {}
     depth = answers.get("depth", "standard")
-    ppt_section_count = PPT_SECTION_COUNT_BY_DEPTH.get(depth, PPT_DEFAULT_SECTIONS)
+    ppt_section_count = estimate_ppt_section_count(topic, depth)
     doc_section_count = DOC_SECTION_COUNT_BY_DEPTH.get(depth, DOC_DEFAULT_SECTIONS)
 
     # PPT / 文档 / 图片 → 异步；其余 → 线程池
