@@ -91,7 +91,17 @@ const scheduleAuthExpiryCheck = token => {
 }
 
 const extractTokenFromResponse = data => {
-  return [data?.token, data?.data?.token, data?.user?.token].find(looksLikeJwt) || ''
+  return [
+    data?.token,
+    data?.id,
+    data?.user_id,
+    data?.data?.token,
+    data?.data?.id,
+    data?.data?.user_id,
+    data?.user?.token,
+    data?.user?.id,
+    data?.user?.user_id
+  ].find(looksLikeJwt) || ''
 }
 
 request.interceptors.request.use(

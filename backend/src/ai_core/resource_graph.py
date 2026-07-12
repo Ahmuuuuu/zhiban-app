@@ -14,6 +14,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import StateGraph, START, END
 
 from backend.src.ai_core.llm_config import llm, llm_vision
+from backend.src.utils.formula_builder import build_formula_sheet
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.utils.json_parser import parse_llm_json
 
@@ -290,8 +291,9 @@ async def generate_formula_sheet(
     llm_priority: str = "high", user_id: int = 0,
 ) -> str:
     """从知识库提取关键公式，生成公式速查表，供各章节 executor 直接引用"""
+    template_sheet = build_formula_sheet(topic)
     if not kb or kb == "暂无相关知识库资料":
-        return ""
+        return template_sheet
 
     prompt = f"""你是一个数学公式整理专家。从以下知识库资料中提取与「{topic}」相关的关键公式。
 
@@ -318,10 +320,12 @@ async def generate_formula_sheet(
         if sheet == "无":
             sheet = ""
         logger.info("[Formula-Sheet] 公式提取 耗时=%.2fs 条数≈%d", time.perf_counter() - t0, sheet.count('\n') + 1 if sheet else 0)
-        return sheet
+        if template_sheet and sheet:
+            return f"{template_sheet}\n\nAdditional formulas extracted from reference materials:\n{sheet}"
+        return template_sheet or sheet
     except Exception:
         logger.exception("[Formula-Sheet] 提取失败")
-        return ""
+        return template_sheet
 
 
 async def generate_learning_objectives(
@@ -955,6 +959,7 @@ async def generate_document_parallel(
 
     outline_lines = [f"第{i+1}章「{s}」" for i, s in enumerate(sections)]
     course_overview = "\n".join(outline_lines)
+    course_formula_sheet = build_formula_sheet(topic)
 
     total = len(sections)
     completed_count = [0]
@@ -986,6 +991,8 @@ async def generate_document_parallel(
 
         prev_section = sections[idx - 1] if idx > 0 else "（无）"
         next_section = sections[idx + 1] if idx < len(sections) - 1 else "（无）"
+        section_formula_sheet = build_formula_sheet(f"{topic} {section_title}") or course_formula_sheet
+        formula_guidance = section_formula_sheet or "暂无稳定公式模板；如需公式，请使用标准 LaTeX 并保证公式块闭合。"
 
         section_prompt = f"""你是一个专业的学习文档撰写者。请为「{topic}」撰写一个章节。
 
@@ -1002,6 +1009,16 @@ async def generate_document_parallel(
 
 ## 学习指导
 {guidance or '无特殊要求'}
+
+## 公式速查表（稳定模板，优先引用）
+{formula_guidance}
+
+## 公式使用规则
+- 如果上方公式速查表非空，优先逐字复用其中的 LaTeX 公式块，不要自行重写同类公式。
+- 公式必须使用 `$...$` 或 `$$...$$`，`\\begin{{...}}...\\end{{...}}` 必须完整放在 `$$...$$` 内。
+- 中文解释必须写在公式块外，每个核心公式后至少补 1-2 句解释变量含义、适用条件和常见错误。
+- 涉及矩阵、行列式、概率、积分、变换等公式密集主题时，优先使用 2x2、3x3 或单变量小例子展开。
+- 禁止用 `...`、`依此类推`、`类似可得` 省略推导；必要步骤要完整写出。
 
 直接输出该章节的 Markdown 内容，以 ### {section_title} 开头。"""
 
