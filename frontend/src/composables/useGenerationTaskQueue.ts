@@ -165,8 +165,10 @@ const formatTaskThinking = (value: any) => {
     : String(value || '')
   return raw
     .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
 }
 
 const getBackendThinking = (taskData: any) => formatTaskThinking(
@@ -175,6 +177,24 @@ const getBackendThinking = (taskData: any) => formatTaskThinking(
   taskData?.message ||
   taskData?.msg
 )
+
+const appendTaskThinking = (task: GenerationTask, value: any) => {
+  const next = formatTaskThinking(value)
+  if (!next) return
+
+  const lines = formatTaskThinking(task.thinkingProcess)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  for (const line of next.split(/\r?\n/).map(item => item.trim()).filter(Boolean)) {
+    if (lines[lines.length - 1] !== line) {
+      lines.push(line)
+    }
+  }
+
+  task.thinkingProcess = lines.slice(-80).join('\n')
+}
 
 const normalizeTaskFiles = (taskData: any) => {
   const result = taskData?.result || taskData?.resources || []
@@ -198,7 +218,7 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
     ? (taskData?.error || '资源生成失败，请稍后再试。')
     : formatTaskProgress(taskData)
   const thinking = getBackendThinking(taskData)
-  if (thinking) task.thinkingProcess = thinking
+  if (!(task as any)._textStream) appendTaskThinking(task, thinking)
   task.error = taskData?.error || ''
   // 保留已生成的视频文件和 doneEvent.presentation，
   // 避免 hydrate 时后端数据覆盖前端已完成的视频状态导致重复生成
@@ -246,7 +266,7 @@ const upsertBackendTask = (taskData: any, tool?: ResourceToolConfig) => {
       chatGroupId: taskData?.chat_group_id || taskData?.chatGroupId || null,
       status: 'running',
       progress: '正在生成资源...',
-      thinkingProcess: getBackendThinking(taskData),
+      thinkingProcess: '',
       error: '',
       files: [],
       images: [],
@@ -317,6 +337,28 @@ const findPptStreamSlideIndex = (slides: any[], eventData: any) => {
 const bumpPptStreamVersion = (stream: any) => {
   stream._version = Number(stream._version || 0) + 1
   return stream
+}
+
+const findTextStreamPartIndex = (parts: any[], eventData: any) => {
+  const sectionIdx = streamOrder(eventData?.section_idx, 0)
+  return parts.findIndex((part: any) => streamOrder(part?.section_idx, 0) === sectionIdx)
+}
+
+const sortTextStreamParts = (parts: any[]) => {
+  return [...parts].sort((a, b) => streamOrder(a?.section_idx, 0) - streamOrder(b?.section_idx, 0))
+}
+
+const formatTextStreamThinking = (stream: any, task: GenerationTask) => {
+  const parts = sortTextStreamParts(stream?.parts || [])
+    .map((part: any) => String(part?.content || '').trim())
+    .filter(Boolean)
+  const types = task.tool?.resourceTypes || []
+  const isMindmap = stream?.file_type === 'mindmap' || types.includes('mindmap')
+  const title = task.status === 'done'
+    ? (isMindmap ? '思维导图内容已生成。' : '文档内容已生成。')
+    : (isMindmap ? '正在生成思维导图内容...' : '正在生成文档内容...')
+  if (!parts.length) return title
+  return `${title}\n\n${parts.join('\n\n')}`
 }
 
 const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
@@ -412,8 +454,71 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
       task.backendTaskId?.slice(0, 12) || task.id, eventData.section_idx, stream.slides.length)
   }
 
+  if (eventData.type === 'stream_text_start') {
+    const stream = (task as any)._textStream || { parts: [] }
+    stream.file_type = eventData.file_type || stream.file_type || 'document'
+    const nextPart = {
+      content: '',
+      section_idx: eventData.section_idx ?? 0,
+      section_title: eventData.section_title || '',
+      streaming: true,
+    }
+    const existingIdx = findTextStreamPartIndex(stream.parts, eventData)
+    if (existingIdx >= 0) {
+      stream.parts[existingIdx] = nextPart
+    } else {
+      stream.parts.push(nextPart)
+    }
+    stream.parts = sortTextStreamParts(stream.parts)
+    ;(task as any)._textStream = stream
+    task.thinkingProcess = formatTextStreamThinking(stream, task)
+  }
+
+  if (eventData.type === 'stream_text_delta') {
+    const stream = (task as any)._textStream || { parts: [] }
+    stream.file_type = eventData.file_type || stream.file_type || 'document'
+    const existingIdx = findTextStreamPartIndex(stream.parts, eventData)
+    if (existingIdx >= 0) {
+      stream.parts[existingIdx] = {
+        ...stream.parts[existingIdx],
+        content: `${stream.parts[existingIdx].content || ''}${eventData.delta || ''}`,
+        streaming: true,
+      }
+    } else {
+      stream.parts.push({
+        content: eventData.delta || '',
+        section_idx: eventData.section_idx ?? 0,
+        section_title: eventData.section_title || '',
+        streaming: true,
+      })
+    }
+    stream.parts = sortTextStreamParts(stream.parts)
+    ;(task as any)._textStream = stream
+    task.thinkingProcess = formatTextStreamThinking(stream, task)
+  }
+
+  if (eventData.type === 'stream_text_done') {
+    const stream = (task as any)._textStream || { parts: [] }
+    stream.file_type = eventData.file_type || stream.file_type || 'document'
+    const existingIdx = findTextStreamPartIndex(stream.parts, eventData)
+    const finalPart = {
+      content: eventData.content || '',
+      section_idx: eventData.section_idx ?? 0,
+      section_title: eventData.section_title || '',
+      streaming: false,
+    }
+    if (existingIdx >= 0) {
+      stream.parts[existingIdx] = finalPart
+    } else {
+      stream.parts.push(finalPart)
+    }
+    stream.parts = sortTextStreamParts(stream.parts)
+    ;(task as any)._textStream = stream
+    task.thinkingProcess = formatTextStreamThinking(stream, task)
+  }
+
   const thinking = getBackendThinking(eventData)
-  if (thinking) task.thinkingProcess = thinking
+  if (!(task as any)._textStream) appendTaskThinking(task, thinking)
 
   if (eventData.progress_msg || eventData.progressMsg || eventData.progress || eventData.status) {
     task.progress = formatTaskProgress(eventData)
@@ -436,6 +541,9 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
       chat_group_id: task.chatGroupId,
       resources: task.files,
       ...eventData,
+    }
+    if ((task as any)._textStream) {
+      task.thinkingProcess = formatTextStreamThinking((task as any)._textStream, task)
     }
   }
 
@@ -482,18 +590,18 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.backendTaskId = submitData?.task_id || submitData?.taskId || submitData?.id || task.backendTaskId
       task.chatGroupId = submitData?.chat_group_id || submitData?.chatGroupId || task.chatGroupId
       const thinking = getBackendThinking(submitData)
-      if (thinking) task.thinkingProcess = thinking
+      appendTaskThinking(task, thinking)
       task.updatedAt = Date.now()
       persistTasks()
     },
     onProgress: msg => {
       task.progress = msg
-      task.thinkingProcess = formatTaskThinking(msg) || task.thinkingProcess
+      appendTaskThinking(task, msg)
       task.updatedAt = Date.now()
       persistTasks()
     },
     onThinking: msg => {
-      task.thinkingProcess = formatTaskThinking(msg) || task.thinkingProcess
+      appendTaskThinking(task, msg)
       task.updatedAt = Date.now()
       persistTasks()
     },
@@ -687,7 +795,7 @@ export function useGenerationTaskQueue() {
       }
       task.progress = formatTaskProgress(data)
       const thinking = getBackendThinking(data)
-      if (thinking) task.thinkingProcess = thinking
+      appendTaskThinking(task, thinking)
       task.updatedAt = Date.now()
       streamBackendTask(task)
       pollBackendTask(task)

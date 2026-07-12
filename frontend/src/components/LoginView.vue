@@ -105,10 +105,10 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { login, registerByEmail, sendEmailCode } from '../api/apis'
 import AnimatedCharacters from './AnimatedCharacters.vue'; 
-defineProps({
+const props = defineProps({
   visible: {
     type: Boolean,
     default: false
@@ -149,6 +149,13 @@ const codeButtonText = computed(() => {
 const resetMessage = () => {
   errorMessage.value = ''
   successMessage.value = ''
+}
+
+const clearSensitiveFields = () => {
+  form.password = ''
+  form.code = ''
+  showPassword.value = false
+  resetMessage()
 }
 
 const closeModal = () => {
@@ -313,8 +320,23 @@ const handleSubmit = async () => {
   }
 }
 
+const handleAuthExpired = () => {
+  clearSensitiveFields()
+  isRegister.value = false
+}
+
+watch(
+  () => props.visible,
+  visible => {
+    if (visible) clearSensitiveFields()
+  }
+)
+
+window.addEventListener('zhiban-auth-expired', handleAuthExpired)
+
 onBeforeUnmount(() => {
   if (codeTimer) window.clearInterval(codeTimer)
+  window.removeEventListener('zhiban-auth-expired', handleAuthExpired)
 })
 </script>
 

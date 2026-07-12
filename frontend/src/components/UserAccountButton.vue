@@ -137,15 +137,22 @@ const handleLogout = () => {
   avatarUrl.value = ''
 }
 
+const handleAuthExpired = () => {
+  handleLogout()
+  showLogin.value = true
+}
+
 onMounted(() => {
   window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
   window.addEventListener('zhiban:user-logged-out', handleLogout)
+  window.addEventListener('zhiban-auth-expired', handleAuthExpired)
   loadAccountInfo()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
   window.removeEventListener('zhiban:user-logged-out', handleLogout)
+  window.removeEventListener('zhiban-auth-expired', handleAuthExpired)
 })
 </script>
 

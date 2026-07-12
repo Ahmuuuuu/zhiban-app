@@ -79,6 +79,7 @@ const isResourceSection = computed(() => {
 })
 
 const isAdmin = computed(() => isAdminRole(userRole.value))
+const hasAuthToken = () => Boolean(localStorage.getItem('token'))
 
 const audioVisible = computed(() => {
   return Boolean(narrationState.value.resourceId && (narrationState.value.sections.length || narrationState.value.loading))
@@ -104,6 +105,11 @@ const audioProgressText = computed(() => {
 })
 
 const fetchUnread = async () => {
+  if (!hasAuthToken()) {
+    unreadCount.value = 0
+    return
+  }
+
   if (Date.now() < unreadRetryAt) return
 
   try {
@@ -147,6 +153,7 @@ const handleUserLoggedIn = () => {
 
 const handleUserLoggedOut = () => {
   userRole.value = ''
+  unreadCount.value = 0
 }
 
 onMounted(() => {

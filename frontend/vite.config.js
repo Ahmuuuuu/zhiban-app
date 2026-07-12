@@ -3,7 +3,10 @@ import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
-const backendTarget = process.env.VITE_API_BASE_URL || 'http://127.0.0.1:2221'
+const rawBackendTarget = process.env.VITE_API_BASE_URL?.trim() || ''
+const backendTarget = /^https?:\/\//i.test(rawBackendTarget)
+  ? rawBackendTarget.replace(/\/+$/, '')
+  : 'http://127.0.0.1:2221'
 const proxyTarget = {
   target: backendTarget,
   changeOrigin: true,
@@ -22,6 +25,8 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
+    port: 5173,
+    strictPort: true,
     proxy: {
       '/static': proxyTarget,
       '/ai_chat': proxyTarget,

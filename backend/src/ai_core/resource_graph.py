@@ -30,6 +30,51 @@ PROMPT_MAP = {
     "image": "resource/image_prompt",
 }
 
+TEXT_STREAM_CHUNK_SIZE = 80
+
+
+def _iter_stream_text_chunks(text: str, chunk_size: int = TEXT_STREAM_CHUNK_SIZE):
+    for start in range(0, len(text), chunk_size):
+        yield text[start:start + chunk_size]
+
+
+def _push_text_stream(
+    stream_writer,
+    file_type: str,
+    content: str,
+    *,
+    section_idx: int | None = None,
+    section_title: str = "",
+    total: int | None = None,
+):
+    if not stream_writer or not content:
+        return
+
+    meta = {
+        "file_type": file_type,
+        "section_idx": section_idx,
+        "section_title": section_title,
+        "total": total,
+    }
+    try:
+        stream_writer({"type": "stream_text_start", **meta})
+        cursor = 0
+        for delta in _iter_stream_text_chunks(str(content)):
+            stream_writer({
+                "type": "stream_text_delta",
+                "delta": delta,
+                "cursor": cursor,
+                **meta,
+            })
+            cursor += len(delta)
+        stream_writer({
+            "type": "stream_text_done",
+            "content": content,
+            **meta,
+        })
+    except Exception:
+        logger.exception("[Text-Stream] push failed file_type=%s section=%s", file_type, section_idx)
+
 
 # ═══════════════════════════════════════
 #  State
@@ -803,6 +848,14 @@ async def generate_document_parallel(
         try:
             response = await llm.ainvoke(section_prompt, priority=llm_priority, user_id=user_id, pool="document")
             content = response.content.strip()
+            _push_text_stream(
+                stream_writer,
+                "document",
+                content,
+                section_idx=idx,
+                section_title=section_title,
+                total=total,
+            )
             elapsed = time.perf_counter() - t0
             completed_count[0] += 1
             logger.info("[Doc-Section] %d/%d idx=%d section=%s len=%d 耗时=%.2fs",
@@ -987,6 +1040,8 @@ async def executor_node(state: ResourceState) -> dict:
             if content.get("url"):
                 file_urls[actual_rt] = content["url"]
         else:
+            if rt == "mindmap":
+                _push_text_stream(writer, "mindmap", content)
             generated[rt] = content
     if ppt_content:
         generated["ppt"] = ppt_content

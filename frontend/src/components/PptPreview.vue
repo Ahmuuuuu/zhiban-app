@@ -19,6 +19,7 @@
       @toggle-tool="toggleAnnotationTool"
       @undo="undoEdit"
       @redo="redoEdit"
+      @advanced-edit="emitAdvancedEdit"
       @export="emitExport"
     />
 
@@ -127,7 +128,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:slides', 'change', 'export-pptx', 'create-note', 'update-note', 'delete-note'])
+const emit = defineEmits(['update:slides', 'change', 'export-pptx', 'advanced-edit', 'create-note', 'update-note', 'delete-note'])
 
 const activeIndex = ref(0)
 const editing = ref(false)
@@ -473,6 +474,12 @@ const emitExport = () => {
   const slides = currentExportSlides()
   emit('update:slides', slides)
   emit('export-pptx', slides)
+}
+
+const emitAdvancedEdit = () => {
+  const slides = currentExportSlides()
+  emit('update:slides', slides)
+  emit('advanced-edit', slides)
 }
 
 const updateSlideField = (field, value) => {

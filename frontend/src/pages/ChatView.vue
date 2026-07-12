@@ -264,6 +264,7 @@
         <div
           v-else-if="message.role === 'assistant'"
           class="bubble rich-bubble markdown-body"
+          :class="{ 'generation-bubble': message.generationTaskId || message.thinkingProcess }"
           v-html="renderMarkdown(message.content)"
         ></div>
 
@@ -274,6 +275,7 @@
         <div
           v-if="message.thinkingProcess"
           class="thinking-process"
+          :class="{ 'is-expanded': isThinkingExpanded(message.id) }"
         >
           <div class="thinking-process__head">
             <span>思考过程</span>
@@ -285,7 +287,9 @@
               {{ isThinkingExpanded(message.id) ? '收起' : '展开' }}
             </button>
           </div>
-          <p>{{ visibleThinkingProcess(message) }}</p>
+          <div class="thinking-process__viewport">
+            <p :class="{ 'is-typing': isThinkingTyping(message) }">{{ visibleThinkingProcess(message) }}</p>
+          </div>
         </div>
 
         <div class="message-time">
@@ -395,6 +399,7 @@
               @create-note="createPptPreviewAnnotation($event)"
               @update-note="(id, payload) => updatePptPreviewAnnotation(id, payload)"
               @delete-note="deletePptPreviewAnnotation($event)"
+              @advanced-edit="openPptistAdvancedEditor"
               @export-pptx="exportChatPptx"
             />
             <div v-else class="ppt-dialog__loading">暂无可预览的幻灯片内容。</div>
@@ -566,6 +571,7 @@ import petHeroImage from '../assets/pic/zhiban-pet-base.png'
 import { getQuizSet, looksLikeQuizContent, upsertQuizSet } from '../utils/quizBank'
 import { saveGeneratedResourceRef } from '../utils/savedResources'
 import { renderMath } from '../utils/renderMath'
+import { openPptistEditor, toPptistPayload } from '../utils/pptistAdapter'
 import 'katex/dist/katex.min.css'
 
 const showHistoryPanel = ref(false)
@@ -1213,12 +1219,15 @@ const pptPreview = ref({
 })
 
 const thinkingLines = value => String(value || '').split(/\r?\n/)
-const hasLongThinkingProcess = value => thinkingLines(value).length > 5
+const compactThinkingLines = value => thinkingLines(value)
+  .map(line => line.trim())
+  .filter(line => line && line !== '---')
+const hasLongThinkingProcess = value => compactThinkingLines(value).length > 5
 const isThinkingExpanded = messageId => expandedThinkingMessageIds.value.has(String(messageId))
 const visibleThinkingProcess = message => {
-  const text = String(message?.thinkingProcess || '')
+  const text = String(message?._thinkingDisplay ?? message?.thinkingProcess ?? '')
   if (isThinkingExpanded(message?.id)) return text
-  const lines = thinkingLines(text)
+  const lines = compactThinkingLines(text)
   return lines.length > 5 ? lines.slice(-5).join('\n') : text
 }
 const toggleThinkingExpanded = messageId => {
@@ -1228,6 +1237,126 @@ const toggleThinkingExpanded = messageId => {
   else next.add(key)
   expandedThinkingMessageIds.value = next
 }
+
+type ThinkingTypewriterState = {
+  target: string
+  timer: number | null
+}
+
+const thinkingTypewriterStates = new Map<string, ThinkingTypewriterState>()
+let thinkingScrollFrame = 0
+
+const commonPrefixLength = (left: string, right: string) => {
+  const limit = Math.min(left.length, right.length)
+  let index = 0
+  while (index < limit && left[index] === right[index]) index += 1
+  return index
+}
+
+const thinkingTypeStep = (gap: number) => {
+  if (gap > 2400) return 24
+  if (gap > 1200) return 16
+  if (gap > 480) return 10
+  if (gap > 160) return 6
+  return 2
+}
+
+const scheduleThinkingAutoScroll = () => {
+  if (thinkingScrollFrame) return
+  thinkingScrollFrame = window.requestAnimationFrame(() => {
+    thinkingScrollFrame = 0
+    scrollToBottom()
+  })
+}
+
+const stopThinkingTypewriter = (messageId: string) => {
+  const state = thinkingTypewriterStates.get(messageId)
+  if (state?.timer) {
+    window.clearInterval(state.timer)
+  }
+  thinkingTypewriterStates.delete(messageId)
+}
+
+const advanceThinkingTypewriter = (message: any, messageId: string) => {
+  const state = thinkingTypewriterStates.get(messageId)
+  if (!state) return
+
+  const target = state.target
+  const current = String(message?._thinkingDisplay || '')
+  if (current === target) {
+    message._thinkingTyping = false
+    stopThinkingTypewriter(messageId)
+    return
+  }
+
+  if (!target.startsWith(current)) {
+    message._thinkingDisplay = target.slice(0, commonPrefixLength(current, target))
+    return
+  }
+
+  const nextLength = Math.min(target.length, current.length + thinkingTypeStep(target.length - current.length))
+  message._thinkingDisplay = target.slice(0, nextLength)
+  message._thinkingTyping = nextLength < target.length
+  scheduleThinkingAutoScroll()
+}
+
+const syncThinkingTypewriter = (message: any) => {
+  const messageId = String(message?.id || '')
+  if (!messageId) return
+
+  const target = String(message?.thinkingProcess || '')
+  if (!target) {
+    message._thinkingDisplay = ''
+    message._thinkingTyping = false
+    stopThinkingTypewriter(messageId)
+    return
+  }
+
+  let state = thinkingTypewriterStates.get(messageId)
+  if (!state) {
+    state = { target, timer: null }
+    thinkingTypewriterStates.set(messageId, state)
+  } else {
+    state.target = target
+  }
+
+  const current = String(message?._thinkingDisplay || '')
+  if (!current) {
+    message._thinkingDisplay = ''
+  } else if (!target.startsWith(current)) {
+    message._thinkingDisplay = target.slice(0, commonPrefixLength(current, target))
+  }
+
+  if (message._thinkingDisplay === target) {
+    message._thinkingTyping = false
+    stopThinkingTypewriter(messageId)
+    return
+  }
+
+  message._thinkingTyping = true
+  if (!state.timer) {
+    state.timer = window.setInterval(() => advanceThinkingTypewriter(message, messageId), 18)
+  }
+}
+
+const isThinkingTyping = (message: any) => Boolean(message?._thinkingTyping)
+
+watch(
+  () => messages.value.map((message: any) => ({
+    id: String(message?.id || ''),
+    thinkingProcess: String(message?.thinkingProcess || '')
+  })),
+  entries => {
+    const aliveIds = new Set(entries.map(entry => entry.id).filter(Boolean))
+    for (const message of messages.value as any[]) {
+      if (message?.thinkingProcess) syncThinkingTypewriter(message)
+    }
+    for (const messageId of thinkingTypewriterStates.keys()) {
+      if (!aliveIds.has(messageId)) stopThinkingTypewriter(messageId)
+    }
+  },
+  { deep: true }
+)
 
 const documentPreview = ref({
   visible: false,
@@ -1259,7 +1388,7 @@ const normalizeFileMessage = data => {
     fileType,
     filename,
     content: data.content || data.text || data.preview_content || data.previewContent || '',
-    slides: Array.isArray(data.slides) ? data.slides : [],
+    slides: normalizePptSlidesForPreview(data.slides),
     annotations: Array.isArray(data.annotations) ? data.annotations : [],
     narration: data.narration || null,
     presentation: data.presentation || null,
@@ -1556,6 +1685,31 @@ const parseSingleSlide = (content) => {
   }
 }
 
+const FALLBACK_PPT_TITLE_RE = /^(未命名|slide\s*\d+|第\s*\d+\s*页)$/i
+
+const hasMeaningfulPptBlocks = blocks => {
+  return Array.isArray(blocks) && blocks.some(block => {
+    const value = typeof block === 'object'
+      ? block?.text || block?.content || block?.title || ''
+      : block
+    return String(value || '').trim()
+  })
+}
+
+const isMeaningfulPptSlide = slide => {
+  const title = String(slide?.title || slide?.heading || '').trim()
+  const text = String(slide?.text || slide?.content || slide?.body || '').trim()
+  const notes = String(slide?.notes || slide?.speaker_notes || '').trim()
+  if (text || notes || hasMeaningfulPptBlocks(slide?.blocks)) return true
+  return Boolean(title && !FALLBACK_PPT_TITLE_RE.test(title))
+}
+
+const normalizePptSlidesForPreview = slides => {
+  return (Array.isArray(slides) ? slides : [])
+    .filter(isMeaningfulPptSlide)
+    .map((slide, index) => ({ ...slide, index }))
+}
+
 const streamOrder = (value, fallback = Number.MAX_SAFE_INTEGER) => {
   const n = Number(value)
   return Number.isFinite(n) ? n : fallback
@@ -1614,6 +1768,8 @@ const upsertPreviewStreamSlide = (source, { appendDelta = false } = {}) => {
 const normalizePptStreamSlides = pptStream => {
   return sortPptStreamSlides(pptStream?.slides || [])
     .map((s: any, i: number) => normalizeStreamSlide(s, i))
+    .filter(isMeaningfulPptSlide)
+    .map((slide: any, index: number) => ({ ...slide, index }))
 }
 
 const openStreamingPptPreview = (task, messageId, title = 'PPT 预览') => {
@@ -1645,6 +1801,12 @@ const formatPptStreamPlainContent = (pptStream, task) => {
   return `${title}\n\n${slides.join('\n\n---\n\n')}`
 }
 
+const getPptStreamSlideCount = pptStream => {
+  return sortPptStreamSlides(pptStream?.slides || [])
+    .filter(slide => String(typeof slide === 'object' ? slide.content : slide || '').trim())
+    .length
+}
+
 const parsePptSlidesFromContent = content => {
   const text = String(content || '').trim()
   if (!text) return []
@@ -1653,7 +1815,7 @@ const parsePptSlidesFromContent = content => {
     const parsed = JSON.parse(text)
     const list = Array.isArray(parsed) ? parsed : parsed.slides || parsed.pages || parsed.items || []
     if (Array.isArray(list) && list.length) {
-      return list.map((slide, index) => ({
+      return normalizePptSlidesForPreview(list.map((slide, index) => ({
         index,
         title: slide.title || slide.heading || `第 ${index + 1} 页`,
         text: slide.text || slide.content || slide.body || '',
@@ -1661,7 +1823,8 @@ const parsePptSlidesFromContent = content => {
         ...(slide.layout ? { layout: slide.layout } : {}),
         ...(slide.theme ? { theme: slide.theme } : {}),
         ...(slide.visual ? { visual: slide.visual } : {}),
-      }))
+        ...(slide.blocks ? { blocks: slide.blocks } : {}),
+      })))
     }
   } catch {
     // fall through to markdown/plain-text parsing
@@ -1674,7 +1837,7 @@ const parsePptSlidesFromContent = content => {
     .map(block => block.trim())
     .filter(Boolean)
 
-  return blocks.map((block, index) => {
+  return normalizePptSlidesForPreview(blocks.map((block, index) => {
     const raw = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
     const { meta, contentLines } = _extractSlideMeta(raw)
     const titleLine = contentLines.find(line => /^#{1,3}\s+/.test(line)) || contentLines[0] || `第 ${index + 1} 页`
@@ -1693,19 +1856,22 @@ const parsePptSlidesFromContent = content => {
       ...(meta.theme ? { theme: meta.theme } : {}),
       ...(meta.visual ? { visual_hint: meta.visual } : {}),
     }
-  }).filter(slide => slide.title || slide.text)
+  }))
 }
 
 const hydratePptPreview = async message => {
   const resourceId = getFileResourceId(message)
-  if (message.slides?.length) return message.slides
+  if (message.slides?.length) {
+    message.slides = normalizePptSlidesForPreview(message.slides)
+    return message.slides
+  }
 
   if (resourceId) {
     const res = await getGeneratedResource(resourceId)
     const data = getResponseData(res)?.data || getResponseData(res)
     const content = data.content || message.content || ''
     const slides = Array.isArray(data.slides) && data.slides.length
-      ? data.slides
+      ? normalizePptSlidesForPreview(data.slides)
       : parsePptSlidesFromContent(content)
 
     Object.assign(message, {
@@ -1746,7 +1912,7 @@ const openPptPreview = async message => {
       resourceId: '',
       themeId,
       title: message.filename || 'PPT 预览',
-      slides: streamSlides,
+      slides: normalizePptSlidesForPreview(streamSlides),
       annotations: [],
       followLatest: true
     }
@@ -1760,7 +1926,7 @@ const openPptPreview = async message => {
     resourceId,
     themeId: message.pptThemeId || pptGenThemeId.value,
     title: message.filename || 'PPT 预览',
-    slides: message.slides || [],
+    slides: normalizePptSlidesForPreview(message.slides),
     annotations: message.annotations || [],
     followLatest: false
   }
@@ -1774,7 +1940,7 @@ const openPptPreview = async message => {
       ...pptPreview.value,
       loading: false,
       themeId: message.pptThemeId || pptPreview.value.themeId,
-      slides: slides || [],
+      slides: normalizePptSlidesForPreview(slides),
       annotations,
       followLatest: false
     }
@@ -2228,6 +2394,27 @@ const getPptxExportName = title => {
   return normalizeFileName(fileTitleWithoutExtension(title || 'edited-presentation'), 'ppt')
 }
 
+const openPptistAdvancedEditor = slides => {
+  const currentSlides = Array.isArray(slides) && slides.length ? slides : pptPreview.value.slides
+  if (!currentSlides?.length) {
+    window.alert('暂无可编辑的 PPT 内容。')
+    return
+  }
+
+  const payload = toPptistPayload({
+    title: fileTitleWithoutExtension(pptPreview.value.title || 'Zhiban PPT'),
+    slides: currentSlides,
+    themeId: pptPreview.value.themeId || pptGenThemeId.value
+  })
+
+  if (!payload.slides.length) {
+    window.alert('当前 PPT 内容为空，暂时无法打开高级编辑。')
+    return
+  }
+
+  openPptistEditor(payload)
+}
+
 const exportChatPptx = async slides => {
   const resourceId = pptPreview.value.resourceId
   if (!resourceId) {
@@ -2532,8 +2719,10 @@ const formatThinkingProcess = value => {
     : String(value || '')
   return raw
     .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
 }
 
 const getTaskThinkingProcess = task => {
@@ -2581,9 +2770,16 @@ const attachGenerationTaskToMessage = (task, messageId) => {
           if (task.status === 'failed') {
             target.content = task.error || '资源生成失败，请稍后再试。'
           } else {
-            target.content = task.files.length || task.images.length
-              ? '资源已生成，可以在下方查看。'
-              : (pptStream ? '正在生成 PPT 内容...' : '正在生成资源...')
+            if (pptStream) {
+              const slideCount = getPptStreamSlideCount(pptStream)
+              target.content = task.files.length
+                ? `PPT 已生成，可以在下方打开预览。${slideCount ? `已生成 ${slideCount} 页内容。` : ''}`
+                : `正在生成 PPT 内容...${slideCount ? `已收到 ${slideCount} 页，正文在思考过程里。` : '等待首段内容。'}`
+            } else {
+              target.content = task.files.length || task.images.length
+                ? '资源已生成，可以在下方查看。'
+                : '正在生成资源...'
+            }
           }
           target.time = getNowTime()
         }
@@ -2724,6 +2920,22 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             task.tool?.generateMode === 'image' && imageCursor === 0 ? messageId : ''
           )
           imageCursor += 1
+        }
+
+        const progressMessage = messages.value.find(m => m.id === messageId)
+        if (progressMessage?.type === 'text' && task.tool?.generateMode !== 'video') {
+          if (task.status === 'failed') {
+            progressMessage.content = task.error || '资源生成失败，请稍后再试。'
+          } else if (task.files.length || task.images.length || task.status === 'done') {
+            const pptStream = isPptGenerationTask(task) ? (task as any)._pptStream : null
+            if (pptStream || task.tool?.resourceTypes?.includes('ppt')) {
+              const slideCount = getPptStreamSlideCount(pptStream)
+              progressMessage.content = `PPT 已生成，可以在下方打开预览。${slideCount ? `已生成 ${slideCount} 页内容。` : ''}`
+            } else {
+              progressMessage.content = '资源已生成，可以在下方查看。'
+            }
+            progressMessage.time = getNowTime()
+          }
         }
 
         // 外部视频（B站推荐，graph 完成前已推送）
@@ -2928,7 +3140,9 @@ const sendMessage = async () => {
 
     let hasReceivedChunk = false
     let hasPptStreamText = false
+    let hasResourceTextStream = false
     const pptTextStream = { slides: [] }
+    const resourceTextStream = { fileType: '', parts: [] }
 
     const ensurePptTextStream = async () => {
       if (!target) return
@@ -2944,6 +3158,8 @@ const sendMessage = async () => {
 
     const rebuildPptTextStream = async () => {
       if (!target) return
+      const slideCount = getPptStreamSlideCount(pptTextStream)
+      target.content = `正在生成 PPT 内容...${slideCount ? `已收到 ${slideCount} 页，正文在思考过程里。` : '等待首段内容。'}`
       target.thinkingProcess = formatPptStreamPlainContent(pptTextStream, { status: 'running' })
       target.time = getNowTime()
       await scrollToBottom()
@@ -2970,6 +3186,56 @@ const sendMessage = async () => {
         pptTextStream.slides.push(nextSlide)
       }
       pptTextStream.slides = sortPptStreamSlides(pptTextStream.slides)
+    }
+
+    const textStreamTitle = status => {
+      const isMindmap = resourceTextStream.fileType === 'mindmap'
+      if (status === 'done') return isMindmap ? '思维导图内容已生成。' : '文档内容已生成。'
+      return isMindmap ? '正在生成思维导图内容...' : '正在生成文档内容...'
+    }
+
+    const formatResourceTextStream = status => {
+      const parts = [...resourceTextStream.parts]
+        .sort((a, b) => streamOrder(a.section_idx, 0) - streamOrder(b.section_idx, 0))
+        .map(part => String(part.content || '').trim())
+        .filter(Boolean)
+      const title = textStreamTitle(status)
+      return parts.length ? `${title}\n\n${parts.join('\n\n')}` : title
+    }
+
+    const ensureResourceTextStream = async eventData => {
+      if (!target) return
+      resourceTextStream.fileType = eventData?.file_type || resourceTextStream.fileType || 'document'
+      if (!hasResourceTextStream) {
+        target.content = textStreamTitle('running')
+        target.thinkingProcess = formatResourceTextStream('running')
+        target.time = getNowTime()
+        hasResourceTextStream = true
+        hasReceivedChunk = true
+        await scrollToBottom()
+      }
+    }
+
+    const upsertResourceTextPart = (eventData, { appendDelta = false, content = undefined } = {}) => {
+      resourceTextStream.fileType = eventData?.file_type || resourceTextStream.fileType || 'document'
+      const sectionIdx = eventData?.section_idx ?? 0
+      const existingIdx = resourceTextStream.parts.findIndex(part =>
+        streamOrder(part.section_idx, 0) === streamOrder(sectionIdx, 0)
+      )
+      const existing = existingIdx >= 0 ? resourceTextStream.parts[existingIdx] : null
+      const nextPart = {
+        ...(existing || {}),
+        section_idx: sectionIdx,
+        section_title: eventData?.section_title || existing?.section_title || '',
+        content: appendDelta
+          ? `${existing?.content || ''}${eventData?.delta || ''}`
+          : String(content ?? eventData?.content ?? existing?.content ?? ''),
+      }
+      if (existingIdx >= 0) {
+        resourceTextStream.parts[existingIdx] = nextPart
+      } else {
+        resourceTextStream.parts.push(nextPart)
+      }
     }
 
     await streamChatMessage({
@@ -3023,9 +3289,40 @@ const sendMessage = async () => {
           await rebuildPptTextStream()
         }
       },
+      onStreamTextStart: async eventData => {
+        if (eventData?.file_type === 'ppt') return
+        await ensureResourceTextStream(eventData)
+        upsertResourceTextPart(eventData, { content: '' })
+        if (target) {
+          target.thinkingProcess = formatResourceTextStream('running')
+          target.time = getNowTime()
+        }
+        await scrollToBottom()
+      },
+      onStreamTextDelta: async eventData => {
+        if (eventData?.file_type === 'ppt') return
+        await ensureResourceTextStream(eventData)
+        upsertResourceTextPart(eventData, { appendDelta: true })
+        if (target) {
+          target.content = textStreamTitle('running')
+          target.thinkingProcess = formatResourceTextStream('running')
+          target.time = getNowTime()
+        }
+        await scrollToBottom()
+      },
+      onStreamTextDone: async eventData => {
+        if (eventData?.file_type === 'ppt') return
+        await ensureResourceTextStream(eventData)
+        upsertResourceTextPart(eventData)
+        if (target) {
+          target.thinkingProcess = formatResourceTextStream('running')
+          target.time = getNowTime()
+        }
+        await scrollToBottom()
+      },
       onThinking: async message => {
         if (!target) return
-        if (hasPptStreamText) return
+        if (hasPptStreamText || hasResourceTextStream) return
         const thinking = formatThinkingProcess(message)
         if (!thinking) return
         target.thinkingProcess = thinking
@@ -3033,8 +3330,15 @@ const sendMessage = async () => {
         await scrollToBottom()
       },
       onFile: async fileData => {
+        if (target && hasResourceTextStream && !isPptFile(fileData)) {
+          target.content = '资源已生成，可以在下方查看。'
+          target.thinkingProcess = formatResourceTextStream('done')
+          target.time = getNowTime()
+        }
+
         if (target && hasPptStreamText && isPptFile(fileData)) {
-          target.content = 'PPT 已生成，可以在下方打开预览。'
+          const slideCount = getPptStreamSlideCount(pptTextStream)
+          target.content = `PPT 已生成，可以在下方打开预览。${slideCount ? `已生成 ${slideCount} 页内容。` : ''}`
           target.thinkingProcess = formatPptStreamPlainContent(pptTextStream, { status: 'done' })
           target.time = getNowTime()
         }
@@ -3280,6 +3584,13 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  for (const messageId of thinkingTypewriterStates.keys()) {
+    stopThinkingTypewriter(messageId)
+  }
+  if (thinkingScrollFrame) {
+    window.cancelAnimationFrame(thinkingScrollFrame)
+    thinkingScrollFrame = 0
+  }
   stopVoiceInput()
 })
 
@@ -3827,6 +4138,11 @@ watch(
   white-space: normal;
 }
 
+.rich-bubble.generation-bubble {
+  width: min(420px, 100%);
+  min-height: 58px;
+}
+
 .message-time {
   margin-top: 6px;
   color: rgba(22, 63, 143, 0.68);
@@ -3839,6 +4155,10 @@ watch(
   color: rgba(31, 51, 86, 0.52);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.thinking-process.is-expanded {
+  max-width: min(680px, 96%);
 }
 
 .thinking-process__head {
@@ -3865,9 +4185,58 @@ watch(
   padding: 0;
 }
 
+.thinking-process__viewport {
+  height: calc(1.55em * 5);
+  overflow: hidden;
+}
+
+.thinking-process.is-expanded .thinking-process__viewport {
+  height: auto;
+  max-height: min(42vh, 360px);
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(95, 143, 195, 0.45) transparent;
+}
+
+.thinking-process.is-expanded .thinking-process__viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thinking-process.is-expanded .thinking-process__viewport::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(95, 143, 195, 0.45);
+}
+
 .thinking-process p {
   margin: 0;
   white-space: pre-line;
+}
+
+.thinking-process p.is-typing::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 1em;
+  margin-left: 2px;
+  background: rgba(22, 63, 143, 0.45);
+  vertical-align: -2px;
+  animation: thinkingCursorBlink 0.9s steps(2, start) infinite;
+}
+
+@keyframes thinkingCursorBlink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  46%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .user .message-time {
