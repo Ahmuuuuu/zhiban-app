@@ -23,6 +23,14 @@ async def generate_path(data: GeneratePathRequest, user_id: int = Depends(get_us
     return {"code": 200, "msg": "success", "data": result}
 
 
+@router.post("/generate/stream")
+async def generate_path_stream(data: GeneratePathRequest, user_id: int = Depends(get_user_id_from_token)):
+    return StreamingResponse(
+        PathService.generate_path_stream(data.subject, user_id, data.difficulty, data.node_count),
+        media_type="text/event-stream",
+    )
+
+
 @router.get("/list")
 async def list_paths(user_id: int = Depends(get_user_id_from_token)):
     """路径列表"""

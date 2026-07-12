@@ -5,8 +5,10 @@ import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
 import { useVoiceInput } from "../composables/useVoiceInput";
 import { getQuizSet, looksLikeQuizContent, upsertQuizSet } from "../utils/quizBank";
+import { renderMath } from "../utils/renderMath";
 import { saveGeneratedResourceRef } from "../utils/savedResources";
 import { Mic } from "lucide-vue-next";
+import "katex/dist/katex.min.css";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -375,7 +377,7 @@ const renderPetMarkdown = (value: string) => {
     }
     return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   });
-  return text.replace(/\n/g, "<br>");
+  return renderMath(text.replace(/\n/g, "<br>"));
 };
 
 const createWelcomeMessage = (): PetChatMessage => ({
@@ -493,23 +495,48 @@ const closePetQuizPreview = () => {
 };
 
 // ── 画像问答 onboarding ──
-const PORTRAIT_QUESTIONS = [
-  "你好呀！很高兴认识你！🎉 我想先了解一下你，这样以后可以给你更合适的学习建议和资源~ 先说说你平时有什么兴趣爱好吧？比如喜欢做什么事情？",
-  "那你学习的时候，是更喜欢自己安安静静看书、听老师或视频讲解、还是动手做实验/练习题呀？",
-  "你现在学习主要是为了什么呢？比如准备考试、参加竞赛、考个证书、纯粹兴趣学习，还是为了找工作？",
-  "你觉得自己在学习上有什么特点或者擅长的方面吗？比如逻辑分析能力特别强、记忆力好、还是想象力丰富、动手能力强？",
-  "最后一个问题~ 你平时会做学习计划吗？是那种自律性很强的类型，还是随性一点想学就学？",
+const PORTRAIT_QUESTION_GROUPS = [
+  [
+    "你好呀！很高兴认识你！🎉 先说说你平时有什么兴趣爱好吧？比如喜欢做什么事情？",
+    "我们先从轻松一点的开始~ 你平时最愿意花时间做的事情是什么？可以是学习里的，也可以是生活里的。",
+    "为了以后给你更合适的学习建议，我想先了解一下你：最近有什么让你特别感兴趣的领域或活动吗？",
+  ],
+  [
+    "那你学习的时候，是更喜欢自己安安静静看书、听老师或视频讲解，还是动手做实验/练习题呀？",
+    "遇到新知识时，你通常更习惯怎么学？比如先看例子、听讲解、自己推导，还是直接上手做题。",
+    "如果要学一个全新的知识点，你最喜欢哪种方式？阅读资料、看视频、跟着老师走、还是边做边学？",
+  ],
+  [
+    "你现在学习主要是为了什么呢？比如准备考试、参加竞赛、考个证书、纯粹兴趣学习，还是为了找工作？",
+    "现阶段你最想通过学习达成什么目标？可以是考试、项目、竞赛、升学、就业，或者单纯想变强。",
+    "接下来一段时间，你最希望在哪件学习相关的事情上看到进步？",
+  ],
+  [
+    "你觉得自己在学习上有什么特点或者擅长的方面吗？比如逻辑分析能力强、记忆力好、想象力丰富、动手能力强？",
+    "回想一下，以前学得比较顺的时候，你通常是靠什么优势推进的？比如理解快、记得牢、会总结、能坚持。",
+    "别人如果评价你的学习方式，你觉得他们可能会说你哪方面比较突出？",
+  ],
+  [
+    "最后一个问题~ 你平时会做学习计划吗？是自律性很强的类型，还是随性一点想学就学？",
+    "最后想了解下你的节奏感：你更喜欢提前规划每天学什么，还是根据当天状态灵活安排？",
+    "最后一个小问题：当任务比较多的时候，你一般会列计划推进，还是先挑最想做/最紧急的开始？",
+  ],
 ];
+
+const pickPortraitQuestions = () =>
+  PORTRAIT_QUESTION_GROUPS.map((questions) => questions[Math.floor(Math.random() * questions.length)]);
 
 const portraitQAMode = ref(false);
 const portraitQAStep = ref(0);
 const portraitQAAnswers = ref<string[]>([]);
+const portraitQAQuestions = ref<string[]>([]);
 const portraitQASaving = ref(false);
 
 const startPortraitQA = () => {
   portraitQAMode.value = true;
   portraitQAStep.value = 0;
   portraitQAAnswers.value = [];
+  portraitQAQuestions.value = pickPortraitQuestions();
   portraitQASaving.value = false;
 
   emit("update:modelValue", true);
@@ -528,14 +555,14 @@ const startPortraitQA = () => {
 };
 
 const sendNextPortraitQuestion = () => {
-  if (portraitQAStep.value >= PORTRAIT_QUESTIONS.length) {
+  if (portraitQAStep.value >= portraitQAQuestions.value.length) {
     void finishPortraitQA();
     return;
   }
   petMessages.value.push({
     id: `portrait-q-${portraitQAStep.value}-${Date.now()}`,
     role: "assistant",
-    content: PORTRAIT_QUESTIONS[portraitQAStep.value],
+    content: portraitQAQuestions.value[portraitQAStep.value],
   });
   void scrollPetMessagesToBottom();
 };
@@ -544,7 +571,7 @@ const handlePortraitAnswer = async (answer: string) => {
   portraitQAAnswers.value.push(answer);
   portraitQAStep.value++;
 
-  if (portraitQAStep.value < PORTRAIT_QUESTIONS.length) {
+  if (portraitQAStep.value < portraitQAQuestions.value.length) {
     window.setTimeout(() => sendNextPortraitQuestion(), 800);
   } else {
     await finishPortraitQA();
@@ -558,7 +585,7 @@ const finishPortraitQA = async () => {
   emit("update:loading", true);
 
   try {
-    const dialogue = PORTRAIT_QUESTIONS.map((q, i) => ({
+    const dialogue = portraitQAQuestions.value.map((q, i) => ({
       question: q,
       answer: portraitQAAnswers.value[i] || "",
     }));

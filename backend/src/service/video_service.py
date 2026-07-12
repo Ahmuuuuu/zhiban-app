@@ -462,7 +462,7 @@ def _push_progress(presentation_id: int, step: str, label: str, status: str = "r
 async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural",
                   chapters: list[str] | None = None, answers: dict | None = None,
                   chat_group_id: int = 0, video_mode: bool = False,
-                  background: bool = False) -> dict:
+                  background: bool = False, save_history: bool = True) -> dict:
     """创建视频。background=True 立即返回 {id, status:'generating'}，进度走 SSE；background=False 同步等完整结果"""
     import time as _time
     from datetime import datetime, timedelta
@@ -576,30 +576,31 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
             await record.save()
 
             # 保存到聊天历史
-            cgid = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
-            chat_group_id = cgid
-            try:
-                req_text = topic
-                if answers:
-                    selected = []
-                    for v in answers.values():
-                        if isinstance(v, list):
-                            selected.extend(str(x) for x in v)
-                        elif v:
-                            selected.append(str(v))
-                    if selected:
-                        req_text = f"{topic}（已选择：{' / '.join(selected)}）"
-                res_json = json.dumps({
-                    "type": "presentation",
-                    "id": record.id,
-                    "topic": topic,
-                    "file_url": _versioned_presentation_url(record.file_url),
-                    "status": "ready",
-                    "_video_hint": "学习视频已生成，可立即查看",
-                }, ensure_ascii=False)
-                await ChatHistory.create(user=user, chat_group_id=cgid, req=req_text, res=res_json)
-            except Exception:
-                logger.exception("保存视频到聊天历史失败")
+            if save_history:
+                cgid = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
+                chat_group_id = cgid
+                try:
+                    req_text = topic
+                    if answers:
+                        selected = []
+                        for v in answers.values():
+                            if isinstance(v, list):
+                                selected.extend(str(x) for x in v)
+                            elif v:
+                                selected.append(str(v))
+                        if selected:
+                            req_text = f"{topic}（已选择：{' / '.join(selected)}）"
+                    res_json = json.dumps({
+                        "type": "presentation",
+                        "id": record.id,
+                        "topic": topic,
+                        "file_url": _versioned_presentation_url(record.file_url),
+                        "status": "ready",
+                        "_video_hint": "学习视频已生成，可立即查看",
+                    }, ensure_ascii=False)
+                    await ChatHistory.create(user=user, chat_group_id=cgid, req=req_text, res=res_json)
+                except Exception:
+                    logger.exception("保存视频到聊天历史失败")
 
             # 推送通知
             try:

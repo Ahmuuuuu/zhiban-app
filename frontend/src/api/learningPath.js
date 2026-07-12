@@ -28,6 +28,55 @@ export function generateLearningPath(data) {
   })
 }
 
+export async function generateLearningPathStream(data, onEvent, onError) {
+  const token = localStorage.getItem('token')
+  const baseURL = request.defaults.baseURL || ''
+  const url = `${baseURL}/path/generate/stream`
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: apiFetchHeaders({
+        'Content-Type': 'application/json',
+        ...(token ? { token } : {})
+      }),
+      body: JSON.stringify(data || {})
+    })
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new Error(detail || `HTTP ${response.status}`)
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const jsonStr = line.slice(6).trim()
+        if (!jsonStr || jsonStr === '[DONE]') continue
+        try {
+          onEvent?.(JSON.parse(jsonStr))
+        } catch {
+          // skip unparseable event
+        }
+      }
+    }
+  } catch (err) {
+    onError?.(err)
+    throw err
+  }
+}
+
 export function generateLearningPathsFromProfile(data = {}) {
   return request({
     url: '/path/generate-from-profile',

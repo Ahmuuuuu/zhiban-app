@@ -73,7 +73,10 @@ def _push_text_stream(
             "content": content,
             **meta,
         })
-    except Exception:
+    except Exception as exc:
+        if _is_stream_context_error(exc):
+            logger.debug("[Text-Stream] skipped outside runnable context file_type=%s section=%s", file_type, section_idx)
+            return
         logger.exception("[Text-Stream] push failed file_type=%s section=%s", file_type, section_idx)
 
 
@@ -98,8 +101,15 @@ def _push_agent_event(
             "message": message,
             **extra,
         })
-    except Exception:
+    except Exception as exc:
+        if _is_stream_context_error(exc):
+            logger.debug("[AgentFlow] skipped outside runnable context agent_id=%s", agent_id)
+            return
         logger.exception("[AgentFlow] push failed agent_id=%s", agent_id)
+
+
+def _is_stream_context_error(exc: Exception) -> bool:
+    return isinstance(exc, RuntimeError) and "outside of a runnable context" in str(exc)
 
 
 def _safe_stream_writer():
@@ -1098,7 +1108,7 @@ async def executor_node(state: ResourceState) -> dict:
     focus_guidance = _build_focus_guidance(state.get("answers", {}) or {})
     user_notes = state.get("user_notes", "")
 
-    writer = get_stream_writer()
+    writer = _safe_stream_writer()
     _push_agent_event(
         writer,
         "executor",

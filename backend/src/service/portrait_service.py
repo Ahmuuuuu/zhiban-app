@@ -444,12 +444,13 @@ class PortraitRadarService:
         from backend.src.models.portrait_radar_model import PortraitRadar
 
         radar = await PortraitRadar.filter(user_id=user_id).first()
-        if not radar:
-            try:
-                return await PortraitRadarService.compute(user_id)
-            except ValueError:
-                return None
-        return PortraitRadarService._format(radar)
+        try:
+            return await PortraitRadarService.compute(user_id)
+        except ValueError:
+            return PortraitRadarService._format(radar) if radar else None
+        except Exception:
+            logger.exception("portrait radar recompute failed user_id=%s", user_id)
+            return PortraitRadarService._format(radar) if radar else None
 
     @staticmethod
     def _format(radar) -> dict:

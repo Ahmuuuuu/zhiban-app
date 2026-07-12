@@ -135,6 +135,8 @@
 <script setup>
 import { ref, watch, defineEmits } from 'vue'
 import { deleteGeneratedResource, resolveApiUrl, streamResourceGeneration } from '../api/apis'
+import { renderMath } from '../utils/renderMath'
+import 'katex/dist/katex.min.css'
 
 const emit = defineEmits(['toggle'])
 
@@ -564,7 +566,7 @@ const renderMarkdown = (content) => {
   if (inCodeBlock) flushCode()
   flushParagraph()
   flushList()
-  return html.join('')
+  return renderMath(html.join(''))
 }
 </script>
 

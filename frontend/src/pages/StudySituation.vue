@@ -156,7 +156,7 @@
                   <strong>{{ item.title }}</strong>
                   <p v-if="item.meta" class="path-meta">{{ item.meta }}</p>
                   <p>{{ item.time }} · {{ item.score }}</p>
-                  <div class="path-progress"><span :style="{ width: `${item.percent}%`, background: progressBarColors[index % progressBarColors.length] }"></span></div>
+                  <div class="path-progress"><span :style="{ width: `${item.percent}%`, background: progressBarColors[idx % progressBarColors.length] }"></span></div>
                 </div>
               </router-link>
             </li>
@@ -308,6 +308,9 @@ const handleAvatarUpdated = event => {
 
 const studyMinutes = ref(0)
 const studyTimeNote = ref(zh([0x672c, 0x5468, 0x6682, 0x65e0, 0x5b66, 0x4e60, 0x65f6, 0x957f, 0x8bb0, 0x5f55]))
+const DASHBOARD_REFRESH_MS = 30000
+let dashboardRefreshTimer = null
+let dashboardLoading = false
 
 const learnerTags = ref([])
 
@@ -479,6 +482,7 @@ const pathFallbackTitle = zh([0x5b66, 0x4e60, 0x8def, 0x5f84])
 const completedText = zh([0x5df2, 0x5b8c, 0x6210])
 const nodeText = zh([0x4e2a, 0x8282, 0x70b9])
 const progressText = zh([0x5b8c, 0x6210, 0x5ea6])
+const totalText = zh([0x5171])
 
 const normalizeLearningPaths = result => {
   const raw = unwrapApiData(result) || {}
@@ -525,8 +529,8 @@ const formatPathCard = (item, index, isCompleted = false) => {
     id: item.id,
     index: String(index + 1).padStart(2, '0'),
     title: item.title,
-    time: `${item.completedNodes}/${item.totalNodes} ${nodeText}`,
-    score: isCompleted ? completedText : `${progressText} ${percent}%`,
+    time: `${totalText} ${item.totalNodes} ${nodeText}`,
+    score: isCompleted ? completedText : `${completedText} ${item.completedNodes}/${item.totalNodes} - ${progressText} ${percent}%`,
     percent,
     meta: [
       item.currentNode ? `${zh([0x5f53, 0x524d])} ${item.currentNode}` : '',
@@ -654,6 +658,69 @@ const normalizeGuidance = raw => {
     .slice(0, 4)
 }
 
+const aggregatePathResourceStats = (pathStats, fallbackResources = {}) => {
+  const raw = unwrapApiData(pathStats) || {}
+  const paths = Array.isArray(raw.paths) ? raw.paths : []
+  const totals = {
+    total: 0,
+    readCount: 0,
+    unreadCount: 0,
+    totalViews: 0,
+    totalDownloads: 0,
+    durationSeconds: 0,
+    hasPathResources: false
+  }
+
+  paths.forEach(path => {
+    const resources = path.resources || path.resource_usage || path.resourceUsage || {}
+    const list = Array.isArray(resources.list)
+      ? resources.list
+      : Array.isArray(resources.resources)
+        ? resources.resources
+        : []
+    const total = Number(resources.total ?? resources.total_count ?? resources.totalCount ?? list.length ?? 0)
+    const readCount = list.length
+      ? list.filter(item => Boolean(item.is_read ?? item.isRead)).length
+      : Number(resources.read_count ?? resources.readCount ?? 0)
+    const unreadCount = Number(resources.unread_count ?? resources.unreadCount ?? Math.max(0, total - readCount))
+    const views = list.length
+      ? list.reduce((sum, item) => sum + Number(item.view_count ?? item.viewCount ?? 0), 0)
+      : Number(resources.total_views ?? resources.totalViews ?? 0)
+    const downloads = list.length
+      ? list.reduce((sum, item) => sum + Number(item.download_count ?? item.downloadCount ?? 0), 0)
+      : Number(resources.total_downloads ?? resources.totalDownloads ?? 0)
+    const duration = list.length
+      ? list.reduce((sum, item) => sum + Number(item.duration_seconds ?? item.durationSeconds ?? 0), 0)
+      : Number(resources.total_duration_seconds ?? resources.totalDurationSeconds ?? 0)
+
+    if (total > 0 || list.length) totals.hasPathResources = true
+    totals.total += Math.max(0, total)
+    totals.readCount += Math.max(0, readCount)
+    totals.unreadCount += Math.max(0, unreadCount)
+    totals.totalViews += Math.max(0, views)
+    totals.totalDownloads += Math.max(0, downloads)
+    totals.durationSeconds += Math.max(0, duration)
+  })
+
+  if (totals.hasPathResources) {
+    totals.readRate = totals.total ? totals.readCount / totals.total : null
+    return totals
+  }
+
+  const fallbackTotal = Number(fallbackResources.total ?? 0)
+  const fallbackRead = Number(fallbackResources.read_count ?? fallbackResources.readCount ?? 0)
+  return {
+    total: Math.max(0, fallbackTotal),
+    readCount: Math.max(0, fallbackRead),
+    unreadCount: Math.max(0, Number(fallbackResources.unread_count ?? fallbackResources.unreadCount ?? Math.max(0, fallbackTotal - fallbackRead))),
+    totalViews: Math.max(0, Number(fallbackResources.total_views ?? fallbackResources.totalViews ?? 0)),
+    totalDownloads: Math.max(0, Number(fallbackResources.total_downloads ?? fallbackResources.totalDownloads ?? 0)),
+    durationSeconds: 0,
+    readRate: fallbackTotal ? fallbackRead / fallbackTotal : null,
+    hasPathResources: false
+  }
+}
+
 const applyStudyStats = (stats, collections = [], pathStats = null) => {
   const studyTime = stats.study_time || stats.studyTime || {}
   const resources = stats.resources || {}
@@ -668,6 +735,7 @@ const applyStudyStats = (stats, collections = [], pathStats = null) => {
   const correctRate = Number(exam.correct_rate ?? exam.correctRate ?? 0)
   const completionRate = Number(exam.completion_rate ?? exam.completionRate ?? 0)
   const collectedCount = Array.isArray(collections) ? collections.length : Number(resources.collected_count || 0)
+  const resourceUsage = aggregatePathResourceStats(pathStats, resources)
 
   studyMinutes.value = weekMinutes
   studyTimeNote.value = `${zh([0x672c, 0x5468, 0x7d2f, 0x8ba1])} ${weekMinutes} min - ${zh([0x7d2f, 0x8ba1])} ${totalMinutes} min - ${zh([0x6d3b, 0x8dc3])} ${activeDays} ${zh([0x5929])}`
@@ -679,17 +747,19 @@ const applyStudyStats = (stats, collections = [], pathStats = null) => {
     accuracySummary.value = `${zh([0x6700, 0x8fd1, 0x37, 0x5929, 0x6682, 0x65e0, 0x505a, 0x9898, 0x6570, 0x636e])} - ${zh([0x603b, 0x6b63, 0x786e, 0x7387])} ${toPercent(correctRate)}`
   }
   resourceFeedback.value = [
-    { label: zh([0x8d44, 0x6e90, 0x6253, 0x5f00, 0x7387]), value: toPercent(resources.open_rate ?? resources.openRate) },
-    { label: zh([0x7ec3, 0x4e60, 0x5b8c, 0x6210, 0x7387]), value: toPercent(completionRate) },
-    { label: zh([0x67e5, 0x770b, 0x6b21, 0x6570]), value: String(resources.total_views ?? resources.totalViews ?? 0) },
-    { label: zh([0x4e0b, 0x8f7d, 0x6b21, 0x6570]), value: String(resources.total_downloads ?? resources.totalDownloads ?? 0) },
+    { label: zh([0x8def, 0x5f84, 0x8d44, 0x6e90, 0x5df2, 0x8bfb, 0x7387]), value: resourceUsage.readRate == null ? zh([0x6682, 0x65e0]) : toPercent(resourceUsage.readRate) },
+    { label: zh([0x7b54, 0x9898, 0x5b8c, 0x6210, 0x7387]), value: toPercent(completionRate) },
+    { label: zh([0x67e5, 0x770b, 0x6b21, 0x6570]), value: String(resourceUsage.totalViews) },
+    { label: zh([0x4e0b, 0x8f7d, 0x6b21, 0x6570]), value: String(resourceUsage.totalDownloads) },
     { label: zh([0x6536, 0x85cf, 0x8d44, 0x6599]), value: String(collectedCount) }
   ]
-  resourceFeedbackText.value = `${zh([0x5171, 0x6709, 0x8d44, 0x6e90])} ${resources.total || 0} ${zh([0x4efd])} - ${zh([0x5df2, 0x9605, 0x8bfb])} ${resources.read_count ?? resources.readCount ?? 0} ${zh([0x4efd])} - ${zh([0x5f85, 0x9605, 0x8bfb])} ${resources.unread_count ?? resources.unreadCount ?? 0} ${zh([0x4efd])}`
+  resourceFeedbackText.value = `${zh([0x5171, 0x6709, 0x8d44, 0x6e90])} ${resourceUsage.total} ${zh([0x4efd])} - ${zh([0x5df2, 0x9605, 0x8bfb])} ${resourceUsage.readCount} ${zh([0x4efd])} - ${zh([0x5f85, 0x9605, 0x8bfb])} ${resourceUsage.unreadCount} ${zh([0x4efd])}`
   suggestions.value = normalizeGuidance(stats.learning_guidance || stats.learningGuidance)
 }
 
 const loadStudyDashboard = async () => {
+  if (dashboardLoading) return
+  dashboardLoading = true
   try {
     const statsResult = await getStudyStats()
     const stats = unwrapApiData(statsResult) || {}
@@ -723,6 +793,8 @@ const loadStudyDashboard = async () => {
     applyStudyStats({ ...stats, learning_guidance: guidance }, collections, pathStats)
   } catch (error) {
     console.warn('[StudySituation] load dashboard failed:', error)
+  } finally {
+    dashboardLoading = false
   }
 }
 
@@ -740,16 +812,33 @@ const loadPortraitTags = async () => {
   }
 }
 
-onMounted(() => {
-  window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+const refreshStudySituation = () => {
   loadUserAvatar()
   loadRadarData()
   loadPortraitTags()
   loadStudyDashboard()
+}
+
+const handleDashboardVisibility = () => {
+  if (!document.hidden) refreshStudySituation()
+}
+
+onMounted(() => {
+  window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  window.addEventListener('focus', refreshStudySituation)
+  document.addEventListener('visibilitychange', handleDashboardVisibility)
+  refreshStudySituation()
+  dashboardRefreshTimer = window.setInterval(refreshStudySituation, DASHBOARD_REFRESH_MS)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  window.removeEventListener('focus', refreshStudySituation)
+  document.removeEventListener('visibilitychange', handleDashboardVisibility)
+  if (dashboardRefreshTimer) {
+    window.clearInterval(dashboardRefreshTimer)
+    dashboardRefreshTimer = null
+  }
 })
 </script>
 

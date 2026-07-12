@@ -7,7 +7,7 @@ class GeneratePathRequest(BaseModel):
     """生成学习路径（user_id 从 token 提取）"""
     subject: str = Field(description="学科主题")
     difficulty: str = Field(default="medium", description="难度: easy/medium/hard")
-    node_count: int = Field(default=5, description="节点数量")
+    node_count: int = Field(default=0, description="节点数，0=自动")
 
 
 class EnrollPathRequest(BaseModel):

@@ -64,6 +64,293 @@ def _compute_node_count(subject: str, picture) -> int:
 
 
 class PathService:
+    @staticmethod
+    async def generate_path_stream(subject: str, user_id: int, difficulty: str = "medium", node_count: int = 0):
+        """Stream path creation. Emits start/node/node_result/done events as soon as data is persisted."""
+        def event(payload: dict) -> str:
+            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+        await init_db()
+
+        admin_mode = subject.rstrip().endswith(">admin")
+        if admin_mode:
+            subject = subject.rstrip()[:-6].rstrip()
+            node_count = 2
+
+        existing = await LearningPath.filter(user_id=user_id, subject=subject).first()
+        if existing:
+            detail = await PathService.get_path(existing.id, user_id)
+            yield event({"type": "cached", "path": detail})
+            yield event({"type": "done", "path": detail})
+            return
+
+        portrait_context = "No portrait data"
+        mastery_context = "No mastery data"
+        kb_context = "No knowledge base context"
+        learning_guidance = ""
+
+        user = await User.filter(id=user_id).first()
+        if user:
+            picture = await user.picture
+            if picture:
+                try:
+                    radar_data = await PortraitRadarService.get(user_id)
+                except Exception:
+                    radar_data = None
+                portrait_context = "\n".join(format_portrait(picture, show_missing=False, radar_data=radar_data))
+                if node_count <= 0:
+                    node_count = _compute_node_count(subject, picture)
+
+        try:
+            learning_guidance = await build_learning_guidance(user_id) or ""
+        except Exception:
+            logger.exception("learning guidance failed user_id=%s", user_id)
+
+        try:
+            kb_result = await kb_search(subject, top_k=5, user_id=user_id)
+            if kb_result and "暂无" not in kb_result:
+                kb_context = kb_result
+        except Exception:
+            logger.exception("knowledge search failed subject=%s user_id=%s", subject, user_id)
+
+        mastery_records = await KnowledgeMastery.filter(user_id=user_id).all()
+        if mastery_records:
+            lines = []
+            for m in mastery_records:
+                acc = round(m.correct_count / max(m.total_attempts, 1), 2)
+                lines.append(f"- {m.knowledge_tag}: {m.mastery_level} ({acc})")
+            mastery_context = "Mastered knowledge:\n" + "\n".join(lines)
+
+        from tortoise.exceptions import IntegrityError
+        try:
+            path = await LearningPath.create(
+                subject=subject,
+                difficulty=difficulty,
+                node_count=max(0, node_count),
+                cover_tags="[]",
+                user=user,
+            )
+        except IntegrityError:
+            existing = await LearningPath.filter(user_id=user_id, subject=subject).first()
+            if existing:
+                detail = await PathService.get_path(existing.id, user_id)
+                yield event({"type": "cached", "path": detail})
+                yield event({"type": "done", "path": detail})
+                return
+            raise
+
+        yield event({
+            "type": "start",
+            "path_id": path.id,
+            "subject": subject,
+            "difficulty": difficulty,
+            "node_count": node_count,
+        })
+
+        used_order_indexes: set[int] = set()
+
+        async def create_node(nd: dict, fallback_index: int) -> tuple[PathNode, dict]:
+            try:
+                order_index = int(nd.get("order_index") or fallback_index)
+            except Exception:
+                order_index = fallback_index
+            if order_index < 1 or order_index in used_order_indexes:
+                order_index = fallback_index
+            while order_index in used_order_indexes:
+                order_index += 1
+            used_order_indexes.add(order_index)
+
+            node = await PathNode.create(
+                path=path,
+                topic=nd.get("topic", ""),
+                knowledge_tags=json.dumps(nd.get("knowledge_tags", []), ensure_ascii=False),
+                order_index=order_index,
+                prerequisites=json.dumps(nd.get("prerequisites", []), ensure_ascii=False),
+                resource_types=json.dumps(nd.get("resource_types", ["document", "ppt", "mindmap"]), ensure_ascii=False),
+                quiz_config=json.dumps(nd.get("quiz_config", {"count": 5, "threshold": 0.7}), ensure_ascii=False),
+            )
+
+            status = "unlocked" if order_index == 1 else "locked"
+            await UserPathProgress.create(
+                user_id=user_id,
+                path=path,
+                node=node,
+                node_status=status,
+            )
+
+            payload = {
+                "node_id": node.id,
+                "topic": node.topic,
+                "order_index": node.order_index,
+                "knowledge_tags": json.loads(node.knowledge_tags) if node.knowledge_tags else [],
+                "prerequisites": json.loads(node.prerequisites) if node.prerequisites else [],
+                "resource_types": json.loads(node.resource_types) if node.resource_types else [],
+                "quiz_config": json.loads(node.quiz_config) if node.quiz_config else {},
+                "status": status,
+            }
+            return node, payload
+
+        created_nodes: list[PathNode] = []
+        emitted_nodes: list[dict] = []
+        node_results = {}
+        first_node = None
+
+        try:
+            if admin_mode:
+                template = load_prompt("path/path_generation")
+                prompt_text = fill_prompt(
+                    template,
+                    subject=subject,
+                    difficulty=difficulty,
+                    node_count=str(node_count),
+                    portrait_context=portrait_context,
+                    mastery_context=mastery_context,
+                    kb_context=kb_context,
+                    learning_guidance=learning_guidance,
+                )
+                response = await llm.ainvoke(prompt_text)
+                result = parse_llm_json(response.content)
+                nodes_data = (result.get("nodes", []) if isinstance(result, dict) else [])[:2]
+                for index, nd in enumerate(nodes_data, 1):
+                    node, payload = await create_node(nd, index)
+                    created_nodes.append(node)
+                    emitted_nodes.append(payload)
+                    if payload["order_index"] == 1:
+                        first_node = node
+                    yield event({"type": "node", "path_id": path.id, "node": payload})
+            else:
+                leader_prompt = fill_prompt(
+                    load_prompt("path/leader"),
+                    subject=subject,
+                    difficulty=difficulty,
+                    node_count=str(node_count),
+                    portrait_context=portrait_context,
+                    mastery_context=mastery_context,
+                    kb_context=kb_context,
+                    learning_guidance=learning_guidance,
+                )
+                user_id_int = int(user_id)
+                leader_response = await llm.ainvoke(leader_prompt, priority="high", user_id=user_id_int, pool="path")
+                leader_result = parse_llm_json(leader_response.content)
+                topic_outline = leader_result.get("topic_outline", []) if isinstance(leader_result, dict) else []
+                node_count = int(leader_result.get("node_count", len(topic_outline)) or len(topic_outline)) if isinstance(leader_result, dict) else len(topic_outline)
+                difficulty = leader_result.get("difficulty", difficulty) if isinstance(leader_result, dict) else difficulty
+                path.node_count = node_count
+                path.difficulty = difficulty
+                await path.save()
+                yield event({"type": "outline", "path_id": path.id, "node_count": node_count, "topic_outline": topic_outline})
+
+                if not topic_outline:
+                    raise RuntimeError("Path leader returned no topic outline")
+
+                group_size = 4
+                groups = [topic_outline[i:i + group_size] for i in range(0, len(topic_outline), group_size)]
+
+                async def generate_group(group_idx: int, group: list[dict]) -> list[dict]:
+                    group_start = group_idx * group_size + 1
+                    group_end = group_start + len(group) - 1
+                    group_topics = json.dumps(
+                        [
+                            {
+                                "order_index": group_start + j,
+                                "topic": n["topic"],
+                                "cognitive_level": n.get("cognitive_level", "理解"),
+                            }
+                            for j, n in enumerate(group)
+                        ],
+                        ensure_ascii=False,
+                    )
+                    prompt_text = fill_prompt(
+                        load_prompt("path/executor"),
+                        subject=subject,
+                        difficulty=difficulty,
+                        group_start=str(group_start),
+                        group_end=str(group_end),
+                        total_nodes=str(len(topic_outline)),
+                        topic_outline=json.dumps(topic_outline, ensure_ascii=False),
+                        group_topics=group_topics,
+                        portrait_context=portrait_context,
+                        feedback="",
+                    )
+                    response = await llm.ainvoke(prompt_text, priority="high", user_id=user_id_int, pool="path")
+                    nodes = parse_llm_json(response.content)
+                    return nodes if isinstance(nodes, list) else []
+
+                tasks = [asyncio.create_task(generate_group(i, group)) for i, group in enumerate(groups)]
+                for done in asyncio.as_completed(tasks):
+                    group_nodes = await done
+                    for nd in sorted(group_nodes, key=lambda item: item.get("order_index", 0)):
+                        node, payload = await create_node(nd, len(emitted_nodes) + 1)
+                        created_nodes.append(node)
+                        emitted_nodes.append(payload)
+                        if payload["order_index"] == 1:
+                            first_node = node
+                        yield event({"type": "node", "path_id": path.id, "node": payload})
+
+            if not emitted_nodes:
+                raise RuntimeError("Path generation returned no valid nodes")
+
+            emitted_nodes.sort(key=lambda n: n.get("order_index", 0))
+            created_nodes.sort(key=lambda n: n.order_index)
+            path.node_count = len(emitted_nodes)
+            path.cover_tags = json.dumps([n.get("topic") for n in emitted_nodes], ensure_ascii=False)
+            await path.save()
+
+            if first_node:
+                await check_and_create_node_unlocked(user_id, first_node.topic, path.id, first_node.id)
+
+            if first_node and not admin_mode:
+                async def gen_resources():
+                    try:
+                        r = await PathService.generate_node_resources(path.id, first_node.id, user_id)
+                        return r.get("resource_ids", [])
+                    except Exception:
+                        logger.exception("first node resource generation failed node_id=%s", first_node.id)
+                        return []
+
+                async def gen_quiz():
+                    try:
+                        q = await PathService.generate_node_quiz(path.id, first_node.id, user_id)
+                        return q.get("session_id"), q.get("questions", [])
+                    except Exception:
+                        logger.exception("first node quiz generation failed node_id=%s", first_node.id)
+                        return None, []
+
+                res_ids, (session_id, questions) = await asyncio.gather(gen_resources(), gen_quiz())
+                node_results[first_node.id] = {
+                    "node_id": first_node.id,
+                    "resource_ids": res_ids,
+                    "session_id": session_id,
+                    "quiz_count": len(questions),
+                }
+                yield event({"type": "node_result", "path_id": path.id, "node_result": node_results[first_node.id]})
+
+            asyncio.create_task(_generate_path_video_background(path.id, user_id))
+
+            yield event({
+                "type": "done",
+                "path": {
+                    "path_id": path.id,
+                    "subject": path.subject,
+                    "difficulty": path.difficulty,
+                    "node_count": path.node_count,
+                    "stage": "进行中",
+                    "nodes": emitted_nodes,
+                    "progress": [
+                        {"node_id": n["node_id"], "topic": n["topic"], "status": n.get("status", "locked")}
+                        for n in emitted_nodes
+                    ],
+                    "node_results": node_results,
+                },
+            })
+        except Exception as exc:
+            logger.exception("streaming path generation failed subject=%s user_id=%s", subject, user_id)
+            if not emitted_nodes:
+                try:
+                    await path.delete()
+                except Exception:
+                    logger.exception("failed to remove empty streaming path path_id=%s", path.id)
+            yield event({"type": "error", "detail": str(exc) or "Path generation failed"})
 
     @staticmethod
     async def generate_path(subject: str, user_id: int, difficulty: str = "medium", node_count: int = 0) -> dict:
@@ -96,9 +383,6 @@ class PathService:
                 portrait_context = "\n".join(format_portrait(picture, show_missing=False, radar_data=radar_data))
                 if node_count <= 0:
                     node_count = _compute_node_count(subject, picture)
-            else:
-                if node_count <= 0:
-                    node_count = 5
 
         try:
             learning_guidance = await build_learning_guidance(user_id) or ""
@@ -933,6 +1217,11 @@ class PathService:
 
         # 更新画像 traits
         await PathService._update_portrait_from_mastery(user_id)
+        try:
+            await PortraitRadarService.compute(user_id)
+            await PortraitRadarService.sync_to_portrait(user_id)
+        except Exception:
+            logger.exception("portrait radar update failed user_id=%s node_id=%s", user_id, node_id)
 
         return {
             "node_id": node_id,
@@ -1584,7 +1873,7 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
     if not user:
         return None
 
-    pres = await generate_presentation(topic, user_id, video_mode=False)
+    pres = await generate_presentation(topic, user_id, video_mode=False, save_history=False)
     if not pres or "error" in pres:
         logger.error("视频生成失败 topic=%s error=%s", topic, pres.get("error") if pres else "unknown")
         return None

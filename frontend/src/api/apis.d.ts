@@ -303,6 +303,16 @@ export function generateLearningPath(data: {
   node_count?: number;
 }): Promise<unknown>;
 
+export function generateLearningPathStream(
+  data: {
+    subject: string;
+    difficulty?: string;
+    node_count?: number;
+  },
+  onEvent?: (event: unknown) => void,
+  onError?: (error: unknown) => void
+): Promise<void>;
+
 export function generateLearningPathsFromProfile(data?: {
   difficulty?: string;
   node_count?: number;

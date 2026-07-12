@@ -119,11 +119,12 @@
             :key="node.id"
             class="path-node"
             :class="[`is-${node.status}`, { 'is-new': node.id === newestNodeId }]"
-            @click="openNode(node)"
+            @click="node.status !== 'generating' && openNode(node)"
           >
             <div class="node-pin">
               <Check v-if="node.status === 'done'" :size="18" />
               <LockKeyhole v-else-if="node.status === 'locked'" :size="16" />
+              <span v-else-if="node.status === 'generating'" class="node-pin-spinner"></span>
               <span v-else>{{ index + 1 }}</span>
             </div>
 
@@ -136,7 +137,7 @@
               <p>{{ node.summary }}</p>
             </div>
 
-            <div class="node-branches" @click.stop>
+            <div v-if="node.status !== 'generating'" class="node-branches" @click.stop>
               <section class="node-branch">
                 <div class="branch-line"></div>
                 <article class="branch-card">
@@ -529,7 +530,7 @@ import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, Fi
 import {
   createResourceAnnotation,
   deleteResourceAnnotation,
-  getCurrentLearningPath, generateLearningPath,
+  getCurrentLearningPath, generateLearningPath, generateLearningPathStream,
   getLearningPaths, getLearningPathDetail, getLearningPathProgress, getStudyPathStats, sendStudyHeartbeat, enrollLearningPath,
   generatePathNodeResources, generatePathNodeResourcesStream, generatePathNodeQuiz, downloadWithToken, exportEditedPptx, getGeneratedResource, getResourceAnnotations, markStudyResourceRead, markStudyResourceUnread, resolveApiUrl,
   updateResourceAnnotation
@@ -541,6 +542,8 @@ import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
 import { getResourceCoverUrl } from '../utils/resourceCover'
+import { renderMath } from '../utils/renderMath'
+import 'katex/dist/katex.min.css'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
 const route = useRoute()
@@ -605,9 +608,18 @@ const normalizeStatus = s => {
     available: 'available',
     unlocked: 'available',
     open: 'available',
+    generating: 'generating',
   }
   return map[s] || s || 'locked'
 }
+
+const normalizeOrderIndex = (value, fallback = 1) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback
+}
+
+const getNodeOrderIndex = (node, fallback = 1) =>
+  normalizeOrderIndex(node?.orderIndex ?? node?.order_index ?? node?.order ?? node?.index, fallback)
 
 const normalizePath = data => {
   // 后端可能有多层包装
@@ -655,7 +667,7 @@ const normalizePath = data => {
       })(),
       recommendation: path.diagnosis?.recommendation || path.diagnosis?.suggestion || ''
     },
-    nodes: (Array.isArray(nodes) ? nodes : []).map(n => {
+    nodes: (Array.isArray(nodes) ? nodes : []).map((n, index) => {
       const nodeId = String(n.id || n.node_id || n.nodeId || '')
       const progress = progressMap.get(nodeId) || {}
       const nodeResult = nodeResults[nodeId] || nodeResults[Number(nodeId)] || {}
@@ -663,6 +675,7 @@ const normalizePath = data => {
       const resourceIds = n.resource_ids || n.resourceIds || nodeResult.resource_ids || nodeResult.resourceIds || []
       return {
       id: nodeId,
+      orderIndex: normalizeOrderIndex(n.order_index ?? n.orderIndex, index + 1),
       title: n.title || n.name || n.topic || '',
       type: n.type || n.node_type || n.nodeType || 'read',
       summary: n.summary || n.description || n.desc || n.intro || '',
@@ -695,7 +708,160 @@ const normalizePath = data => {
   }
 }
 
+const completePathGenerationState = state => {
+  if (!state) return state
+  const nodes = (state.nodes || []).filter(node => node.status !== 'generating')
+  const allDone = nodes.length > 0 && nodes.every(node => node.status === 'done')
+  return {
+    ...state,
+    stage: allDone ? '已完成' : '进行中',
+    nodes
+  }
+}
+
 const unwrapApiData = result => result?.data?.data ?? result?.data ?? result
+
+const makePendingPathNodes = (count, outline = []) => {
+  const total = Math.max(0, Number(count || outline.length || 0))
+  return Array.from({ length: total }, (_, index) => {
+    const item = outline[index] || {}
+    const orderIndex = normalizeOrderIndex(item.order_index ?? item.orderIndex, index + 1)
+    const topic = typeof item === 'string' ? item : item.topic
+    return {
+      id: `pending-${orderIndex}`,
+      orderIndex,
+      title: topic || `第 ${orderIndex} 个学习节点`,
+      type: 'read',
+      summary: topic ? '正在生成节点详情...' : '正在规划节点内容...',
+      description: '',
+      estimatedMinutes: 15,
+      rule: '',
+      status: 'generating',
+      resourceTypes: [],
+      resources: [],
+      _resources: [],
+      quiz: null,
+      quizId: null,
+      sessionId: ''
+    }
+  })
+}
+
+const applyPendingPathNodes = (count, outline = [], fallbackSubject = '') => {
+  const basePendingNodes = makePendingPathNodes(count, outline)
+  const base = pathState.value || normalizePath({
+    subject: fallbackSubject || '学习路径',
+    nodes: []
+  })
+  const realNodes = (base.nodes || []).filter(node => node.status !== 'generating')
+  const realOrderIndexes = new Set(realNodes.map((node, index) => getNodeOrderIndex(node, index + 1)))
+  const pendingNodes = basePendingNodes.filter(node => !realOrderIndexes.has(getNodeOrderIndex(node)))
+  if (!pendingNodes.length) return
+  const totalCount = Math.max(basePendingNodes.length, realNodes.length + pendingNodes.length)
+  setPathState({
+    ...base,
+    stage: `生成中 ${realNodes.length}/${totalCount}`,
+    nodes: sortPathNodes([...realNodes, ...pendingNodes])
+  })
+}
+
+const normalizeStreamNode = (event, fallbackSubject = '') => {
+  const node = event?.node || {}
+  const pathId = event?.path_id || event?.pathId || pathState.value?.pathId || ''
+  const fallbackOrder = (pathState.value?.nodes || []).filter(item => item.status !== 'generating').length + 1
+  const nodeOrder = normalizeOrderIndex(node.order_index ?? node.orderIndex, fallbackOrder)
+  const normalized = normalizePath({
+    path_id: pathId,
+    subject: pathState.value?.goal || fallbackSubject || '学习路径',
+    nodes: [{ ...node, order_index: nodeOrder }],
+    progress: [{
+      node_id: node.node_id || node.nodeId || node.id,
+      status: node.status || (nodeOrder === 1 ? 'unlocked' : 'locked')
+    }]
+  })
+  return normalized.nodes?.[0] || null
+}
+
+const sortPathNodes = nodes => {
+  return [...(nodes || [])].sort((a, b) => {
+    const ai = Number(a.orderIndex || 0)
+    const bi = Number(b.orderIndex || 0)
+    if (ai && bi && ai !== bi) return ai - bi
+    if (ai && !bi) return -1
+    if (!ai && bi) return 1
+    return String(a.id).localeCompare(String(b.id))
+  })
+}
+
+const mergeStreamingNode = (event, fallbackSubject = '') => {
+  const node = normalizeStreamNode(event, fallbackSubject)
+  if (!node?.id) return
+
+  const base = pathState.value || normalizePath({
+    path_id: event?.path_id || event?.pathId || '',
+    subject: fallbackSubject || '学习路径',
+    nodes: []
+  })
+  const existing = Array.isArray(base.nodes) ? base.nodes : []
+  const existingSameNode = existing.find(item => item.id === node.id)
+  if (existingSameNode) {
+    node.orderIndex = getNodeOrderIndex(existingSameNode, node.orderIndex)
+  } else {
+    const usedRealOrders = new Set(
+      existing
+        .filter(item => item.status !== 'generating')
+        .map((item, index) => getNodeOrderIndex(item, index + 1))
+    )
+    if (usedRealOrders.has(getNodeOrderIndex(node))) {
+      const pendingSlot = sortPathNodes(existing)
+        .find(item => item.status === 'generating' && !usedRealOrders.has(getNodeOrderIndex(item)))
+      node.orderIndex = pendingSlot ? getNodeOrderIndex(pendingSlot) : normalizeOrderIndex(null, usedRealOrders.size + 1)
+    }
+  }
+  const nodeOrder = getNodeOrderIndex(node)
+  const nextNodes = sortPathNodes([
+    ...existing.filter(item => item.id !== node.id && !(item.status === 'generating' && getNodeOrderIndex(item) === nodeOrder)),
+    node
+  ])
+  const realCount = nextNodes.filter(item => item.status !== 'generating').length
+  const totalCount = nextNodes.length
+
+  newestNodeId.value = node.id
+  setPathState({
+    ...base,
+    stage: generating.value ? `生成中 ${realCount}/${totalCount}` : base.stage,
+    nodes: nextNodes
+  })
+}
+
+const mergeStreamingNodeResult = event => {
+  const result = event?.node_result || event?.nodeResult || {}
+  const nodeId = String(result.node_id || result.nodeId || '')
+  if (!nodeId || !pathState.value?.nodes?.length) return
+
+  pathState.value = {
+    ...pathState.value,
+    nodes: pathState.value.nodes.map(node => {
+      if (node.id !== nodeId) return node
+      const resourceIds = Array.isArray(result.resource_ids || result.resourceIds)
+        ? (result.resource_ids || result.resourceIds)
+        : []
+      const resources = resourceIds.map((id, index) => ({
+        resource_id: id,
+        resource_type: node.resourceTypes?.[index] || node.resourceTypes?.[0] || 'document',
+        topic: node.title,
+        download_url: `/resource/${id}/download`
+      }))
+      return {
+        ...node,
+        resources,
+        _resources: normalizeNodeResources(resources, node),
+        sessionId: result.session_id || result.sessionId || node.sessionId
+      }
+    })
+  }
+  savePathToCache(pathState.value)
+}
 
 const normalizeHistoryList = result => {
   const list = unwrapApiData(result)
@@ -740,6 +906,7 @@ const normalizeSelectedPath = (detailResult, progressResult, historyItem = null)
       const p = progressMap.get(nodeId) || {}
       return {
         id: nodeId,
+        orderIndex: normalizeOrderIndex(node.order_index ?? node.orderIndex, index + 1),
         title: node.topic || node.title || '',
         summary: node.knowledge_tags?.length ? node.knowledge_tags.slice(0, 3).join(' / ') : `学习${node.topic || node.title || ''}`,
         description: node.topic || node.title || '',
@@ -1146,49 +1313,88 @@ const generateNewPath = async () => {
   generationRunId.value = runId
   generating.value = true
   error.value = ''
-
-  const generatePromise = generateLearningPath({ subject })
-    .then(result => ({ type: 'generated', result }))
-    .catch(err => ({ type: 'error', err }))
-
-  const currentPromise = waitForGeneratedPath(runId, subject)
+  let streamHadNode = false
+  let streamError = null
 
   try {
     console.log('[StudyPath] generate path payload:', { subject })
-    const firstResult = await Promise.race([generatePromise, currentPromise])
-    if (runId !== generationRunId.value) return
-
-    if (firstResult?.type === 'current') {
-      topicInput.value = ''
-      announceGeneratedPathTeacher(runId, pathState.value, subject)
-      generatePromise.then(done => {
-        if (runId !== generationRunId.value || done?.type !== 'generated') return
-        const generatedPath = normalizePath(done.result)
-        if (generatedPath?.nodes?.length) {
-          setPathState(generatedPath)
-          announceGeneratedPathTeacher(runId, generatedPath, subject)
+    await generateLearningPathStream(
+      { subject, node_count: 0 },
+      event => {
+        if (runId !== generationRunId.value) return
+        if (event.type === 'start') {
+          setPathState(normalizePath({
+            path_id: event.path_id || event.pathId,
+            subject: event.subject || subject,
+            difficulty: event.difficulty,
+            node_count: event.node_count,
+            stage: '生成中',
+            nodes: []
+          }))
+          applyPendingPathNodes(event.node_count || event.nodeCount || 8, [], subject)
+          return
         }
-      })
-      return
-    }
+        if (event.type === 'outline') {
+          const outline = Array.isArray(event.topic_outline || event.topicOutline)
+            ? (event.topic_outline || event.topicOutline)
+            : []
+          applyPendingPathNodes(event.node_count || event.nodeCount || outline.length || 8, outline, subject)
+          return
+        }
+        if (event.type === 'node') {
+          streamHadNode = true
+          mergeStreamingNode(event, subject)
+          return
+        }
+        if (event.type === 'node_result') {
+          mergeStreamingNodeResult(event)
+          return
+        }
+        if ((event.type === 'done' || event.type === 'cached') && event.path) {
+          const generatedPath = completePathGenerationState(normalizePath(event.path))
+          if (generatedPath?.nodes?.length) {
+            setPathState(generatedPath)
+            streamHadNode = true
+          }
+          return
+        }
+        if (event.type === 'error') {
+          streamError = new Error(event.detail || '生成学习路径失败')
+        }
+      }
+    )
 
-    if (firstResult?.type === 'generated') {
-      console.log('[StudyPath] generated path:', firstResult.result)
-      const generatedPath = normalizePath(firstResult.result)
-      if (generatedPath?.nodes?.length) {
-        setPathState(generatedPath)
-        announceGeneratedPathTeacher(runId, generatedPath, subject)
-      } else {
-        const recovered = await recoverGeneratedPathFromCurrent()
-        if (recovered) announceGeneratedPathTeacher(runId, pathState.value, subject)
+    if (runId !== generationRunId.value) return
+    if (streamError) throw streamError
+    if (pathState.value?.nodes?.length || streamHadNode) {
+      if (pathState.value?.stage?.startsWith?.('生成中')) {
+        setPathState(completePathGenerationState(pathState.value))
       }
       topicInput.value = ''
+      announceGeneratedPathTeacher(runId, pathState.value, subject)
       refreshGeneratedPathInBackground()
       return
     }
 
-    throw firstResult?.err || new Error('生成学习路径失败')
+    throw new Error('生成学习路径失败')
   } catch (err) {
+    if (!streamHadNode) {
+      try {
+        const result = await generateLearningPath({ subject, node_count: 0 })
+        if (runId !== generationRunId.value) return
+        const generatedPath = completePathGenerationState(normalizePath(result))
+        if (generatedPath?.nodes?.length) {
+          setPathState(generatedPath)
+          topicInput.value = ''
+          announceGeneratedPathTeacher(runId, generatedPath, subject)
+          refreshGeneratedPathInBackground()
+          return
+        }
+      } catch (fallbackErr) {
+        console.warn('[StudyPath] fallback path generation failed:', fallbackErr)
+      }
+    }
+
     const recovered = await recoverGeneratedPathFromCurrent()
     if (recovered) {
       topicInput.value = ''
@@ -1265,7 +1471,8 @@ const statusLabel = status => ({
   done: '已完成',
   current: '当前任务',
   available: '可开始',
-  locked: '待解锁'
+  locked: '待解锁',
+  generating: '生成中'
 }[status] || '待开始')
 
 const pathQuizLink = (quiz, node) => {
@@ -1578,7 +1785,7 @@ const renderMarkdown = content => {
   flushParagraph()
   flushList()
 
-  return html.join('')
+  return renderMath(html.join(''))
 }
 
 const getResourceUsageById = resourceId => {
@@ -1737,7 +1944,9 @@ const hydratePathForRender = state => {
       const resources = node._resources?.length
         ? node._resources
         : normalizeNodeResources(node.resources || [], node)
+      const canPromote = node.status !== 'generating'
       const shouldPromote =
+        canPromote &&
         !hasCurrentNode &&
         !promotedCurrent &&
         (node.status === 'available' || node.status === 'unlocked' || (index === 0 && node.status !== 'locked'))
@@ -1892,7 +2101,7 @@ const refreshGeneratedPathInBackground = async () => {
   try {
     await delay(1200)
     const result = await getCurrentLearningPath()
-    const refreshed = normalizePath(result)
+    const refreshed = completePathGenerationState(normalizePath(result))
     if (refreshed?.nodes?.length) {
       setPathState(refreshed)
     }
@@ -2999,6 +3208,10 @@ onBeforeUnmount(() => {
   animation: node-grow 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+.path-node.is-generating {
+  cursor: default;
+}
+
 .node-pin {
   width: 34px;
   height: 34px;
@@ -3024,8 +3237,26 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 6px rgba(95, 143, 195, 0.16), 0 10px 22px rgba(22, 63, 143, 0.12);
 }
 
+.is-generating .node-pin {
+  border-color: rgba(95, 143, 195, 0.42);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.node-pin-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(95, 143, 195, 0.28);
+  border-top-color: #163f8f;
+  border-radius: 50%;
+  animation: node-spin 860ms linear infinite;
+}
+
 .is-locked {
   opacity: 0.62;
+}
+
+.is-generating {
+  opacity: 0.78;
 }
 
 .node-card {
@@ -3040,6 +3271,27 @@ onBeforeUnmount(() => {
   transform: translateY(-2px);
   border-color: rgba(95, 143, 195, 0.52);
   background: rgba(255, 255, 255, 0.88);
+}
+
+.is-generating:hover .node-card {
+  transform: none;
+}
+
+.is-generating .node-card {
+  position: relative;
+  overflow: hidden;
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.is-generating .node-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.72) 45%, transparent 78%);
+  transform: translateX(-100%);
+  animation: node-shimmer 1.4s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .node-card__top {
@@ -3060,6 +3312,18 @@ onBeforeUnmount(() => {
   color: rgba(22, 63, 143, 0.68);
   line-height: 1.65;
   font-size: 13px;
+}
+
+@keyframes node-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes node-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .diagnosis-panel {

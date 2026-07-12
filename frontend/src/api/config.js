@@ -5,6 +5,11 @@ const rawBase = request.defaults.baseURL || '/'
 export const API_BASE_URL = rawBase.endsWith('/') ? rawBase : rawBase + '/'
 
 const isNgrokApi = /^https?:\/\/[^/]+\.ngrok-free\.(app|dev)(\/|$)/i.test(API_BASE_URL)
+const isStaticAvatarPath = pathname => /\/static\/avatars\//.test(pathname)
+const canUseDevStaticProxy = () => {
+  if (typeof window === 'undefined') return false
+  return ['localhost', '127.0.0.1'].includes(window.location.hostname)
+}
 
 export const apiFetchHeaders = (headers = {}) => ({
   ...headers,
@@ -32,9 +37,13 @@ export const normalizeAvatarUrl = avatar => {
       ? new URL(raw)
       : new URL(raw.replace(/^\//, ''), API_BASE_URL)
 
-    if (/\/static\/avatars\//.test(url.pathname) && !url.searchParams.has('v')) {
+    if (isStaticAvatarPath(url.pathname) && !url.searchParams.has('v')) {
       const version = localStorage.getItem('zhiban_avatar_version')
       if (version) url.searchParams.set('v', version)
+    }
+
+    if (isStaticAvatarPath(url.pathname) && isNgrokApi && canUseDevStaticProxy()) {
+      return `${url.pathname}${url.search}${url.hash}`
     }
 
     return url.toString()

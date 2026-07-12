@@ -121,15 +121,27 @@ class StudyService:
 
         # ── 学习路径 ──
         paths = []
-        path_records = await LearningPath.filter().prefetch_related("nodes").all()
+        all_progress_records = await UserPathProgress.filter(user_id=user_id).all()
+        progress_by_path: dict[int, list] = {}
+        for record in all_progress_records:
+            progress_by_path.setdefault(record.path_id, []).append(record)
+
+        path_ids = list(progress_by_path.keys())
+        path_records = await LearningPath.filter(id__in=path_ids).prefetch_related("nodes").all() if path_ids else []
         for p in path_records:
-            progress_records = await UserPathProgress.filter(path_id=p.id, user_id=user_id).all()
-            total_nodes = len(p.nodes) if p.nodes else 0
+            nodes = sorted(list(p.nodes or []), key=lambda n: n.order_index)
+            node_order = {n.id: n.order_index for n in nodes}
+            node_map = {n.id: n for n in nodes}
+            progress_records = sorted(
+                progress_by_path.get(p.id, []),
+                key=lambda r: node_order.get(r.node_id, 10**9),
+            )
+            total_nodes = len(nodes)
             completed_nodes = sum(1 for r in progress_records if r.node_status == "completed")
             current = None
             for r in progress_records:
                 if r.node_status in ("unlocked", "in_progress"):
-                    node = next((n for n in (p.nodes or []) if n.id == r.node_id), None)
+                    node = node_map.get(r.node_id)
                     current = node.topic if node else None
                     break
             paths.append({
@@ -165,19 +177,27 @@ class StudyService:
             total_downloads += (r.download_count or 0)
 
         # ── 答题汇总 ──
-        exam_records = await ExamRecord.filter(user_id=user_id, is_correct__not_isnull=True).all()
+        exam_records = await ExamRecord.filter(user_id=user_id).all()
         total_questions = len(exam_records)
-        correct_count = sum(1 for r in exam_records if r.is_correct)
-        session_ids = {r.session_id for r in exam_records}
+        judged_records = [r for r in exam_records if r.is_correct is not None]
+        completed_questions = len(judged_records)
+        correct_count = sum(1 for r in judged_records if r.is_correct)
+        session_ids = {r.session_id for r in exam_records if r.session_id}
         # 练习完成率：judged > 0 的会话视为完成
-        session_judged = {}
+        session_totals: dict[str, dict[str, int]] = {}
         for r in exam_records:
             sid = r.session_id
-            if sid not in session_judged:
-                session_judged[sid] = False
+            if not sid:
+                continue
+            if sid not in session_totals:
+                session_totals[sid] = {"total": 0, "judged": 0}
+            session_totals[sid]["total"] += 1
             if r.is_correct is not None:
-                session_judged[sid] = True
-        completed_sessions = sum(1 for v in session_judged.values() if v)
+                session_totals[sid]["judged"] += 1
+        completed_sessions = sum(
+            1 for item in session_totals.values()
+            if item["total"] > 0 and item["judged"] >= item["total"]
+        )
         total_sessions = len(session_ids)
 
         # ── 学习指导 ──
@@ -208,10 +228,13 @@ class StudyService:
             },
             "exam_summary": {
                 "total_questions": total_questions,
-                "correct_rate": round(correct_count / max(total_questions, 1), 2),
+                "completed_questions": completed_questions,
+                "correct_questions": correct_count,
+                "correct_rate": round(correct_count / max(completed_questions, 1), 2),
                 "total_sessions": total_sessions,
                 "completed_sessions": completed_sessions,
-                "completion_rate": round(completed_sessions / max(total_sessions, 1), 2),
+                "completion_rate": round(completed_questions / max(total_questions, 1), 2),
+                "session_completion_rate": round(completed_sessions / max(total_sessions, 1), 2),
             },
             "learning_guidance": guidance,
         }
@@ -301,7 +324,10 @@ class StudyService:
         for p in path_records:
             # ── 进度 ──
             progress_records = await UserPathProgress.filter(path_id=p.id, user_id=user_id).all()
-            nodes = p.nodes or []
+            nodes = sorted(list(p.nodes or []), key=lambda n: n.order_index)
+            node_order = {n.id: n.order_index for n in nodes}
+            node_map = {n.id: n for n in nodes}
+            progress_records = sorted(progress_records, key=lambda r: node_order.get(r.node_id, 10**9))
             total_nodes = len(nodes)
             completed_nodes = sum(1 for r in progress_records if r.node_status == "completed")
             in_progress = sum(1 for r in progress_records if r.node_status == "in_progress")
@@ -310,7 +336,7 @@ class StudyService:
             current_node = None
             for r in progress_records:
                 if r.node_status in ("unlocked", "in_progress"):
-                    node = next((n for n in nodes if n.id == r.node_id), None)
+                    node = node_map.get(r.node_id)
                     current_node = node.topic if node else None
                     break
 

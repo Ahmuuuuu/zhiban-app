@@ -135,6 +135,7 @@ export {
   completeLearningPathNode,
   enrollLearningPath,
   generateLearningPath,
+  generateLearningPathStream,
   generateLearningPathsFromProfile,
   generatePathNodeQuiz,
   generatePathNodeResources,
