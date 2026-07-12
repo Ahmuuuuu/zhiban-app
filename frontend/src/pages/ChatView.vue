@@ -264,6 +264,7 @@
         <div
           v-else-if="message.role === 'assistant'"
           class="bubble rich-bubble markdown-body"
+          :class="{ 'generation-bubble': message.generationTaskId || message.thinkingProcess }"
           v-html="renderMarkdown(message.content)"
         ></div>
 
@@ -274,6 +275,7 @@
         <div
           v-if="message.thinkingProcess"
           class="thinking-process"
+          :class="{ 'is-expanded': isThinkingExpanded(message.id) }"
         >
           <div class="thinking-process__head">
             <span>思考过程</span>
@@ -285,7 +287,9 @@
               {{ isThinkingExpanded(message.id) ? '收起' : '展开' }}
             </button>
           </div>
-          <p :class="{ 'is-typing': isThinkingTyping(message) }">{{ visibleThinkingProcess(message) }}</p>
+          <div class="thinking-process__viewport">
+            <p :class="{ 'is-typing': isThinkingTyping(message) }">{{ visibleThinkingProcess(message) }}</p>
+          </div>
         </div>
 
         <div class="message-time">
@@ -2918,6 +2922,22 @@ const attachGenerationTaskToMessage = (task, messageId) => {
           imageCursor += 1
         }
 
+        const progressMessage = messages.value.find(m => m.id === messageId)
+        if (progressMessage?.type === 'text' && task.tool?.generateMode !== 'video') {
+          if (task.status === 'failed') {
+            progressMessage.content = task.error || '资源生成失败，请稍后再试。'
+          } else if (task.files.length || task.images.length || task.status === 'done') {
+            const pptStream = isPptGenerationTask(task) ? (task as any)._pptStream : null
+            if (pptStream || task.tool?.resourceTypes?.includes('ppt')) {
+              const slideCount = getPptStreamSlideCount(pptStream)
+              progressMessage.content = `PPT 已生成，可以在下方打开预览。${slideCount ? `已生成 ${slideCount} 页内容。` : ''}`
+            } else {
+              progressMessage.content = '资源已生成，可以在下方查看。'
+            }
+            progressMessage.time = getNowTime()
+          }
+        }
+
         // 外部视频（B站推荐，graph 完成前已推送）
         const extVideos = (task as any).externalVideos
         if (extVideos && extVideos.length > 0) {
@@ -3120,7 +3140,9 @@ const sendMessage = async () => {
 
     let hasReceivedChunk = false
     let hasPptStreamText = false
+    let hasResourceTextStream = false
     const pptTextStream = { slides: [] }
+    const resourceTextStream = { fileType: '', parts: [] }
 
     const ensurePptTextStream = async () => {
       if (!target) return
@@ -3164,6 +3186,56 @@ const sendMessage = async () => {
         pptTextStream.slides.push(nextSlide)
       }
       pptTextStream.slides = sortPptStreamSlides(pptTextStream.slides)
+    }
+
+    const textStreamTitle = status => {
+      const isMindmap = resourceTextStream.fileType === 'mindmap'
+      if (status === 'done') return isMindmap ? '思维导图内容已生成。' : '文档内容已生成。'
+      return isMindmap ? '正在生成思维导图内容...' : '正在生成文档内容...'
+    }
+
+    const formatResourceTextStream = status => {
+      const parts = [...resourceTextStream.parts]
+        .sort((a, b) => streamOrder(a.section_idx, 0) - streamOrder(b.section_idx, 0))
+        .map(part => String(part.content || '').trim())
+        .filter(Boolean)
+      const title = textStreamTitle(status)
+      return parts.length ? `${title}\n\n${parts.join('\n\n')}` : title
+    }
+
+    const ensureResourceTextStream = async eventData => {
+      if (!target) return
+      resourceTextStream.fileType = eventData?.file_type || resourceTextStream.fileType || 'document'
+      if (!hasResourceTextStream) {
+        target.content = textStreamTitle('running')
+        target.thinkingProcess = formatResourceTextStream('running')
+        target.time = getNowTime()
+        hasResourceTextStream = true
+        hasReceivedChunk = true
+        await scrollToBottom()
+      }
+    }
+
+    const upsertResourceTextPart = (eventData, { appendDelta = false, content = undefined } = {}) => {
+      resourceTextStream.fileType = eventData?.file_type || resourceTextStream.fileType || 'document'
+      const sectionIdx = eventData?.section_idx ?? 0
+      const existingIdx = resourceTextStream.parts.findIndex(part =>
+        streamOrder(part.section_idx, 0) === streamOrder(sectionIdx, 0)
+      )
+      const existing = existingIdx >= 0 ? resourceTextStream.parts[existingIdx] : null
+      const nextPart = {
+        ...(existing || {}),
+        section_idx: sectionIdx,
+        section_title: eventData?.section_title || existing?.section_title || '',
+        content: appendDelta
+          ? `${existing?.content || ''}${eventData?.delta || ''}`
+          : String(content ?? eventData?.content ?? existing?.content ?? ''),
+      }
+      if (existingIdx >= 0) {
+        resourceTextStream.parts[existingIdx] = nextPart
+      } else {
+        resourceTextStream.parts.push(nextPart)
+      }
     }
 
     await streamChatMessage({
@@ -3217,9 +3289,40 @@ const sendMessage = async () => {
           await rebuildPptTextStream()
         }
       },
+      onStreamTextStart: async eventData => {
+        if (eventData?.file_type === 'ppt') return
+        await ensureResourceTextStream(eventData)
+        upsertResourceTextPart(eventData, { content: '' })
+        if (target) {
+          target.thinkingProcess = formatResourceTextStream('running')
+          target.time = getNowTime()
+        }
+        await scrollToBottom()
+      },
+      onStreamTextDelta: async eventData => {
+        if (eventData?.file_type === 'ppt') return
+        await ensureResourceTextStream(eventData)
+        upsertResourceTextPart(eventData, { appendDelta: true })
+        if (target) {
+          target.content = textStreamTitle('running')
+          target.thinkingProcess = formatResourceTextStream('running')
+          target.time = getNowTime()
+        }
+        await scrollToBottom()
+      },
+      onStreamTextDone: async eventData => {
+        if (eventData?.file_type === 'ppt') return
+        await ensureResourceTextStream(eventData)
+        upsertResourceTextPart(eventData)
+        if (target) {
+          target.thinkingProcess = formatResourceTextStream('running')
+          target.time = getNowTime()
+        }
+        await scrollToBottom()
+      },
       onThinking: async message => {
         if (!target) return
-        if (hasPptStreamText) return
+        if (hasPptStreamText || hasResourceTextStream) return
         const thinking = formatThinkingProcess(message)
         if (!thinking) return
         target.thinkingProcess = thinking
@@ -3227,6 +3330,12 @@ const sendMessage = async () => {
         await scrollToBottom()
       },
       onFile: async fileData => {
+        if (target && hasResourceTextStream && !isPptFile(fileData)) {
+          target.content = '资源已生成，可以在下方查看。'
+          target.thinkingProcess = formatResourceTextStream('done')
+          target.time = getNowTime()
+        }
+
         if (target && hasPptStreamText && isPptFile(fileData)) {
           const slideCount = getPptStreamSlideCount(pptTextStream)
           target.content = `PPT 已生成，可以在下方打开预览。${slideCount ? `已生成 ${slideCount} 页内容。` : ''}`
@@ -4029,6 +4138,11 @@ watch(
   white-space: normal;
 }
 
+.rich-bubble.generation-bubble {
+  width: min(420px, 100%);
+  min-height: 58px;
+}
+
 .message-time {
   margin-top: 6px;
   color: rgba(22, 63, 143, 0.68);
@@ -4041,6 +4155,10 @@ watch(
   color: rgba(31, 51, 86, 0.52);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.thinking-process.is-expanded {
+  max-width: min(680px, 96%);
 }
 
 .thinking-process__head {
@@ -4065,6 +4183,33 @@ watch(
   font-weight: 800;
   cursor: pointer;
   padding: 0;
+}
+
+.thinking-process__viewport {
+  height: calc(1.55em * 5);
+  overflow: hidden;
+}
+
+.thinking-process.is-expanded .thinking-process__viewport {
+  height: auto;
+  max-height: min(42vh, 360px);
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(95, 143, 195, 0.45) transparent;
+}
+
+.thinking-process.is-expanded .thinking-process__viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thinking-process.is-expanded .thinking-process__viewport::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(95, 143, 195, 0.45);
 }
 
 .thinking-process p {

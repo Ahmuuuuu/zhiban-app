@@ -218,7 +218,7 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
     ? (taskData?.error || '资源生成失败，请稍后再试。')
     : formatTaskProgress(taskData)
   const thinking = getBackendThinking(taskData)
-  appendTaskThinking(task, thinking)
+  if (!(task as any)._textStream) appendTaskThinking(task, thinking)
   task.error = taskData?.error || ''
   // 保留已生成的视频文件和 doneEvent.presentation，
   // 避免 hydrate 时后端数据覆盖前端已完成的视频状态导致重复生成
@@ -339,6 +339,28 @@ const bumpPptStreamVersion = (stream: any) => {
   return stream
 }
 
+const findTextStreamPartIndex = (parts: any[], eventData: any) => {
+  const sectionIdx = streamOrder(eventData?.section_idx, 0)
+  return parts.findIndex((part: any) => streamOrder(part?.section_idx, 0) === sectionIdx)
+}
+
+const sortTextStreamParts = (parts: any[]) => {
+  return [...parts].sort((a, b) => streamOrder(a?.section_idx, 0) - streamOrder(b?.section_idx, 0))
+}
+
+const formatTextStreamThinking = (stream: any, task: GenerationTask) => {
+  const parts = sortTextStreamParts(stream?.parts || [])
+    .map((part: any) => String(part?.content || '').trim())
+    .filter(Boolean)
+  const types = task.tool?.resourceTypes || []
+  const isMindmap = stream?.file_type === 'mindmap' || types.includes('mindmap')
+  const title = task.status === 'done'
+    ? (isMindmap ? '思维导图内容已生成。' : '文档内容已生成。')
+    : (isMindmap ? '正在生成思维导图内容...' : '正在生成文档内容...')
+  if (!parts.length) return title
+  return `${title}\n\n${parts.join('\n\n')}`
+}
+
 const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
   if (!eventData || eventData.type === '__close__') return
 
@@ -432,8 +454,71 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
       task.backendTaskId?.slice(0, 12) || task.id, eventData.section_idx, stream.slides.length)
   }
 
+  if (eventData.type === 'stream_text_start') {
+    const stream = (task as any)._textStream || { parts: [] }
+    stream.file_type = eventData.file_type || stream.file_type || 'document'
+    const nextPart = {
+      content: '',
+      section_idx: eventData.section_idx ?? 0,
+      section_title: eventData.section_title || '',
+      streaming: true,
+    }
+    const existingIdx = findTextStreamPartIndex(stream.parts, eventData)
+    if (existingIdx >= 0) {
+      stream.parts[existingIdx] = nextPart
+    } else {
+      stream.parts.push(nextPart)
+    }
+    stream.parts = sortTextStreamParts(stream.parts)
+    ;(task as any)._textStream = stream
+    task.thinkingProcess = formatTextStreamThinking(stream, task)
+  }
+
+  if (eventData.type === 'stream_text_delta') {
+    const stream = (task as any)._textStream || { parts: [] }
+    stream.file_type = eventData.file_type || stream.file_type || 'document'
+    const existingIdx = findTextStreamPartIndex(stream.parts, eventData)
+    if (existingIdx >= 0) {
+      stream.parts[existingIdx] = {
+        ...stream.parts[existingIdx],
+        content: `${stream.parts[existingIdx].content || ''}${eventData.delta || ''}`,
+        streaming: true,
+      }
+    } else {
+      stream.parts.push({
+        content: eventData.delta || '',
+        section_idx: eventData.section_idx ?? 0,
+        section_title: eventData.section_title || '',
+        streaming: true,
+      })
+    }
+    stream.parts = sortTextStreamParts(stream.parts)
+    ;(task as any)._textStream = stream
+    task.thinkingProcess = formatTextStreamThinking(stream, task)
+  }
+
+  if (eventData.type === 'stream_text_done') {
+    const stream = (task as any)._textStream || { parts: [] }
+    stream.file_type = eventData.file_type || stream.file_type || 'document'
+    const existingIdx = findTextStreamPartIndex(stream.parts, eventData)
+    const finalPart = {
+      content: eventData.content || '',
+      section_idx: eventData.section_idx ?? 0,
+      section_title: eventData.section_title || '',
+      streaming: false,
+    }
+    if (existingIdx >= 0) {
+      stream.parts[existingIdx] = finalPart
+    } else {
+      stream.parts.push(finalPart)
+    }
+    stream.parts = sortTextStreamParts(stream.parts)
+    ;(task as any)._textStream = stream
+    task.thinkingProcess = formatTextStreamThinking(stream, task)
+  }
+
   const thinking = getBackendThinking(eventData)
-  appendTaskThinking(task, thinking)
+  if (!(task as any)._textStream) appendTaskThinking(task, thinking)
 
   if (eventData.progress_msg || eventData.progressMsg || eventData.progress || eventData.status) {
     task.progress = formatTaskProgress(eventData)
@@ -456,6 +541,9 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
       chat_group_id: task.chatGroupId,
       resources: task.files,
       ...eventData,
+    }
+    if ((task as any)._textStream) {
+      task.thinkingProcess = formatTextStreamThinking((task as any)._textStream, task)
     }
   }
 
