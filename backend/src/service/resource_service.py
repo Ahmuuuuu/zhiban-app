@@ -54,6 +54,7 @@ _FILE_EXT_MAP = {
 }
 
 _PPT_THEME_RE = re.compile(r"^\s*<!--\s*theme\s*:\s*([A-Za-z0-9_-]{1,64})\s*-->\s*$", re.IGNORECASE | re.MULTILINE)
+_PPT_META_COMMENT_RE = re.compile(r"^\s*<!--\s*(?:theme|layout|visual)\s*:[\s\S]*?-->\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 def _normalize_ppt_theme_id(ppt_theme_id: str | None) -> str:
@@ -66,6 +67,11 @@ def _normalize_ppt_theme_id(ppt_theme_id: str | None) -> str:
 def _extract_ppt_theme_id(content: str | None) -> str:
     match = _PPT_THEME_RE.search(content or "")
     return match.group(1) if match else ""
+
+
+def _looks_like_ppt_markdown(content: str | None) -> bool:
+    text = _PPT_META_COMMENT_RE.sub("", str(content or "")).strip()
+    return text.startswith("#")
 
 
 def _apply_ppt_theme_to_content(content: str | None, ppt_theme_id: str | None) -> str | None:
@@ -561,6 +567,7 @@ class ResourceService:
                     "resource_id": r["resource_id"],
                     "file_type": r["resource_type"],
                     "topic": r["topic"],
+                    "content": r.get("content", ""),
                     "download_url": f"/resource/{r['resource_id']}/download",
                     **({"ppt_theme_id": r.get("ppt_theme_id")} if r["resource_type"] == "ppt" else {}),
                 }
@@ -662,7 +669,7 @@ class ResourceService:
         result["favorited"] = favorited
 
         # PPT 资源 → 按页拆成 slides 预览数组（仅 LLM 生成的 markdown 可解析）
-        if record.resource_type == "ppt" and record.content and record.content.startswith("#"):
+        if record.resource_type == "ppt" and _looks_like_ppt_markdown(record.content):
             try:
                 from backend.src.utils.tts_utils import parse_slides
                 slides_data = parse_slides(record.content)
