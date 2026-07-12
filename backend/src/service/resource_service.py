@@ -1104,6 +1104,14 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         task.progress = 85
         task.progress_msg = "正在保存…"
         await task.save()
+        await _notify_task_sse(task_id, {
+            "type": "agent_event",
+            "agent_id": "saver",
+            "agent_name": "ResourceService",
+            "phase": "saver",
+            "status": "saving",
+            "message": "正在保存生成资源",
+        })
         await _notify_task_sse(task_id, {"type": "status", "progress": 85, "progress_msg": "正在保存…"})
         asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": 85, "progress_msg": "正在保存…", "user_id": user_id}))
 
@@ -1134,6 +1142,15 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         task.progress_msg = "生成完成"
         task.result = json.dumps(result_data, ensure_ascii=False)
         await task.save()
+        await _notify_task_sse(task_id, {
+            "type": "agent_event",
+            "agent_id": "saver",
+            "agent_name": "ResourceService",
+            "phase": "saver",
+            "status": "done",
+            "message": f"已保存 {len(saved)} 个资源",
+            "total": len(saved),
+        })
 
         # 生成标题
         type_labels = {"document": "文献", "exercise": "习题", "mindmap": "思维导图", "ppt": "PPT", "image": "图片"}
@@ -1141,6 +1158,15 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         gen_title = await _generate_resource_title(task.topic, type_names)
 
         total_ms = int((_time.perf_counter() - _t_total) * 1000)
+        await _notify_task_sse(task_id, {
+            "type": "agent_event",
+            "agent_id": "complete",
+            "agent_name": "完成",
+            "phase": "complete",
+            "status": "done",
+            "message": f"全部生成完毕，总耗时 {total_ms / 1000:.1f}s",
+            "elapsed_ms": total_ms,
+        })
         await _notify_task_sse(task_id, {
             "type": "done",
             "status": "success",
@@ -1170,6 +1196,14 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
                 task.status = "failed"
                 task.error = str(e)
                 await task.save()
+                await _notify_task_sse(task_id, {
+                    "type": "agent_event",
+                    "agent_id": "complete",
+                    "agent_name": "生成失败",
+                    "phase": "complete",
+                    "status": "failed",
+                    "message": str(e)[:160],
+                })
                 await _notify_task_sse(task_id, {
                     "type": "done",
                     "status": "failed",

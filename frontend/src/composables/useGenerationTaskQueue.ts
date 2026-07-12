@@ -12,6 +12,28 @@ import {
 import { executeGeneration, type ResourceToolConfig } from './useResourceGeneration'
 
 export type GenerationTaskStatus = 'running' | 'done' | 'failed'
+export type AgentFlowStatus = 'pending' | 'running' | 'reviewing' | 'retrying' | 'saving' | 'done' | 'failed'
+
+export interface AgentFlowNode {
+  agent_id: string
+  agent_name: string
+  phase: string
+  status: AgentFlowStatus
+  message: string
+  resource_type?: string
+  current?: number
+  total?: number
+  elapsed_ms?: number
+  updatedAt: number
+}
+
+export interface AgentFlowState {
+  visible: boolean
+  activeAgentId: string
+  nodes: Record<string, AgentFlowNode>
+  events: Array<Record<string, any>>
+  updatedAt: number
+}
 
 export interface GenerationTask {
   id: string
@@ -25,6 +47,7 @@ export interface GenerationTask {
   error: string
   files: unknown[]
   images: unknown[]
+  agentFlow?: AgentFlowState
   doneEvent: unknown
   createdAt: number
   updatedAt: number
@@ -49,6 +72,223 @@ const dispatchNotificationUpdateIfAway = () => {
   }
 }
 
+const RESOURCE_AGENT_LABELS: Record<string, string> = {
+  ppt: 'PPT生成智能体',
+  document: '文档生成智能体',
+  mindmap: '思维导图智能体',
+  exercise: '习题生成智能体',
+  image: '图片生成智能体',
+  video: '视频生成智能体',
+  case: '案例资料智能体',
+  reading: '阅读材料智能体',
+}
+
+const normalizeAgentStatus = (status: any): AgentFlowStatus => {
+  const value = String(status || 'pending').toLowerCase()
+  if (['running', 'reviewing', 'retrying', 'saving', 'done', 'failed'].includes(value)) {
+    return value as AgentFlowStatus
+  }
+  return 'pending'
+}
+
+const FLOW_PHASES = ['leader', 'executor', 'reviewer', 'saver', 'complete']
+const FLOW_PHASE_NAMES: Record<string, string> = {
+  leader: 'LeaderAgent',
+  executor: 'ExecutorAgent',
+  reviewer: 'ReviewerAgent',
+  saver: 'ResourceService',
+  complete: '完成',
+}
+const FLOW_PHASE_DONE_MESSAGES: Record<string, string> = {
+  leader: '需求规划完成',
+  executor: '资源生成完成',
+  reviewer: '质量审核完成',
+  saver: '资源保存完成',
+  complete: '生成完成',
+}
+const ACTIVE_AGENT_STATUSES = ['running', 'reviewing', 'retrying', 'saving']
+
+const makeAgentNode = (
+  agentId: string,
+  agentName: string,
+  phase: string,
+  status: AgentFlowStatus = 'pending',
+  message = '等待中',
+): AgentFlowNode => ({
+  agent_id: agentId,
+  agent_name: agentName,
+  phase,
+  status,
+  message,
+  updatedAt: Date.now(),
+})
+
+const isActiveAgentStatus = (status: AgentFlowStatus | string) => {
+  return ACTIVE_AGENT_STATUSES.includes(String(status))
+}
+
+const phaseRank = (phase: string) => FLOW_PHASES.indexOf(phase)
+
+const ensurePhaseNode = (flow: AgentFlowState, phase: string, now = Date.now()) => {
+  const existing = flow.nodes[phase]
+  if (existing) return existing
+  const node = makeAgentNode(
+    phase,
+    FLOW_PHASE_NAMES[phase] || phase,
+    phase,
+    'pending',
+    '等待中',
+  )
+  node.updatedAt = now
+  flow.nodes[phase] = node
+  return node
+}
+
+const markPreviousPhasesDone = (flow: AgentFlowState, phase: string, now = Date.now()) => {
+  const rank = phaseRank(phase)
+  if (rank <= 0) return
+  for (const previousPhase of FLOW_PHASES.slice(0, rank)) {
+    const node = ensurePhaseNode(flow, previousPhase, now)
+    if (node.status === 'failed') continue
+    node.status = 'done'
+    node.message = FLOW_PHASE_DONE_MESSAGES[previousPhase] || node.message || '已完成'
+    node.updatedAt = now
+  }
+}
+
+const setPhaseStatus = (
+  flow: AgentFlowState,
+  phase: string,
+  status: AgentFlowStatus,
+  message = '',
+  now = Date.now(),
+) => {
+  if (phaseRank(phase) === -1) return
+  const node = ensurePhaseNode(flow, phase, now)
+  node.status = status
+  node.message = message || (status === 'done'
+    ? (FLOW_PHASE_DONE_MESSAGES[phase] || '已完成')
+    : node.message)
+  node.updatedAt = now
+  if (isActiveAgentStatus(status) || phase === 'complete') {
+    flow.activeAgentId = phase
+  }
+}
+
+const getFlowResourceTypes = (flow: AgentFlowState, tool?: ResourceToolConfig) => {
+  const fromTool = tool?.resourceTypes || []
+  const fromNodes = Object.values(flow.nodes)
+    .map(node => node.resource_type || (node as any).resourceType)
+    .filter(Boolean)
+  return [...new Set([...fromTool, ...fromNodes].map(item => String(item || '').toLowerCase()))]
+    .filter(item => item && item !== 'external_video')
+}
+
+const syncResourceBranchFromChildren = (
+  flow: AgentFlowState,
+  resourceType: string,
+  now = Date.now(),
+) => {
+  if (!resourceType) return
+  const branchId = `executor:${resourceType}`
+  const branch = flow.nodes[branchId]
+  if (!branch) return
+  const children = Object.values(flow.nodes).filter(node => (
+    node.phase === 'executor' &&
+    String(node.resource_type || (node as any).resourceType || '').toLowerCase() === resourceType &&
+    String(node.agent_id || (node as any).agentId || '').includes(':section-')
+  ))
+  if (!children.length) return
+
+  const failed = children.find(node => normalizeAgentStatus(node.status) === 'failed')
+  const active = children.find(node => isActiveAgentStatus(normalizeAgentStatus(node.status)))
+  const doneCount = children.filter(node => normalizeAgentStatus(node.status) === 'done').length
+  const total = Math.max(Number(branch.total || 0), children.length)
+
+  if (failed) {
+    branch.status = 'failed'
+    branch.message = failed.message || '章节生成失败'
+  } else if (active) {
+    branch.status = normalizeAgentStatus(active.status)
+    branch.message = active.message || '正在并行生成章节'
+  } else if (doneCount >= total && total > 0) {
+    branch.status = 'done'
+    branch.message = '章节生成完成'
+  } else if (branch.status === 'pending') {
+    branch.status = 'running'
+    branch.message = `已完成 ${doneCount}/${total || children.length} 章节`
+  }
+
+  branch.current = Math.max(Number(branch.current || 0), doneCount)
+  branch.total = total || branch.total
+  branch.updatedAt = now
+}
+
+const syncExecutorPhaseFromBranches = (
+  flow: AgentFlowState,
+  tool?: ResourceToolConfig,
+  now = Date.now(),
+) => {
+  const resourceTypes = getFlowResourceTypes(flow, tool)
+  const branches = resourceTypes
+    .map(type => flow.nodes[`executor:${type}`])
+    .filter(Boolean)
+  if (!branches.length) return
+
+  const failed = branches.find(node => normalizeAgentStatus(node.status) === 'failed')
+  const active = branches.find(node => isActiveAgentStatus(normalizeAgentStatus(node.status)))
+  if (failed) {
+    setPhaseStatus(flow, 'executor', 'failed', failed.message || '资源生成失败', now)
+  } else if (active) {
+    setPhaseStatus(flow, 'executor', normalizeAgentStatus(active.status), active.message || '正在并行生成资源', now)
+  } else if (branches.every(node => normalizeAgentStatus(node.status) === 'done')) {
+    setPhaseStatus(flow, 'executor', 'done', '资源生成完成', now)
+  }
+}
+
+const createInitialAgentFlow = (tool?: ResourceToolConfig): AgentFlowState => {
+  const nodes: Record<string, AgentFlowNode> = {
+    leader: makeAgentNode('leader', 'LeaderAgent', 'leader', 'running', '正在分析需求'),
+    executor: makeAgentNode('executor', 'ExecutorAgent', 'executor', 'pending', '等待生成任务'),
+    reviewer: makeAgentNode('reviewer', 'ReviewerAgent', 'reviewer', 'pending', '等待审核'),
+    saver: makeAgentNode('saver', 'ResourceService', 'saver', 'pending', '等待保存'),
+    complete: makeAgentNode('complete', '完成', 'complete', 'pending', '等待结果'),
+  }
+
+  for (const type of tool?.resourceTypes || []) {
+    const key = String(type || '').toLowerCase()
+    if (!key) continue
+    nodes[`executor:${key}`] = makeAgentNode(
+      `executor:${key}`,
+      RESOURCE_AGENT_LABELS[key] || `${key} 智能体`,
+      'executor',
+      'pending',
+      '等待调度',
+    )
+    nodes[`executor:${key}`].resource_type = key
+  }
+
+  return {
+    visible: true,
+    activeAgentId: 'leader',
+    nodes,
+    events: [],
+    updatedAt: Date.now(),
+  }
+}
+
+const normalizeAgentFlow = (flow: any, tool?: ResourceToolConfig): AgentFlowState => {
+  const base = createInitialAgentFlow(tool)
+  if (!flow || typeof flow !== 'object') return base
+  return {
+    visible: flow.visible !== false,
+    activeAgentId: flow.activeAgentId || base.activeAgentId,
+    nodes: { ...base.nodes, ...(flow.nodes || {}) },
+    events: Array.isArray(flow.events) ? flow.events.slice(-80) : [],
+    updatedAt: Number(flow.updatedAt || Date.now()),
+  }
+}
+
 const persistTasks = () => {
   try {
     window.localStorage.setItem(
@@ -65,6 +305,7 @@ const persistTasks = () => {
         error: task.error,
         files: task.files,
         images: task.images,
+        agentFlow: task.agentFlow,
         doneEvent: task.doneEvent,
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,
@@ -100,6 +341,7 @@ const restorePersistedTasks = () => {
         error: item.error || '',
         files: Array.isArray(item.files) ? item.files : [],
         images: Array.isArray(item.images) ? item.images : [],
+        agentFlow: normalizeAgentFlow(item.agentFlow, item.tool),
         doneEvent: item.doneEvent || null,
         createdAt: Number(item.createdAt || Date.now()),
         updatedAt: Number(item.updatedAt || Date.now()),
@@ -196,17 +438,219 @@ const appendTaskThinking = (task: GenerationTask, value: any) => {
   task.thinkingProcess = lines.slice(-80).join('\n')
 }
 
+const upsertAgentFlowNode = (task: GenerationTask, eventData: any) => {
+  const flow = normalizeAgentFlow((task as any).agentFlow, task.tool)
+  const now = Date.now()
+  const agentId = String(eventData.agent_id || eventData.agentId || eventData.phase || `agent-${now}`)
+  const phase = String(eventData.phase || (agentId.split(':')[0] || 'executor'))
+  const resourceType = String(eventData.resource_type || eventData.resourceType || '').toLowerCase()
+  const status = normalizeAgentStatus(eventData.status)
+  const previous = flow.nodes[agentId] || makeAgentNode(agentId, eventData.agent_name || eventData.agentName || agentId, phase)
+  const isSectionAgent = agentId.includes(':section-')
+
+  markPreviousPhasesDone(flow, phase, now)
+  if (phaseRank(phase) !== -1) {
+    if (isActiveAgentStatus(status) || agentId === phase || phase === 'saver' || phase === 'complete') {
+      setPhaseStatus(flow, phase, status, eventData.message || previous.message || '', now)
+    }
+  }
+
+  const nextNode: AgentFlowNode = {
+    ...previous,
+    ...eventData,
+    agent_id: agentId,
+    agent_name: eventData.agent_name || eventData.agentName || previous.agent_name || agentId,
+    phase,
+    status,
+    message: eventData.message || previous.message || '',
+    resource_type: resourceType || previous.resource_type,
+    updatedAt: now,
+  }
+
+  flow.nodes[agentId] = nextNode
+
+  if (phase === 'executor' && resourceType) {
+    const branchId = `executor:${resourceType}`
+    const branchPrevious = flow.nodes[branchId] || makeAgentNode(
+      branchId,
+      RESOURCE_AGENT_LABELS[resourceType] || `${resourceType} 智能体`,
+      'executor',
+    )
+    const shouldWriteBranchStatus = !isSectionAgent || isActiveAgentStatus(status) || status === 'failed'
+    flow.nodes[branchId] = {
+      ...branchPrevious,
+      status: shouldWriteBranchStatus ? status : branchPrevious.status,
+      message: shouldWriteBranchStatus ? nextNode.message : branchPrevious.message,
+      resource_type: resourceType,
+      current: eventData.current ?? branchPrevious.current,
+      total: eventData.total ?? branchPrevious.total,
+      elapsed_ms: eventData.elapsed_ms ?? branchPrevious.elapsed_ms,
+      updatedAt: now,
+    }
+    syncResourceBranchFromChildren(flow, resourceType, now)
+    syncExecutorPhaseFromBranches(flow, task.tool, now)
+  }
+
+  if (['running', 'reviewing', 'retrying', 'saving'].includes(status)) {
+    flow.activeAgentId = agentId
+  }
+  if (phaseRank(phase) !== -1 && (isActiveAgentStatus(status) || phase === 'complete')) {
+    flow.activeAgentId = phase
+  }
+
+  flow.events = [
+    ...(flow.events || []),
+    {
+      ...eventData,
+      agent_id: agentId,
+      agent_name: nextNode.agent_name,
+      phase,
+      status,
+      resource_type: resourceType || nextNode.resource_type,
+      updatedAt: now,
+    }
+  ].slice(-80)
+  flow.visible = true
+  flow.updatedAt = now
+  ;(task as any).agentFlow = flow
+}
+
+const applyAgentFlowEvent = (task: GenerationTask, eventData: any) => {
+  if (eventData?.type !== 'agent_event') return false
+  upsertAgentFlowNode(task, eventData)
+  return true
+}
+
+const applyBackendProgressToAgentFlow = (task: GenerationTask, eventData: any) => {
+  if (!eventData || eventData.type === 'agent_event' || eventData.type === 'external_videos') return false
+
+  const type = String(eventData.type || '').toLowerCase()
+  const message = String(eventData.progress_msg || eventData.progressMsg || eventData.message || '')
+  const progress = Number(eventData.progress || 0)
+  const resourceType = String(eventData.resource_type || eventData.resourceType || eventData.file_type || eventData.fileType || '').toLowerCase()
+  let phase = ''
+  let status: AgentFlowStatus = 'running'
+  let agentId = ''
+  let agentName = ''
+  let flowMessage = message
+
+  if (eventData.done || type === 'done') {
+    phase = 'complete'
+    status = String(eventData.status || '').toLowerCase() === 'failed' ? 'failed' : 'done'
+    agentId = 'complete'
+    agentName = status === 'failed' ? '生成失败' : '完成'
+    flowMessage = message || (status === 'failed' ? '生成失败' : '生成完成')
+  } else if (eventData.error) {
+    phase = 'complete'
+    status = 'failed'
+    agentId = 'complete'
+    agentName = '生成失败'
+    flowMessage = String(eventData.error || '生成失败')
+  } else if (progress >= 85 || /保存/.test(message)) {
+    phase = 'saver'
+    status = 'saving'
+    agentId = 'saver'
+    agentName = 'ResourceService'
+    flowMessage = message || '正在保存生成资源'
+  } else if (progress >= 70 || /审核/.test(message)) {
+    phase = 'reviewer'
+    status = 'reviewing'
+    agentId = 'reviewer'
+    agentName = 'ReviewerAgent'
+    flowMessage = message || '正在进行质量审核'
+  } else if (
+    type === 'progress' ||
+    type === 'stream_progress' ||
+    type === 'stream_start' ||
+    type === 'stream_slide_start' ||
+    type === 'stream_slide' ||
+    type === 'stream_slide_done' ||
+    type === 'stream_text_start' ||
+    type === 'stream_text_done'
+  ) {
+    phase = 'executor'
+    status = type === 'progress' && /生成完毕|生成完成|已生成/.test(message) ? 'done' : 'running'
+    agentId = resourceType ? `executor:${resourceType}` : 'executor'
+    agentName = resourceType ? (RESOURCE_AGENT_LABELS[resourceType] || `${resourceType}智能体`) : 'ExecutorAgent'
+    flowMessage = message || '正在生成资源'
+  } else if (progress > 0 || /初始化|规划|分析/.test(message)) {
+    phase = 'leader'
+    status = 'running'
+    agentId = 'leader'
+    agentName = 'LeaderAgent'
+    flowMessage = message || '正在分析学习需求'
+  }
+
+  if (!phase) return false
+
+  upsertAgentFlowNode(task, {
+    type: 'agent_event',
+    agent_id: agentId || phase,
+    agent_name: agentName || FLOW_PHASE_NAMES[phase] || phase,
+    phase,
+    status,
+    message: flowMessage,
+    resource_type: resourceType || undefined,
+    current: eventData.current,
+    total: eventData.total,
+    elapsed_ms: eventData.elapsed_ms,
+    source_event_type: eventData.type,
+  })
+  return true
+}
+
+const finishAgentFlow = (task: GenerationTask, failed = false) => {
+  const flow = normalizeAgentFlow((task as any).agentFlow, task.tool)
+  const now = Date.now()
+  const finalStatus: AgentFlowStatus = failed ? 'failed' : 'done'
+
+  for (const node of Object.values(flow.nodes)) {
+    if (node.status !== 'failed') {
+      node.status = finalStatus
+      node.updatedAt = now
+      if (!failed && !node.message) node.message = '已完成'
+    }
+  }
+
+  flow.nodes.complete = {
+    ...(flow.nodes.complete || makeAgentNode('complete', '完成', 'complete')),
+    status: finalStatus,
+    message: failed ? '生成失败' : '生成完成',
+    updatedAt: now,
+  }
+  flow.activeAgentId = 'complete'
+  flow.visible = true
+  flow.updatedAt = now
+  ;(task as any).agentFlow = flow
+}
+
 const normalizeTaskFiles = (taskData: any) => {
-  const result = taskData?.result || taskData?.resources || []
-  return (Array.isArray(result) ? result : []).map((item: any) => ({
-    ...item,
-    file_id: item.file_id || item.fileId || item.resource_id || item.resourceId,
-    resource_id: item.resource_id || item.resourceId || item.file_id || item.fileId,
-    file_type: item.file_type || item.fileType || item.resource_type || item.resourceType,
-    resource_type: item.resource_type || item.resourceType || item.file_type || item.fileType,
-    filename: item.filename || `${item.topic || '生成资源'}_${item.file_type || item.resource_type || 'resource'}`,
-    download_url: item.download_url || item.downloadUrl || (item.resource_id ? `/resource/${item.resource_id}/download` : ''),
-  }))
+  let result = taskData?.result ?? taskData?.resources ?? []
+  if (typeof result === 'string') {
+    try {
+      result = JSON.parse(result)
+    } catch {
+      result = []
+    }
+  }
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    result = result.resources || result.result || result.data || []
+  }
+
+  return (Array.isArray(result) ? result : []).map((item: any) => {
+    const resourceId = item.file_id || item.fileId || item.resource_id || item.resourceId
+    const resourceType = item.resource_type || item.resourceType || item.file_type || item.fileType
+    const fileType = item.file_type || item.fileType || item.resource_type || item.resourceType
+    return {
+      ...item,
+      file_id: resourceId,
+      resource_id: item.resource_id || item.resourceId || resourceId,
+      file_type: fileType,
+      resource_type: resourceType,
+      filename: item.filename || `${item.topic || '生成资源'}_${fileType || resourceType || 'resource'}`,
+      download_url: item.download_url || item.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''),
+    }
+  })
 }
 
 const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
@@ -237,6 +681,11 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
   }
   if (existingPresentation) {
     (task.doneEvent as any).presentation = existingPresentation
+  }
+  if (task.status === 'done') {
+    finishAgentFlow(task, false)
+  } else if (task.status === 'failed') {
+    finishAgentFlow(task, true)
   }
   task.updatedAt = Date.now()
   persistTasks()
@@ -364,6 +813,12 @@ const formatTextStreamThinking = (stream: any, task: GenerationTask) => {
 const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
   if (!eventData || eventData.type === '__close__') return
 
+  if (applyAgentFlowEvent(task, eventData)) {
+    task.updatedAt = Date.now()
+    persistTasks()
+    return
+  }
+
   // 外部视频搜索结果（在 graph 完成前提前推送）
   if (eventData.type === 'external_videos' && Array.isArray(eventData.external_videos)) {
     if (!(task as any).externalVideos) {
@@ -377,6 +832,8 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     persistTasks()
     return
   }
+
+  applyBackendProgressToAgentFlow(task, eventData)
 
   if (eventData.type === 'stream_start') {
     ;(task as any)._pptStream = { slides: [] }
@@ -529,6 +986,7 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     task.error = eventData.error
     task.status = 'failed'
     task.progress = eventData.error
+    finishAgentFlow(task, true)
   }
 
   if (eventData.result || eventData.resources) {
@@ -545,6 +1003,7 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     if ((task as any)._textStream) {
       task.thinkingProcess = formatTextStreamThinking((task as any)._textStream, task)
     }
+    finishAgentFlow(task, task.status === 'failed')
   }
 
   task.updatedAt = Date.now()
@@ -822,6 +1281,7 @@ export function useGenerationTaskQueue() {
       error: '',
       files: [],
       images: [],
+      agentFlow: createInitialAgentFlow(tool),
       doneEvent: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
