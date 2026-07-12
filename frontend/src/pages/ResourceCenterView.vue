@@ -49,6 +49,20 @@
       </aside>
 
       <section class="resource-list" aria-label="资源列表区域">
+        <div class="sub-category-bar" aria-label="学科分类">
+          <button
+            v-for="group in subjectGroups"
+            :key="group.value"
+            class="sub-cat-btn"
+            type="button"
+            :class="{ active: activeSubjectGroup === group.value }"
+            @click="switchSubjectGroup(group.value)"
+          >
+            {{ group.label }}
+            <span>{{ getSubjectGroupCount(group.value) }}</span>
+          </button>
+        </div>
+
         <template v-if="loading">
           <article v-for="item in 9" :key="item" class="resource-card skeleton-card">
             <span></span>
@@ -77,6 +91,10 @@
             </div>
 
             <h2>{{ resource.title || '未命名资源' }}</h2>
+            <div class="resource-card-meta">
+              <span>{{ getResourceKind(resource) }}</span>
+              <span>{{ resource.subjectLabel || '未标注学科' }}</span>
+            </div>
             <div class="resource-card-actions" @click.stop>
               <button
                 class="reaction-btn"
@@ -313,6 +331,13 @@ const {
 const keyword = ref('')
 const categories = ['文档', 'PPT', '图片', '视频', '题库', '思维导图']
 const activeCategory = ref(categories[0])
+const subjectGroups = [
+  { value: 'all', label: '全部学科' },
+  { value: 'liberal', label: '文科' },
+  { value: 'science', label: '理科' },
+  { value: 'engineering', label: '工科' }
+]
+const activeSubjectGroup = ref(subjectGroups[0].value)
 const pendingNotificationOpen = ref('')
 
 
@@ -352,6 +377,50 @@ const normalizeReactionFields = item => ({
   isFavorited: pickBoolean(item.is_favorited, item.isFavorited, item.favorited, item.collected, item.is_collected, item.has_favorited)
 })
 
+const pickText = (...values) => {
+  for (const value of values) {
+    const text = String(value || '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+const normalizeSubjectText = item => pickText(
+  item.subject,
+  item.subject_name,
+  item.subjectName,
+  item.course_subject,
+  item.courseSubject,
+  item.discipline,
+  item.discipline_name,
+  item.disciplineName,
+  item.major,
+  item.major_name,
+  item.majorName,
+  item.course,
+  item.course_name,
+  item.courseName
+)
+
+const subjectGroupMatchers = {
+  liberal: /(文科|语文|英语|外语|政治|思想政治|历史|地理|文综|哲学|法学|文学|语言|新闻|传播|经济|管理|艺术|音乐|美术|设计)/,
+  science: /(理科|数学|高数|高等数学|线性代数|概率|统计|物理|化学|生物|科学|理综|天文|地质)/,
+  engineering: /(工科|工程|计算机|软件|编程|程序|数据结构|算法|人工智能|机器学习|网络|通信|电子|电气|自动化|机械|土木|建筑|材料|能源|控制)/
+}
+
+const getSubjectGroup = subject => {
+  const text = String(subject || '').trim()
+  if (!text) return ''
+  if (/文科|人文|社科/.test(text)) return 'liberal'
+  if (/理科|自然科学/.test(text)) return 'science'
+  if (/工科|工程/.test(text)) return 'engineering'
+  return Object.entries(subjectGroupMatchers).find(([, matcher]) => matcher.test(text))?.[0] || ''
+}
+
+const getSubjectGroupCount = group => {
+  return resources.value.filter(resource => matchesCategory(resource) && matchesSubjectGroup(resource, group)).length
+}
+
 const currentUserId = () => String(localStorage.getItem('user_id') || localStorage.getItem('userId') || '')
 
 const normalizeOwnerFields = item => {
@@ -378,6 +447,8 @@ const normalizeResources = data => {
     const isVideo = item.category === 'video' || (item.type || item.file_type || '').includes('video')
     const rawContent = item.preview || item.content || ''
     const videoUrl = isVideo ? resolveApiUrl(rawContent) : ''
+    const subjectLabel = normalizeSubjectText(item)
+    const subjectGroup = getSubjectGroup(subjectLabel)
     const resource = {
       doc_id: String(item.doc_id || item.id || index),
       source: item.source || 'knowledge',
@@ -387,6 +458,8 @@ const normalizeResources = data => {
       type: isVideo ? 'video' : (item.type || item.file_type || ''),
       category: item.category || '',
       categoryLabel: categoryLabelMap[item.category] || '',
+      subjectLabel,
+      subjectGroup,
       visibility: item.visibility || 'private',
       created_at: item.created_at || item.createdAt || '',
       previewUrl: item.previewUrl || item.preview_url || videoUrl || '',
@@ -405,6 +478,8 @@ const normalizeGeneratedResources = data => {
     const resourceType = item.resource_type || item.file_type || item.fileType || 'resource'
     const resourceId = item.resource_id || item.resourceId || item.id
     const filename = item.filename || `${item.topic || item.title || '生成资源'}_${resourceType}`
+    const subjectLabel = normalizeSubjectText(item)
+    const subjectGroup = getSubjectGroup(subjectLabel)
 
     const resourceText = String(`${resourceType} ${filename} ${item.topic || ''} ${item.title || ''}`).toLowerCase()
     const isQuiz = resourceText.includes('exercise') || resourceText.includes('quiz')
@@ -422,6 +497,8 @@ const normalizeGeneratedResources = data => {
       type: isMindmap ? 'mindmap' : resourceType,
       category: isQuiz ? 'exercise' : isMindmap ? 'mindmap' : 'reference',
       categoryLabel: isMindmap ? '思维导图' : (isQuiz ? '练习题库' : 'AI 生成'),
+      subjectLabel,
+      subjectGroup,
       visibility: item.visibility || 'private',
       quizId: item.quiz_id || item.quizId || '',
       sessionId: item.session_id || item.sessionId || '',
@@ -440,6 +517,8 @@ const normalizeGeneratedImages = data => {
   return (Array.isArray(list) ? list : []).map(item => {
     const imageId = String(item.image_id || item.imageId || item.id || '')
     const url = item.url || item.image_url || item.imageUrl || item.preview_url || item.previewUrl || ''
+    const subjectLabel = normalizeSubjectText(item)
+    const subjectGroup = getSubjectGroup(subjectLabel)
     const resource = {
       doc_id: `image-${imageId}`,
       source: 'generated',
@@ -450,6 +529,8 @@ const normalizeGeneratedImages = data => {
       type: 'image',
       category: 'reference',
       categoryLabel: 'AI 生成图片',
+      subjectLabel,
+      subjectGroup,
       visibility: item.visibility || 'private',
       quizId: '',
       sessionId: '',
@@ -466,6 +547,8 @@ const normalizeGeneratedImages = data => {
 const normalizePresentations = data => {
   const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
   return list.map(item => {
+    const subjectLabel = normalizeSubjectText(item)
+    const subjectGroup = getSubjectGroup(subjectLabel)
     const resource = {
       doc_id: `presentation-${item.id}`,
       source: 'presentation',
@@ -476,6 +559,8 @@ const normalizePresentations = data => {
       type: 'presentation',
       category: 'presentation',
       categoryLabel: 'AI 视频',
+      subjectLabel,
+      subjectGroup,
       visibility: 'private',
       created_at: item.created_at || '',
       previewUrl: resolveApiUrl(item.file_url || ''),
@@ -542,7 +627,7 @@ const filteredResources = computed(() => {
       !searchText ||
       resource.title.toLowerCase().includes(searchText) ||
       resource.content.toLowerCase().includes(searchText)
-    ) && matchesCategory(resource)
+    ) && matchesCategory(resource) && matchesSubjectGroup(resource)
   })
 })
 
@@ -767,6 +852,10 @@ const matchesCategory = resource => {
   return getResourceKind(resource) === activeCategory.value
 }
 
+const matchesSubjectGroup = (resource, group = activeSubjectGroup.value) => {
+  return group === 'all' || resource.subjectGroup === group
+}
+
 const getReactionId = resource => {
   const id = resource?.sourceId || resource?.resourceId || resource?.resource_id || ''
   return id && !String(id).startsWith('image-') ? id : ''
@@ -920,6 +1009,10 @@ const toggleResourceFavorite = async resource => {
 // 切换资源大类
 const switchCategory = cat => {
   activeCategory.value = cat
+}
+
+const switchSubjectGroup = group => {
+  activeSubjectGroup.value = group
 }
 
 watch(filteredResources, list => {
@@ -1789,16 +1882,33 @@ onBeforeUnmount(() => {
 
 .sub-cat-btn {
   height: 38px;
-  padding: 0 20px;
+  padding: 0 14px 0 18px;
   border: 1px solid rgba(201, 220, 233, 0.72);
   border-radius: 999px;
   background: rgba(250, 250, 250, 0.66);
   color: rgba(22, 63, 143, 0.7);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
+}
+
+.sub-cat-btn span {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(95, 143, 195, 0.14);
+  color: #5f8fc3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .sub-cat-btn:hover {
@@ -1810,6 +1920,11 @@ onBeforeUnmount(() => {
   background: rgba(201, 220, 233, 0.78);
   color: #163f8f;
   border-color: rgba(95, 143, 195, 0.42);
+}
+
+.sub-cat-btn.active span {
+  background: #163f8f;
+  color: #ffffff;
 }
 
 .resource-card {
@@ -1914,6 +2029,35 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   overflow: hidden;
   flex-shrink: 0;
+}
+
+.resource-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  flex-shrink: 0;
+}
+
+.resource-card-meta span {
+  max-width: 50%;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(201, 220, 233, 0.52);
+  color: #45617e;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resource-card-meta span:first-child {
+  background: rgba(22, 63, 143, 0.1);
+  color: #163f8f;
 }
 
 .resource-card p {
