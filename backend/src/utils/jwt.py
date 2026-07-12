@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 JWT_KEY = os.getenv("JWT_KEY") or "zhiban-jwt-secret-key-change-in-production"
 ALGORITHM = os.getenv("ALGORITHM") or "HS256"
+JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES") or 60 * 24 * 7)
 
 if not JWT_KEY:
     import warnings
@@ -12,11 +13,12 @@ if not JWT_KEY:
 
 
 def create_access_token(user_id: int, role: str = "user") -> str:
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
         "role": role,
-        "exp": datetime.now(timezone.utc) + timedelta(days=7),
-        "iat": datetime.now(timezone.utc),
+        "exp": now + timedelta(minutes=JWT_EXPIRE_MINUTES),
+        "iat": now,
     }
     return jwt.encode(payload, JWT_KEY, ALGORITHM)
 

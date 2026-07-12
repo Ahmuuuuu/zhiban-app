@@ -2715,8 +2715,10 @@ const formatThinkingProcess = value => {
     : String(value || '')
   return raw
     .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
 }
 
 const getTaskThinkingProcess = task => {

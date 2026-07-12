@@ -165,8 +165,10 @@ const formatTaskThinking = (value: any) => {
     : String(value || '')
   return raw
     .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
 }
 
 const getBackendThinking = (taskData: any) => formatTaskThinking(
@@ -175,6 +177,24 @@ const getBackendThinking = (taskData: any) => formatTaskThinking(
   taskData?.message ||
   taskData?.msg
 )
+
+const appendTaskThinking = (task: GenerationTask, value: any) => {
+  const next = formatTaskThinking(value)
+  if (!next) return
+
+  const lines = formatTaskThinking(task.thinkingProcess)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  for (const line of next.split(/\r?\n/).map(item => item.trim()).filter(Boolean)) {
+    if (lines[lines.length - 1] !== line) {
+      lines.push(line)
+    }
+  }
+
+  task.thinkingProcess = lines.slice(-80).join('\n')
+}
 
 const normalizeTaskFiles = (taskData: any) => {
   const result = taskData?.result || taskData?.resources || []
@@ -198,7 +218,7 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
     ? (taskData?.error || '资源生成失败，请稍后再试。')
     : formatTaskProgress(taskData)
   const thinking = getBackendThinking(taskData)
-  if (thinking) task.thinkingProcess = thinking
+  appendTaskThinking(task, thinking)
   task.error = taskData?.error || ''
   // 保留已生成的视频文件和 doneEvent.presentation，
   // 避免 hydrate 时后端数据覆盖前端已完成的视频状态导致重复生成
@@ -246,7 +266,7 @@ const upsertBackendTask = (taskData: any, tool?: ResourceToolConfig) => {
       chatGroupId: taskData?.chat_group_id || taskData?.chatGroupId || null,
       status: 'running',
       progress: '正在生成资源...',
-      thinkingProcess: getBackendThinking(taskData),
+      thinkingProcess: '',
       error: '',
       files: [],
       images: [],
@@ -413,7 +433,7 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
   }
 
   const thinking = getBackendThinking(eventData)
-  if (thinking) task.thinkingProcess = thinking
+  appendTaskThinking(task, thinking)
 
   if (eventData.progress_msg || eventData.progressMsg || eventData.progress || eventData.status) {
     task.progress = formatTaskProgress(eventData)
@@ -482,18 +502,18 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
       task.backendTaskId = submitData?.task_id || submitData?.taskId || submitData?.id || task.backendTaskId
       task.chatGroupId = submitData?.chat_group_id || submitData?.chatGroupId || task.chatGroupId
       const thinking = getBackendThinking(submitData)
-      if (thinking) task.thinkingProcess = thinking
+      appendTaskThinking(task, thinking)
       task.updatedAt = Date.now()
       persistTasks()
     },
     onProgress: msg => {
       task.progress = msg
-      task.thinkingProcess = formatTaskThinking(msg) || task.thinkingProcess
+      appendTaskThinking(task, msg)
       task.updatedAt = Date.now()
       persistTasks()
     },
     onThinking: msg => {
-      task.thinkingProcess = formatTaskThinking(msg) || task.thinkingProcess
+      appendTaskThinking(task, msg)
       task.updatedAt = Date.now()
       persistTasks()
     },
@@ -687,7 +707,7 @@ export function useGenerationTaskQueue() {
       }
       task.progress = formatTaskProgress(data)
       const thinking = getBackendThinking(data)
-      if (thinking) task.thinkingProcess = thinking
+      appendTaskThinking(task, thinking)
       task.updatedAt = Date.now()
       streamBackendTask(task)
       pollBackendTask(task)

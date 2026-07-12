@@ -112,7 +112,7 @@ async def read(user_id : int = Depends(get_user_id_from_token)):
                 "code" : 200,
                 "msg" : msg,
                 "data" : {
-                    "id" : create_access_token(user.id, user.role or "user"),
+                    "id" : user.id,
                     "username" : user.username,
                     "university" : user.university,
                     "grade" : user.grade,
