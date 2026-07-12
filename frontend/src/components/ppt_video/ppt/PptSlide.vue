@@ -252,7 +252,38 @@ const slidePalette = slide => {
 
 const svgUrl = svg => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
 
-const cleanDisplayText = value => String(value || '')
+const decodeHtmlEntities = value => {
+  const text = String(value || '')
+  if (!/[&][a-zA-Z#0-9]+;/.test(text)) return text
+  if (typeof document === 'undefined') {
+    return text
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+  }
+  const textarea = document.createElement('textarea')
+  textarea.innerHTML = text
+  return textarea.value
+}
+
+const stripRenderedMathHtml = value => {
+  let text = decodeHtmlEntities(value)
+  const hasRenderedMathLeak = /katex|mathml|spanclass|xmlns|semantics|mrow|annotation-xml/i.test(text)
+  if (!hasRenderedMathLeak) return text
+  text = text
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<\/?[^>\n]+>/g, ' ')
+    .replace(/<[^>\n]*$/g, ' ')
+    .replace(/\b(?:spanclass|span|math|semantics|mrow|mi|mo|mn|mfrac|msup|msub|annotation-xml|annotation)\b(?:\s*=\s*["']?[^<>\s]+["']?)?/gi, ' ')
+    .replace(/\b(?:katex|mathml|mord|mopen|mclose|mrel|mspace|mop|mbin|base|strut|vlist|pstrut|reset-size|size\d+|displaystyle|textstyle)\b/gi, ' ')
+    .replace(/\s*\/\/www\.w3\.org\/1998\/Math\/MathML\S*/gi, ' ')
+  return text
+}
+
+const cleanDisplayText = value => stripRenderedMathHtml(value)
   .replace(/<!--[\s\S]*?-->/g, ' ')
   .replace(/<\/?[^>\n]+>/g, ' ')
   .replace(/<[^>\n]*$/g, ' ')
@@ -263,8 +294,11 @@ const cleanDisplayText = value => String(value || '')
   .replace(/\n{3,}/g, '\n\n')
   .trim()
 
+const hasLatexSyntax = value => /(\$\$?[^$]+?\$\$?|\\begin\{[a-zA-Z*]+\}|\\frac|\\sum|\\prod|\\int|\\cdot|\\times|\\left|\\right|[_^]\{?[\w\\]+)/.test(value)
+
 const compactDisplayText = (value, limit = 260) => {
   const text = cleanDisplayText(value).replace(/\s+/g, ' ').trim()
+  if (hasLatexSyntax(text)) return text
   return text.length > limit ? `${text.slice(0, limit - 1)}...` : text
 }
 
@@ -325,7 +359,34 @@ const normalizeBlocks = slide => {
 
 const slideBlocks = computed(() => normalizeBlocks(props.slide))
 const firstBlockText = computed(() => slideBlocks.value[0]?.text || '')
-const formulaText = computed(() => slideBlocks.value.find(block => /=|\$|\\sum|\\frac|\^|_/.test(block.text))?.text || firstBlockText.value)
+const extractFormulaText = value => {
+  const text = cleanDisplayText(value)
+  const displayMatch = text.match(/\$\$([\s\S]+?)\$\$/)
+  if (displayMatch) return `$$${displayMatch[1].trim()}$$`
+
+  const inlineMatches = [...text.matchAll(/\$([^$\n]{2,})\$/g)]
+    .map(match => match[1].trim())
+    .filter(item => item && !/[\u4e00-\u9fff]/.test(item))
+  if (inlineMatches.length) {
+    return inlineMatches
+      .slice(0, 3)
+      .map(item => `$${item}$`)
+      .join('  ')
+  }
+
+  const beginMatch = text.match(/\\begin\{([a-zA-Z*]+)\}[\s\S]+?\\end\{\1\}/)
+  if (beginMatch) return `$$${beginMatch[0].trim()}$$`
+
+  const equationLine = text
+    .split(/\r?\n|[。；;]/)
+    .map(line => line.trim())
+    .find(line => /[=≈≤≥]|\\sum|\\frac|\\int|\\prod|[_^]/.test(line) && !/[\u4e00-\u9fff]{6,}/.test(line))
+  return equationLine || ''
+}
+const formulaText = computed(() => {
+  const formulaBlock = slideBlocks.value.find(block => /=|\$|\\sum|\\frac|\\begin|\^|_/.test(block.text))
+  return extractFormulaText(formulaBlock?.text) || extractFormulaText(firstBlockText.value) || firstBlockText.value
+})
 const formulaBlocks = computed(() => slideBlocks.value.filter(block => block.text !== formulaText.value).slice(0, 5))
 
 const slideTextLength = computed(() => {

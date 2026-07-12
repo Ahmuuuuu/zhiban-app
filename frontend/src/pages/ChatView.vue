@@ -960,11 +960,11 @@ const buildMessagesFromHistory = (records, conversationId) => {
       const content = item.content || item.req || ''
 
       if (item.role === 'assistant') {
-        return normalizeHistoryAssistantMessage(
+        return markStaticThinkingMessage(normalizeHistoryAssistantMessage(
           { ...item, res: content, content },
           `${conversationId}-${id}`,
           time
-        )
+        ))
       }
 
       return {
@@ -1412,6 +1412,14 @@ const stopThinkingTypewriter = (messageId: string) => {
   thinkingTypewriterStates.delete(messageId)
 }
 
+const freezeThinkingProcess = (message: any) => {
+  if (!message) return
+  const messageId = String(message?.id || '')
+  if (messageId) stopThinkingTypewriter(messageId)
+  message._thinkingDisplay = String(message?.thinkingProcess || '')
+  message._thinkingTyping = false
+}
+
 const advanceThinkingTypewriter = (message: any, messageId: string) => {
   const state = thinkingTypewriterStates.get(messageId)
   if (!state) return
@@ -1440,6 +1448,11 @@ const syncThinkingTypewriter = (message: any) => {
   if (!messageId) return
 
   const target = String(message?.thinkingProcess || '')
+  if (message?._staticThinking) {
+    freezeThinkingProcess(message)
+    return
+  }
+
   if (!target) {
     message._thinkingDisplay = ''
     message._thinkingTyping = false
@@ -1476,6 +1489,13 @@ const syncThinkingTypewriter = (message: any) => {
 
 const isThinkingTyping = (message: any) => Boolean(message?._thinkingTyping)
 
+const markStaticThinkingMessage = (message: any) => {
+  if (!message || typeof message !== 'object') return message
+  message._staticThinking = true
+  if (message.thinkingProcess) freezeThinkingProcess(message)
+  return message
+}
+
 watch(
   () => messages.value.map((message: any) => ({
     id: String(message?.id || ''),
@@ -1484,7 +1504,11 @@ watch(
   entries => {
     const aliveIds = new Set(entries.map(entry => entry.id).filter(Boolean))
     for (const message of messages.value as any[]) {
-      if (message?.thinkingProcess) syncThinkingTypewriter(message)
+      if (message?._staticThinking) {
+        freezeThinkingProcess(message)
+      } else if (message?.thinkingProcess) {
+        syncThinkingTypewriter(message)
+      }
     }
     for (const messageId of thinkingTypewriterStates.keys()) {
       if (!aliveIds.has(messageId)) stopThinkingTypewriter(messageId)
@@ -2939,6 +2963,8 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             }
           }
           target.time = getNowTime()
+          target._staticThinking = task.status !== 'running'
+          if (target._staticThinking) freezeThinkingProcess(target)
         }
 
         if (task.status === 'done' && task.tool?.generateMode === 'video') {
@@ -3176,6 +3202,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
 const addGenerationTaskMessage = task => {
   const userMsgId = `generation-user-${task.id}`
   const cleanTaskText = stripInternalInstructions(task.text)
+  const isRunningTask = task.status === 'running'
   const existingUser = messages.value.find(item => (
     item.id === userMsgId ||
     (item.role === 'user' && stripInternalInstructions(item.content) === cleanTaskText)
@@ -3203,8 +3230,11 @@ const addGenerationTaskMessage = task => {
       generationTaskId: task.id,
       content: task.status === 'failed' ? task.error : (task.progress || '正在生成资源...'),
       thinkingProcess: getTaskThinkingProcess(task),
+      _staticThinking: !isRunningTask,
       time: formatTime(task.updatedAt)
     })
+  } else if (!isRunningTask) {
+    markStaticThinkingMessage(existingAssistant)
   }
 
   attachGenerationTaskToMessage(task, assistantMsgId)
@@ -3493,6 +3523,7 @@ const sendMessage = async () => {
           target.content = '资源已生成，可以在下方查看。'
           target.thinkingProcess = formatResourceTextStream('done')
           target.time = getNowTime()
+          markStaticThinkingMessage(target)
         }
 
         if (target && hasPptStreamText && isPptFile(fileData)) {
@@ -3500,6 +3531,7 @@ const sendMessage = async () => {
           target.content = `PPT 已生成，可以在下方打开预览。${slideCount ? `已生成 ${slideCount} 页内容。` : ''}`
           target.thinkingProcess = formatPptStreamPlainContent(pptTextStream, { status: 'done' })
           target.time = getNowTime()
+          markStaticThinkingMessage(target)
         }
 
         if (target && !hasReceivedChunk) {

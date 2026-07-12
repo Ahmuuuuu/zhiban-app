@@ -884,13 +884,13 @@ watch(
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   align-content: stretch;
-  gap: clamp(8px, 1.4vw, 18px);
+  gap: clamp(8px, 1.2vw, 14px);
 }
 
 .ppt-slide h3 {
   margin: 0;
   color: #163f8f;
-  font-size: clamp(22px, 3.2vw, 40px);
+  font-size: clamp(22px, 2.8vw, 38px);
   line-height: 1.16;
   text-align: center;
 }
@@ -997,9 +997,11 @@ watch(
 
 .process-strip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  grid-auto-rows: minmax(0, auto);
   gap: 12px;
-  align-items: stretch;
+  align-items: start;
+  align-content: start;
   min-height: 0;
   height: 100%;
 }
@@ -1016,6 +1018,7 @@ watch(
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  max-height: 100%;
 }
 
 .process-step b {
@@ -1036,11 +1039,11 @@ watch(
 .process-step span {
   display: block;
   font-size: clamp(13px, 1.25vw, 16px);
-  line-height: 1.55;
+  line-height: 1.48;
   max-height: 100%;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 8;
+  -webkit-line-clamp: 10;
   -webkit-box-orient: vertical;
 }
 
@@ -1090,7 +1093,7 @@ watch(
 
 .formula-layout {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(86px, auto) minmax(0, 1fr);
   gap: 14px;
   min-height: 0;
   height: 100%;
@@ -1098,27 +1101,40 @@ watch(
 
 .formula-box {
   min-height: 0;
-  max-height: 150px;
-  padding: clamp(14px, 2vw, 24px);
+  max-height: min(28vh, 150px);
+  padding: clamp(10px, 1.5vw, 18px);
   border-radius: 8px;
   background:
     linear-gradient(135deg, var(--slide-primary, #163f8f), var(--slide-secondary, #2f80ed));
   color: #ffffff;
   display: grid;
   place-items: center;
-  font-size: clamp(20px, 3vw, 38px);
+  font-size: clamp(18px, 2.4vw, 32px);
   font-weight: 900;
   line-height: 1.25;
   text-align: center;
   overflow: hidden;
 }
 
+.formula-box .katex-display {
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.formula-box .katex {
+  max-width: 100%;
+  white-space: normal;
+}
+
 .formula-points {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  grid-auto-rows: minmax(0, auto);
   gap: 12px;
   min-height: 0;
+  align-content: start;
+  overflow: hidden;
 }
 
 .formula-points p,
@@ -1133,21 +1149,23 @@ watch(
   background: #ffffff;
   color: rgba(31, 51, 86, 0.82);
   font-size: clamp(14px, 1.3vw, 17px);
-  line-height: 1.55;
+  line-height: 1.46;
   min-height: 0;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 8;
+  -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
 }
 
 .content-card-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  grid-auto-rows: minmax(0, auto);
   gap: 10px;
   min-height: 0;
   height: 100%;
+  align-content: start;
+  overflow: hidden;
 }
 
 .content-card-grid article {
@@ -1179,9 +1197,13 @@ watch(
 
 .content-card-grid article p {
   font-size: clamp(14px, 1.3vw, 16px);
-  line-height: 1.48;
+  line-height: 1.42;
   overflow-wrap: anywhere;
   word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .content-card-grid article p .katex {
   font-size: 0.95em;
@@ -1196,9 +1218,22 @@ watch(
 }
 
 .ppt-slide.is-dense .ppt-slide__content {
-  width: min(94%, 1040px);
+  width: min(96%, 1080px);
   font-size: clamp(13px, 1.15vw, 17px);
-  line-height: 1.45;
+  line-height: 1.4;
+}
+
+.ppt-slide.is-dense .process-strip {
+  grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
+}
+
+.ppt-slide.is-dense .content-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+}
+
+.ppt-slide.is-dense .formula-points p,
+.ppt-slide.is-dense .content-card-grid article p {
+  -webkit-line-clamp: 4;
 }
 
 .ppt-slide.is-very-dense h3 {
@@ -1206,14 +1241,20 @@ watch(
 }
 
 .ppt-slide.is-very-dense .ppt-slide__content {
-  width: min(96%, 1100px);
+  width: min(98%, 1120px);
   font-size: clamp(12px, 1vw, 15px);
   line-height: 1.38;
 }
 
 .ppt-slide.is-very-dense .formula-box {
-  max-height: 110px;
-  font-size: clamp(18px, 2.4vw, 30px);
+  max-height: 96px;
+  font-size: clamp(16px, 2vw, 26px);
+}
+
+.ppt-slide.is-very-dense .process-step span,
+.ppt-slide.is-very-dense .content-card-grid article p,
+.ppt-slide.is-very-dense .formula-points p {
+  -webkit-line-clamp: 4;
 }
 
 .ppt-slide__content span,

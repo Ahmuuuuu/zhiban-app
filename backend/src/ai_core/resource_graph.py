@@ -447,39 +447,61 @@ async def generate_ppt_parallel(
         t = re.sub(r'`([^`]+)`', r'\1', t)               # 行内代码
         return t.strip()
 
-    def _quick_check_ppt(content: str) -> bool:
-        """启发式快检：只拦截明显不合格的（空白、$不配对、拆分页），其他留给 reviewer"""
-        slides = content.split("\n---\n")
+    def _quick_check_ppt(content: str) -> tuple[bool, str]:
+        """格式安全快检：只拦截机械硬伤，内容质量留给 reviewer。"""
+        normalized = str(content or "").strip()
+        normalized = re.sub(r"^```(?:markdown|md)?\s*", "", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"\s*```$", "", normalized)
+        if not normalized:
+            return False, "empty_content"
+
+        slides = re.split(r"\n\s*---+\s*\n", normalized)
+        checked_slides = 0
         for slide in slides:
             slide = slide.strip()
             if not slide:
                 continue
+            if re.search(r'katex|mathml|spanclass|xmlns|semantics|mrow|&lt;/?[a-z]|<(?!/?!--)[a-z][^>]*>', slide, re.IGNORECASE):
+                return False, "rendered_html_or_katex_leak"
+            if re.search(r'^\s*\$\$\s*\$\$\s*$', slide, re.MULTILINE):
+                return False, "empty_formula_block"
             has_layout = slide.startswith("<!-- layout:")
             has_title = slide.startswith("# ") or slide.startswith("## ")
             if not (has_layout or has_title):
                 continue
-            body = _strip_framework(slide)
-            if len(body) < 40:
-                return False
-            inline_n = len(re.findall(r'\$[^$]+\$', slide))
-            display_n = len(re.findall(r'\$\$[\s\S]*?\$\$', slide))
-            formula_count = inline_n + display_n
-            chinese_chars = len(re.findall(r'[一-鿿㐀-䶿]', body))
-            min_chinese = 15 + formula_count * 6
-            if chinese_chars < min_chinese:
-                return False
+            checked_slides += 1
             if "（上）" in slide or "（下）" in slide:
-                return False
+                return False, "split_title_marker"
             dollars = slide.count("$")
             if dollars % 2 != 0:
-                return False
+                return False, "unbalanced_dollar"
             text_no_math = re.sub(r'\$\$[\s\S]*?\$\$', '', slide)
             text_no_math = re.sub(r'\$[^$]*\$', '', text_no_math)
             if re.search(r'\.{4,}|……{1,}', text_no_math):
-                return False
+                return False, "ellipsis_placeholder"
             if re.search(r'(同上|以此类推|依此类推|类似可得|不再赘述|此处不再展开|（略）|证明略|过程略|推导略|步骤略)', text_no_math):
-                return False
-        return True
+                return False, "omitted_content"
+        if checked_slides <= 0:
+            return False, "missing_slide_title"
+        return True, ""
+
+    def _fallback_ppt_section(section_title: str) -> str:
+        safe_title = re.sub(r"[#<>`$]", "", section_title or topic).strip() or "核心知识点"
+        return (
+            f"## {safe_title}：核心概念梳理\n"
+            "<!-- layout: content_cards -->\n"
+            f"- 本页用于替代未通过质量审核的初稿，先围绕「{safe_title}」建立稳定的概念框架，避免错误公式、残缺推导或渲染标签进入学习材料。\n"
+            f"- 学习时先确认本章节讨论的对象、条件和目标，再进入具体例子；这样可以把「{safe_title}」放回完整知识链条中理解。\n"
+            "- 对公式密集内容，优先用小规模例子验证含义，再推广到一般情形；每一步都应说明变量来源、运算规则和适用前提。\n"
+            "- 如果后续需要更精细的推导，可以重新生成本章节或改用文档资源承载长公式，避免在幻灯片里塞入过长表达式。\n"
+            "\n---\n"
+            f"## {safe_title}：应用检查清单\n"
+            "<!-- layout: process_steps -->\n"
+            "- 第一步：用一句话说清本章节概念解决什么问题，并列出至少两个关键词，检查自己是否只记住了符号而没有理解意义。\n"
+            "- 第二步：选择一个最小例子进行手算或口头推演，重点观察每一步为什么成立，而不是直接跳到最后答案。\n"
+            "- 第三步：对比常见错误做法，尤其关注符号位置、维度匹配、条件遗漏和把结论套用到不适用场景的问题。\n"
+            "- 第四步：完成一道同类型练习后复述解题路径，确认能从题目信息推出所用方法，而不是依赖题目标题提示。\n"
+        )
 
 
     def _trim_section_context(
@@ -689,7 +711,7 @@ async def generate_ppt_parallel(
                 f"请生成适配该模板风格的 layout/theme/visual 元数据，并在每页标题后一行加入 `<!-- theme: {ppt_theme_id} -->`。"
             )
 
-        # ── 生成 + 审核循环（先展示后修改：初稿立即推送，审核在后台进行，修改后推送替换）──
+        # ── 生成 + 审核循环：通过格式快检和 reviewer 后再推送，避免未审坏稿进入前端 ──
         MAX_REVIEW_ROUNDS = 3
         content = ""
         review_feedback = ""
@@ -794,32 +816,28 @@ async def generate_ppt_parallel(
 
             # Step B: 快检
             quick_ok = False
+            quick_reason = ""
             if not is_portrait_section:
-                quick_ok = _quick_check_ppt(content)
-                logger.info("[PPT-Gen] idx=%d section=%s round=%d %s 耗时=%.2fs",
-                            idx, section_title, round_idx + 1, "快检通过" if quick_ok else "快检未通过", elapsed)
+                quick_ok, quick_reason = _quick_check_ppt(content)
+                logger.info("[PPT-Gen] idx=%d section=%s round=%d %s reason=%s 耗时=%.2fs",
+                            idx, section_title, round_idx + 1, "快检通过" if quick_ok else "快检未通过", quick_reason or "-", elapsed)
 
-            # Step C: 初稿立即推送（不等审核），后续轮次推送替换
-            if is_first_round:
+            # 画像引入页不走严格章节 reviewer，但仍只在生成完成后推送。
+            if is_portrait_section:
                 _results[idx] = {"idx": idx, "content": content}
                 _push_section(idx, content, section_title)
-                if is_portrait_section or skip_review_sections:
-                    _push_agent_event(
-                        stream_writer,
-                        section_agent_id,
-                        f"PPT第 {idx + 1} 章",
-                        "executor",
-                        "done",
-                        f"「{section_title}」已生成",
-                        resource_type="ppt",
-                        current=idx + 1,
-                        total=total,
-                    )
-                    return
-            # 非首轮：更新 _results 后推送替换
-            else:
-                _results[idx] = {"idx": idx, "content": content}
-                _push_section_replace(idx, content, section_title)
+                _push_agent_event(
+                    stream_writer,
+                    section_agent_id,
+                    f"PPT第 {idx + 1} 章",
+                    "executor",
+                    "done",
+                    f"「{section_title}」已生成",
+                    resource_type="ppt",
+                    current=idx + 1,
+                    total=total,
+                )
+                return
 
             # Step D: 审核（画像引入页已在上面 return）
             _push_agent_event(
@@ -833,9 +851,18 @@ async def generate_ppt_parallel(
                 current=idx + 1,
                 total=total,
             )
-            review_result = await _review_ppt_section(content, section_title, format_checked=quick_ok)
+            if not quick_ok:
+                review_result = {
+                    "passed": False,
+                    "score": 0,
+                    "feedback": f"系统格式快检未通过（{quick_reason or 'format_error'}）：请输出完整 PPT Markdown，修复结构、公式闭合、空公式块、HTML/KaTeX 标签泄漏或省略占位问题。",
+                }
+            else:
+                review_result = await _review_ppt_section(content, section_title, format_checked=True)
             if review_result.get("passed"):
                 final_passed = True
+                _results[idx] = {"idx": idx, "content": content}
+                _push_section(idx, content, section_title)
                 _push_agent_event(
                     stream_writer,
                     section_agent_id,
@@ -860,7 +887,10 @@ async def generate_ppt_parallel(
                            idx, section_title, round_idx + 1, review_feedback[:120])
 
         if not final_passed and not is_portrait_section:
-            logger.warning("[PPT-Review] idx=%d section=%s 达最大轮次 %d，接受当前版本",
+            fallback_content = _fallback_ppt_section(section_title)
+            _results[idx] = {"idx": idx, "content": fallback_content}
+            _push_section(idx, fallback_content, section_title)
+            logger.warning("[PPT-Review] idx=%d section=%s 达最大轮次 %d，使用安全兜底版本",
                            idx, section_title, MAX_REVIEW_ROUNDS)
             _push_agent_event(
                 stream_writer,
@@ -868,7 +898,7 @@ async def generate_ppt_parallel(
                 f"PPT第 {idx + 1} 章",
                 "reviewer",
                 "done",
-                f"「{section_title}」已完成修订",
+                f"「{section_title}」使用兜底内容",
                 resource_type="ppt",
                 current=idx + 1,
                 total=total,
@@ -1186,7 +1216,7 @@ async def executor_node(state: ResourceState) -> dict:
             ppt_prompt_key=state.get("ppt_prompt_key", "ppt"),
             llm_priority=llm_priority,
             user_id=user_id_int,
-            skip_review_sections=bool(state.get("skip_review")),
+            skip_review_sections=False,
             ppt_theme_id=state.get("ppt_theme_id", ""),
         )
 
