@@ -3930,10 +3930,10 @@ watch(
 }
 
 .agent-flow-launcher {
-  position: fixed;
+  position: absolute;
   z-index: 72;
   right: clamp(18px, 2.4vw, 32px);
-  top: 94px;
+  top: clamp(18px, 2.4vw, 32px);
   height: 46px;
   padding: 0 14px;
   border: 1px solid rgba(22, 63, 143, 0.16);
@@ -5567,7 +5567,7 @@ textarea::placeholder {
 
   .agent-flow-launcher {
     right: 14px;
-    top: 66px;
+    top: 14px;
     width: 44px;
     height: 44px;
     padding: 0;

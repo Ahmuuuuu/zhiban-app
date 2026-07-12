@@ -32,13 +32,13 @@
             stroke-width="1.5"
             @mouseenter="hoverIndex = i"
             @mouseleave="hoverIndex = -1"
-            :style="{ transform: hoverIndex === i ? 'scale(1.05)' : '', transformOrigin: `${c}px ${c}px`, transition: 'transform 0.2s ease' }"
+            :style="{ transform: hoverIndex === i ? 'scale(1.05)' : '', transformOrigin: '0 0', transition: 'transform 0.2s ease' }"
           />
         </template>
         <circle :r="innerR" fill="var(--color-card, #fff)" stroke="none" />
         <text text-anchor="middle" dy="0.35em" class="donut-center-text">
-          <tspan class="donut-center-value">{{ total }}</tspan>
-          <tspan v-if="unit" class="donut-center-unit" x="0" dy="16">{{ unit }}</tspan>
+          <tspan class="donut-center-value">{{ centerDisplayValue }}</tspan>
+          <tspan v-if="centerDisplayLabel" class="donut-center-unit" x="0" dy="16">{{ centerDisplayLabel }}</tspan>
         </text>
       </g>
     </svg>
@@ -171,6 +171,8 @@ const props = defineProps({
   width: { type: Number, default: 400 },     // for bar/hbar
   height: { type: Number, default: 200 },
   unit: { type: String, default: '' },
+  centerValue: { type: [String, Number], default: '' },
+  centerLabel: { type: String, default: '' },
   showLegend: { type: Boolean, default: false }
 })
 
@@ -181,6 +183,8 @@ const c = computed(() => props.size / 2)
 const innerR = computed(() => props.size * 0.3)
 
 const total = computed(() => props.data.reduce((s, d) => s + (Number(d.value) || 0), 0))
+const centerDisplayValue = computed(() => props.centerValue !== '' ? props.centerValue : total.value)
+const centerDisplayLabel = computed(() => props.centerLabel || props.unit)
 
 function polarToCartesian(cx, cy, r, angleDeg) {
   const rad = (angleDeg - 90) * Math.PI / 180
@@ -204,7 +208,7 @@ const donutArcs = computed(() => {
     const end = angle + slice
     angle = end
     return {
-      d: describeArc(c.value, c.value, outer, start, end),
+      d: describeArc(0, 0, outer, start, end),
       color: d.color || PALETTE[i % PALETTE.length]
     }
   })

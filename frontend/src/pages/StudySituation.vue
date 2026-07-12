@@ -24,35 +24,57 @@
           </div>
 
           <div class="profile-body">
-            <div class="avatar-frame">
-              <img :src="displayAvatarUrl" alt="avatar" />
+            <div class="profile-identity">
+              <div class="avatar-frame">
+                <img :src="displayAvatarUrl" alt="avatar" />
+              </div>
+              <div class="profile-badges">
+                <div
+                  v-for="item in profileHighlights"
+                  :key="item.label"
+                  class="profile-badge"
+                  :style="{ '--badge-color': item.color }"
+                >
+                  <component :is="item.icon" :size="15" stroke-width="2" />
+                  <div>
+                    <strong>{{ item.value }}</strong>
+                    <span>{{ item.label }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div class="radar-wrap">
-              <svg viewBox="0 0 220 220" role="img" aria-label="profile radar">
-                <polygon
-                  v-for="ring in radarRings"
-                  :key="ring"
-                  :points="radarRingPoints(ring)"
-                  class="radar-grid"
-                  :class="{ muted: ring < 100 }"
-                />
-                <line
-                  v-for="axis in radarAxes"
-                  :key="axis.angle"
-                  :x1="radarCenter"
-                  :y1="radarCenter"
-                  :x2="axis.x"
-                  :y2="axis.y"
-                  class="radar-axis"
-                />
-                <polygon :points="radarPoints" class="radar-score" />
-                <text v-for="label in radarLabels" :key="label.text" :x="label.x" :y="label.y" text-anchor="middle">
-                  <tspan :x="label.x" dy="-12" class="radar-value">{{ label.value }}</tspan>
-                  <tspan :x="label.x" dy="13">{{ label.text }}</tspan>
-                  <tspan :x="label.x" dy="13" class="radar-label-en">{{ label.en }}</tspan>
-                </text>
-              </svg>
+            <div class="profile-chart-card">
+              <div class="profile-chart-card__head">
+                <span>能力画像图</span>
+                <small>雷达能力分布</small>
+              </div>
+              <div class="radar-wrap">
+                <svg viewBox="0 0 220 220" role="img" aria-label="profile radar">
+                  <polygon
+                    v-for="ring in radarRings"
+                    :key="ring"
+                    :points="radarRingPoints(ring)"
+                    class="radar-grid"
+                    :class="{ muted: ring < 100 }"
+                  />
+                  <line
+                    v-for="axis in radarAxes"
+                    :key="axis.angle"
+                    :x1="radarCenter"
+                    :y1="radarCenter"
+                    :x2="axis.x"
+                    :y2="axis.y"
+                    class="radar-axis"
+                  />
+                  <polygon :points="radarPoints" class="radar-score" />
+                  <text v-for="label in radarLabels" :key="label.text" :x="label.x" :y="label.y" text-anchor="middle">
+                    <tspan :x="label.x" dy="-12" class="radar-value">{{ label.value }}</tspan>
+                    <tspan :x="label.x" dy="13">{{ label.text }}</tspan>
+                    <tspan :x="label.x" dy="13" class="radar-label-en">{{ label.en }}</tspan>
+                  </text>
+                </svg>
+              </div>
             </div>
           </div>
         </article>
@@ -76,10 +98,46 @@
             <h2>&#x4EBA;&#x7269;&#x753B;&#x50CF;&#x6807;&#x7B7E;</h2>
           </div>
           <div class="tag-list">
-            <span v-for="tag in learnerTags" :key="tag">{{ tag }}</span>
+            <span
+              v-for="(tag, index) in learnerTags"
+              :key="tag"
+              :style="tagAccentStyle(index)"
+            >
+              <component :is="tagIconForIndex(index)" :size="13" stroke-width="2.2" />
+              {{ tag }}
+            </span>
           </div>
-          <div v-if="knowledgeDistribution.length" class="mini-donut">
-            <SimpleChart type="donut" :data="knowledgeDistribution" :size="150" unit="知识点" />
+          <div v-if="knowledgeDistribution.length" class="knowledge-focus">
+            <div class="knowledge-focus__head">
+              <span>薄弱知识点占比</span>
+              <small>按薄弱程度</small>
+            </div>
+            <div class="knowledge-focus__body">
+              <div class="knowledge-focus__chart">
+                <SimpleChart
+                  type="donut"
+                  :data="knowledgeDistribution"
+                  :size="148"
+                  :center-value="knowledgeDistribution.length"
+                  center-label="项知识点"
+                />
+              </div>
+              <div class="knowledge-focus__legend">
+                <div
+                  v-for="(item, index) in knowledgeDistribution"
+                  :key="item.label"
+                  class="knowledge-focus__legend-item"
+                >
+                  <span :style="{ background: item.color }">
+                    <component :is="knowledgeIconForIndex(index)" :size="12" stroke-width="2.2" />
+                  </span>
+                  <div>
+                    <strong>{{ item.label }}</strong>
+                    <small>{{ item.value }}% 薄弱 · {{ item.accuracyText }} · {{ item.attemptText }}</small>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           </article>
         </aside>
@@ -154,13 +212,13 @@
             </div>
             <p v-if="!weakPoints.length" class="path-empty">&#x6682;&#x65E0;&#x8584;&#x5F31;&#x77E5;&#x8BC6;&#x70B9;</p>
             <div v-else class="weak-list">
-              <div v-for="item in weakPoints" :key="item.name" class="weak-row">
+              <div v-for="(item, index) in weakPoints" :key="item.name" class="weak-row">
                 <div>
                   <strong>{{ item.name }}</strong>
                   <span>{{ item.tip }}</span>
                 </div>
                 <div class="weak-bar">
-                  <span :style="{ width: `${item.value}%`, background: progressBarColors[index % progressBarColors.length] }"></span>
+                  <span :style="{ width: `${item.value}%`, background: weakBarColor(index) }"></span>
                 </div>
               </div>
             </div>
@@ -185,13 +243,15 @@
           </div>
           <div class="feedback-chart-row">
             <div class="feedback-summary">
-              <div v-for="(item, idx) in resourceFeedback" :key="item.label" class="feedback-stat-card" :style="{ borderTopColor: progressBarColors[idx % progressBarColors.length] }">
-                <strong :style="{ color: progressBarColors[idx % progressBarColors.length] }">{{ item.value }}</strong>
+              <div
+                v-for="(item, idx) in resourceFeedback"
+                :key="item.label"
+                class="feedback-stat-card"
+                :style="feedbackStatStyle(idx)"
+              >
+                <strong>{{ item.value }}</strong>
                 <span>{{ item.label }}</span>
               </div>
-            </div>
-            <div v-if="resourceChartData.length" class="feedback-bar">
-              <SimpleChart type="hbar" :data="resourceChartData" :width="280" :height="140" />
             </div>
           </div>
           <p>{{ resourceFeedbackText }}</p>
@@ -204,11 +264,16 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  Activity,
   BadgeCheck,
+  BookOpenCheck,
+  BrainCircuit,
   Clock3,
+  Flame,
   Lightbulb,
   MessageSquareText,
   Route,
+  Sparkles,
   Target,
   TrendingUp,
   UserRound
@@ -482,13 +547,34 @@ const CHART_COLORS = [
   '#e11d48', '#ea580c', '#eab308', '#6366f1',
   '#14b8a6', '#dc2626', '#a855f7', '#0ea5e9'
 ]
+const PROFILE_ICONS = [BrainCircuit, Activity, BookOpenCheck]
+const TAG_ICONS = [Sparkles, BrainCircuit, BookOpenCheck, Flame, Target, BadgeCheck]
+
+const colorForIndex = index => CHART_COLORS[index % CHART_COLORS.length]
+const tagIconForIndex = index => TAG_ICONS[index % TAG_ICONS.length]
+const knowledgeIconForIndex = index => TAG_ICONS[(index + 1) % TAG_ICONS.length]
+const tagAccentStyle = index => ({
+  '--tag-color': colorForIndex(index),
+  borderColor: `${colorForIndex(index)}33`,
+  background: `${colorForIndex(index)}14`,
+  color: colorForIndex(index)
+})
+
+const profileHighlights = computed(() => radarData.value.slice(0, 3).map((item, index) => ({
+  label: item.label,
+  value: `${item.value}`,
+  color: colorForIndex(index),
+  icon: PROFILE_ICONS[index % PROFILE_ICONS.length]
+})))
 
 const knowledgeDistribution = computed(() => {
   const points = weakPoints.value
   if (!points.length) return []
   return points.slice(0, 6).map((point, i) => ({
-    label: point.name.length > 6 ? point.name.slice(0, 6) + '…' : point.name,
-    value: point.value,
+    label: point.name.length > 6 ? `${point.name.slice(0, 6)}…` : point.name,
+    value: point.severity,
+    accuracyText: point.accuracy == null ? '暂无正确率' : `正确率 ${toPercent(point.accuracy)}`,
+    attemptText: point.attempts ? `${point.attempts} 次练习` : '未练习',
     color: CHART_COLORS[i % CHART_COLORS.length]
   }))
 })
@@ -505,16 +591,39 @@ const resourceChartData = computed(() => {
 
 // ---- color helpers for progress bars ----
 const progressBarColors = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#e11d48', '#0891b2', '#eab308', '#6366f1']
+const weakBarColor = index => progressBarColors[index % progressBarColors.length]
+const feedbackStatStyle = index => ({
+  '--stat-color': progressBarColors[index % progressBarColors.length]
+})
 
 const toPercent = value => `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`
 const formatSecondsToMinutes = seconds => Math.round(Number(seconds || 0) / 60)
+const clampPercent = value => Math.max(0, Math.min(100, Math.round(Number(value || 0))))
+const normalizeRatioValue = value => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  return Math.max(0, Math.min(1, number > 1 ? number / 100 : number))
+}
+
+const normalizePercentValue = value => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  return clampPercent(number > 1 ? number : number * 100)
+}
+
+const severityByLevel = level => ({
+  beginner: 85,
+  learning: 62,
+  proficient: 34,
+  mastered: 12
+}[String(level || '').toLowerCase()] ?? 50)
 
 const normalizeWeakPoints = raw => {
   const list = Array.isArray(raw) ? raw : []
   return list.map(item => {
-    const accuracy = Number(item.accuracy ?? item.correct_rate ?? 0)
-    const normalizedAccuracy = accuracy > 1 ? accuracy / 100 : accuracy
-    const severity = Math.round((1 - Math.max(0, Math.min(1, normalizedAccuracy))) * 100)
+    const normalizedAccuracy = normalizeRatioValue(item.accuracy ?? item.correct_rate ?? item.correctRate)
+    const directSeverity = normalizePercentValue(item.severity ?? item.weakness ?? item.weakness_score ?? item.weakScore ?? item.value)
+    const severity = directSeverity ?? (normalizedAccuracy == null ? severityByLevel(item.level) : clampPercent((1 - normalizedAccuracy) * 100))
     const attempts = Number(item.total_attempts || 0)
     const levelMap = {
       beginner: zh([0x521d, 0x5b66]),
@@ -524,9 +633,12 @@ const normalizeWeakPoints = raw => {
     return {
       name: String(item.tag || item.name || item.knowledge_tag || zh([0x672a, 0x547d, 0x540d, 0x77e5, 0x8bc6, 0x70b9])),
       tip: attempts
-        ? `${levelMap[item.level] || item.level || zh([0x9700, 0x5de9, 0x56fa])} - ${zh([0x6b63, 0x786e, 0x7387])} ${toPercent(normalizedAccuracy)} - ${attempts} ${zh([0x6b21, 0x7ec3, 0x4e60])}`
-        : `${levelMap[item.level] || item.level || zh([0x9700, 0x5de9, 0x56fa])} - ${zh([0x638c, 0x63e1, 0x5ea6])} ${toPercent(normalizedAccuracy)}`,
-      value: severity
+        ? `${levelMap[item.level] || item.level || zh([0x9700, 0x5de9, 0x56fa])} - ${zh([0x6b63, 0x786e, 0x7387])} ${normalizedAccuracy == null ? zh([0x6682, 0x65e0]) : toPercent(normalizedAccuracy)} - ${attempts} ${zh([0x6b21, 0x7ec3, 0x4e60])}`
+        : `${levelMap[item.level] || item.level || zh([0x9700, 0x5de9, 0x56fa])} - ${zh([0x638c, 0x63e1, 0x5ea6])} ${severity}%`,
+      value: severity,
+      severity,
+      accuracy: normalizedAccuracy,
+      attempts
     }
   }).filter(item => item.name).slice(0, 4)
 }
@@ -901,15 +1013,21 @@ onBeforeUnmount(() => {
   min-height: 276px;
   margin-top: 16px;
   display: grid;
-  grid-template-columns: 230px minmax(280px, 1fr);
+  grid-template-columns: minmax(190px, 0.34fr) minmax(360px, 1fr);
   align-items: center;
-  gap: 28px;
+  gap: 22px;
+}
+
+.profile-identity {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
 }
 
 .avatar-frame {
-  width: 210px;
+  width: 168px;
   aspect-ratio: 1;
-  margin-left: 54px;
   border: 1px solid rgba(22, 63, 143, 0.16);
   border-radius: 50%;
   background: #ffffff;
@@ -924,14 +1042,86 @@ onBeforeUnmount(() => {
   object-fit: cover;
 }
 
+.profile-badges {
+  width: min(100%, 220px);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.profile-badge {
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--badge-color) 28%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--badge-color) 12%, #ffffff);
+  color: var(--badge-color);
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.profile-badge div {
+  display: grid;
+  gap: 1px;
+}
+
+.profile-badge strong {
+  color: #163f8f;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.profile-badge span {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--badge-color) 74%, #163f8f);
+  font-size: 10px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-chart-card {
+  min-width: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid rgba(201, 220, 233, 0.76);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.74), rgba(235, 249, 252, 0.72)),
+    rgba(255, 255, 255, 0.58);
+}
+
+.profile-chart-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.profile-chart-card__head span {
+  color: #163f8f;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.profile-chart-card__head small {
+  color: #5f8fc3;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .radar-wrap {
+  margin-top: 4px;
   min-width: 0;
   display: flex;
   justify-content: center;
 }
 
 .radar-wrap svg {
-  width: min(100%, 320px);
+  width: min(100%, 356px);
   height: auto;
   overflow: visible;
 }
@@ -1023,6 +1213,12 @@ onBeforeUnmount(() => {
   font-weight: 800;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+}
+
+.tag-list span svg {
+  color: var(--tag-color, #163f8f);
+  flex-shrink: 0;
 }
 
 .line-chart {
@@ -1206,7 +1402,7 @@ onBeforeUnmount(() => {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #163f8f;
+  box-shadow: 0 0 12px rgba(22, 63, 143, 0.12);
 }
 
 .suggestion-panel ul {
@@ -1248,38 +1444,120 @@ onBeforeUnmount(() => {
 
 .feedback-chart-row {
   margin-top: 14px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 14px;
-  align-items: start;
+  display: block;
 }
 
-.feedback-bar {
-  min-width: 200px;
-  padding: 10px 8px;
-  border: 1px solid rgba(201, 220, 233, 0.82);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.7);
-}
-
-.mini-donut {
+.knowledge-focus {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid rgba(201, 220, 233, 0.62);
 }
 
+.knowledge-focus__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.knowledge-focus__head span {
+  color: #163f8f;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.knowledge-focus__head small {
+  color: #5f8fc3;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.knowledge-focus__body {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 12px;
+}
+
+.knowledge-focus__chart {
+  width: 100%;
+  min-height: 156px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.knowledge-focus__legend {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.knowledge-focus__legend-item {
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid rgba(201, 220, 233, 0.66);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.52);
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-focus__legend-item > span {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.knowledge-focus__legend-item div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.knowledge-focus__legend-item strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #163f8f;
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-focus__legend-item small {
+  overflow: hidden;
+  color: #5f8fc3;
+  font-size: 10px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .feedback-chart-row .feedback-summary {
   margin-top: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .feedback-summary div {
   min-height: 74px;
   padding: 12px 8px;
-  border: 1px solid rgba(201, 220, 233, 0.82);
-  border-top: 3px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--stat-color) 26%, rgba(201, 220, 233, 0.82));
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.7);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--stat-color) 12%, #ffffff), rgba(255, 255, 255, 0.78));
   display: grid;
   place-items: center;
   text-align: center;
@@ -1292,13 +1570,13 @@ onBeforeUnmount(() => {
 }
 
 .feedback-summary strong {
-  color: #163f8f;
+  color: var(--stat-color);
   font-size: 22px;
   line-height: 1;
 }
 
 .feedback-summary span {
-  color: #5f8fc3;
+  color: color-mix(in srgb, var(--stat-color) 70%, #163f8f);
   font-size: 11px;
   font-weight: 800;
 }
@@ -1353,6 +1631,7 @@ onBeforeUnmount(() => {
 
   .profile-body,
   .weak-row,
+  .knowledge-focus__legend,
   .feedback-summary {
     grid-template-columns: 1fr;
   }
