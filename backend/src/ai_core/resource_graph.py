@@ -76,6 +76,38 @@ def _push_text_stream(
         logger.exception("[Text-Stream] push failed file_type=%s section=%s", file_type, section_idx)
 
 
+def _push_agent_event(
+    stream_writer,
+    agent_id: str,
+    agent_name: str,
+    phase: str,
+    status: str,
+    message: str,
+    **extra,
+):
+    if not stream_writer:
+        return
+    try:
+        stream_writer({
+            "type": "agent_event",
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "phase": phase,
+            "status": status,
+            "message": message,
+            **extra,
+        })
+    except Exception:
+        logger.exception("[AgentFlow] push failed agent_id=%s", agent_id)
+
+
+def _safe_stream_writer():
+    try:
+        return get_stream_writer()
+    except Exception:
+        return None
+
+
 # ═══════════════════════════════════════
 #  State
 # ═══════════════════════════════════════
@@ -112,8 +144,19 @@ class ResourceState(TypedDict):
 
 async def leader_node(state: ResourceState) -> dict:
     """LeaderAgent: 分析需求，决定生成哪些资源类型（用户已指定则跳过 LLM）"""
+    writer = _safe_stream_writer()
+    _push_agent_event(writer, "leader", "LeaderAgent", "leader", "running", "正在分析学习需求")
     requested = state.get("resource_types") or []
     if requested:
+        _push_agent_event(
+            writer,
+            "leader",
+            "LeaderAgent",
+            "leader",
+            "done",
+            f"已确认生成类型：{' / '.join(requested)}",
+            total=len(requested),
+        )
         return {"resource_types": requested}
 
     topic = state["topic"]
@@ -126,6 +169,7 @@ async def leader_node(state: ResourceState) -> dict:
         response = await llm.ainvoke(prompt_text, priority=state.get("llm_priority", "high"), user_id=int(state.get("user_id", 0)), pool="leader")
     except Exception as e:
         logger.exception("LeaderAgent LLM 调用失败")
+        _push_agent_event(writer, "leader", "LeaderAgent", "leader", "failed", "规划失败，降级生成文档")
         return {"resource_types": ["document"]}
 
     try:
@@ -134,6 +178,15 @@ async def leader_node(state: ResourceState) -> dict:
         plan = {"resource_types": ["document"], "topic": topic, "outline": response.content.strip()}
 
     resource_types = plan.get("resource_types", ["document"])
+    _push_agent_event(
+        writer,
+        "leader",
+        "LeaderAgent",
+        "leader",
+        "done",
+        f"规划完成：{' / '.join(resource_types)}",
+        total=len(resource_types),
+    )
     return {"resource_types": resource_types}
 
 
@@ -330,6 +383,7 @@ async def generate_ppt_parallel(
 ) -> str:
     """按章节并行生成 PPT：大纲（默认{section_count}章节） → N 条线并行（每条 2-5 页），共 2N-5N 页 + 2 页画像学习引入"""
     _t_total = time.perf_counter()
+    _push_agent_event(stream_writer, "executor:ppt", "PPT生成智能体", "executor", "running", "正在启动 PPT 生成", resource_type="ppt")
     # 立即通知前端，避免长时间无反馈
     if stream_writer:
         try:
@@ -340,12 +394,14 @@ async def generate_ppt_parallel(
     if sections is None:
         if stream_writer:
             try:
+                _push_agent_event(stream_writer, "executor:ppt", "PPT生成智能体", "executor", "running", "正在规划课程大纲", resource_type="ppt")
                 stream_writer({"type": "stream_progress", "file_type": "ppt", "message": "正在规划课程大纲..."})
             except Exception:
                 logger.exception("[PPT-Parallel] stream_progress 推送异常")
         outline_task = generate_ppt_outline(topic, kb=kb, guidance=guidance, count=section_count, llm_priority=llm_priority, user_id=user_id)
         formula_task = generate_formula_sheet(topic, kb=kb, guidance=guidance, llm_priority=llm_priority, user_id=user_id)
         sections, formula_sheet = await asyncio.gather(outline_task, formula_task)
+        _push_agent_event(stream_writer, "executor:ppt", "PPT生成智能体", "executor", "running", f"大纲规划完成，共 {len(sections)} 章", resource_type="ppt", total=len(sections))
     else:
         formula_sheet = ""
 
@@ -548,6 +604,18 @@ async def generate_ppt_parallel(
 
     async def _gen_section(idx: int, section_title: str) -> None:
         """单章节：生成 → 审核 → 反馈重生成（最多 3 轮） → 推送"""
+        section_agent_id = f"executor:ppt:section-{idx}"
+        _push_agent_event(
+            stream_writer,
+            section_agent_id,
+            f"PPT第 {idx + 1} 章",
+            "executor",
+            "running",
+            f"正在生成「{section_title}」",
+            resource_type="ppt",
+            current=idx + 1,
+            total=total,
+        )
         if stream_writer:
             try:
                 stream_writer({
@@ -632,6 +700,17 @@ async def generate_ppt_parallel(
 
             if stream_writer and not is_first_round:
                 try:
+                    _push_agent_event(
+                        stream_writer,
+                        section_agent_id,
+                        f"PPT第 {idx + 1} 章",
+                        "executor",
+                        "retrying",
+                        f"「{section_title}」审核未通过，正在重写",
+                        resource_type="ppt",
+                        current=idx + 1,
+                        total=total,
+                    )
                     stream_writer({
                         "type": "stream_progress", "file_type": "ppt",
                         "message": f"「{section_title}」审核未通过，正在修改...（第{round_idx + 1}轮）",
@@ -667,11 +746,33 @@ async def generate_ppt_parallel(
                         continue
                     logger.exception("[PPT-Gen] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
                     _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
+                    _push_agent_event(
+                        stream_writer,
+                        section_agent_id,
+                        f"PPT第 {idx + 1} 章",
+                        "executor",
+                        "failed",
+                        f"「{section_title}」生成失败",
+                        resource_type="ppt",
+                        current=idx + 1,
+                        total=total,
+                    )
                     _push_section(idx, _results[idx]["content"], section_title)
                     return
 
             if not gen_ok:
                 _results[idx] = {"idx": idx, "content": f"## {section_title}\n- 生成失败"}
+                _push_agent_event(
+                    stream_writer,
+                    section_agent_id,
+                    f"PPT第 {idx + 1} 章",
+                    "executor",
+                    "failed",
+                    f"「{section_title}」生成失败",
+                    resource_type="ppt",
+                    current=idx + 1,
+                    total=total,
+                )
                 _push_section(idx, _results[idx]["content"], section_title)
                 return
 
@@ -689,6 +790,17 @@ async def generate_ppt_parallel(
                 _results[idx] = {"idx": idx, "content": content}
                 _push_section(idx, content, section_title)
                 if is_portrait_section or skip_review_sections:
+                    _push_agent_event(
+                        stream_writer,
+                        section_agent_id,
+                        f"PPT第 {idx + 1} 章",
+                        "executor",
+                        "done",
+                        f"「{section_title}」已生成",
+                        resource_type="ppt",
+                        current=idx + 1,
+                        total=total,
+                    )
                     return
             # 非首轮：更新 _results 后推送替换
             else:
@@ -696,9 +808,32 @@ async def generate_ppt_parallel(
                 _push_section_replace(idx, content, section_title)
 
             # Step D: 审核（画像引入页已在上面 return）
+            _push_agent_event(
+                stream_writer,
+                section_agent_id,
+                f"PPT第 {idx + 1} 章",
+                "reviewer",
+                "reviewing",
+                f"正在审核「{section_title}」",
+                resource_type="ppt",
+                current=idx + 1,
+                total=total,
+            )
             review_result = await _review_ppt_section(content, section_title, format_checked=quick_ok)
             if review_result.get("passed"):
                 final_passed = True
+                _push_agent_event(
+                    stream_writer,
+                    section_agent_id,
+                    f"PPT第 {idx + 1} 章",
+                    "reviewer",
+                    "done",
+                    f"「{section_title}」审核通过",
+                    resource_type="ppt",
+                    current=idx + 1,
+                    total=total,
+                    score=review_result.get("score"),
+                )
                 logger.info("[PPT-Review] idx=%d section=%s round=%d 审核通过 score=%s",
                             idx, section_title, round_idx + 1, review_result.get("score"))
                 break
@@ -713,9 +848,21 @@ async def generate_ppt_parallel(
         if not final_passed and not is_portrait_section:
             logger.warning("[PPT-Review] idx=%d section=%s 达最大轮次 %d，接受当前版本",
                            idx, section_title, MAX_REVIEW_ROUNDS)
+            _push_agent_event(
+                stream_writer,
+                section_agent_id,
+                f"PPT第 {idx + 1} 章",
+                "reviewer",
+                "done",
+                f"「{section_title}」已完成修订",
+                resource_type="ppt",
+                current=idx + 1,
+                total=total,
+            )
 
     # ── 所有章节同时启动（asyncio.gather 天然并行）──
     await asyncio.gather(*[_gen_section(i, s) for i, s in enumerate(sections)])
+    _push_agent_event(stream_writer, "executor:ppt", "PPT生成智能体", "executor", "done", "PPT 内容生成完成", resource_type="ppt", current=total, total=total, elapsed_ms=int((time.perf_counter() - _t_total) * 1000))
 
     # ═══════════════════════════════════
     #  组装最终结果
@@ -790,6 +937,7 @@ async def generate_document_parallel(
 ) -> str:
     """按章节并行生成文档：大纲 → N 条线并行（每条约 400 字），最后按序拼接"""
     _t_total = time.perf_counter()
+    _push_agent_event(stream_writer, "executor:document", "文档生成智能体", "executor", "running", "正在启动文档生成", resource_type="document")
     if stream_writer:
         try:
             stream_writer({"type": "stream_start", "file_type": "document"})
@@ -799,6 +947,7 @@ async def generate_document_parallel(
     if sections is None:
         if stream_writer:
             try:
+                _push_agent_event(stream_writer, "executor:document", "文档生成智能体", "executor", "running", "正在规划文档大纲", resource_type="document")
                 stream_writer({"type": "stream_progress", "file_type": "document", "message": "正在规划文档大纲..."})
             except Exception:
                 logger.exception("[Doc-Parallel] stream_progress 推送异常")
@@ -811,6 +960,18 @@ async def generate_document_parallel(
     completed_count = [0]
 
     async def gen_section(idx: int, section_title: str) -> tuple[int, str]:
+        section_agent_id = f"executor:document:section-{idx}"
+        _push_agent_event(
+            stream_writer,
+            section_agent_id,
+            f"文档第 {idx + 1} 节",
+            "executor",
+            "running",
+            f"正在撰写「{section_title}」",
+            resource_type="document",
+            current=idx + 1,
+            total=total,
+        )
         if stream_writer:
             try:
                 stream_writer({
@@ -858,11 +1019,35 @@ async def generate_document_parallel(
             )
             elapsed = time.perf_counter() - t0
             completed_count[0] += 1
+            _push_agent_event(
+                stream_writer,
+                section_agent_id,
+                f"文档第 {idx + 1} 节",
+                "executor",
+                "done",
+                f"「{section_title}」已完成",
+                resource_type="document",
+                current=completed_count[0],
+                total=total,
+                elapsed_ms=int(elapsed * 1000),
+            )
             logger.info("[Doc-Section] %d/%d idx=%d section=%s len=%d 耗时=%.2fs",
                         completed_count[0], total, idx, section_title, len(content), elapsed)
             return idx, content
         except Exception:
             elapsed = time.perf_counter() - t0
+            _push_agent_event(
+                stream_writer,
+                section_agent_id,
+                f"文档第 {idx + 1} 节",
+                "executor",
+                "failed",
+                f"「{section_title}」生成失败",
+                resource_type="document",
+                current=idx + 1,
+                total=total,
+                elapsed_ms=int(elapsed * 1000),
+            )
             logger.exception("[Doc-Section] idx=%d section=%s 生成失败 耗时=%.2fs", idx, section_title, elapsed)
             return idx, f"### {section_title}\n- 生成失败"
 
@@ -873,6 +1058,7 @@ async def generate_document_parallel(
     parts = [content for _, content in results if content]
     combined = "\n\n".join(parts)
     logger.info("[Doc-Parallel] 完成 章节数=%d 全程耗时=%.1fs", len(sections), time.perf_counter() - _t_total)
+    _push_agent_event(stream_writer, "executor:document", "文档生成智能体", "executor", "done", "文档内容生成完成", resource_type="document", current=total, total=total, elapsed_ms=int((time.perf_counter() - _t_total) * 1000))
 
     if stream_writer:
         try:
@@ -896,6 +1082,15 @@ async def executor_node(state: ResourceState) -> dict:
     user_notes = state.get("user_notes", "")
 
     writer = get_stream_writer()
+    _push_agent_event(
+        writer,
+        "executor",
+        "ExecutorAgent",
+        "executor",
+        "running",
+        f"正在并行调度：{' / '.join(resource_types)}",
+        total=len(resource_types),
+    )
 
     # 章节数：根据追问答案的 depth 决定
     answers = state.get("answers", {}) or {}
@@ -930,6 +1125,7 @@ async def executor_node(state: ResourceState) -> dict:
 
     def gen_one_sync(rt: str) -> tuple[str, str]:
         t_start = time.perf_counter()
+        _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "running", f"正在生成 {rt}", resource_type=rt)
         try:
             if rt == "image":
                 result = _generate_image_sync(prompts[rt], user_id, user_id_int, llm_priority)
@@ -937,10 +1133,12 @@ async def executor_node(state: ResourceState) -> dict:
                 response = llm.invoke(prompts[rt], priority=llm_priority, user_id=user_id_int, pool="thread")
                 result = rt, response.content
             elapsed = time.perf_counter() - t_start
+            _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "done", f"{rt} 生成完成", resource_type=rt, elapsed_ms=int(elapsed * 1000))
             logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
             return result
         except Exception as e:
             elapsed = time.perf_counter() - t_start
+            _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "failed", f"{rt} 生成失败", resource_type=rt, elapsed_ms=int(elapsed * 1000))
             logger.exception(f"[Executor] {rt} 调用失败 耗时={elapsed:.2f}s")
             return rt, f"[生成失败: {e}]"
 
@@ -981,6 +1179,7 @@ async def executor_node(state: ResourceState) -> dict:
     async def _run_image():
         if not has_image:
             return None
+        _push_agent_event(writer, "executor:image", "图片生成智能体", "executor", "running", "正在生成图片提示词", resource_type="image")
         img_prompt_text = build_resource_prompt(
             "image", topic, portrait=portrait, kb=kb, guidance=guidance,
             feedback=feedback, user_notes=user_notes,
@@ -992,16 +1191,21 @@ async def executor_node(state: ResourceState) -> dict:
             image_prompt = response.content.strip()[:900]
         except Exception:
             logger.exception("[Executor] 图片 prompt 生成失败")
+            _push_agent_event(writer, "executor:image", "图片生成智能体", "executor", "failed", "图片提示词生成失败", resource_type="image")
             return "image:error", {"prompt": "", "url": ""}
 
         try:
+            _push_agent_event(writer, "executor:image", "图片生成智能体", "executor", "running", "正在调用图片生成服务", resource_type="image")
             from backend.src.service.image_service import ImageService
             images = await ImageService.generate(image_prompt, str(user_id_int), aspect_ratio="16:9", img_count=2, save_history=False, chat_group_id=int(state.get("chat_group_id", 0)))
             if images and len(images) > 0:
+                _push_agent_event(writer, "executor:image", "图片生成智能体", "executor", "done", "图片生成完成", resource_type="image")
                 return "image:image", {"prompt": image_prompt, "url": images[0].get("url", "")}
+            _push_agent_event(writer, "executor:image", "图片生成智能体", "executor", "done", "图片提示词已生成", resource_type="image")
             return "image:image", {"prompt": image_prompt, "url": ""}
         except Exception as e:
             logger.exception(f"[Executor] 图片生成失败: {e}")
+            _push_agent_event(writer, "executor:image", "图片生成智能体", "executor", "failed", "图片生成失败", resource_type="image")
             return "image:image", {"prompt": image_prompt, "url": ""}
 
     ppt_coro = _run_ppt()
@@ -1019,6 +1223,15 @@ async def executor_node(state: ResourceState) -> dict:
         ppt_content, doc_content, image_result = await asyncio.gather(ppt_coro, doc_coro, image_coro)
 
     logger.info("[Executor] 全部生成完成 并行总耗时=%.2fs types=%s", time.perf_counter() - t_gen_start, resource_types)
+    _push_agent_event(
+        writer,
+        "executor",
+        "ExecutorAgent",
+        "executor",
+        "done",
+        "并行生成阶段完成",
+        elapsed_ms=int((time.perf_counter() - t_gen_start) * 1000),
+    )
 
     retry = state.get("retry_count", 0)
     if feedback:
@@ -1117,20 +1330,26 @@ _REVIEWER_MAP = {
 
 async def reviewer_node(state: ResourceState) -> dict:
     """ReviewerAgent: 每种资源类型由专用审核员独立审查，并行执行"""
+    writer = _safe_stream_writer()
     generated = state.get("generated_resources", {})
     llm_priority = state.get("llm_priority", "high")
     user_id_int = int(state.get("user_id", 0))
+    _push_agent_event(writer, "reviewer", "ReviewerAgent", "reviewer", "reviewing", "正在进行质量审核", total=len(generated))
 
     async def review_one(rt: str, content: str) -> dict:
+        _push_agent_event(writer, f"reviewer:{rt}", f"{rt}审核智能体", "reviewer", "reviewing", f"正在审核 {rt}", resource_type=rt)
         # PPT / 文档 已在 generate_*_parallel 内部逐章节审核（生成→审核→重生成循环），跳过全局审核
         if rt in ("ppt", "document", "case", "reading"):
+            _push_agent_event(writer, f"reviewer:{rt}", f"{rt}审核智能体", "reviewer", "done", f"{rt} 已通过内置审核", resource_type=rt, score=100)
             return {"passed": True, "score": 100, "feedback": ""}
         # API 生成的图片跳过文本审核
         file_urls = state.get("file_urls", {})
         if file_urls.get(rt):
+            _push_agent_event(writer, f"reviewer:{rt}", f"{rt}审核智能体", "reviewer", "done", f"{rt} 自动通过审核", resource_type=rt, score=100)
             return {"passed": True, "score": 100, "feedback": "API 生成，自动通过"}
         reviewer_path = _REVIEWER_MAP.get(rt, "agent/reviewer_document")
         if not content:
+            _push_agent_event(writer, f"reviewer:{rt}", f"{rt}审核智能体", "reviewer", "done", f"{rt} 无需审核", resource_type=rt, score=100)
             return {"passed": True, "score": 100, "feedback": ""}
         try:
             content_snippet = content[:3000]
@@ -1142,14 +1361,26 @@ async def reviewer_node(state: ResourceState) -> dict:
             )
             response = await (llm_vision if rt == "image" else llm).ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="reviewer")
             result = _parse_review_response(response.content)
+            _push_agent_event(
+                writer,
+                f"reviewer:{rt}",
+                f"{rt}审核智能体",
+                "reviewer",
+                "done" if result.get("passed") else "retrying",
+                f"{rt} 审核{'通过' if result.get('passed') else '需要修订'}",
+                resource_type=rt,
+                score=result.get("score"),
+            )
             logger.info(f"[审核] {rt}: passed={result.get('passed')} score={result.get('score')}")
             return result
         except Exception as e:
             logger.exception(f"[审核] {rt} 失败")
+            _push_agent_event(writer, f"reviewer:{rt}", f"{rt}审核智能体", "reviewer", "failed", f"{rt} 审核异常", resource_type=rt)
             return {"passed": True, "score": 0, "feedback": f"审核异常: {e}"}
 
     tasks = [review_one(rt, content) for rt, content in generated.items()]
     if not tasks:
+        _push_agent_event(writer, "reviewer", "ReviewerAgent", "reviewer", "done", "没有需要审核的资源")
         return {"review_passed": True, "review_feedback": ""}
 
     results = await asyncio.gather(*tasks)
@@ -1168,6 +1399,15 @@ async def reviewer_node(state: ResourceState) -> dict:
         # 收集 per-question 审核结果（exercise 类型）
         for q in result.get("questions", []):
             question_results.append(q)
+
+    _push_agent_event(
+        writer,
+        "reviewer",
+        "ReviewerAgent",
+        "reviewer",
+        "done" if all_passed else "retrying",
+        "质量审核通过" if all_passed else "审核发现问题，准备重新生成",
+    )
 
     return {
         "review_passed": all_passed,

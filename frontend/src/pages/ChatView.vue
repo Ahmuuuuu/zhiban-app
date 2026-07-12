@@ -521,6 +521,28 @@
         </article>
       </section>
     </Teleport>
+
+    <AgentFlowDrawer
+      :open="agentFlowDrawerOpen"
+      :task="activeAgentFlowTask"
+      :tasks="currentAgentFlowTasks"
+      :selected-task-id="activeAgentFlowTask?.id || ''"
+      @close="closeAgentFlowDrawer"
+      @select-task="selectAgentFlowTask"
+    />
+
+    <button
+      v-if="showAgentFlowLauncher"
+      class="agent-flow-launcher"
+      type="button"
+      title="查看智能体工作流"
+      @click="reopenAgentFlowDrawer"
+    >
+      <Bot :size="20" stroke-width="1.8" />
+      <span>智能体流程</span>
+      <b v-if="currentAgentFlowTasks.length > 1">{{ currentAgentFlowTasks.length }}</b>
+      <i v-if="activeAgentFlowTask?.status === 'running'" aria-hidden="true"></i>
+    </button>
   </div>
 </template>
 
@@ -550,9 +572,11 @@ import { useGenerationTaskQueue } from '../composables/useGenerationTaskQueue'
 import { useVoiceInput } from '../composables/useVoiceInput'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
+import AgentFlowDrawer from '../components/AgentFlowDrawer.vue'
 import PptPreview from '../components/PptPreview.vue'
 import PptGenerateModal from '../components/ppt_video/ppt/PptGenerateModal.vue'
 import {
+  Bot,
   FileText,
   GitBranch,
   Image,
@@ -590,6 +614,86 @@ const {
 } = useGenerationTaskQueue()
 const boundGenerationTaskMessages = new Map()
 const ACTIVE_GENERATION_TASK_KEY = 'zhiban_active_generation_task_id'
+const agentFlowDrawerOpen = ref(false)
+const selectedAgentFlowTaskId = ref('')
+const dismissedAgentFlowTaskIds = ref(new Set())
+
+const normalizeConversationId = value => {
+  const text = String(value ?? '').trim()
+  return text && !['0', 'null', 'undefined'].includes(text) ? text : ''
+}
+
+const taskHasVisibleMessage = task => {
+  if (!task?.id) return false
+  return messages.value.some(message => (
+    message.generationTaskId === task.id ||
+    message._taskId === task.id ||
+    message.taskId === task.id
+  ))
+}
+
+const isTaskInCurrentConversation = task => {
+  if (!task || !(task as any).agentFlow?.visible) return false
+  const currentChatId = normalizeConversationId(activeConversationId.value)
+  const taskChatId = normalizeConversationId(task.chatGroupId || task.chat_group_id)
+  if (currentChatId && historyLoading.value && !taskChatId) return false
+  if (currentChatId) {
+    return taskChatId === currentChatId || (!taskChatId && taskHasVisibleMessage(task))
+  }
+  return !taskChatId && taskHasVisibleMessage(task)
+}
+
+const currentAgentFlowTasks = computed(() => generationTasks.filter(isTaskInCurrentConversation))
+
+const activeAgentFlowTask = computed(() => {
+  if (selectedAgentFlowTaskId.value) {
+    const selected = currentAgentFlowTasks.value.find(task => task.id === selectedAgentFlowTaskId.value)
+    if (selected) return selected
+  }
+  return currentAgentFlowTasks.value.find(task => task.status === 'running') ||
+    currentAgentFlowTasks.value[0] ||
+    null
+})
+const showAgentFlowLauncher = computed(() => Boolean(activeAgentFlowTask.value && !agentFlowDrawerOpen.value))
+
+const openAgentFlowForTask = task => {
+  if (!task?.id) return
+  selectedAgentFlowTaskId.value = task.id
+  agentFlowDrawerOpen.value = true
+}
+
+const selectAgentFlowTask = taskId => {
+  const task = currentAgentFlowTasks.value.find(item => item.id === taskId)
+  if (!task) return
+  const next = new Set(dismissedAgentFlowTaskIds.value)
+  next.delete(task.id)
+  dismissedAgentFlowTaskIds.value = next
+  openAgentFlowForTask(task)
+}
+
+const closeAgentFlowDrawer = () => {
+  const taskId = activeAgentFlowTask.value?.id
+  if (taskId) {
+    const next = new Set(dismissedAgentFlowTaskIds.value)
+    next.add(taskId)
+    dismissedAgentFlowTaskIds.value = next
+  }
+  agentFlowDrawerOpen.value = false
+}
+
+const clearAgentFlowSelection = () => {
+  selectedAgentFlowTaskId.value = ''
+  agentFlowDrawerOpen.value = false
+}
+
+const reopenAgentFlowDrawer = () => {
+  const task = activeAgentFlowTask.value
+  if (!task?.id) return
+  const next = new Set(dismissedAgentFlowTaskIds.value)
+  next.delete(task.id)
+  dismissedAgentFlowTaskIds.value = next
+  openAgentFlowForTask(task)
+}
 
 const resourceTools = [
   {
@@ -1206,6 +1310,37 @@ const getNowTime = () => {
 // 初始空状态展示草图里的学习资源引导
 const messages = ref([])
 const expandedThinkingMessageIds = ref(new Set())
+
+watch(
+  () => [
+    normalizeConversationId(activeConversationId.value),
+    messages.value.map(message => (
+      message.generationTaskId ||
+      message._taskId ||
+      message.taskId ||
+      ''
+    )).filter(Boolean).join(','),
+    currentAgentFlowTasks.value.map(task => `${task.id}:${task.status}:${(task as any).agentFlow?.updatedAt || 0}`).join('|')
+  ].join('::'),
+  () => {
+    if (!currentAgentFlowTasks.value.length) {
+      clearAgentFlowSelection()
+      return
+    }
+
+    if (selectedAgentFlowTaskId.value && !currentAgentFlowTasks.value.some(task => task.id === selectedAgentFlowTaskId.value)) {
+      selectedAgentFlowTaskId.value = ''
+      agentFlowDrawerOpen.value = false
+    }
+
+    const running = currentAgentFlowTasks.value.find(task => task.status === 'running')
+    if (!running || dismissedAgentFlowTaskIds.value.has(running.id)) return
+    if (agentFlowDrawerOpen.value && selectedAgentFlowTaskId.value && selectedAgentFlowTaskId.value !== running.id) return
+    openAgentFlowForTask(running)
+  },
+  { immediate: true }
+)
+
 const pptPreview = ref({
   visible: false,
   loading: false,
@@ -2124,6 +2259,26 @@ const replaceTextWithQuizMessage = async (message, title = 'AI 生成题目') =>
   return true
 }
 
+const sameLooseFileKind = (left, right) => {
+  const getText = value => String(
+    value?.fileType ||
+    value?.file_type ||
+    value?.resource_type ||
+    value?.resourceType ||
+    value?.filename ||
+    ''
+  ).toLowerCase()
+  const a = getText(left)
+  const b = getText(right)
+  if (!a || !b) return false
+  if (a === b) return true
+  return [
+    /ppt|pptx|powerpoint|presentation|slide/,
+    /mindmap|mind_map|mind-|xmind/,
+    /document|doc|txt|md|markdown/,
+  ].some(group => group.test(a) && group.test(b))
+}
+
 const appendFileMessage = async fileData => {
   if (isExerciseFile(fileData)) {
     await appendQuizMessage(fileData)
@@ -2133,7 +2288,7 @@ const appendFileMessage = async fileData => {
   const fileMessage = normalizeFileMessage(fileData)
   let existingIndex = findDuplicateFileIndex(fileMessage)
   const fallbackIndex = existingIndex === -1 && fileMessage.fileType
-    ? messages.value.findIndex(item => item.type === 'file' && !item.fileId && item.fileType === fileMessage.fileType)
+    ? messages.value.findIndex(item => item.type === 'file' && !item.fileId && sameLooseFileKind(item, fileMessage))
     : existingIndex
 
   if (fallbackIndex === -1) {
@@ -2144,11 +2299,13 @@ const appendFileMessage = async fileData => {
     return { index: messages.value.length - 1, isNew: true }
   }
 
+  const previousMessage = messages.value[fallbackIndex]
   messages.value[fallbackIndex] = {
-    ...messages.value[fallbackIndex],
+    ...previousMessage,
     ...fileMessage,
-    content: fileMessage.content || messages.value[fallbackIndex].content,
-    centerSaveStatus: messages.value[fallbackIndex].centerSaveStatus || fileMessage.centerSaveStatus
+    _generating: false,
+    content: fileMessage.content || previousMessage.content,
+    centerSaveStatus: previousMessage.centerSaveStatus || fileMessage.centerSaveStatus
   }
   if (isMindmapFile(messages.value[fallbackIndex]) && !messages.value[fallbackIndex].content) {
     await hydrateMindmapPreview(messages.value[fallbackIndex])
@@ -3122,6 +3279,7 @@ const sendMessage = async () => {
       const task = startGenerationTask(backendText, activeTool, activeConversationId.value)
       window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
+      openAgentFlowForTask(task)
       attachGenerationTaskToMessage(task, loadingMessageId)
       await scrollToBottom(true)
       return
@@ -3133,6 +3291,7 @@ const sendMessage = async () => {
       const task = startGenerationTask(text, detectedTool, activeConversationId.value)
       window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
+      openAgentFlowForTask(task)
       attachGenerationTaskToMessage(task, loadingMessageId)
       await scrollToBottom(true)
       return
@@ -3468,6 +3627,7 @@ const openConversation = async (conversationId) => {
   activeConversationId.value = conversationId
   showHistoryPanel.value = false
   showAddMenu.value = false
+  clearAgentFlowSelection()
   historyLoading.value = true
 
   try {
@@ -3515,6 +3675,7 @@ const deleteHistoryConversation = async (item) => {
       messages.value = []
       inputValue.value = ''
       showAddMenu.value = false
+      clearAgentFlowSelection()
       window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
     }
   } catch (error) {
@@ -3548,6 +3709,7 @@ const createNewChat = () => {
   messages.value = []
   showHistoryPanel.value = false
   showAddMenu.value = false
+  clearAgentFlowSelection()
 }
 
 //enter发送 enter+shift换行
@@ -3765,6 +3927,74 @@ watch(
 .recent-item:focus-visible {
   outline: 2px solid rgba(95, 143, 195, 0.24);
   outline-offset: 2px;
+}
+
+.agent-flow-launcher {
+  position: fixed;
+  z-index: 72;
+  right: clamp(18px, 2.4vw, 32px);
+  top: 94px;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #163f8f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 14px 34px rgba(22, 63, 143, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.agent-flow-launcher:hover {
+  transform: translateY(-1px);
+  border-color: rgba(95, 143, 195, 0.55);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 42px rgba(22, 63, 143, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.agent-flow-launcher:focus-visible {
+  outline: 2px solid rgba(95, 143, 195, 0.28);
+  outline-offset: 3px;
+}
+
+.agent-flow-launcher i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #18a46f;
+  box-shadow: 0 0 0 4px rgba(24, 164, 111, 0.14);
+  animation: agentFlowLauncherPulse 1.3s ease-out infinite;
+}
+
+.agent-flow-launcher b {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #163f8f;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+}
+
+@keyframes agentFlowLauncherPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(24, 164, 111, 0.3);
+  }
+
+  100% {
+    box-shadow: 0 0 0 9px rgba(24, 164, 111, 0);
+  }
 }
 
 .history-panel {
@@ -5333,6 +5563,41 @@ textarea::placeholder {
 
   .quick-tool span {
     display: none;
+  }
+
+  .agent-flow-launcher {
+    right: 14px;
+    top: 66px;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 8px;
+    transform: none;
+  }
+
+  .agent-flow-launcher:hover {
+    transform: translateY(-1px);
+  }
+
+  .agent-flow-launcher span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .agent-flow-launcher i {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+  }
+
+  .agent-flow-launcher b {
+    position: absolute;
+    right: -5px;
+    top: -5px;
   }
 
   .message-body {
