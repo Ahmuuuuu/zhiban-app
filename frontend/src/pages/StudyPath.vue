@@ -82,34 +82,34 @@
         </article>
       </section>
 
-      <section v-if="pathVideo" class="path-video-section">
-        <button class="path-video-play-btn" type="button" @click="openPathVideo">
-          <MonitorPlay :size="22" />
-        </button>
-        <div class="path-video-info">
-          <strong>路径教学视频</strong>
-          <span>{{ visibleNodes.length }} 个节点</span>
+      <section v-if="visibleNodes.length" class="path-map" :style="{ '--map-progress': `${progressPercent}%` }">
+        <div class="path-map__head">
+          <div>
+            <span>Route Map</span>
+            <strong>路径地图</strong>
+          </div>
+          <small>{{ visibleNodes.filter(node => node.status === 'done').length }}/{{ visibleNodes.length }} 已完成</small>
         </div>
-        <button
-          class="path-video-gen-btn"
-          type="button"
-          :disabled="pathVideoLoading"
-          @click="fetchOrGeneratePathVideo"
-        >
-          {{ pathVideoLoading ? '生成中...' : '重新生成' }}
-        </button>
-      </section>
-      <section v-else-if="pathState?.pathId" class="path-video-section path-video-placeholder">
-        <MonitorPlay :size="18" class="path-video-placeholder-icon" />
-        <span>暂无路径视频</span>
-        <button
-          class="path-video-gen-btn"
-          type="button"
-          :disabled="pathVideoLoading"
-          @click="fetchOrGeneratePathVideo"
-        >
-          {{ pathVideoLoading ? '生成中...' : '生成' }}
-        </button>
+        <div class="path-map__scroller">
+          <div class="path-map__route">
+            <button
+              v-for="(node, index) in visibleNodes"
+              :key="node.id"
+              type="button"
+              class="path-map-node"
+              :class="[`is-${node.status}`, { 'is-new': node.id === newestNodeId }]"
+              @click="openNode(node)"
+            >
+              <span class="path-map-node__dot">
+                <Check v-if="node.status === 'done'" :size="15" />
+                <LockKeyhole v-else-if="node.status === 'locked'" :size="13" />
+                <span v-else>{{ index + 1 }}</span>
+              </span>
+              <strong>{{ node.title || `节点 ${index + 1}` }}</strong>
+              <small>{{ statusLabel(node.status) }}</small>
+            </button>
+          </div>
+        </div>
       </section>
 
       <section class="path-layout">
@@ -130,11 +130,12 @@
 
             <div class="node-card">
               <div class="node-card__top">
-                <span>{{ statusLabel(node.status) }}</span>
+                <span>{{ chapterLabel(index) }}</span>
                 <small>{{ node.estimatedMinutes }} 分钟</small>
               </div>
               <h2>{{ node.title }}</h2>
               <p>{{ node.summary }}</p>
+              <div class="node-card__status">{{ statusLabel(node.status) }}</div>
             </div>
 
             <div v-if="node.status !== 'generating'" class="node-branches" @click.stop>
@@ -143,7 +144,7 @@
                 <article class="branch-card">
                   <div class="branch-head">
                     <FileText :size="16" />
-                    <strong>学习资料</strong>
+                    <strong>{{ sectionLabel(1) }} 学习资料</strong>
                   </div>
 
                   <div v-if="node._resLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
@@ -204,12 +205,15 @@
                   >
                     {{ node._resources?.length ? '补充更多资料' : '生成资料' }}
                   </button>
+                </article>
+              </section>
 
-                  <div class="branch-divider"></div>
-
+              <section class="node-branch">
+                <div class="branch-line"></div>
+                <article class="branch-card">
                   <div class="branch-head">
                     <Check :size="16" />
-                    <strong>学习检测</strong>
+                    <strong>{{ sectionLabel(2) }} 学习检测</strong>
                   </div>
 
                   <div v-if="node._quizLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
@@ -1474,6 +1478,18 @@ const statusLabel = status => ({
   locked: '待解锁',
   generating: '生成中'
 }[status] || '待开始')
+
+const cnNumbers = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+const cnNumber = value => {
+  const number = Number(value)
+  if (number <= 10) return cnNumbers[number - 1] || String(number)
+  if (number < 20) return `十${cnNumbers[number - 11] || ''}`
+  const tens = Math.floor(number / 10)
+  const ones = number % 10
+  return `${cnNumbers[tens - 1] || tens}十${ones ? cnNumbers[ones - 1] : ''}`
+}
+const chapterLabel = index => `第${cnNumber(index + 1)}章`
+const sectionLabel = index => `第${cnNumber(index)}节`
 
 const pathQuizLink = (quiz, node) => {
   const query = new URLSearchParams({
@@ -2888,15 +2904,16 @@ onBeforeUnmount(() => {
 .study-panel {
   position: relative;
   isolation: isolate;
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
   padding: 26px 34px 30px;
   background: #f1f7fb;
   color: #163f8f;
   display: flex;
   flex-direction: column;
   gap: 18px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .page-bg-deco {
@@ -3030,7 +3047,7 @@ onBeforeUnmount(() => {
 .path-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .path-summary article,
@@ -3045,11 +3062,11 @@ onBeforeUnmount(() => {
 }
 
 .path-summary article {
-  min-height: 82px;
-  padding: 14px 16px;
-  border-radius: 22px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-radius: 16px;
   display: grid;
-  gap: 6px;
+  gap: 3px;
 }
 
 .path-summary span,
@@ -3064,7 +3081,7 @@ onBeforeUnmount(() => {
 .path-summary strong {
   min-width: 0;
   color: #163f8f;
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1.35;
 }
 
@@ -3145,13 +3162,219 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
+.path-map {
+  --map-progress: 0%;
+  margin-top: 10px;
+  padding: 10px 14px 12px;
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(237, 249, 252, 0.62)),
+    rgba(250, 250, 250, 0.8);
+  box-shadow: 0 14px 34px rgba(22, 63, 143, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+
+.path-map__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.path-map__head div {
+  display: grid;
+  gap: 0;
+}
+
+.path-map__head span {
+  color: #5f8fc3;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.path-map__head strong {
+  color: #163f8f;
+  font-size: 14px;
+}
+
+.path-map__head small {
+  color: #5f8fc3;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.path-map__scroller {
+  margin-top: 8px;
+  overflow-x: auto;
+  padding: 5px 2px 0;
+  scrollbar-width: none;
+}
+
+.path-map__scroller::-webkit-scrollbar {
+  height: 0;
+}
+
+.path-map__scroller::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(95, 143, 195, 0.38);
+}
+
+.path-map__route {
+  position: relative;
+  min-width: max-content;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 132px;
+  gap: 14px;
+  align-items: start;
+}
+
+.path-map__route::before,
+.path-map__route::after {
+  content: "";
+  position: absolute;
+  left: 66px;
+  right: 66px;
+  top: 14px;
+  height: 2px;
+  border-radius: 999px;
+}
+
+.path-map__route::before {
+  background:
+    repeating-linear-gradient(90deg, rgba(201, 220, 233, 0.98) 0 12px, rgba(201, 220, 233, 0.42) 12px 18px);
+}
+
+.path-map__route::after {
+  right: auto;
+  width: calc((100% - 132px) * var(--map-progress) / 100);
+  max-width: calc(100% - 132px);
+  background: #163f8f;
+  box-shadow: 0 0 10px rgba(22, 63, 143, 0.18);
+  transition: width 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.path-map-node {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 74px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: #163f8f;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 5px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.path-map-node__dot {
+  width: 28px;
+  height: 28px;
+  border: 2px solid #c9dce9;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #163f8f;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 900;
+  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.12);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.path-map-node strong {
+  width: 100%;
+  min-height: 25px;
+  padding: 5px 7px 0;
+  overflow: hidden;
+  border: 1px solid rgba(201, 220, 233, 0.78);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: rgba(255, 255, 255, 0.66);
+  color: #163f8f;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-map-node small {
+  width: 100%;
+  min-height: 20px;
+  padding: 0 7px 5px;
+  border: 1px solid rgba(201, 220, 233, 0.78);
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: rgba(255, 255, 255, 0.66);
+  color: #5f8fc3;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.path-map-node.is-done .path-map-node__dot {
+  border-color: #163f8f;
+  background: #163f8f;
+  color: #ffffff;
+}
+
+.path-map-node.is-done strong,
+.path-map-node.is-done small {
+  border-color: rgba(22, 63, 143, 0.2);
+  background: rgba(237, 249, 252, 0.82);
+}
+
+.path-map-node.is-current .path-map-node__dot,
+.path-map-node.is-available .path-map-node__dot {
+  border-color: #163f8f;
+  background: #ffffff;
+  color: #163f8f;
+  box-shadow: 0 0 0 5px rgba(95, 143, 195, 0.13), 0 10px 22px rgba(22, 63, 143, 0.14);
+}
+
+.path-map-node.is-current .path-map-node__dot {
+  animation: map-node-pulse 1.6s ease-in-out infinite;
+}
+
+.path-map-node.is-current strong,
+.path-map-node.is-current small {
+  border-color: rgba(22, 63, 143, 0.28);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.path-map-node.is-locked {
+  opacity: 1;
+}
+
+.path-map-node.is-locked .path-map-node__dot {
+  background: #f7fbfd;
+  color: #8aa9c2;
+}
+
+.path-map-node.is-locked strong,
+.path-map-node.is-locked small {
+  color: #7a9cc6;
+  background: rgba(247, 251, 253, 0.72);
+}
+
+.path-map-node:hover .path-map-node__dot {
+  transform: translateY(-2px);
+}
+
 .path-layout {
-  min-height: 0;
-  flex: 1;
+  margin-top: 12px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 260px;
   gap: 22px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .side-panels {
@@ -3166,9 +3389,8 @@ onBeforeUnmount(() => {
 .path-track {
   --progress: 0%;
   position: relative;
-  min-height: 0;
   padding: 8px 8px 20px 22px;
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .path-track::before,
@@ -3197,10 +3419,10 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 34px minmax(190px, 0.3fr) minmax(360px, 1fr);
+  gap: 14px;
   align-items: start;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   cursor: pointer;
 }
 
@@ -3260,10 +3482,12 @@ onBeforeUnmount(() => {
 }
 
 .node-card {
-  min-height: 126px;
-  padding: 16px;
-  border-radius: 22px;
+  min-height: 0;
+  padding: 12px 14px;
+  border-radius: 18px;
   transition: transform 0.22s ease, border-color 0.22s ease, background 0.22s ease;
+  display: flex;
+  flex-direction: column;
 }
 
 .path-node:hover .node-card,
@@ -3298,19 +3522,33 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.node-card__status {
+  width: fit-content;
+  margin-top: 10px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(95, 143, 195, 0.12);
+  color: #163f8f;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .node-card h2 {
-  margin: 10px 0 7px;
+  margin: 8px 0 5px;
   color: #163f8f;
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .node-card p,
 .diagnosis-panel p {
   margin: 0;
   color: rgba(22, 63, 143, 0.68);
-  line-height: 1.65;
+  line-height: 1.5;
   font-size: 13px;
 }
 
@@ -3724,37 +3962,54 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 鈹€鈹€ Node branches (inline resources + quiz) 鈹€鈹€ */
+@keyframes map-node-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px rgba(95, 143, 195, 0.14), 0 10px 22px rgba(22, 63, 143, 0.14);
+  }
+
+  50% {
+    box-shadow: 0 0 0 8px rgba(95, 143, 195, 0.05), 0 12px 26px rgba(22, 63, 143, 0.18);
+  }
+}
+
+/* Chapter branches */
 
 .node-branches {
-  grid-column: 2;
-  margin: -4px 0 4px;
+  grid-column: 3;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+  align-self: start;
+  margin: 0;
 }
 
 .node-branch {
   position: relative;
-  padding-top: 18px;
+  display: grid;
+  align-items: start;
+  padding-left: 18px;
 }
 
 .branch-line {
   position: absolute;
-  left: 24px;
-  top: 0;
-  width: 2px;
-  height: 18px;
+  left: 0;
+  top: 24px;
+  width: 18px;
+  height: 2px;
   background: rgba(95, 143, 195, 0.42);
 }
 
 .branch-card {
-  min-height: 98px;
-  padding: 12px;
+  min-height: 0;
+  padding: 10px 12px;
   border: 1px solid rgba(201, 220, 233, 0.78);
-  border-radius: 18px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 12px 28px rgba(22, 63, 143, 0.08);
+  box-shadow: 0 8px 20px rgba(22, 63, 143, 0.06);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .branch-head {
@@ -3798,6 +4053,19 @@ onBeforeUnmount(() => {
   align-items: center;
   cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.node-branches .branch-resource-card {
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  border-radius: 16px;
+}
+
+.node-branches .branch-resource-actions {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
 }
 
 .branch-resource-card:hover {
@@ -4884,12 +5152,36 @@ onBeforeUnmount(() => {
 
   .path-summary,
   .path-video-section,
+  .path-map,
   .path-layout {
     grid-template-columns: 1fr;
   }
 
   .path-track {
     overflow: visible;
+  }
+
+  .path-node {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .node-branches {
+    grid-column: 2;
+    grid-template-columns: 1fr;
+    margin-top: -4px;
+  }
+
+  .node-branch {
+    padding-top: 16px;
+    padding-left: 0;
+  }
+
+  .branch-line {
+    left: 24px;
+    top: 0;
+    width: 2px;
+    height: 16px;
+    transform: none;
   }
 
   .branch-resource-card {
@@ -4900,6 +5192,22 @@ onBeforeUnmount(() => {
     grid-column: 1 / -1;
     flex-direction: row;
     align-items: center;
+  }
+
+  .path-map__route {
+    grid-auto-columns: 118px;
+    gap: 12px;
+  }
+
+  .path-map__route::before,
+  .path-map__route::after {
+    left: 59px;
+    right: 59px;
+  }
+
+  .path-map__route::after {
+    width: calc((100% - 118px) * var(--map-progress) / 100);
+    max-width: calc(100% - 118px);
   }
 }
 
