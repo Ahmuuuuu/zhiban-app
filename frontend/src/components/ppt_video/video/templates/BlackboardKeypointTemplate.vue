@@ -1,7 +1,7 @@
 <template>
   <section
     class="blackboard-keypoint-template video-fit-stage"
-    :class="{ 'is-dense': displayItems.length > 4, 'is-flipped': flip }"
+    :class="{ 'is-dense': isDense, 'is-sparse': isSparse, 'is-flipped': flip }"
   >
     <BoardHeaderBlock
       class="blackboard-keypoint-template__header"
@@ -11,6 +11,7 @@
     />
 
     <BoardBulletListBlock
+      v-if="displayItems.length"
       class="blackboard-keypoint-template__body"
       :items="displayItems"
       :rendered-items="karaokeItems"
@@ -46,12 +47,46 @@ const props = defineProps({
   }
 })
 
+const normalizeText = value => String(value || '')
+  .replace(/<[^>]+>/g, '')
+  .replace(/[^\p{L}\p{N}]+/gu, '')
+  .toLowerCase()
+
+const isDuplicateText = (value, references) => {
+  const text = normalizeText(value)
+  if (!text) return true
+  return references.some(reference => {
+    const target = normalizeText(reference)
+    return target && (text === target || target.includes(text) || text.includes(target))
+  })
+}
+
 const displayItems = computed(() => {
   const items = Array.isArray(props.slide.items) ? props.slide.items : []
-  return items.length ? items : [props.slide.summary].filter(Boolean)
+  const references = [props.slide.title, props.slide.summary]
+  return items
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+    .filter(item => !isDuplicateText(item, references))
 })
 
-const terms = computed(() => getSlideTerms(props.slide))
+const terms = computed(() => {
+  const references = [props.slide.title, props.slide.summary, ...displayItems.value]
+  const seen = new Set()
+  return getSlideTerms(props.slide).filter(term => {
+    const key = normalizeText(term)
+    if (!key || seen.has(key) || isDuplicateText(term, references)) return false
+    seen.add(key)
+    return true
+  })
+})
+const textLength = computed(() => [
+  props.slide.title,
+  props.slide.summary,
+  ...displayItems.value
+].join('').length)
+const isDense = computed(() => displayItems.value.length > 4 || textLength.value > 180)
+const isSparse = computed(() => displayItems.value.length <= 1 && terms.value.length <= 3 && textLength.value < 90)
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 const karaokeItems = computed(() => {
@@ -102,6 +137,55 @@ const karaokeItems = computed(() => {
 /* ===== Dense — only shrink, keep layout ===== */
 .blackboard-keypoint-template.is-dense {
   gap: calc(var(--video-gap) * 0.62) calc(var(--video-gap) * 0.78);
+}
+
+.blackboard-keypoint-template.is-sparse {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+  grid-template-areas:
+    "header"
+    "body";
+  place-content: center;
+  gap: calc(var(--video-gap) * 0.9);
+}
+
+.blackboard-keypoint-template.is-sparse .blackboard-keypoint-template__visual {
+  display: none;
+}
+
+.blackboard-keypoint-template.is-sparse :deep(.board-header-block) {
+  max-width: min(860px, 86%);
+  margin: 0 auto;
+  text-align: center;
+  align-content: center;
+  justify-items: center;
+}
+
+.blackboard-keypoint-template.is-sparse :deep(.board-header-block h2) {
+  font-size: clamp(36px, 6.2cqw, 82px);
+  -webkit-line-clamp: 3;
+}
+
+.blackboard-keypoint-template.is-sparse :deep(.board-header-block p) {
+  max-width: 720px;
+  font-size: clamp(15px, 1.45cqw, 22px);
+  -webkit-line-clamp: 4;
+}
+
+.blackboard-keypoint-template.is-sparse :deep(.board-bullet-list-block) {
+  max-width: min(760px, 82%);
+  margin: 0 auto;
+  align-content: start;
+}
+
+.blackboard-keypoint-template.is-sparse :deep(.board-bullet-list-block article) {
+  padding: clamp(18px, 2.4cqw, 28px);
+}
+
+.blackboard-keypoint-template.is-sparse :deep(.board-bullet-list-block span) {
+  font-size: clamp(15px, 1.58cqw, 24px);
+  line-height: 1.45;
+  -webkit-line-clamp: 4;
 }
 
 .blackboard-keypoint-template.is-dense :deep(.board-header-block h2) {

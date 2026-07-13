@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-vocabulary-slide video-fit-stage"
-    :class="{ 'is-dense': vocabCards.length > 6, 'is-flipped': flip }"
+    :class="{ 'is-dense': isDense, 'is-sparse': isSparse, 'is-flipped': flip }"
   >
     <BoardHeaderBlock
       class="video-vocabulary-slide__header"
@@ -10,7 +10,7 @@
       :summary="slide.summary"
     />
 
-    <div class="vocab-deck">
+    <div v-if="vocabCards.length" class="vocab-deck">
       <article
         v-for="(card, index) in vocabCards"
         :key="`${index}-${card.word}`"
@@ -21,7 +21,7 @@
       </article>
     </div>
 
-    <div class="scene-board">
+    <div v-if="exampleText" class="scene-board">
       <ChalkTag>Scene Practice</ChalkTag>
       <p v-html="renderMath(exampleText)"></p>
       <div class="scene-bars">
@@ -56,6 +56,20 @@ const props = defineProps({
   }
 })
 
+const normalizeText = value => String(value || '')
+  .replace(/<[^>]+>/g, '')
+  .replace(/[^\p{L}\p{N}]+/gu, '')
+  .toLowerCase()
+
+const isDuplicateText = (value, references) => {
+  const text = normalizeText(value)
+  if (!text) return true
+  return references.some(reference => {
+    const target = normalizeText(reference)
+    return target && (text === target || target.includes(text) || text.includes(target))
+  })
+}
+
 const vocabCards = computed(() => {
   const items = Array.isArray(props.slide.items) ? props.slide.items : []
   const cards = []
@@ -68,10 +82,26 @@ const vocabCards = computed(() => {
       cards.push({ word, meaning })
     })
   })
-  return cards.length ? cards : [{ word: props.slide.title, meaning: props.slide.summary || '核心表达' }]
+  const seen = new Set()
+  return cards.filter(card => {
+    const key = normalizeText(`${card.word}${card.meaning}`)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return !isDuplicateText(card.word, [props.slide.title]) &&
+      !isDuplicateText(card.meaning, [props.slide.summary])
+  })
 })
 
-const exampleText = computed(() => props.slide.items?.[0] || props.slide.summary || '')
+const exampleText = computed(() => {
+  const candidates = [...(props.slide.items || []), props.slide.summary]
+  return candidates
+    .map(item => String(item || '').trim())
+    .find(item => !isDuplicateText(item, [props.slide.title, props.slide.summary]) &&
+      !vocabCards.value.some(card => isDuplicateText(item, [card.word, card.meaning]))) || ''
+})
+const textLength = computed(() => [props.slide.title, props.slide.summary, ...(props.slide.items || [])].join('').length)
+const isDense = computed(() => vocabCards.value.length > 6 || textLength.value > 180)
+const isSparse = computed(() => vocabCards.value.length <= 1 && textLength.value < 100)
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 </script>
 
@@ -97,6 +127,56 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 /* ===== Dense — only shrink, keep layout ===== */
 .video-vocabulary-slide.is-dense {
   gap: calc(var(--video-gap) * 0.58) calc(var(--video-gap) * 0.78);
+}
+
+.video-vocabulary-slide.is-sparse {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "header"
+    "deck";
+  align-content: center;
+}
+
+.video-vocabulary-slide.is-sparse .scene-board {
+  display: none;
+}
+
+.video-vocabulary-slide.is-sparse :deep(.board-header-block) {
+  max-width: min(840px, 86%);
+  margin: 0 auto;
+  justify-items: center;
+  text-align: center;
+}
+
+.video-vocabulary-slide.is-sparse :deep(.board-header-block h2) {
+  font-size: clamp(36px, 6cqw, 80px);
+  -webkit-line-clamp: 3;
+}
+
+.video-vocabulary-slide.is-sparse :deep(.board-header-block p) {
+  max-width: 700px;
+  font-size: clamp(15px, 1.45cqw, 22px);
+}
+
+.video-vocabulary-slide.is-sparse .vocab-deck {
+  width: min(560px, 74%);
+  margin: 0 auto;
+  grid-template-columns: 1fr;
+  align-content: start;
+}
+
+.video-vocabulary-slide.is-sparse .vocab-deck article {
+  padding: clamp(18px, 2.4cqw, 28px);
+  text-align: center;
+}
+
+.video-vocabulary-slide.is-sparse .vocab-deck b {
+  font-size: clamp(26px, 4cqw, 52px);
+}
+
+.video-vocabulary-slide.is-sparse .vocab-deck span {
+  font-size: clamp(14px, 1.32cqw, 20px);
 }
 
 /* ===== grid areas ===== */

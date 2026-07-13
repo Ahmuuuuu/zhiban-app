@@ -1,7 +1,7 @@
 <template>
   <section
     class="video-intro-slide video-fit-stage"
-    :class="{ 'is-dense': isDense, 'is-flipped': flip }"
+    :class="{ 'is-dense': isDense, 'is-sparse': isSparse, 'is-flipped': flip }"
   >
     <div class="intro-profile">
       <ChalkTag>学习画像</ChalkTag>
@@ -56,15 +56,40 @@ const props = defineProps({
   }
 })
 
+const normalizeText = value => String(value || '')
+  .replace(/<[^>]+>/g, '')
+  .replace(/[^\p{L}\p{N}]+/gu, '')
+  .toLowerCase()
+
+const isDuplicateText = (value, references) => {
+  const text = normalizeText(value)
+  if (!text) return true
+  return references.some(reference => {
+    const target = normalizeText(reference)
+    return target && (text === target || target.includes(text) || text.includes(target))
+  })
+}
+
 const learnerTitle = computed(() => props.slide.title || '课程导入')
 const introText = computed(() => props.slide.summary || '根据你的学习画像，把课程内容拆成更容易进入的学习路径。')
-const terms = computed(() => getSlideTerms(props.slide).slice(0, 6))
+const terms = computed(() => {
+  const references = [props.slide.title, props.slide.summary]
+  const seen = new Set()
+  return getSlideTerms(props.slide).filter(term => {
+    const key = normalizeText(term)
+    if (!key || seen.has(key) || isDuplicateText(term, references)) return false
+    seen.add(key)
+    return true
+  }).slice(0, 6)
+})
+const textLength = computed(() => [props.slide.title, props.slide.summary, ...(props.slide.items || [])].join('').length)
 const metrics = computed(() => [
   { value: '01', label: props.slide.chapterTitle || '课程起点' },
   { value: String((props.slide.items || []).length || 3).padStart(2, '0'), label: '关键线索' },
   { value: 'AI', label: '个性匹配' }
 ])
 const isDense = computed(() => terms.value.length > 8 || (props.slide.items || []).length > 6)
+const isSparse = computed(() => terms.value.length <= 2 && (props.slide.items || []).length <= 1 && textLength.value < 100)
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 </script>
 
@@ -85,6 +110,40 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 /* ===== Dense — only shrink, keep layout ===== */
 .video-intro-slide.is-dense {
   gap: 22px;
+}
+
+.video-intro-slide.is-sparse {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "profile";
+  align-items: center;
+}
+
+.video-intro-slide.is-sparse .intro-relation {
+  display: none;
+}
+
+.video-intro-slide.is-sparse .intro-profile {
+  width: min(860px, 86%);
+  min-height: min(430px, 68cqh);
+  margin: 0 auto;
+  justify-items: center;
+  text-align: center;
+}
+
+.video-intro-slide.is-sparse .intro-profile h2 {
+  max-width: 760px;
+  font-size: clamp(38px, 6.4cqw, 84px);
+  -webkit-line-clamp: 3;
+}
+
+.video-intro-slide.is-sparse .intro-profile p {
+  max-width: 680px;
+  font-size: clamp(15px, 1.5cqw, 23px);
+  -webkit-line-clamp: 5;
+}
+
+.video-intro-slide.is-sparse .profile-metrics {
+  width: min(560px, 100%);
 }
 
 /* ===== Shared Panel Base ===== */
