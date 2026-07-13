@@ -130,7 +130,7 @@ async def upload_document(
         doc_title = title.strip() if title else Path(file.filename).stem
 
         # ── 切片 + 逐块入库 ──
-        chunks = chunk_text(raw_text, max_chars=500)
+        chunks = chunk_text(raw_text, max_chars=1000, overlap_chars=150)
         results = []
         for idx, chunk in enumerate(chunks):
             chunk_title = f"{doc_title} (第{idx+1}部分)" if len(chunks) > 1 else doc_title

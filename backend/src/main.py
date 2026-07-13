@@ -111,7 +111,7 @@ async def debug_token(user_id: int):
 async def startup():
     await init_db()
     # 清理未完成的生成任务
-    from backend.src.service.resource_service import ResourceService
+    from backend.src.service.resource.service import ResourceService
     await ResourceService.init_tasks()
     # 预加载 BGE 模型，避免首次知识库操作时等待下载/加载
     from backend.src.utils.knowledge_base import _get_embed_model_async

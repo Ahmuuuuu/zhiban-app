@@ -22,6 +22,23 @@ _embed_model = None
 _embed_lock = asyncio.Lock()
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+_RAG_SEARCH_SEM = asyncio.Semaphore(max(1, _int_env("RAG_GLOBAL_SEARCH_CONCURRENCY", 20)))
+
+
 async def _get_embed_model_async():
     """异步加载 BGE 模型（首次使用时才 import sentence_transformers，避免拖慢启动）"""
     global _embed_model
@@ -71,6 +88,11 @@ async def _encode_async(text: str):
 
 
 async def search(query: str, top_k: int = 5, user_id: int = None, category: str = None) -> str:
+    async with _RAG_SEARCH_SEM:
+        return await _search_inner(query, top_k=top_k, user_id=user_id, category=category)
+
+
+async def _search_inner(query: str, top_k: int = 5, user_id: int = None, category: str = None) -> str:
     """
     从知识库检索资料。
     - user_id 为空：只查公开资料
@@ -80,6 +102,8 @@ async def search(query: str, top_k: int = 5, user_id: int = None, category: str 
     try:
         import numpy as np
         query_vec = await _encode_async(query)
+        min_score = _float_env("RAG_MIN_SCORE", 0.0)
+        max_chars = _int_env("RAG_RESULT_MAX_CHARS", 1200)
 
         if user_id:
             qs = KnowledgeVector.filter(Q(visibility="public") | Q(user_id=user_id))
@@ -89,22 +113,38 @@ async def search(query: str, top_k: int = 5, user_id: int = None, category: str 
         if category:
             qs = qs.filter(category=category)
 
-        records = await qs.values("title", "content", "category", "embedding")
+        records = await qs.values("doc_id", "title", "content", "category", "embedding")
 
         if not records:
             return "知识库中暂无相关内容"
 
         scored = []
         for r in records:
-            vec = np.array(json.loads(r["embedding"]), dtype=np.float32)
+            raw_embedding = r.get("embedding") or "[]"
+            try:
+                embedding = json.loads(raw_embedding)
+                if not embedding:
+                    continue
+                vec = np.array(embedding, dtype=np.float32)
+                if vec.shape != query_vec.shape:
+                    continue
+            except Exception:
+                continue
             sim = float(np.dot(query_vec, vec))
-            scored.append((sim, r["title"], r["content"], r.get("category", "")))
+            if sim < min_score:
+                continue
+            scored.append((sim, r.get("doc_id", ""), r["title"], r["content"], r.get("category", "")))
 
         scored.sort(key=lambda x: x[0], reverse=True)
+        if not scored:
+            return "知识库中暂无相关内容"
 
         items = [
-            f"【资料{i+1}】来源：{title}（{cat}）\n{content}\n"
-            for i, (_, title, content, cat) in enumerate(scored[:top_k])
+            (
+                f"【资料{i+1}】来源：{title}（{cat}，score={sim:.3f}，doc_id={doc_id}）\n"
+                f"{str(content or '')[:max_chars]}\n"
+            )
+            for i, (sim, doc_id, title, content, cat) in enumerate(scored[:top_k])
         ]
         return "\n".join(items)
 

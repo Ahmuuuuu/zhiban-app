@@ -26,7 +26,10 @@ from backend.src.ai_core.tools.video_search import search_online_video
 from backend.src.ai_core.tools.history import get_used_history
 from backend.src.utils.prompt_loader import load_prompt
 from pydantic import create_model, Field as PydanticField
-from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+try:
+    from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+except ModuleNotFoundError:
+    from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, AIMessage
@@ -139,8 +142,8 @@ class Brain:
 
     async def _load_action_tools_async(self):
         """在正确的 async 上下文中从 DB 加载 action skill"""
-        from backend.src.service.skill_service import SkillService
-        skills = await SkillService.list_actions(user_id=self.user_id)
+        from backend.src.service.skill import service as skill_service
+        skills = await skill_service.list_actions(user_id=self.user_id)
         return [self._make_http_tool(s) for s in skills if s["action_type"] == "http"]
 
     # ── 热刷新 ──
@@ -250,7 +253,7 @@ class Brain:
             )
             while True:
                 try:
-                    event = await asyncio.wait_for(agen.__anext__(), timeout=30 if tool_running else None)
+                    event = await asyncio.wait_for(agen.__anext__(), timeout=30 if tool_running else 120)
                 except asyncio.TimeoutError:
                     yield {"type": "keepalive"}
                     continue

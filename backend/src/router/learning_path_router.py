@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
-from backend.src.service.path_service import PathService
+from backend.src.service.path.service import PathService
 from backend.src.utils.jwt import get_user_id_from_token
 
 router = APIRouter(prefix="/learning_path", tags=["学习路径(轻量)"])

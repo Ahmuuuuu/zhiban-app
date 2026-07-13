@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Body, Query
 from fastapi.responses import StreamingResponse
-from backend.src.service.chat_service import ChatService
+from backend.src.service.chat import service as chat_service
 from backend.src.schemas.chat import CreateNewHistory, CreateMsgIntoHistory, StreamNewHistory, StreamMsgIntoHistory
 from backend.src.utils.jwt import create_access_token, get_user_id_from_token
 
@@ -13,7 +13,7 @@ async def new_history(
     data: CreateNewHistory = Body(...)
 ):
     try:
-        message, msg = await ChatService.create_new_history(user_id, data.user_req)
+        message, msg = await chat_service.create_new_history(user_id, data.user_req)
         if message is None:
             return {"code": 404, "msg": msg}
         return {
@@ -36,7 +36,7 @@ async def new_message(
     data: CreateMsgIntoHistory = Body(...)
 ):
     try:
-        message, msg = await ChatService.create_message_into_history(
+        message, msg = await chat_service.create_message_into_history(
             user_id, data.chat_group_id, data.user_req
         )
         if message is None:
@@ -58,7 +58,7 @@ async def new_message(
 @router.get("/read_history_group")
 async def read_history(user_id: int = Depends(get_user_id_from_token)):
     try:
-        history, msg = await ChatService.read_history(user_id)
+        history, msg = await chat_service.read_history(user_id)
         return {"code": 200, "msg": msg, "data": history}
     except HTTPException:
         raise
@@ -72,7 +72,7 @@ async def read_messages(
     chat_group_id: int = Query(...)
 ):
     try:
-        messages, msg = await ChatService.read_message(user_id, chat_group_id)
+        messages, msg = await chat_service.read_message(user_id, chat_group_id)
         return {"code": 200, "msg": msg, "data": messages}
     except HTTPException:
         raise
@@ -86,7 +86,7 @@ async def delete_history(
     chat_group_id: int = Query(...)
 ):
     try:
-        user, group, msg = await ChatService.delete_history(user_id, chat_group_id)
+        user, group, msg = await chat_service.delete_history(user_id, chat_group_id)
         if user is None:
             return {"code": 404, "msg": msg}
         if group is None:
@@ -108,7 +108,7 @@ async def stream_new_history(
     data: StreamNewHistory = Body(...)
 ):
     return StreamingResponse(
-        ChatService.stream_create_new_history(user_id, data.user_req),
+        chat_service.stream_create_new_history(user_id, data.user_req),
         media_type="text/event-stream",
     )
 
@@ -119,7 +119,7 @@ async def stream_new_message(
     data: StreamMsgIntoHistory = Body(...)
 ):
     return StreamingResponse(
-        ChatService.stream_create_message_into_history(
+        chat_service.stream_create_message_into_history(
             user_id, data.chat_group_id, data.user_req
         ),
         media_type="text/event-stream",

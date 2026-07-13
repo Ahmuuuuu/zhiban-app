@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from tortoise.expressions import Q
 
-from backend.src.service.image_service import ImageService
+from backend.src.service.image import service as image_service
 from backend.src.models.image_model import GeneratedImage
 from backend.src.schemas.image import GenerateImageRequest
 from backend.src.utils.jwt import get_user_id_from_token
@@ -26,10 +26,10 @@ async def generate_image(
     data: GenerateImageRequest = Body(...),
 ):
     """提交图片生成任务到讯飞 HiDream，立即返回 task_id，后台异步轮询"""
-    from backend.src.service.image_service import _ensure_prompt_quality
+    from backend.src.service.image.service import _ensure_prompt_quality
     try:
         prompt = await _ensure_prompt_quality(data.prompt)
-        result = await ImageService.submit(
+        result = await image_service.submit(
             prompt=prompt,
             user_id=user_id,
             aspect_ratio=data.aspect_ratio,
@@ -46,7 +46,7 @@ async def generate_image(
 @router.get("/status/{task_id}")
 async def get_task_status(task_id: str):
     """查询图片生成任务状态，每次调用会主动查询一次讯飞"""
-    result = await ImageService.poll_once(task_id)
+    result = await image_service.poll_once(task_id)
     if result is None:
         return {"code": 404, "msg": "任务不存在"}
     return {"code": 200, "msg": "success", "data": result}

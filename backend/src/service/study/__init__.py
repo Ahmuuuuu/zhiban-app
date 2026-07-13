@@ -1,0 +1,1 @@
+"""Study service domain."""

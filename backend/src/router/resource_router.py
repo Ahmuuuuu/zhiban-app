@@ -8,11 +8,12 @@ from fastapi import APIRouter, HTTPException, Depends, Body, Query, Header, Requ
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from backend.src.service.resource_service import ResourceService, _subscribe_task_sse, _unsubscribe_task_sse
-from backend.src.service.resource_service import replay_sse as _replay_task_sse
+from backend.src.service.resource.service import ResourceService, _subscribe_task_sse, _unsubscribe_task_sse
+from backend.src.service.resource.service import replay_sse as _replay_task_sse
 from backend.src.utils.redis_client import check_rate_limit
-from backend.src.service.skill_service import SkillService
+from backend.src.service.skill import service as skill_service
 from backend.src.schemas.resource import GenerateResourceRequest
+from backend.src.schemas.response import fail, ok
 from backend.src.schemas.skill import UpsertSkillRequest
 from backend.src.utils.jwt import get_user_id_from_token, JWT_KEY, ALGORITHM
 from backend.src.utils.admin_check import is_admin
@@ -96,7 +97,7 @@ async def generate_resource(
         raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     try :
         result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history, ppt_theme_id=data.ppt_theme_id)
-        return {"code" : 200, "msg" : "success", "data" : result}
+        return ok(result)
     except HTTPException :
         raise
     except Exception :
@@ -144,8 +145,8 @@ async def create_generation_task(
     try:
         result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers, bind_chat_history=data.bind_chat_history, skip_review=data.skip_review, ppt_theme_id=data.ppt_theme_id)
         if result.get("duplicated"):
-            return {"code": 200, "msg": "该话题已在生成中", "data": result}
-        return {"code": 200, "msg": "success", "data": result}
+            return ok(result, msg="该话题已在生成中")
+        return ok(result)
     except Exception:
         raise HTTPException(500, "创建任务失败")
 
@@ -158,8 +159,8 @@ async def get_generation_task(
     try:
         result = await ResourceService.get_task(task_id, user_id)
         if result is None:
-            return {"code": 404, "msg": "任务不存在"}
-        return {"code": 200, "msg": "success", "data": result}
+            return fail("任务不存在", code=404)
+        return ok(result)
     except Exception:
         raise HTTPException(500, "查询任务失败")
 
@@ -170,7 +171,7 @@ async def list_generation_tasks(
 ):
     try:
         result = await ResourceService.list_tasks(user_id)
-        return {"code": 200, "msg": "success", "data": result}
+        return ok(result)
     except Exception:
         raise HTTPException(500, "查询任务列表失败")
 
@@ -230,7 +231,7 @@ async def list_resources(
 ):
     try :
         records = await ResourceService.list_resources(user_id, visibility=visibility)
-        return {"code" : 200, "msg" : "success", "data" : records}
+        return ok(records)
     except HTTPException :
         raise
     except Exception :
@@ -253,9 +254,9 @@ async def update_resource_visibility(
             target_visibility = "pending"
         record = await ResourceService.publish_resource(resource_id, user_id, target_visibility)
         if record is None:
-            return {"code": 404, "msg": "资源不存在或无权操作"}
+            return fail("资源不存在或无权操作", code=404)
         msg = "公开申请已提交，等待管理员审核" if target_visibility == "pending" else "success"
-        return {"code": 200, "msg": msg, "data": record}
+        return ok(record, msg=msg)
     except HTTPException:
         raise
     except Exception:
@@ -268,10 +269,10 @@ async def upsert_skill(
     data : UpsertSkillRequest = Body(...)
 ):
     try :
-        result = await SkillService.upsert(user_id, data.resource_type, data.name, data.system_prompt)
-        return {"code" : 200, "msg" : "success", "data" : result}
+        result = await skill_service.upsert(user_id, data.resource_type, data.name, data.system_prompt)
+        return ok(result)
     except ValueError as e :
-        return {"code" : 400, "msg" : str(e)}
+        return fail(str(e), code=400)
     except HTTPException :
         raise
     except Exception :
@@ -281,8 +282,8 @@ async def upsert_skill(
 @router.get("/skill/list")
 async def list_skills(user_id : int = Depends(get_user_id_from_token)):
     try :
-        records = await SkillService.list_all(user_id)
-        return {"code" : 200, "msg" : "success", "data" : records}
+        records = await skill_service.list_all(user_id)
+        return ok(records)
     except HTTPException :
         raise
     except Exception :
@@ -295,10 +296,10 @@ async def get_skill(
     user_id : int = Depends(get_user_id_from_token)
 ):
     try :
-        record = await SkillService.get(user_id, resource_type)
+        record = await skill_service.get(user_id, resource_type)
         if record is None :
-            return {"code" : 404, "msg" : f"资源类型 '{resource_type}' 暂无定制 skill"}
-        return {"code" : 200, "msg" : "success", "data" : record}
+            return fail(f"资源类型 '{resource_type}' 暂无定制 skill", code=404)
+        return ok(record)
     except HTTPException :
         raise
     except Exception :
@@ -311,10 +312,10 @@ async def delete_skill(
     user_id : int = Depends(get_user_id_from_token)
 ):
     try :
-        msg = await SkillService.delete(user_id, resource_type)
+        msg = await skill_service.delete(user_id, resource_type)
         if "不存在" in msg :
-            return {"code" : 404, "msg" : msg}
-        return {"code" : 200, "msg" : msg}
+            return fail(msg, code=404)
+        return ok(msg=msg)
     except HTTPException :
         raise
     except Exception :
@@ -333,8 +334,8 @@ async def get_resource(
     try :
         record = await ResourceService.get_resource(resource_id, user_id)
         if record is None :
-            return {"code" : 404, "msg" : "资源不存在"}
-        return {"code" : 200, "msg" : "success", "data" : record}
+            return fail("资源不存在", code=404)
+        return ok(record)
     except HTTPException :
         raise
     except Exception :
@@ -349,7 +350,7 @@ async def download_resource(
     try :
         result = await ResourceService.download_resource(resource_id, user_id)
         if result is None :
-            return {"code" : 404, "msg" : "资源不存在"}
+            return fail("资源不存在", code=404)
         content, filename, media_type = result
         ascii_name = quote(filename, safe="")
         return StreamingResponse(
@@ -372,7 +373,7 @@ async def export_edited_pptx(
     try:
         resource = await ResourceService.get_resource(resource_id, user_id)
         if resource is None:
-            return {"code": 404, "msg": "资源不存在"}
+            return fail("资源不存在", code=404)
 
         markdown = _slides_to_markdown(data.title or resource.get("topic") or resource.get("title") or "", data.slides)
         if not markdown.strip():
@@ -412,9 +413,9 @@ async def toggle_like(
 ):
     try:
         result = await ResourceService.toggle_like(resource_id, user_id)
-        return {"code": 200, "msg": "success", "data": result}
+        return ok(result)
     except ValueError as e:
-        return {"code": 404, "msg": str(e)}
+        return fail(str(e), code=404)
     except Exception:
         raise HTTPException(500, "服务器错误")
 
@@ -426,9 +427,9 @@ async def toggle_favorite(
 ):
     try:
         result = await ResourceService.toggle_favorite(resource_id, user_id)
-        return {"code": 200, "msg": "success", "data": result}
+        return ok(result)
     except ValueError as e:
-        return {"code": 404, "msg": str(e)}
+        return fail(str(e), code=404)
     except Exception:
         raise HTTPException(500, "服务器错误")
 
@@ -439,10 +440,10 @@ async def delete_resource(
     user_id : int = Depends(get_user_id_from_token)
 ):
     try :
-        ok = await ResourceService.delete_resource(resource_id, user_id)
-        if not ok :
-            return {"code" : 404, "msg" : "资源不存在"}
-        return {"code" : 200, "msg" : "删除成功"}
+        deleted = await ResourceService.delete_resource(resource_id, user_id)
+        if not deleted :
+            return fail("资源不存在", code=404)
+        return ok(msg="删除成功")
     except HTTPException :
         raise
     except Exception :

@@ -37,7 +37,7 @@ async def sync_to_portrait(user_id: int, major: str, grade: str) -> list[str] | 
 
     from backend.src.models.usermodel import User
     from backend.src.models.portraitmodel import User_picture
-    from backend.src.service.portrait_service import parse_traits, dump_traits
+    from backend.src.service.portrait.service import parse_traits, dump_traits
 
     user = await User.filter(id=user_id).first()
     if not user:

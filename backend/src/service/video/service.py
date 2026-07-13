@@ -3,10 +3,13 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+
+import httpx
 
 from backend.src.models.video_model import Video
 from backend.src.models.resource_model import GeneratedResource
@@ -17,18 +20,169 @@ from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.utils.exceptions import ServiceError
 from backend.src.utils.chat_utils import allocate_chat_group_id
 from backend.src.utils.redis_client import notify_sse as _redis_notify_sse, subscribe_sse, unsubscribe_sse
-from backend.src.utils.constants import VIDEOS_DIR
+from backend.src.utils.constants import AUDIO_DIR, VIDEOS_DIR
 
 logger = logging.getLogger(__name__)
 
-TEMPLATE_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template.html"
-TEMPLATE_VIDEO_PATH = Path(__file__).parent.parent / "ai_core" / "prompts" / "presentation" / "template_video.html"
+SRC_DIR = Path(__file__).resolve().parents[2]
+TEMPLATE_PATH = SRC_DIR / "ai_core" / "prompts" / "presentation" / "template.html"
+TEMPLATE_VIDEO_PATH = SRC_DIR / "ai_core" / "prompts" / "presentation" / "template_video.html"
 PRESENTATION_TEMPLATE_VERSION = "visual-v6"
 VIDEO_TEMPLATE_VERSION = "video-v4"
-AUDIO_FRONTLOAD_CHAPTERS = 2
-AUDIO_FRONTLOAD_SLIDES = 2
-AUDIO_CHAPTER_CONCURRENCY = 2
-AUDIO_SLIDE_CONCURRENCY = 3
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _bool_env(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+VIDEO_AUDIO_AUTO_GENERATE = _bool_env("VIDEO_AUDIO_AUTO_GENERATE", True)
+AUDIO_FRONTLOAD_CHAPTERS = max(0, _int_env("VIDEO_AUDIO_FRONTLOAD_CHAPTERS", 0))
+AUDIO_FRONTLOAD_SLIDES = max(0, _int_env("VIDEO_AUDIO_FRONTLOAD_SLIDES", 0))
+AUDIO_CHAPTER_CONCURRENCY = max(1, _int_env("VIDEO_AUDIO_CHAPTER_CONCURRENCY", 3))
+AUDIO_SLIDE_CONCURRENCY = max(1, _int_env("VIDEO_AUDIO_SLIDE_CONCURRENCY", 4))
+
+
+def _format_duration(seconds: int | float | str | None) -> str:
+    try:
+        raw = str(seconds or "").strip()
+        if ":" in raw:
+            parts = [int(p) for p in raw.split(":") if p != ""]
+            total = 0
+            for part in parts:
+                total = total * 60 + part
+        else:
+            total = int(float(raw or 0))
+    except (TypeError, ValueError):
+        return ""
+    if total <= 0:
+        return ""
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_view_count(count: int | float | str | None) -> str:
+    try:
+        value = int(float(count or 0))
+    except (TypeError, ValueError):
+        return ""
+    if value >= 10000:
+        return f"{value / 10000:.1f}万".rstrip("0").rstrip(".") + "次"
+    return f"{value}次" if value > 0 else ""
+
+
+class ExternalVideoService:
+    """Lightweight online teaching video search, currently backed by Bilibili web search."""
+
+    SEARCH_URL = "https://api.bilibili.com/x/web-interface/search/type"
+
+    @staticmethod
+    async def search(topic: str, max_results: int = 3) -> list[dict]:
+        query = str(topic or "").strip()
+        if not query:
+            return []
+        max_results = max(1, min(int(max_results or 3), 5))
+        params = {
+            "search_type": "video",
+            "keyword": f"{query} 教学",
+            "page": 1,
+        }
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+            ),
+            "Referer": "https://www.bilibili.com/",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+                resp = await client.get(ExternalVideoService.SEARCH_URL, params=params, headers=headers)
+                resp.raise_for_status()
+                payload = resp.json()
+        except Exception:
+            logger.info("[ExternalVideo] search failed topic=%s", query, exc_info=True)
+            return []
+
+        items = ((payload or {}).get("data") or {}).get("result") or []
+        videos: list[dict] = []
+        for item in items[:max_results]:
+            bvid = item.get("bvid") or ""
+            page_url = item.get("arcurl") or (f"https://www.bilibili.com/video/{bvid}" if bvid else "")
+            embed_url = f"https://player.bilibili.com/player.html?bvid={bvid}" if bvid else page_url
+            title = re.sub(r"<[^>]+>", "", str(item.get("title") or "")).strip()
+            videos.append({
+                "title": title,
+                "author": item.get("author") or "",
+                "duration": item.get("duration") or 0,
+                "view_count": item.get("play") or 0,
+                "description": item.get("description") or "",
+                "cover_url": item.get("pic") or "",
+                "page_url": page_url,
+                "embed_url": embed_url,
+                "source": "bilibili",
+                "source_label": "B站",
+            })
+        return videos
+
+    @staticmethod
+    async def search_and_save(topic: str, user_id: int, max_results: int = 3, chat_group_id: int = 0) -> list[dict]:
+        videos = await ExternalVideoService.search(topic, max_results=max_results)
+        saved: list[dict] = []
+        for v in videos:
+            record = await GeneratedResource.create(
+                topic=topic,
+                resource_type="external_video",
+                content=json.dumps(v, ensure_ascii=False),
+                file_url=v.get("page_url") or v.get("embed_url") or "",
+                cover_url=v.get("cover_url") or "",
+                review_passed=True,
+                retry_count=0,
+                user_id=user_id,
+            )
+            saved.append({
+                "resource_id": record.id,
+                "topic": record.topic,
+                "resource_type": "external_video",
+                "file_type": "external_video",
+                "filename": f"推荐视频: {(v.get('title') or '')[:40]}",
+                "file_url": record.file_url,
+                "cover_url": v.get("cover_url", ""),
+                "embed_url": v.get("embed_url", ""),
+                "title": v.get("title", ""),
+                "author": v.get("author", ""),
+                "duration": v.get("duration"),
+                "duration_text": _format_duration(v.get("duration")),
+                "view_count": v.get("view_count", 0),
+                "view_count_text": _format_view_count(v.get("view_count")),
+                "description": v.get("description", ""),
+                "source": v.get("source_label", ""),
+                "source_label": v.get("source_label", ""),
+                "preview_url": v.get("embed_url", ""),
+            })
+
+        if saved and chat_group_id:
+            try:
+                await ChatHistory.create(
+                    user_id=user_id,
+                    chat_group_id=chat_group_id,
+                    req=f"搜索在线视频：{topic}",
+                    res=json.dumps({"type": "external_videos", "resources": saved}, ensure_ascii=False),
+                )
+            except Exception:
+                logger.debug("[ExternalVideo] save chat history failed", exc_info=True)
+        return saved
 
 
 # ═══════════════════════════════════════════════
@@ -615,7 +769,8 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
                 logger.exception("视频通知推送失败")
 
             # 后台补音频
-            asyncio_create_task(_add_audio_to_presentation(record.id, topic, user_id, voice, chapters_list, audio_tasks))
+            if VIDEO_AUDIO_AUTO_GENERATE and audio_tasks:
+                asyncio_create_task(_add_audio_to_presentation(record.id, topic, user_id, voice, chapters_list, audio_tasks))
 
             total_ms = int((_time.perf_counter() - _t_total) * 1000)
             chapter_names = [c.get("title", "") for c in chapters_list]
@@ -751,7 +906,7 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
     import os as _os
     import time as _time
     from backend.src.models.narration_model import Narration
-    from backend.src.service.narration_service import _generate_tts
+    from backend.src.service.narration.service import _generate_tts
     from backend.src.utils.tts_utils import parse_by_type as _parse_by_type, generate_audio_with_timestamps
 
     _t_start = _time.perf_counter()
@@ -762,7 +917,7 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
 
     _flush_lock = asyncio.Lock()
 
-    _TTS_CACHE = Path(__file__).parent.parent.parent / "static" / "audio" / "_cache"
+    _TTS_CACHE = AUDIO_DIR / "_cache"
     _TTS_CACHE.mkdir(parents=True, exist_ok=True)
     _tts_cache_key = lambda text, v: hashlib.md5(f"{text}_{v}".encode()).hexdigest()[:12]
 
@@ -771,7 +926,7 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
         if not text:
             return None
         cache_key = _tts_cache_key(text, voice)
-        base_dir = Path(__file__).parent.parent.parent / "static" / "audio" / str(resource_id)
+        base_dir = AUDIO_DIR / str(resource_id)
         base_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(base_dir / f"{cache_key}.mp3")
         json_path = str(base_dir / f"{cache_key}.json")
@@ -890,17 +1045,16 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
         front_tasks = ordered_tasks[:AUDIO_FRONTLOAD_CHAPTERS]
         rest_tasks = ordered_tasks[AUDIO_FRONTLOAD_CHAPTERS:]
 
-        for task in front_tasks:
-            await _process_chapter(task, frontload=True)
-
         chapter_sem = asyncio.Semaphore(AUDIO_CHAPTER_CONCURRENCY)
 
         async def _run_background_chapter(task: dict):
             async with chapter_sem:
                 await _process_chapter(task, frontload=False)
 
-        if rest_tasks:
-            await asyncio.gather(*(_run_background_chapter(t) for t in rest_tasks))
+        background_runs = [_run_background_chapter(t) for t in rest_tasks]
+        front_runs = [_process_chapter(t, frontload=True) for t in front_tasks]
+        if front_runs or background_runs:
+            await asyncio.gather(*(front_runs + background_runs), return_exceptions=True)
 
         segments = _build_audio_segments(chapters)
         await _flush(record, topic, chapters, "ready", segments=segments)

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Body, UploadFile, File
-from backend.src.service.userservice import UserService
+from backend.src.service.user import service as user_service
 from backend.src.utils.jwt import create_access_token, get_user_id_from_token
 from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User, SendEmailCode, RegisterByEmail, LoginByEmail
 
@@ -8,7 +8,7 @@ router = APIRouter(prefix = "/user", tags = ["用户"])
 @router.post("/create_user")
 async def create(data : Create_User):
     try :
-        user, msg = await UserService.create_user(data)
+        user, msg = await user_service.create_user(data)
         if user is not None:
             return {
                 "code" : 200,
@@ -31,7 +31,7 @@ async def create(data : Create_User):
 @router.post("/login_user")
 async def login(data : Login_User):
     try : 
-        user, msg = await UserService.login_user(data)
+        user, msg = await user_service.login_user(data)
         if user is None:
             return {
                 "code" : 404,
@@ -55,7 +55,7 @@ async def login(data : Login_User):
 @router.post("/send_email_code")
 async def send_email_code(data: SendEmailCode = Body(...)):
     try:
-        _, msg = await UserService.send_email_code(data.email, data.purpose)
+        _, msg = await user_service.send_email_code(data.email, data.purpose)
         if msg != "success":
             return {"code": 400, "msg": msg}
         return {"code": 200, "msg": "验证码已发送"}
@@ -66,7 +66,7 @@ async def send_email_code(data: SendEmailCode = Body(...)):
 @router.post("/register_by_email")
 async def register_by_email(data: RegisterByEmail = Body(...)):
     try:
-        user, msg = await UserService.register_by_email(data.email, data.code, data.password, data.username)
+        user, msg = await user_service.register_by_email(data.email, data.code, data.password, data.username)
         if user is None:
             return {"code": 400, "msg": msg}
         return {
@@ -81,7 +81,7 @@ async def register_by_email(data: RegisterByEmail = Body(...)):
 @router.post("/login_by_email")
 async def login_by_email(data: LoginByEmail = Body(...)):
     try:
-        user, msg = await UserService.login_by_email(data.email, data.code)
+        user, msg = await user_service.login_by_email(data.email, data.code)
         if user is None:
             return {"code": 400, "msg": msg}
         return {
@@ -101,7 +101,7 @@ async def login_by_email(data: LoginByEmail = Body(...)):
 @router.get("/read_user")
 async def read(user_id : int = Depends(get_user_id_from_token)):
     try : 
-        user, msg = await UserService.read_user(user_id)
+        user, msg = await user_service.read_user(user_id)
         if user is None:
             return {
                 "code" : 404,
@@ -129,7 +129,7 @@ async def read(user_id : int = Depends(get_user_id_from_token)):
 @router.post("/update_user/information")
 async def update_information(user_id : int = Depends(get_user_id_from_token), data : Update_User_Information = Body(...)):
     try : 
-        user, msg = await UserService.update_user_information(user_id, data)
+        user, msg = await user_service.update_user_information(user_id, data)
         if user is None:
             return {
                 "code" : 404,
@@ -151,7 +151,7 @@ async def update_information(user_id : int = Depends(get_user_id_from_token), da
 @router.post("/update_user/password")
 async def update_password(user_id : int = Depends(get_user_id_from_token), data : Update_User_Password = Body(...)):
     try : 
-        user, msg = await UserService.update_user_password(user_id, data)
+        user, msg = await user_service.update_user_password(user_id, data)
         if user is None:
             return {
                 "code" : 404,
@@ -176,7 +176,7 @@ async def upload_avatar(user_id: int = Depends(get_user_id_from_token), file: Up
         if not file.filename:
             return {"code": 400, "msg": "未选择文件"}
         content = await file.read()
-        user, msg = await UserService.upload_avatar(user_id, content, file.filename)
+        user, msg = await user_service.upload_avatar(user_id, content, file.filename)
         if user is None:
             return {"code": 404, "msg": msg}
         return {
@@ -192,7 +192,7 @@ async def upload_avatar(user_id: int = Depends(get_user_id_from_token), file: Up
 @router.delete("/avatar")
 async def delete_avatar(user_id: int = Depends(get_user_id_from_token)):
     try:
-        user, msg = await UserService.delete_avatar(user_id)
+        user, msg = await user_service.delete_avatar(user_id)
         if user is None:
             return {"code": 404, "msg": msg}
         return {"code": 200, "msg": msg}
@@ -204,7 +204,7 @@ async def delete_avatar(user_id: int = Depends(get_user_id_from_token)):
 @router.delete("/delete_user")
 async def delete(user_id : int = Depends(get_user_id_from_token), data : Delete_User = Body(...)):
     try :
-        user, msg = await UserService.delete_user(user_id, data)
+        user, msg = await user_service.delete_user(user_id, data)
         if user is None :
             return {
                 "code" : 404,

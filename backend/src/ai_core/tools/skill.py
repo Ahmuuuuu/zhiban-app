@@ -7,8 +7,8 @@ from langchain_core.tools import tool
 @tool
 async def read_skill(resource_type: str, user_id: str):
     """查看某个 skill 的详情。参数：resource_type 可以是资源类型(document/ppt/mindmap/exercise/case/reading)或 action skill 名如 action:技能名，user_id用户ID"""
-    from backend.src.service.skill_service import SkillService
-    skill = await SkillService.get(user_id=int(user_id), resource_type=resource_type)
+    from backend.src.service.skill import service as skill_service
+    skill = await skill_service.get(user_id=int(user_id), resource_type=resource_type)
     if not skill:
         return f"'{resource_type}' 暂无自定义 skill"
     if skill["skill_type"] == "generation":
@@ -33,9 +33,9 @@ async def read_skill(resource_type: str, user_id: str):
 @tool
 async def upsert_skill(resource_type: str, name: str, system_prompt: str, user_id: str):
     """创建或更新某个资源类型的生成 skill。参数：resource_type资源类型，name技能名称，system_prompt自定义提示词(支持 topic/portrait_context/kb_context 占位符)，user_id用户ID"""
-    from backend.src.service.skill_service import SkillService
+    from backend.src.service.skill import service as skill_service
     try:
-        result = await SkillService.upsert(
+        result = await skill_service.upsert(
             user_id=int(user_id), resource_type=resource_type,
             name=name, system_prompt=system_prompt,
         )
@@ -58,13 +58,13 @@ async def create_action_skill(
     action_config JSON格式的动作配置，包含 url(含{{参数名}}占位符)、method(GET/POST)、params(参数名映射描述)，
     tool_description 工具描述，告诉 LLM 何时及如何调用，
     user_id用户ID"""
-    from backend.src.service.skill_service import SkillService
+    from backend.src.service.skill import service as skill_service
     try:
         config = json.loads(action_config)
     except json.JSONDecodeError:
         return "action_config 不是合法的 JSON，请修正后重试"
     try:
-        result = await SkillService.upsert_action(
+        result = await skill_service.upsert_action(
             user_id=int(user_id),
             name=name,
             action_type=action_type,
@@ -82,8 +82,8 @@ async def create_action_skill(
 @tool
 async def list_skills(user_id: str):
     """列出当前用户的所有 skill（含生成 skill 和动作 skill）。参数：user_id用户ID"""
-    from backend.src.service.skill_service import SkillService
-    skills = await SkillService.list_all(user_id=int(user_id))
+    from backend.src.service.skill import service as skill_service
+    skills = await skill_service.list_all(user_id=int(user_id))
     if not skills:
         return "暂无自定义 skill，全部使用默认"
     lines = [f"当前共 {len(skills)} 个 skill："]
@@ -98,8 +98,8 @@ async def list_skills(user_id: str):
 @tool
 async def delete_skill(resource_type: str, user_id: str):
     """删除某个 skill。参数：resource_type 可以是资源类型(document/ppt等)或 action:技能名，user_id用户ID"""
-    from backend.src.service.skill_service import SkillService
-    result = await SkillService.delete(user_id=int(user_id), resource_type=resource_type)
+    from backend.src.service.skill import service as skill_service
+    result = await skill_service.delete(user_id=int(user_id), resource_type=resource_type)
     if resource_type.startswith("action:"):
         from backend.src.ai_core.brain import Brain  # deferred: circular brain<->skill
         Brain.rebuild_for_user(int(user_id))

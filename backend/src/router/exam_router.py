@@ -4,7 +4,7 @@ import json
 
 from fastapi import APIRouter, Query, HTTPException, Depends
 
-from backend.src.service.exam_service import ExamService
+from backend.src.service.exam.service import ExamService
 from backend.src.schemas.exam import GenerateExamRequest, SubmitAnswerRequest
 from backend.src.utils.jwt import get_user_id_from_token
 

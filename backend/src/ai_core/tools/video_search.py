@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 async def search_online_video(topic: str, user_id: str, max_results: int = 3, chat_group_id: str = "0"):
     """搜索在线教学视频（B站）。当用户说"找视频""搜视频教程""找个教学视频""搜索视频资料"时调用。
     参数：topic搜索关键词，user_id用户数字ID，max_results返回视频数量(1-5，默认3)，chat_group_id聊天组ID"""
-    from backend.src.service.video_service import ExternalVideoService
+    from backend.src.service.video.service import ExternalVideoService
 
     gid = int(chat_group_id) if str(chat_group_id).isdigit() else 0
     try:

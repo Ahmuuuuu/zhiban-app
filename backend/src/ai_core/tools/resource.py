@@ -5,7 +5,7 @@ import re
 import logging
 
 from langchain_core.tools import tool
-from backend.src.service.resource_service import ResourceService
+from backend.src.service.resource.service import ResourceService
 
 logger = logging.getLogger(__name__)
 

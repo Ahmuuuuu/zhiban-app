@@ -3,6 +3,7 @@
 支持 .txt / .pdf / .docx
 """
 from pathlib import Path
+import re
 
 
 # ── 文本提取 ──
@@ -47,24 +48,21 @@ def _extract_docx(path: Path) -> str:
 
 # ── 文本切片 ──
 
-def chunk_text(text: str, max_chars: int = 500) -> list[str]:
+def chunk_text(text: str, max_chars: int = 1000, overlap_chars: int = 150) -> list[str]:
     """
-    将长文本按段落切分成块，每块不超过 max_chars 字符。
-    策略：按双换行分段，再合并小段直到接近上限。
+    将长文本按语义段落切分成块。
+    策略：保留标题路径，按段落聚合，长段落按句子切分，并给相邻块少量 overlap。
     """
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    paragraphs = _paragraphs_with_heading_path(text)
     chunks = []
     current = ""
 
     for para in paragraphs:
-        # 单段超长则按句号/换行切
         if len(para) > max_chars:
-            # 先把 current 存起来
             if current:
                 chunks.append(current)
                 current = ""
-            # 再切这段
-            for sub in _split_long_paragraph(para, max_chars):
+            for sub in _split_long_paragraph(para, max_chars, overlap_chars):
                 chunks.append(sub)
             continue
 
@@ -78,14 +76,62 @@ def chunk_text(text: str, max_chars: int = 500) -> list[str]:
     if current:
         chunks.append(current)
 
-    return chunks or [text]
+    return _add_overlap(chunks, overlap_chars) or [text]
 
 
-def _split_long_paragraph(text: str, max_chars: int) -> list[str]:
-    """按句号、换行、逗号切割超长段落"""
-    import re
-    # 先按句号分割
-    sentences = re.split(r"(?<=[。！？\n])", text)
+def _paragraphs_with_heading_path(text: str) -> list[str]:
+    normalized = re.sub(r"\r\n?", "\n", str(text or ""))
+    raw_parts = [p.strip() for p in re.split(r"\n{2,}", normalized) if p.strip()]
+    heading_path: list[str] = []
+    parts: list[str] = []
+
+    for part in raw_parts:
+        lines = [line.strip() for line in part.splitlines() if line.strip()]
+        if not lines:
+            continue
+
+        first = lines[0]
+        heading = _parse_heading(first)
+        if heading:
+            level, title = heading
+            heading_path = heading_path[: max(0, level - 1)]
+            heading_path.append(title)
+            body = "\n".join(lines[1:]).strip()
+            if not body:
+                continue
+            part = body
+
+        if heading_path:
+            parts.append(f"标题路径：{' > '.join(heading_path)}\n{part}")
+        else:
+            parts.append(part)
+
+    return parts
+
+
+def _parse_heading(line: str) -> tuple[int, str] | None:
+    markdown = re.match(r"^(#{1,6})\s+(.+)$", line)
+    if markdown:
+        return len(markdown.group(1)), markdown.group(2).strip()
+
+    chapter = re.match(r"^第[一二三四五六七八九十百千万\d]+[章节篇讲课]\s*[：:、.]?\s*(.+)$", line)
+    if chapter:
+        return 1, line.strip()
+
+    numbered = re.match(r"^(\d+(?:\.\d+){0,4})[、.)．]\s*(.+)$", line)
+    if numbered:
+        return min(numbered.group(1).count(".") + 1, 6), line.strip()
+
+    cn_numbered = re.match(r"^[一二三四五六七八九十]+[、.．]\s*(.+)$", line)
+    if cn_numbered and len(line) <= 40:
+        return 2, line.strip()
+
+    return None
+
+
+def _split_long_paragraph(text: str, max_chars: int, overlap_chars: int = 150) -> list[str]:
+    """按句号、问号、叹号、分号、换行切割超长段落。"""
+    sentences = re.split(r"(?<=[。！？!?；;\n])", text)
     chunks = []
     current = ""
 
@@ -98,9 +144,32 @@ def _split_long_paragraph(text: str, max_chars: int) -> list[str]:
         else:
             if current:
                 chunks.append(current)
-            current = sent
+            if len(sent) > max_chars:
+                chunks.extend(_hard_split(sent, max_chars, overlap_chars))
+                current = ""
+            else:
+                current = sent
 
     if current:
         chunks.append(current)
 
     return chunks
+
+
+def _hard_split(text: str, max_chars: int, overlap_chars: int) -> list[str]:
+    step = max(1, max_chars - max(0, overlap_chars))
+    return [text[start:start + max_chars].strip() for start in range(0, len(text), step) if text[start:start + max_chars].strip()]
+
+
+def _add_overlap(chunks: list[str], overlap_chars: int) -> list[str]:
+    if overlap_chars <= 0 or len(chunks) <= 1:
+        return chunks
+
+    overlapped = [chunks[0]]
+    for idx in range(1, len(chunks)):
+        prev_tail = chunks[idx - 1][-overlap_chars:].strip()
+        current = chunks[idx]
+        if prev_tail and prev_tail not in current[: overlap_chars * 2]:
+            current = f"上文摘要：{prev_tail}\n{current}"
+        overlapped.append(current)
+    return overlapped

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -15,18 +16,31 @@ from backend.src.utils.constants import VIDEOS_DIR
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
 from backend.src.models.exam_model import ExamRecord, KnowledgeMastery
-from backend.src.service.notification_service import check_and_create_node_unlocked, check_and_create_quiz_failed
+from backend.src.service.notification.service import check_and_create_node_unlocked, check_and_create_quiz_failed
 from backend.src.models.resource_model import GeneratedResource
-from backend.src.models.portraitmodel import User_picture
 from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
-from backend.src.service.portrait_service import format_portrait, PortraitRadarService, build_learning_guidance
-from backend.src.service.exam_service import ExamService, _normalize_db_answer, _parse_multi_ans
-from backend.src.service.resource_service import ResourceService
+from backend.src.service.portrait.service import format_portrait, PortraitRadarService, build_learning_guidance
+from backend.src.service.exam.service import ExamService, _normalize_db_answer, _parse_multi_ans
+from backend.src.service.resource.service import ResourceService
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.json_parser import parse_llm_json
 from backend.src.utils.exceptions import ServiceError
+from backend.src.service.path.helpers import (
+    check_existing_resources,
+    check_resource_viewed,
+    unlock_next_node,
+    update_portrait_from_mastery,
+    update_progress_resource_ids,
+)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _compute_node_count(subject: str, picture) -> int:
@@ -301,32 +315,9 @@ class PathService:
                 await check_and_create_node_unlocked(user_id, first_node.topic, path.id, first_node.id)
 
             if first_node and not admin_mode:
-                async def gen_resources():
-                    try:
-                        r = await PathService.generate_node_resources(path.id, first_node.id, user_id)
-                        return r.get("resource_ids", [])
-                    except Exception:
-                        logger.exception("first node resource generation failed node_id=%s", first_node.id)
-                        return []
+                _schedule_first_node_warmup(path.id, first_node.id, user_id)
 
-                async def gen_quiz():
-                    try:
-                        q = await PathService.generate_node_quiz(path.id, first_node.id, user_id)
-                        return q.get("session_id"), q.get("questions", [])
-                    except Exception:
-                        logger.exception("first node quiz generation failed node_id=%s", first_node.id)
-                        return None, []
-
-                res_ids, (session_id, questions) = await asyncio.gather(gen_resources(), gen_quiz())
-                node_results[first_node.id] = {
-                    "node_id": first_node.id,
-                    "resource_ids": res_ids,
-                    "session_id": session_id,
-                    "quiz_count": len(questions),
-                }
-                yield event({"type": "node_result", "path_id": path.id, "node_result": node_results[first_node.id]})
-
-            asyncio.create_task(_generate_path_video_background(path.id, user_id))
+            _schedule_path_video(path.id, user_id)
 
             yield event({
                 "type": "done",
@@ -528,16 +519,10 @@ class PathService:
                     logger.exception("首节点测验生成失败 node_id=%s topic=%s", first_node.id, first_node.topic)
                     return None, []
 
-            res_ids, (session_id, questions) = await asyncio.gather(gen_resources(), gen_quiz())
-            node_results[first_node.id] = {
-                "node_id": first_node.id,
-                "resource_ids": res_ids,
-                "session_id": session_id,
-                "quiz_count": len(questions),
-            }
+            _schedule_first_node_warmup(path.id, first_node.id, user_id)
 
         # 后台异步生成路径视频，不阻塞返回
-        asyncio.create_task(_generate_path_video_background(path.id, user_id))
+        _schedule_path_video(path.id, user_id)
 
         return {
             "path_id": path.id,
@@ -639,13 +624,13 @@ class PathService:
         resources = []
         if first_node:
             try:
-                res_result = await PathService.generate_node_resources(path_id, first_node.id, user_id)
-                resources = res_result.get("resource_ids", [])
+                _schedule_first_node_warmup(path_id, first_node.id, user_id)
+                resources = []
             except Exception:
                 logger.exception("自动生成首节点资源失败 path_id=%s node_id=%s", path_id, first_node.id)
 
         # 后台异步生成路径视频
-        asyncio.create_task(_generate_path_video_background(path_id, user_id))
+        _schedule_path_video(path_id, user_id)
 
         return {"path_id": path_id, "progress": created, "first_node_resources": resources}
 
@@ -732,32 +717,6 @@ class PathService:
             },
         }
 
-    # ── 内部工具方法（两条生成路径复用） ──
-
-    @staticmethod
-    async def _check_existing_resources(user_id: int, topic: str, resource_types: list[str] | None = None):
-        """查已有资源 → (已有记录列表, 缺失类型列表)"""
-        if resource_types is None:
-            resource_types = ["document", "ppt", "mindmap"]
-        existing_records = []
-        missing_types = []
-        for rt in resource_types:
-            r = await GeneratedResource.filter(user_id=user_id, topic=topic, resource_type=rt).first()
-            if r:
-                existing_records.append(r)
-            else:
-                missing_types.append(rt)
-        return existing_records, missing_types
-
-    @staticmethod
-    async def _update_progress_resource_ids(progress, all_ids: list[int]):
-        """写入 resource_ids 并推进节点状态"""
-        update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
-        if progress.node_status == "unlocked":
-            update_fields["node_status"] = "in_progress"
-            update_fields["started_at"] = datetime.now()
-        await UserPathProgress.filter(id=progress.id).update(**update_fields)
-
     # ── 资源生成 ──
 
     @staticmethod
@@ -775,14 +734,14 @@ class PathService:
 
         topic = node.topic
         node_resource_types = ["document", "ppt", "mindmap"]
-        existing_records, missing_types = await PathService._check_existing_resources(user_id, topic, node_resource_types)
+        existing_records, missing_types = await check_existing_resources(user_id, topic, node_resource_types)
 
         for r in existing_records:
             yield _resource_sse(r)
 
         if not missing_types:
             all_ids = [r.id for r in existing_records]
-            await PathService._update_progress_resource_ids(progress, all_ids)
+            await update_progress_resource_ids(progress, all_ids)
             yield _sse_done(all_ids)
             return
 
@@ -796,7 +755,7 @@ class PathService:
         generated_ids = []
         try:
             if gen_types:
-                from backend.src.service.resource_service import ResourceService
+                from backend.src.service.resource.service import ResourceService
                 async for event_str in ResourceService.generate_stream(
                     topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
                     ppt_prompt_key="ppt_video",
@@ -814,12 +773,12 @@ class PathService:
                             pass
 
             all_ids = [r.id for r in existing_records] + generated_ids
-            await PathService._update_progress_resource_ids(progress, all_ids)
+            await update_progress_resource_ids(progress, all_ids)
             yield _sse_done(all_ids)
         except Exception:
             # 客户端断开或异常时，至少把已收集到的资源 ID 写回进度
             all_ids = [r.id for r in existing_records] + generated_ids
-            await PathService._update_progress_resource_ids(progress, all_ids)
+            await update_progress_resource_ids(progress, all_ids)
 
     @staticmethod
     async def generate_node_resources(path_id: int, node_id: int, user_id: int) -> dict:
@@ -834,7 +793,7 @@ class PathService:
 
         topic = node.topic
         node_resource_types = ["document", "ppt", "mindmap"]
-        existing_records, missing_types = await PathService._check_existing_resources(user_id, topic, node_resource_types)
+        existing_records, missing_types = await check_existing_resources(user_id, topic, node_resource_types)
 
         gen_types = [t for t in missing_types if t != "exercise"]
         if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
@@ -855,7 +814,7 @@ class PathService:
                 logger.exception("ResourceService.generate_and_save 失败 topic=%s types=%s", topic, gen_types)
 
         all_ids = [r.id for r in existing_records] + generated_ids
-        await PathService._update_progress_resource_ids(progress, all_ids)
+        await update_progress_resource_ids(progress, all_ids)
 
         resources = []
         if all_ids:
@@ -889,19 +848,6 @@ class PathService:
             "generated_count": len(generated_ids),
             "reused_count": len(existing_records),
         }
-
-    @staticmethod
-    async def _check_resource_viewed(node_id: int, user_id: int) -> tuple[bool, int]:
-        """检查节点资源是否已查看，返回 (has_viewed, total_view_count)"""
-        progress = await UserPathProgress.filter(user_id=user_id, node_id=node_id).first()
-        if not progress or not progress.resource_ids:
-            return False, 0
-        rids = json.loads(progress.resource_ids) if progress.resource_ids else []
-        if not rids:
-            return False, 0
-        resources = await GeneratedResource.filter(id__in=rids).all()
-        total_views = sum(r.view_count or 0 for r in resources)
-        return total_views > 0, total_views
 
     @staticmethod
     async def generate_node_quiz(path_id: int, node_id: int, user_id: int, pre_generate: bool = False) -> dict:
@@ -939,7 +885,7 @@ class PathService:
 
         if not pre_generate:
             # 检查资源是否已查看，根据查看次数决定难度
-            has_viewed, total_views = await PathService._check_resource_viewed(node_id, user_id)
+            has_viewed, total_views = await check_resource_viewed(node_id, user_id)
             if not has_viewed:
                 return {"blocked": True, "reason": "请先学习当前节点的学习资料后再进行检测"}
 
@@ -957,8 +903,8 @@ class PathService:
         try:
             resource_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
             if resource_ids:
-                from backend.src.service.annotation_service import AnnotationService
-                user_notes = await AnnotationService.collect_notes_for_quiz(user_id, resource_ids)
+                from backend.src.service.annotation import service as annotation_service
+                user_notes = await annotation_service.collect_notes_for_quiz(user_id, resource_ids)
         except Exception:
             logger.exception("收集笔记失败 path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
 
@@ -1015,7 +961,7 @@ class PathService:
         difficulty = "medium"
 
         # 检查资源是否已查看，根据查看次数决定难度
-        has_viewed, total_views = await PathService._check_resource_viewed(node_id, user_id)
+        has_viewed, total_views = await check_resource_viewed(node_id, user_id)
         if not has_viewed:
             yield f"data: {json.dumps({'type': 'blocked', 'reason': '请先学习当前节点的学习资料后再进行检测'}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
@@ -1033,8 +979,8 @@ class PathService:
         try:
             resource_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
             if resource_ids:
-                from backend.src.service.annotation_service import AnnotationService
-                user_notes = await AnnotationService.collect_notes_for_quiz(user_id, resource_ids)
+                from backend.src.service.annotation import service as annotation_service
+                user_notes = await annotation_service.collect_notes_for_quiz(user_id, resource_ids)
         except Exception:
             logger.exception("收集笔记失败 path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
 
@@ -1210,14 +1156,20 @@ class PathService:
             await progress.save()
 
             # 解锁下一节点并自动生成资源
-            await PathService._unlock_next_node(path_id, node.order_index, user_id)
+            await unlock_next_node(
+                path_id,
+                node.order_index,
+                user_id,
+                PathService.generate_node_resources,
+                PathService.generate_node_quiz,
+            )
         else:
             progress.node_status = "in_progress"
             await progress.save()
             await check_and_create_quiz_failed(user_id, node.topic, path_id, node_id)
 
         # 更新画像 traits
-        await PathService._update_portrait_from_mastery(user_id)
+        await update_portrait_from_mastery(user_id)
         try:
             await PortraitRadarService.compute(user_id)
             await PortraitRadarService.sync_to_portrait(user_id)
@@ -1460,99 +1412,6 @@ class PathService:
             "presentation_id": pres_id,
             "topic": video_topic,
         }
-
-    # ── 内部辅助 ──
-
-    @staticmethod
-    async def _pre_generate_node(path_id: int, node_id: int, user_id: int):
-        try:
-            await asyncio.gather(
-                PathService.generate_node_resources(path_id, node_id, user_id),
-                PathService.generate_node_quiz(path_id, node_id, user_id, pre_generate=True),
-            )
-        except Exception:
-            logger.exception("预生成节点资源/检测题失败 path_id=%s node_id=%s", path_id, node_id)    @staticmethod
-    async def _unlock_next_node(path_id: int, current_order: int, user_id: int):
-        """解锁下一顺序节点并预生成下两个节点的资源"""
-        next_node = await PathNode.filter(path_id=path_id, order_index=current_order + 1).first()
-        if not next_node:
-            return
-
-        await UserPathProgress.filter(
-            user_id=user_id, path_id=path_id, node_id=next_node.id
-        ).update(node_status="unlocked")
-
-        await check_and_create_node_unlocked(user_id, next_node.topic, path_id, next_node.id)
-
-        pre_gen_ids = [next_node.id]
-        node_after = await PathNode.filter(path_id=path_id, order_index=current_order + 2).first()
-        if node_after:
-            pre_gen_ids.append(node_after.id)
-        await asyncio.gather(*(PathService._pre_generate_node(path_id, nid, user_id) for nid in pre_gen_ids))
-
-    @staticmethod
-    async def _update_portrait_from_mastery(user_id: int):
-        """汇总知识掌握度 → 同步更新画像 traits"""
-
-        records = await KnowledgeMastery.filter(user_id=user_id).all()
-        if not records:
-            return
-
-        mastery_data = [
-            {"tag": r.knowledge_tag, "level": r.mastery_level, "accuracy": round(r.correct_count / max(r.total_attempts, 1), 2)}
-            for r in records
-        ]
-
-        # 分化强项/弱项
-        strengths = [m["tag"] for m in mastery_data if m["level"] in ("mastered", "proficient")]
-        weaknesses = [m["tag"] for m in mastery_data if m["level"] == "beginner"]
-        avg_accuracy = round(sum(m["accuracy"] for m in mastery_data) / len(mastery_data), 2)
-        level_map = {"beginner": 1, "learning": 2, "proficient": 3, "mastered": 4}
-        avg_level = sum(level_map.get(m["level"], 1) for m in mastery_data) / len(mastery_data)
-        knowbase = round(min(avg_level, 5), 1)
-
-        user = await User.filter(id=user_id).prefetch_related("picture").first()
-        if not user:
-            return
-        picture = await user.picture
-        if not picture:
-            picture = await User_picture.create()
-            user.picture = picture
-            await user.save()
-
-        existing = {}
-        if picture.traits:
-            try:
-                existing = json.loads(picture.traits)
-            except (json.JSONDecodeError, TypeError):
-                logger.warning("画像 traits JSON 解析失败 user_id=%s", user_id)
-                existing = {}
-
-        # 保留原始数据
-        existing["knowledge_mastery"] = mastery_data
-        existing["updated_at"] = str(datetime.now())
-
-        # 同步核心画像维度
-        existing["knowbase"] = {
-            "value": str(knowbase),
-            "confidence": min(0.95, 0.3 + avg_accuracy * 0.5),
-            "source": "agent_inferred",
-        }
-        if strengths:
-            existing["strengths"] = {
-                "value": "、".join(strengths[:5]),
-                "confidence": 0.85,
-                "source": "agent_inferred",
-            }
-        if weaknesses:
-            existing["weaknesses"] = {
-                "value": "、".join(weaknesses[:5]),
-                "confidence": 0.75,
-                "source": "agent_inferred",
-            }
-
-        picture.traits = json.dumps(existing, ensure_ascii=False)
-        await picture.save()
 
     # ── 轻量学习路径接口（供前端动态路径动画） ──
 
@@ -1848,7 +1707,7 @@ async def _create_video_html_and_update_progress(topic: str, user_id: int, ppt_r
 async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | None:
     """通过已有的 video_service 创建学习视频（含骨架→后台补音频→状态轮询）。
     返回 {"html_id": int, "presentation_id": int, "file_url": str} 或 None。"""
-    from backend.src.service.video_service import generate as generate_presentation
+    from backend.src.service.video.service import generate as generate_presentation
     from backend.src.models.resource_model import GeneratedResource
 
     # 已有 HTML GeneratedResource 且是交互模板 → 复用；否则删旧重建
@@ -1890,6 +1749,29 @@ async def _create_video_html(topic: str, user_id: int, ppt_record) -> dict | Non
     )
     logger.info("学习视频已创建 html_id=%s presentation_id=%s", html.id, pres["id"])
     return {"html_id": html.id, "presentation_id": pres["id"], "file_url": pres["file_url"]}
+
+
+def _schedule_first_node_warmup(path_id: int, node_id: int, user_id: int) -> None:
+    if not _env_bool("PATH_AUTO_PREGENERATE_FIRST_NODE", False):
+        return
+    asyncio.create_task(_generate_first_node_warmup_background(path_id, node_id, user_id))
+
+
+async def _generate_first_node_warmup_background(path_id: int, node_id: int, user_id: int) -> None:
+    try:
+        await asyncio.gather(
+            PathService.generate_node_resources(path_id, node_id, user_id),
+            PathService.generate_node_quiz(path_id, node_id, user_id),
+            return_exceptions=True,
+        )
+    except Exception:
+        logger.exception("first node warmup failed path_id=%s node_id=%s", path_id, node_id)
+
+
+def _schedule_path_video(path_id: int, user_id: int) -> None:
+    if not _env_bool("PATH_AUTO_GENERATE_VIDEO", False):
+        return
+    asyncio.create_task(_generate_path_video_background(path_id, user_id))
 
 
 async def _generate_path_video_background(path_id: int, user_id: int):

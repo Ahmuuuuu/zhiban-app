@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Body, Request
 
-from backend.src.service.admin_service import AdminService
-from backend.src.service.resource_service import ResourceService
+from backend.src.service.admin import service as admin_service
+from backend.src.service.resource.service import ResourceService
 from backend.src.schemas.admin import ResetPasswordRequest, DeleteUserRequest
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.utils.admin_check import is_admin
@@ -203,7 +203,7 @@ async def import_base_resource_alias(request: Request, admin_id: int = Depends(_
 @router.get("/users")
 async def list_users(admin_id : int = Depends(_require_admin)):
     try :
-        users = await AdminService.list_users()
+        users = await admin_service.list_users()
         return {"code" : 200, "msg" : "success", "data" : users}
     except HTTPException :
         raise
@@ -220,7 +220,7 @@ async def delete_user(
     if not data.confirm :
         return {"code" : 400, "msg" : "请确认删除"}
     try :
-        msg = await AdminService.delete_user(user_id)
+        msg = await admin_service.delete_user(user_id)
         if "不存在" in msg or "不能删除" in msg :
             return {"code" : 403, "msg" : msg}
         return {"code" : 200, "msg" : msg}
@@ -237,7 +237,7 @@ async def reset_password(
     data : ResetPasswordRequest = Body(...)
 ):
     try :
-        msg = await AdminService.reset_password(user_id, data.new_password)
+        msg = await admin_service.reset_password(user_id, data.new_password)
         if "不存在" in msg :
             return {"code" : 404, "msg" : msg}
         return {"code" : 200, "msg" : msg}
@@ -356,7 +356,7 @@ async def delete_knowledge_base(doc_id: str, admin_id: int = Depends(_require_ad
 @router.get("/knowledge_base")
 async def admin_knowledge_base(admin_id : int = Depends(_require_admin)):
     try :
-        records = await AdminService.list_knowledge_base()
+        records = await admin_service.list_knowledge_base()
         return {"code" : 200, "msg" : "success", "data" : records}
     except HTTPException :
         raise

@@ -8,8 +8,8 @@ from backend.src.models.study_model import StudySession, ResourceReadStatus, Res
 from backend.src.models.exam_model import KnowledgeMastery, ExamRecord
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
-from backend.src.service.portrait_service import build_learning_guidance, PortraitRadarService
-from backend.src.service.notification_service import check_and_create_weekly_report
+from backend.src.service.portrait.service import build_learning_guidance, PortraitRadarService
+from backend.src.service.notification.service import check_and_create_weekly_report
 
 logger = logging.getLogger(__name__)
 

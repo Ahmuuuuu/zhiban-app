@@ -15,8 +15,8 @@ from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.json_parser import parse_llm_json
-from backend.src.service.notification_service import check_and_create_ai_tip
-from backend.src.service.portrait_service import PortraitRadarService
+from backend.src.service.notification.service import check_and_create_ai_tip
+from backend.src.service.portrait.service import PortraitRadarService
 
 
 def _normalize_db_answer(raw: str) -> str:
@@ -150,7 +150,7 @@ class ExamService:
         if not user:
             return {"session_id": None, "questions": []}
 
-        from backend.src.service.resource_service import ResourceService  # deferred: circular exam<->resource
+        from backend.src.service.resource.service import ResourceService  # deferred: circular exam<->resource
 
         types = question_types or ["single_choice", "multi_choice", "true_false", "fill_blank"]
         types_str = ", ".join(types)
@@ -210,7 +210,7 @@ class ExamService:
             yield f"data: {json.dumps({'type': 'error', 'detail': '用户不存在'}, ensure_ascii=False)}\n\n"
             return
 
-        from backend.src.service.resource_service import ResourceService  # deferred: circular exam<->resource
+        from backend.src.service.resource.service import ResourceService  # deferred: circular exam<->resource
 
         types = question_types or ["single_choice", "multi_choice", "true_false", "fill_blank"]
         types_str = ", ".join(types)
@@ -396,9 +396,9 @@ class ExamService:
 
         await check_and_create_ai_tip(user_id)
 
-        from backend.src.service.path_service import PathService
+        from backend.src.service.path.helpers import update_portrait_from_mastery
         try:
-            await PathService._update_portrait_from_mastery(user_id)
+            await update_portrait_from_mastery(user_id)
         except Exception:
             logger.exception("答题后画像同步失败 user_id=%s", user_id)
 

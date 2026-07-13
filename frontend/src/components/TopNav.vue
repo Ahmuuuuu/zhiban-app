@@ -163,6 +163,7 @@ onMounted(() => {
   window.addEventListener('zhiban:notification-read', handleNotifRead)
   window.addEventListener('zhiban:notification-update', handleNotifUpdate)
   window.addEventListener('zhiban:user-logged-in', handleUserLoggedIn)
+  window.addEventListener('zhiban-login-success', handleUserLoggedIn)
   window.addEventListener('zhiban:user-logged-out', handleUserLoggedOut)
 })
 
@@ -171,6 +172,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('zhiban:notification-read', handleNotifRead)
   window.removeEventListener('zhiban:notification-update', handleNotifUpdate)
   window.removeEventListener('zhiban:user-logged-in', handleUserLoggedIn)
+  window.removeEventListener('zhiban-login-success', handleUserLoggedIn)
   window.removeEventListener('zhiban:user-logged-out', handleUserLoggedOut)
 })
 </script>

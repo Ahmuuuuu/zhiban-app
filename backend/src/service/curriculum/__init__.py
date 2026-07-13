@@ -1,0 +1,1 @@
+"""Curriculum service domain."""

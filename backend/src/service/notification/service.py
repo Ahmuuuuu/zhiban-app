@@ -179,7 +179,7 @@ async def check_and_create_ai_tip(user_id: int):
 async def _read_portrait(user_id: int) -> str:
     """读取用户画像摘要"""
     from backend.src.models.usermodel import User
-    from backend.src.service.portrait_service import PortraitChatHistory_Service
+    from backend.src.service.portrait.service import PortraitChatHistory_Service
 
     user = await User.filter(id=user_id).first()
     if not user:

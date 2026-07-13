@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from starlette.responses import StreamingResponse
 
-from backend.src.service.path_service import PathService
+from backend.src.service.path.service import PathService
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.schemas.path import (
     GeneratePathRequest,
@@ -163,7 +163,7 @@ async def generate_paths_from_profile(data: GenerateFromProfileRequest, user_id:
     from datetime import datetime, timedelta
     from backend.src.models.usermodel import User
     from backend.src.models.path_model import LearningPath
-    from backend.src.service.curriculum_service import get_courses
+    from backend.src.service.curriculum.service import get_courses
     from backend.src.models.notification_model import Notification
 
     user = await User.filter(id=user_id).first()

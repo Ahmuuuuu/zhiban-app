@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.src.schemas.annotation import CreateAnnotationRequest, UpdateAnnotationRequest
-from backend.src.service.annotation_service import AnnotationService
+from backend.src.service.annotation import service as annotation_service
 from backend.src.utils.jwt import get_user_id_from_token
 
 router = APIRouter(prefix="/annotation", tags=["笔记"])
@@ -15,7 +15,7 @@ async def list_annotations(
     source_id: int = Query(description="来源记录的主键ID"),
     user_id: int = Depends(get_user_id_from_token),
 ):
-    result = await AnnotationService.list_by_resource(source_type, source_id, user_id)
+    result = await annotation_service.list_by_resource(source_type, source_id, user_id)
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -24,7 +24,7 @@ async def create_annotation(
     body: CreateAnnotationRequest,
     user_id: int = Depends(get_user_id_from_token),
 ):
-    annotation = await AnnotationService.create(user_id, body.model_dump())
+    annotation = await annotation_service.create(user_id, body.model_dump())
     return {"code": 200, "msg": "success", "data": annotation}
 
 
@@ -34,7 +34,7 @@ async def update_annotation(
     body: UpdateAnnotationRequest,
     user_id: int = Depends(get_user_id_from_token),
 ):
-    result = await AnnotationService.update(annotation_id, user_id, body.note_text)
+    result = await annotation_service.update(annotation_id, user_id, body.note_text)
     if not result:
         raise HTTPException(status_code=404, detail="笔记不存在或无权操作")
     return {"code": 200, "msg": "success", "data": result}
@@ -45,7 +45,7 @@ async def delete_annotation(
     annotation_id: int,
     user_id: int = Depends(get_user_id_from_token),
 ):
-    ok = await AnnotationService.delete(annotation_id, user_id)
+    ok = await annotation_service.delete(annotation_id, user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="笔记不存在或无权操作")
     return {"code": 200, "msg": "success", "data": None}

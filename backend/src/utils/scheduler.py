@@ -63,7 +63,7 @@ def get_scheduler() -> AsyncIOScheduler:
 def start():
     sched = get_scheduler()
 
-    from backend.src.service.notification_service import (
+    from backend.src.service.notification.service import (
         generate_weekly_report_and_ai_tip,
     )
 

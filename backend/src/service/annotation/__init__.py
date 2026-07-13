@@ -1,0 +1,1 @@
+"""Annotation service domain."""

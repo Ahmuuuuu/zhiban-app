@@ -1,7 +1,7 @@
 """题库生成工具"""
 
 from langchain_core.tools import tool
-from backend.src.service.exam_service import ExamService
+from backend.src.service.exam.service import ExamService
 
 
 @tool

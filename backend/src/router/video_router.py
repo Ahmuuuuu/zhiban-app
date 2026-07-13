@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from backend.src.service.video_service import (
+from backend.src.service.video.service import (
     generate,
     generate_questions,
     preview,

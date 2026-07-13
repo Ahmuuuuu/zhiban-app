@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.src.service.study_service import StudyService
+from backend.src.service.study.service import StudyService
 from backend.src.utils.jwt import get_user_id_from_token
 
 router = APIRouter(prefix="/study", tags=["学习统计"])
