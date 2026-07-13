@@ -1,6 +1,6 @@
 <template>
   <section
-    class="video-formula-slide"
+    class="video-formula-slide video-fit-stage"
     :class="{ 'is-dense': notes.length > 4 || formulas.length > 3, 'is-flipped': flip }"
   >
     <div class="formula-main">
@@ -57,19 +57,9 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 <style scoped>
 .video-formula-slide {
-  position: absolute;
-  inset: 82px 54px 104px;
-  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-  gap: 28px;
-  color: var(--video-text);
-}
-
-.video-formula-slide *,
-.video-formula-slide *::before,
-.video-formula-slide *::after {
-  box-sizing: border-box;
+  gap: var(--video-gap);
 }
 
 /* ===== flip: formulas on right ===== */
@@ -101,10 +91,12 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 /* ===== formula-main ===== */
 .formula-main {
-  padding: 32px;
+  min-height: 0;
+  padding: var(--video-panel-padding);
   display: grid;
   align-content: center;
-  gap: 20px;
+  gap: calc(var(--video-gap) * 0.72);
+  overflow: hidden;
   animation: formula-in 0.62s ease both;
 }
 
@@ -115,8 +107,12 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 .formula-main h2 {
   margin: 0;
-  font-size: clamp(28px, 3vw, 46px);
+  font-size: clamp(24px, 3.4cqw, 46px);
   line-height: 1.15;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .video-formula-slide.is-dense .formula-main h2 {
@@ -130,7 +126,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 /* ===== formula-notes ===== */
 .formula-notes {
-  padding: 22px;
+  padding: calc(var(--video-panel-padding) * 0.72);
   display: grid;
   gap: 12px;
   align-content: center;

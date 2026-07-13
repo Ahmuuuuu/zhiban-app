@@ -1,6 +1,6 @@
 <template>
   <section
-    class="video-intro-slide"
+    class="video-intro-slide video-fit-stage"
     :class="{ 'is-dense': isDense, 'is-flipped': flip }"
   >
     <div class="intro-profile">
@@ -70,20 +70,10 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 <style scoped>
 .video-intro-slide {
-  position: absolute;
-  inset: 82px 54px 104px;
-  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 0.94fr) minmax(320px, 0.76fr);
   grid-template-areas: "profile relation";
-  gap: 34px;
-  color: var(--video-text);
-}
-
-.video-intro-slide *,
-.video-intro-slide *::before,
-.video-intro-slide *::after {
-  box-sizing: border-box;
+  gap: calc(var(--video-gap) * 1.2);
 }
 
 /* ===== flip: relation on left ===== */
@@ -113,10 +103,11 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 /* ===== Profile Panel ===== */
 .intro-profile {
   grid-area: profile;
-  padding: clamp(28px, 4vw, 56px);
+  min-height: 0;
+  padding: clamp(22px, 3.2cqw, 44px);
   display: grid;
   align-content: center;
-  gap: 22px;
+  gap: calc(var(--video-gap) * 0.78);
   overflow: hidden;
   animation: intro-profile 0.72s ease both;
 }
@@ -129,8 +120,12 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 .intro-profile h2 {
   max-width: 760px;
   margin: 0;
-  font-size: clamp(38px, 5vw, 76px);
+  font-size: clamp(30px, 5.1cqw, 76px);
   line-height: 1.04;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .video-intro-slide.is-dense .intro-profile h2 {
@@ -141,8 +136,12 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   max-width: 780px;
   margin: 0;
   color: var(--video-muted);
-  font-size: clamp(14px, 1.18vw, 22px);
+  font-size: var(--video-body-size);
   line-height: 1.52;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
 }
 
 .video-intro-slide.is-dense .intro-profile p {
@@ -209,9 +208,10 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 .intro-relation {
   grid-area: relation;
   position: relative;
-  padding: 28px;
+  min-height: 0;
+  padding: var(--video-panel-padding);
   display: grid;
-  grid-template-rows: auto minmax(240px, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 18px;
   overflow: hidden;
   animation: intro-map 0.72s ease both;
@@ -238,11 +238,12 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 /* ===== Relation Map (Node Graph) ===== */
 .relation-map {
   position: relative;
-  min-height: 300px;
+  min-height: 0;
+  height: 100%;
 }
 
 .video-intro-slide.is-dense .relation-map {
-  min-height: 200px;
+  min-height: 0;
 }
 
 .node {
@@ -297,6 +298,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
+  max-height: 72px;
   overflow: hidden;
 }
 

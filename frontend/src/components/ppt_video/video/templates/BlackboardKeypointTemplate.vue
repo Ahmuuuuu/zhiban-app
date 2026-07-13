@@ -1,6 +1,6 @@
 <template>
   <section
-    class="blackboard-keypoint-template"
+    class="blackboard-keypoint-template video-fit-stage"
     :class="{ 'is-dense': displayItems.length > 4, 'is-flipped': flip }"
   >
     <BoardHeaderBlock
@@ -77,23 +77,13 @@ const karaokeItems = computed(() => {
 
 <style scoped>
 .blackboard-keypoint-template {
-  position: absolute;
-  inset: 82px 54px 104px;
-  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
-  grid-template-rows: minmax(0, 0.72fr) minmax(160px, 0.9fr);
+  grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas:
     "header visual"
     "body   visual";
-  gap: 22px 28px;
-  color: var(--video-text);
-}
-
-.blackboard-keypoint-template *,
-.blackboard-keypoint-template *::before,
-.blackboard-keypoint-template *::after {
-  box-sizing: border-box;
+  gap: calc(var(--video-gap) * 0.8) var(--video-gap);
 }
 
 /* ===== grid areas ===== */
@@ -111,11 +101,11 @@ const karaokeItems = computed(() => {
 
 /* ===== Dense — only shrink, keep layout ===== */
 .blackboard-keypoint-template.is-dense {
-  gap: 16px 22px;
+  gap: calc(var(--video-gap) * 0.62) calc(var(--video-gap) * 0.78);
 }
 
 .blackboard-keypoint-template.is-dense :deep(.board-header-block h2) {
-  font-size: clamp(24px, 2.6vw, 38px);
+  font-size: var(--video-title-tight-size);
 }
 
 .blackboard-keypoint-template.is-dense :deep(.board-header-block p) {
@@ -136,7 +126,6 @@ const karaokeItems = computed(() => {
 
 @media (max-width: 980px) {
   .blackboard-keypoint-template {
-    inset: 72px 24px 104px;
     grid-template-columns: 1fr;
     grid-template-rows: auto auto minmax(160px, 1fr);
     grid-template-areas:

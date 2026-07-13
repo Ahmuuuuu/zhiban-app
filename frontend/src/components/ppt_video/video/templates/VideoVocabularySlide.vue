@@ -1,6 +1,6 @@
 <template>
   <section
-    class="video-vocabulary-slide"
+    class="video-vocabulary-slide video-fit-stage"
     :class="{ 'is-dense': vocabCards.length > 6, 'is-flipped': flip }"
   >
     <BoardHeaderBlock
@@ -77,23 +77,13 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 <style scoped>
 .video-vocabulary-slide {
-  position: absolute;
-  inset: 82px 54px 104px;
-  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
   grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas:
     "header scene"
     "deck   scene";
-  gap: 22px 28px;
-  color: var(--video-text);
-}
-
-.video-vocabulary-slide *,
-.video-vocabulary-slide *::before,
-.video-vocabulary-slide *::after {
-  box-sizing: border-box;
+  gap: calc(var(--video-gap) * 0.8) var(--video-gap);
 }
 
 /* ===== flip: scene on left ===== */
@@ -106,7 +96,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 /* ===== Dense — only shrink, keep layout ===== */
 .video-vocabulary-slide.is-dense {
-  gap: 16px 22px;
+  gap: calc(var(--video-gap) * 0.58) calc(var(--video-gap) * 0.78);
 }
 
 /* ===== grid areas ===== */
@@ -118,7 +108,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 }
 
 .video-vocabulary-slide.is-dense :deep(.video-vocabulary-slide__header.board-header-block h2) {
-  font-size: clamp(24px, 2.6vw, 40px);
+  font-size: var(--video-title-tight-size);
 }
 
 .video-vocabulary-slide.is-dense :deep(.video-vocabulary-slide__header.board-header-block p) {
@@ -181,7 +171,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   grid-area: scene;
   position: relative;
   overflow: hidden;
-  padding: 28px;
+  padding: var(--video-panel-padding);
   border: 1px solid var(--video-card-border);
   border-radius: 8px;
   background:
@@ -198,6 +188,11 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   color: var(--video-text);
   font-size: clamp(15px, 1.45vw, 28px);
   line-height: 1.42;
+  max-height: 58%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
 }
 
 .scene-bars {

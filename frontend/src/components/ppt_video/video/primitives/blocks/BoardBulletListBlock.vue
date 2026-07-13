@@ -36,8 +36,9 @@ const dense = computed(() => props.items.length > 4)
   min-height: 0;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 12px;
+  gap: clamp(8px, 1.1cqw, 12px);
   align-content: center;
+  overflow: hidden;
 }
 
 .board-bullet-list-block.is-dense {
@@ -73,13 +74,18 @@ const dense = computed(() => props.items.length > 4)
 .board-bullet-list-block span {
   min-width: 0;
   color: var(--video-muted);
-  font-size: clamp(12px, 0.94vw, 17px);
+  font-size: clamp(12px, 1.12cqw, 17px);
   line-height: 1.36;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
 }
 
 .board-bullet-list-block.is-dense span {
-  font-size: clamp(11px, 0.82vw, 14px);
+  font-size: var(--video-body-tight-size, clamp(11px, 0.82vw, 14px));
   line-height: 1.34;
+  -webkit-line-clamp: 2;
 }
 
 @keyframes bullet-in {
