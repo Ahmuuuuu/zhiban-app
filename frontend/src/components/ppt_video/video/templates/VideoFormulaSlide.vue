@@ -1,7 +1,7 @@
 <template>
   <section
-    class="video-formula-slide"
-    :class="{ 'is-dense': notes.length > 4 || formulas.length > 3, 'is-flipped': flip }"
+    class="video-formula-slide video-fit-stage"
+    :class="{ 'is-dense': isDense, 'is-sparse': isSparse, 'is-flipped': flip, 'has-notes': notes.length }"
   >
     <div class="formula-main">
       <ChalkTag>{{ slide.chapterTitle }}</ChalkTag>
@@ -13,7 +13,7 @@
       />
     </div>
 
-    <div class="formula-notes">
+    <div v-if="notes.length" class="formula-notes">
       <article
         v-for="(item, index) in notes"
         :key="`${index}-${item}`"
@@ -48,28 +48,65 @@ const props = defineProps({
   }
 })
 
+const normalizeText = value => String(value || '')
+  .replace(/<[^>]+>/g, '')
+  .replace(/[^\p{L}\p{N}]+/gu, '')
+  .toLowerCase()
+
+const isDuplicateText = (value, references) => {
+  const text = normalizeText(value)
+  if (!text) return true
+  return references.some(reference => {
+    const target = normalizeText(reference)
+    return target && (text === target || target.includes(text) || text.includes(target))
+  })
+}
+
 const formulas = computed(() => props.slide.formulas?.length
   ? props.slide.formulas
-  : (props.slide.items?.length ? props.slide.items : [props.slide.title]))
-const notes = computed(() => props.slide.items?.length ? [] : [])
+    .map(item => String(item || '').trim())
+    .filter(item => !isDuplicateText(item, [props.slide.title, props.slide.summary]))
+  : (props.slide.items || [])
+    .map(item => String(item || '').trim())
+    .filter(item => !isDuplicateText(item, [props.slide.title, props.slide.summary])))
+const notes = computed(() => {
+  const rawNotes = props.slide.notes || props.slide.explanations || props.slide.steps || []
+  const list = Array.isArray(rawNotes) ? rawNotes : [rawNotes]
+  return list
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+    .filter(item => !isDuplicateText(item, [props.slide.title, props.slide.summary, ...formulas.value]))
+})
+const textLength = computed(() => [props.slide.title, props.slide.summary, ...formulas.value, ...notes.value].join('').length)
+const isDense = computed(() => notes.value.length > 4 || formulas.value.length > 3 || textLength.value > 180)
+const isSparse = computed(() => notes.value.length === 0 && formulas.value.length <= 2 && textLength.value < 120)
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 </script>
 
 <style scoped>
 .video-formula-slide {
-  position: absolute;
-  inset: 82px 54px 104px;
-  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-  gap: 28px;
-  color: var(--video-text);
+  gap: var(--video-gap);
 }
 
-.video-formula-slide *,
-.video-formula-slide *::before,
-.video-formula-slide *::after {
-  box-sizing: border-box;
+.video-formula-slide.is-sparse,
+.video-formula-slide:not(.has-notes) {
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+}
+
+.video-formula-slide.is-sparse .formula-main,
+.video-formula-slide:not(.has-notes) .formula-main {
+  width: min(880px, 86%);
+  min-height: min(460px, 72cqh);
+  justify-items: center;
+  text-align: center;
+}
+
+.video-formula-slide.is-sparse .formula-main h2,
+.video-formula-slide:not(.has-notes) .formula-main h2 {
+  font-size: clamp(34px, 5.4cqw, 74px);
 }
 
 /* ===== flip: formulas on right ===== */
@@ -101,10 +138,12 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 /* ===== formula-main ===== */
 .formula-main {
-  padding: 32px;
+  min-height: 0;
+  padding: var(--video-panel-padding);
   display: grid;
   align-content: center;
-  gap: 20px;
+  gap: calc(var(--video-gap) * 0.72);
+  overflow: hidden;
   animation: formula-in 0.62s ease both;
 }
 
@@ -115,8 +154,9 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 .formula-main h2 {
   margin: 0;
-  font-size: clamp(28px, 3vw, 46px);
+  font-size: clamp(24px, 3.4cqw, 46px);
   line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .video-formula-slide.is-dense .formula-main h2 {
@@ -130,7 +170,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 /* ===== formula-notes ===== */
 .formula-notes {
-  padding: 22px;
+  padding: calc(var(--video-panel-padding) * 0.72);
   display: grid;
   gap: 12px;
   align-content: center;

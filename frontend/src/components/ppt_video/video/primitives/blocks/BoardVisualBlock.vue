@@ -34,6 +34,9 @@ defineProps({
 <style scoped>
 .board-visual-block {
   animation: visual-in 0.66s ease both;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .visual-focus {
@@ -77,6 +80,8 @@ defineProps({
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
+  max-height: 36%;
+  overflow: hidden;
 }
 
 .term-cloud :deep(.chalk-tag) {

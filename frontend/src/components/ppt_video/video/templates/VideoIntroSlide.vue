@@ -1,7 +1,7 @@
 <template>
   <section
-    class="video-intro-slide"
-    :class="{ 'is-dense': isDense, 'is-flipped': flip }"
+    class="video-intro-slide video-fit-stage"
+    :class="{ 'is-dense': isDense, 'is-sparse': isSparse, 'is-flipped': flip }"
   >
     <div class="intro-profile">
       <ChalkTag>学习画像</ChalkTag>
@@ -56,34 +56,49 @@ const props = defineProps({
   }
 })
 
+const normalizeText = value => String(value || '')
+  .replace(/<[^>]+>/g, '')
+  .replace(/[^\p{L}\p{N}]+/gu, '')
+  .toLowerCase()
+
+const isDuplicateText = (value, references) => {
+  const text = normalizeText(value)
+  if (!text) return true
+  return references.some(reference => {
+    const target = normalizeText(reference)
+    return target && (text === target || target.includes(text) || text.includes(target))
+  })
+}
+
 const learnerTitle = computed(() => props.slide.title || '课程导入')
 const introText = computed(() => props.slide.summary || '根据你的学习画像，把课程内容拆成更容易进入的学习路径。')
-const terms = computed(() => getSlideTerms(props.slide).slice(0, 6))
+const terms = computed(() => {
+  const references = [props.slide.title, props.slide.summary]
+  const seen = new Set()
+  return getSlideTerms(props.slide).filter(term => {
+    const key = normalizeText(term)
+    if (!key || seen.has(key) || isDuplicateText(term, references)) return false
+    seen.add(key)
+    return true
+  }).slice(0, 6)
+})
+const textLength = computed(() => [props.slide.title, props.slide.summary, ...(props.slide.items || [])].join('').length)
 const metrics = computed(() => [
   { value: '01', label: props.slide.chapterTitle || '课程起点' },
   { value: String((props.slide.items || []).length || 3).padStart(2, '0'), label: '关键线索' },
   { value: 'AI', label: '个性匹配' }
 ])
 const isDense = computed(() => terms.value.length > 8 || (props.slide.items || []).length > 6)
+const isSparse = computed(() => terms.value.length <= 2 && (props.slide.items || []).length <= 1 && textLength.value < 100)
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 </script>
 
 <style scoped>
 .video-intro-slide {
-  position: absolute;
-  inset: 82px 54px 104px;
-  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 0.94fr) minmax(320px, 0.76fr);
   grid-template-areas: "profile relation";
-  gap: 34px;
-  color: var(--video-text);
-}
-
-.video-intro-slide *,
-.video-intro-slide *::before,
-.video-intro-slide *::after {
-  box-sizing: border-box;
+  gap: calc(var(--video-gap) * 1.2);
 }
 
 /* ===== flip: relation on left ===== */
@@ -95,6 +110,38 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 /* ===== Dense — only shrink, keep layout ===== */
 .video-intro-slide.is-dense {
   gap: 22px;
+}
+
+.video-intro-slide.is-sparse {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "profile";
+  align-items: center;
+}
+
+.video-intro-slide.is-sparse .intro-relation {
+  display: none;
+}
+
+.video-intro-slide.is-sparse .intro-profile {
+  width: min(860px, 86%);
+  min-height: min(430px, 68cqh);
+  margin: 0 auto;
+  justify-items: center;
+  text-align: center;
+}
+
+.video-intro-slide.is-sparse .intro-profile h2 {
+  max-width: 760px;
+  font-size: clamp(38px, 6.4cqw, 84px);
+}
+
+.video-intro-slide.is-sparse .intro-profile p {
+  max-width: 680px;
+  font-size: clamp(15px, 1.5cqw, 23px);
+}
+
+.video-intro-slide.is-sparse .profile-metrics {
+  width: min(560px, 100%);
 }
 
 /* ===== Shared Panel Base ===== */
@@ -113,10 +160,11 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 /* ===== Profile Panel ===== */
 .intro-profile {
   grid-area: profile;
-  padding: clamp(28px, 4vw, 56px);
+  min-height: 0;
+  padding: clamp(22px, 3.2cqw, 44px);
   display: grid;
   align-content: center;
-  gap: 22px;
+  gap: calc(var(--video-gap) * 0.78);
   overflow: hidden;
   animation: intro-profile 0.72s ease both;
 }
@@ -129,8 +177,9 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 .intro-profile h2 {
   max-width: 760px;
   margin: 0;
-  font-size: clamp(38px, 5vw, 76px);
+  font-size: clamp(30px, 5.1cqw, 76px);
   line-height: 1.04;
+  overflow-wrap: anywhere;
 }
 
 .video-intro-slide.is-dense .intro-profile h2 {
@@ -141,8 +190,9 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   max-width: 780px;
   margin: 0;
   color: var(--video-muted);
-  font-size: clamp(14px, 1.18vw, 22px);
+  font-size: var(--video-body-size);
   line-height: 1.52;
+  overflow-wrap: anywhere;
 }
 
 .video-intro-slide.is-dense .intro-profile p {
@@ -209,9 +259,10 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 .intro-relation {
   grid-area: relation;
   position: relative;
-  padding: 28px;
+  min-height: 0;
+  padding: var(--video-panel-padding);
   display: grid;
-  grid-template-rows: auto minmax(240px, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 18px;
   overflow: hidden;
   animation: intro-map 0.72s ease both;
@@ -238,11 +289,12 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 /* ===== Relation Map (Node Graph) ===== */
 .relation-map {
   position: relative;
-  min-height: 300px;
+  min-height: 0;
+  height: 100%;
 }
 
 .video-intro-slide.is-dense .relation-map {
-  min-height: 200px;
+  min-height: 0;
 }
 
 .node {
@@ -297,6 +349,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
+  max-height: 72px;
   overflow: hidden;
 }
 

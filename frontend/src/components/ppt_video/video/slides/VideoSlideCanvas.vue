@@ -132,7 +132,17 @@ const styleVariantClass = computed(() => props.styleVariant ? `variant-${props.s
   width: 100%;
   height: 100%;
   overflow: hidden;
+  container-type: size;
   background: #0e2444;
+  --video-safe-x: clamp(24px, 4.2cqw, 54px);
+  --video-safe-top: clamp(50px, 7.6cqh, 82px);
+  --video-safe-bottom: clamp(72px, 9.4cqh, 104px);
+  --video-gap: clamp(14px, 2.1cqw, 28px);
+  --video-panel-padding: clamp(16px, 2.8cqw, 32px);
+  --video-title-size: clamp(24px, 4.2cqw, 54px);
+  --video-title-tight-size: clamp(22px, 3.2cqw, 40px);
+  --video-body-size: clamp(12px, 1.18cqw, 18px);
+  --video-body-tight-size: clamp(11px, 0.98cqw, 15px);
   --video-text: #f8fbff;
   --video-muted: rgba(235, 246, 255, 0.78);
   --video-soft: rgba(215, 242, 246, 0.92);
@@ -294,5 +304,26 @@ const styleVariantClass = computed(() => props.styleVariant ? `variant-${props.s
 .video-slide-canvas :deep(.video-formula-slide),
 .video-slide-canvas :deep(.video-intro-slide) {
   z-index: 2;
+}
+
+.video-slide-canvas :deep(.video-fit-stage) {
+  position: absolute;
+  inset: var(--video-safe-top) var(--video-safe-x) var(--video-safe-bottom);
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  color: var(--video-text);
+}
+
+.video-slide-canvas :deep(.video-fit-stage *),
+.video-slide-canvas :deep(.video-fit-stage *::before),
+.video-slide-canvas :deep(.video-fit-stage *::after) {
+  box-sizing: border-box;
+}
+
+.video-slide-canvas :deep(.video-text-box) {
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
 }
 </style>

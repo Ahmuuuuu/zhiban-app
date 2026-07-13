@@ -36,8 +36,9 @@ const dense = computed(() => props.items.length > 4)
   min-height: 0;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 12px;
+  gap: clamp(8px, 1.1cqw, 12px);
   align-content: center;
+  overflow: visible;
 }
 
 .board-bullet-list-block.is-dense {
@@ -57,7 +58,7 @@ const dense = computed(() => props.items.length > 4)
   grid-template-columns: 34px minmax(0, 1fr);
   gap: 11px;
   align-items: start;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 16px 36px var(--video-shadow);
   animation: bullet-in 0.48s ease both;
   animation-delay: calc(var(--delay) * 0.08s + 0.1s);
@@ -73,12 +74,13 @@ const dense = computed(() => props.items.length > 4)
 .board-bullet-list-block span {
   min-width: 0;
   color: var(--video-muted);
-  font-size: clamp(12px, 0.94vw, 17px);
+  font-size: clamp(12px, 1.12cqw, 17px);
   line-height: 1.36;
+  overflow-wrap: anywhere;
 }
 
 .board-bullet-list-block.is-dense span {
-  font-size: clamp(11px, 0.82vw, 14px);
+  font-size: var(--video-body-tight-size, clamp(11px, 0.82vw, 14px));
   line-height: 1.34;
 }
 

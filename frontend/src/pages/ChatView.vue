@@ -2876,17 +2876,10 @@ const handleConfirmAnswers = async (message) => {
 
   message.answered = true
 
-  // 保存 Q&A 到聊天历史（通过 presentation/question-answers 不需要额外接口）
-  // 直接把追问消息替换为"正在生成视频..."的过渡消息
+  // 追问已确认后移除追问框，保留原有任务进度气泡即可，避免视频生成时出现两个进度对话框。
   const idx = messages.value.findIndex(m => m.id === message.id)
   if (idx >= 0) {
-    messages.value.splice(idx, 1, {
-      id: message.id,
-      role: 'assistant',
-      type: 'text',
-      content: '正在根据你的选择生成视频...',
-      time: getNowTime()
-    })
+    messages.value.splice(idx, 1)
   }
 
   await answerQuestionsAndGenerate(task, message._answers || {})
