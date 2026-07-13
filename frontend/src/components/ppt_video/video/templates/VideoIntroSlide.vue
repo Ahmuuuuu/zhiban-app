@@ -133,13 +133,11 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 .video-intro-slide.is-sparse .intro-profile h2 {
   max-width: 760px;
   font-size: clamp(38px, 6.4cqw, 84px);
-  -webkit-line-clamp: 3;
 }
 
 .video-intro-slide.is-sparse .intro-profile p {
   max-width: 680px;
   font-size: clamp(15px, 1.5cqw, 23px);
-  -webkit-line-clamp: 5;
 }
 
 .video-intro-slide.is-sparse .profile-metrics {
@@ -181,10 +179,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   margin: 0;
   font-size: clamp(30px, 5.1cqw, 76px);
   line-height: 1.04;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 .video-intro-slide.is-dense .intro-profile h2 {
@@ -197,10 +192,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   color: var(--video-muted);
   font-size: var(--video-body-size);
   line-height: 1.52;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 .video-intro-slide.is-dense .intro-profile p {

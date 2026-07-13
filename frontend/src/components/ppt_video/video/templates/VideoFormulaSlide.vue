@@ -107,7 +107,6 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 .video-formula-slide.is-sparse .formula-main h2,
 .video-formula-slide:not(.has-notes) .formula-main h2 {
   font-size: clamp(34px, 5.4cqw, 74px);
-  -webkit-line-clamp: 3;
 }
 
 /* ===== flip: formulas on right ===== */
@@ -157,10 +156,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   margin: 0;
   font-size: clamp(24px, 3.4cqw, 46px);
   line-height: 1.15;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 .video-formula-slide.is-dense .formula-main h2 {

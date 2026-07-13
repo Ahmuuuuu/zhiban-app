@@ -151,7 +151,6 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
 
 .video-vocabulary-slide.is-sparse :deep(.board-header-block h2) {
   font-size: clamp(36px, 6cqw, 80px);
-  -webkit-line-clamp: 3;
 }
 
 .video-vocabulary-slide.is-sparse :deep(.board-header-block p) {
@@ -268,11 +267,7 @@ const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
   color: var(--video-text);
   font-size: clamp(15px, 1.45vw, 28px);
   line-height: 1.42;
-  max-height: 58%;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 7;
-  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 .scene-bars {

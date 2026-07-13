@@ -163,13 +163,11 @@ const karaokeItems = computed(() => {
 
 .blackboard-keypoint-template.is-sparse :deep(.board-header-block h2) {
   font-size: clamp(36px, 6.2cqw, 82px);
-  -webkit-line-clamp: 3;
 }
 
 .blackboard-keypoint-template.is-sparse :deep(.board-header-block p) {
   max-width: 720px;
   font-size: clamp(15px, 1.45cqw, 22px);
-  -webkit-line-clamp: 4;
 }
 
 .blackboard-keypoint-template.is-sparse :deep(.board-bullet-list-block) {
@@ -185,7 +183,6 @@ const karaokeItems = computed(() => {
 .blackboard-keypoint-template.is-sparse :deep(.board-bullet-list-block span) {
   font-size: clamp(15px, 1.58cqw, 24px);
   line-height: 1.45;
-  -webkit-line-clamp: 4;
 }
 
 .blackboard-keypoint-template.is-dense :deep(.board-header-block h2) {

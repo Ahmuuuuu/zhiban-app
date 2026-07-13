@@ -324,26 +324,6 @@ const styleVariantClass = computed(() => props.styleVariant ? `variant-${props.s
 .video-slide-canvas :deep(.video-text-box) {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
-}
-
-.video-slide-canvas :deep(.video-clamp-2),
-.video-slide-canvas :deep(.video-clamp-3),
-.video-slide-canvas :deep(.video-clamp-4) {
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-}
-
-.video-slide-canvas :deep(.video-clamp-2) {
-  -webkit-line-clamp: 2;
-}
-
-.video-slide-canvas :deep(.video-clamp-3) {
-  -webkit-line-clamp: 3;
-}
-
-.video-slide-canvas :deep(.video-clamp-4) {
-  -webkit-line-clamp: 4;
+  overflow: visible;
 }
 </style>

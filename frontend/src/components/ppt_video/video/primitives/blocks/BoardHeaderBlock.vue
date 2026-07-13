@@ -35,7 +35,7 @@ defineProps({
   align-content: end;
   gap: 12px;
   color: var(--video-text);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .board-header-block h2 {
@@ -44,10 +44,7 @@ defineProps({
   font-size: var(--video-title-size, clamp(30px, 3.7vw, 54px));
   line-height: 1.1;
   text-shadow: 0 4px 24px var(--video-shadow);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 .board-header-block p {
@@ -56,10 +53,7 @@ defineProps({
   color: var(--video-muted);
   font-size: var(--video-body-size, clamp(13px, 1.02vw, 18px));
   line-height: 1.52;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 </style>
