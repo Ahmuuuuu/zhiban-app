@@ -293,6 +293,7 @@ const styleVariantClass = computed(() => props.styleVariant ? `variant-${props.s
 
 .video-slide-canvas__wave {
   z-index: 4;
+  pointer-events: none;
 }
 
 .video-slide-canvas__background {
@@ -302,8 +303,66 @@ const styleVariantClass = computed(() => props.styleVariant ? `variant-${props.s
 .video-slide-canvas :deep(.blackboard-keypoint-template),
 .video-slide-canvas :deep(.video-vocabulary-slide),
 .video-slide-canvas :deep(.video-formula-slide),
-.video-slide-canvas :deep(.video-intro-slide) {
-  z-index: 2;
+.video-slide-canvas :deep(.video-intro-slide),
+.video-slide-canvas :deep(.video-keypoint-slide) {
+  z-index: 6;
+  isolation: isolate;
+}
+
+.video-slide-canvas :deep(.video-subject-assets) {
+  z-index: 3;
+}
+
+.video-slide-canvas :deep(.blackboard-keypoint-template__header),
+.video-slide-canvas :deep(.blackboard-keypoint-template__body),
+.video-slide-canvas :deep(.video-keypoint-slide__hero),
+.video-slide-canvas :deep(.video-keypoint-slide__cards),
+.video-slide-canvas :deep(.board-bullet-list-block),
+.video-slide-canvas :deep(.board-bullet-list-block article),
+.video-slide-canvas :deep(.board-bullet-list-block span),
+.video-slide-canvas :deep(.video-keypoint-slide__cards article),
+.video-slide-canvas :deep(.video-keypoint-slide__cards span) {
+  position: relative;
+  z-index: 8;
+}
+
+.video-slide-canvas :deep(.board-bullet-list-block article),
+.video-slide-canvas :deep(.video-keypoint-slide__cards article) {
+  overflow: visible;
+}
+
+.video-slide-canvas :deep(.karaoke-word) {
+  position: relative;
+  z-index: 30 !important;
+  display: inline;
+  border-radius: 5px;
+  padding: 0 2px;
+  opacity: 0.42;
+  text-decoration: none;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition:
+    opacity 0.1s ease,
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    text-shadow 0.15s ease;
+}
+
+.video-slide-canvas :deep(.karaoke-word.is-done) {
+  opacity: 1;
+  color: var(--video-text, #f8fbff);
+}
+
+.video-slide-canvas :deep(.karaoke-word.is-current) {
+  opacity: 1;
+  color: #111827 !important;
+  background: var(--video-warm, #ffd166) !important;
+  font-weight: 900;
+  text-shadow: none;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.84),
+    0 0 20px color-mix(in srgb, var(--video-warm, #ffd166) 72%, transparent);
 }
 
 .video-slide-canvas :deep(.video-fit-stage) {

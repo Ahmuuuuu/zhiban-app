@@ -2,18 +2,29 @@
 
 import json
 import logging
+import os
+import asyncio
 import time as _time
 from backend.src.models.usermodel import User
 from backend.src.models.portraitmodel import User_picture
 
 logger = logging.getLogger(__name__)
 
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
 _last_extraction: dict[int, float] = {}
-_EXTRACTION_INTERVAL = 60  # 60 秒内不重复提取
 
 # ═══════════════════════════════════════
 #  维度与标签映射（原 portrait_utils）
 # ═══════════════════════════════════════
+
+_EXTRACTION_INTERVAL = _env_int("PORTRAIT_EXTRACTION_INTERVAL_SECONDS", 20, minimum=5)
 
 TRAIT_KEYS = [
     "knowbase",
@@ -147,6 +158,43 @@ def format_portrait(picture, show_missing: bool = False, radar_data: dict | None
     return lines
 
 
+def _format_dialogue(dialogue: list[dict]) -> str:
+    lines = []
+    for i, turn in enumerate(dialogue or [], 1):
+        q = str(turn.get("question", "") or "").strip()
+        a = str(turn.get("answer", "") or "").strip()
+        if q:
+            lines.append(f"AI第{i}问：{q}")
+        if a:
+            lines.append(f"用户回答：{a}")
+    return "\n".join(lines)
+
+
+def _answer_excerpt(dialogue: list[dict], index: int = -1, fallback: str = "这个方向") -> str:
+    try:
+        answer = str((dialogue or [])[index].get("answer", "") or "").strip()
+    except (IndexError, AttributeError):
+        answer = ""
+    answer = " ".join(answer.split())
+    if not answer:
+        return fallback
+    return answer[:24] + ("..." if len(answer) > 24 else "")
+
+
+def _fallback_interview_question(step: int, dialogue: list[dict], max_steps: int = 5) -> dict:
+    first = _answer_excerpt(dialogue, 0, "你最近想学的内容")
+    last = _answer_excerpt(dialogue, -1, "刚才提到的情况")
+    questions = [
+        "最近你真正想推进的一件事是什么？比如课程、项目、比赛、考试、找工作方向，或者一个想学会的技能。",
+        f"围绕「{first}」，你通常更喜欢怎么学？比如看讲解、读资料、动手做、刷题巩固，或者和人讨论。",
+        f"学「{first}」时，最容易卡住你的地方是什么？比如概念看不懂、不会迁移、记不住、执行不稳，或者容易分心。",
+        "压力大或者任务多的时候，你更像哪种状态？比如越催越冲、需要人拉一把、先乱后稳，或者容易转去做别的。",
+        f"以后遇到「{last}」这类问题时，你希望我怎么帮你？比如给路线图、拆每日计划、讲例题、出练习，或者提醒推进。",
+    ]
+    idx = max(0, min(step, len(questions) - 1))
+    return {"question": questions[idx], "finish": step >= max_steps - 1}
+
+
 # ═══════════════════════════════════════
 #  Service 方法
 # ═══════════════════════════════════════
@@ -266,6 +314,49 @@ class PortraitChatHistory_Service:
 
 
     @staticmethod
+    async def next_interview_question(
+        user_id: int,
+        dialogue: list[dict],
+        step: int = 0,
+        max_steps: int = 5,
+    ) -> dict:
+        """Generate the next student-profile onboarding question."""
+        step = max(0, int(step or 0))
+        max_steps = max(3, min(int(max_steps or 5), 5))
+        if step >= max_steps:
+            return {"question": "", "finish": True}
+
+        dialogue_text = _format_dialogue(dialogue)
+        if not dialogue_text and step == 0:
+            return _fallback_interview_question(step, dialogue, max_steps)
+
+        try:
+            from backend.src.ai_core.llm_config import llm
+            from backend.src.utils.prompt_loader import load_prompt, fill_prompt
+            from backend.src.utils.json_parser import parse_llm_json
+
+            template = load_prompt("portrait/interview_next")
+            prompt = fill_prompt(
+                template,
+                step=str(step + 1),
+                max_steps=str(max_steps),
+                dialogue_text=dialogue_text or "暂无，准备提出第一问",
+            )
+            response = await asyncio.wait_for(
+                llm.ainvoke(prompt, priority="low", user_id=int(user_id), pool="portrait"),
+                timeout=10,
+            )
+            result = parse_llm_json(response.content.strip())
+            question = str(result.get("question", "") if isinstance(result, dict) else "").strip()
+            finish = bool(result.get("finish", False)) if isinstance(result, dict) else False
+            if question and 8 <= len(question) <= 90:
+                return {"question": question, "finish": finish or step >= max_steps - 1}
+        except Exception:
+            logger.debug("画像访谈下一问生成失败，使用兜底问题 user_id=%s step=%s", user_id, step, exc_info=True)
+
+        return _fallback_interview_question(step, dialogue, max_steps)
+
+    @staticmethod
     async def init_from_dialogue(user_id: int, dialogue: list[dict]) -> dict:
         """通过多轮问答对话让 LLM 提取并初始化用户画像"""
         user = await User.filter(id=user_id).first()
@@ -313,6 +404,8 @@ class PortraitChatHistory_Service:
         cognition = result.get("cognition", "") or ""
         learning_goal = result.get("learning_goal", "") or ""
         tags = result.get("personality_tags") or []
+        profile_summary = str(result.get("profile_summary", "") or "").strip()
+        extracted_traits = result.get("traits") if isinstance(result.get("traits"), dict) else {}
 
         # 只写非空值
         if cognition:
@@ -322,6 +415,8 @@ class PortraitChatHistory_Service:
         if isinstance(tags, list) and tags:
             import json
             picture.personality_tags = json.dumps(tags, ensure_ascii=False)
+        if profile_summary:
+            picture.profile_summary = profile_summary[:240]
 
         # 同步写入 traits 的 interest 维度（如果有对话提取的兴趣信息）
         traits = parse_traits(picture.traits)
@@ -338,8 +433,21 @@ class PortraitChatHistory_Service:
                     "、".join(strength_tags), "user_stated", traits.get("strengths")
                 )
 
+        for key in TRAIT_KEYS:
+            value = extracted_traits.get(key) or result.get(key)
+            if isinstance(value, list):
+                value = "、".join(str(item).strip() for item in value if str(item).strip())
+            value = str(value or "").strip()
+            if value:
+                traits[key] = build_trait_entry(value[:120], "user_stated", traits.get(key))
+
         picture.traits = dump_traits(traits)
         await picture.save()
+        try:
+            from backend.src.service.chat.service import invalidate_portrait_cache
+            invalidate_portrait_cache(user_id)
+        except Exception:
+            pass
 
         logger.info("对话画像初始化成功 user_id=%s cognition=%s goal=%s tags=%s",
                      user_id, cognition, learning_goal, tags)
@@ -349,6 +457,7 @@ class PortraitChatHistory_Service:
             "learning_goal": picture.learning_goal,
             "personality_tags": picture.personality_tags,
             "traits": parse_traits(picture.traits),
+            "profile_summary": picture.profile_summary,
         }
 
 
@@ -612,7 +721,6 @@ async def extract_portrait_from_chat(user_id: int, chat_group_id: int) -> None:
     if elapsed < _EXTRACTION_INTERVAL:
         logger.debug(f"画像提取冷却中 user_id={user_id} 距上次={elapsed:.0f}s")
         return
-    _last_extraction[user_id] = now
 
     try:
         from backend.src.models.chat_history_model import ChatHistory
@@ -639,6 +747,8 @@ async def extract_portrait_from_chat(user_id: int, chat_group_id: int) -> None:
         if len(records) < 2:
             logger.debug(f"画像提取跳过：消息数不足 user_id={user_id} records={len(records)}")
             return
+
+        _last_extraction[user_id] = now
 
         messages = []
         for r in reversed(records):

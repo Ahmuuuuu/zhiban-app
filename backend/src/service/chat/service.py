@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from collections import OrderedDict
 
 from backend.src.ai_core.brain import Brain
@@ -45,12 +46,22 @@ async def _build_path_context(user_id: int) -> str:
 import time as _time
 _portrait_cache: dict[int, tuple[float, str]] = {}
 
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+_PORTRAIT_CONTEXT_TTL = _env_int("CHAT_PORTRAIT_CONTEXT_TTL_SECONDS", 15, minimum=1)
+
 async def _build_portrait_context(user_id: int) -> str:
-    """构建用户画像 + 知识点掌握度 + 六维雷达的上下文文本（30s 缓存）"""
+    """构建用户画像 + 知识点掌握度 + 六维雷达的上下文文本（短 TTL 缓存）"""
     now = _time.time()
     if user_id in _portrait_cache:
         ts, ctx = _portrait_cache[user_id]
-        if now - ts < 30:
+        if now - ts < _PORTRAIT_CONTEXT_TTL:
             return ctx
     try:
         from backend.src.service.portrait.service import PortraitChatHistory_Service, PortraitRadarService
@@ -283,6 +294,8 @@ async def delete_history(user_id: int, chat_group_id: int):
     if not records:
         return None, None, "未查找到该聊天组"
     await ChatHistory.filter(user_id=user_id, chat_group_id=chat_group_id).delete()
+    # 保留空占位，防止 allocate_chat_group_id 在删除最大组号后复用该 chat_group_id。
+    await ChatHistory.create(user_id=user_id, chat_group_id=chat_group_id, req="", res="")
     from backend.src.models.task_model import GenerationTask
     await GenerationTask.filter(chat_group_id=chat_group_id, user_id=user_id).delete()
     return user_id, chat_group_id, "删除成功"

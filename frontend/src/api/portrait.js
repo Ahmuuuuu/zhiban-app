@@ -23,3 +23,11 @@ export function initPortraitFromDialogue(data) {
     data
   })
 }
+
+export function getNextPortraitInterviewQuestion(data) {
+  return request({
+    url: '/ai_portrait/interview/next',
+    method: 'post',
+    data
+  })
+}

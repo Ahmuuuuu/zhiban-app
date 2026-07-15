@@ -44,10 +44,17 @@ async def generate_learning_resource(topic: str, user_id: str, resource_types: s
     # 校验用户最后一条消息是否真的有生成意图，防止 LLM 误触发
     try:
         from backend.src.models.chat_history_model import ChatHistory
-        last_msg = await ChatHistory.filter(chat_group_id=gid, role="user").order_by("-created_at").first()
-        if last_msg and last_msg.content:
-            if not _has_explicit_generation_intent(last_msg.content):
-                logger.info("generate_learning_resource 被调用但用户消息无明确生成意图，已拦截。topic=%s msg=%s", topic, last_msg.content[:80])
+        last_msg = None
+        if gid > 0:
+            recent = await ChatHistory.filter(
+                user_id=uid,
+                chat_group_id=gid,
+            ).order_by("-created_at").limit(5)
+            last_msg = next((record for record in recent if record.req), None)
+        last_text = (last_msg.req or "") if last_msg else ""
+        if last_text:
+            if not _has_explicit_generation_intent(last_text):
+                logger.info("generate_learning_resource 被调用但用户消息无明确生成意图，已拦截。topic=%s msg=%s", topic, last_text[:80])
                 return "[资源生成] 未检测到明确的资源生成请求。如果你确实需要生成学习资料，请直接告诉我：'帮我生成XX的文档/PPT/思维导图'。"
     except Exception:
         logger.exception("generate_learning_resource 意图校验失败 topic=%s gid=%s", topic, gid)
@@ -55,7 +62,13 @@ async def generate_learning_resource(topic: str, user_id: str, resource_types: s
     types = [t.strip() for t in resource_types.split(",") if t.strip()]
     if not types:
         types = ["document"]
-    results = await ResourceService.generate_and_save(topic, uid, types, chat_group_id=gid)
+    results = await ResourceService.generate_and_save(
+        topic,
+        uid,
+        types,
+        chat_group_id=gid,
+        include_request_in_history=False,
+    )
     if not results:
         return "[资源生成] 生成失败，请稍后重试。"
 

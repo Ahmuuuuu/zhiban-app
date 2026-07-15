@@ -1,6 +1,6 @@
 """
 文档文本提取 + 智能切片
-支持 .txt / .pdf / .docx
+支持 .txt / .md / .csv / .json / .pdf / .docx
 """
 from pathlib import Path
 import re
@@ -13,8 +13,11 @@ def extract_text(file_path: str | Path) -> str:
     path = Path(file_path)
     suffix = path.suffix.lower()
 
-    if suffix == ".txt":
+    if suffix in {".txt", ".md", ".csv"}:
         return path.read_text("utf-8", errors="replace")
+
+    elif suffix == ".json":
+        return _extract_json(path)
 
     elif suffix == ".pdf":
         return _extract_pdf(path)
@@ -23,7 +26,19 @@ def extract_text(file_path: str | Path) -> str:
         return _extract_docx(path)
 
     else:
-        raise ValueError(f"不支持的文件格式: {suffix}（仅支持 .txt .pdf .docx）")
+        raise ValueError(f"不支持的文件格式: {suffix}（仅支持 .txt .md .csv .json .pdf .docx）")
+
+
+def _extract_json(path: Path) -> str:
+    import json
+
+    raw = path.read_text("utf-8", errors="replace")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+    return json.dumps(data, ensure_ascii=False, indent=2)
 
 
 def _extract_pdf(path: Path) -> str:

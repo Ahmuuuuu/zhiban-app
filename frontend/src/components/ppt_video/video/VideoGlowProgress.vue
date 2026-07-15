@@ -5,7 +5,8 @@
       <button
         type="button"
         class="video-progress__play"
-        :class="{ 'is-playing': isPlaying }"
+        :class="{ 'is-playing': isPlaying, 'is-disabled': !canPlay }"
+        :disabled="!canPlay"
         :aria-label="isPlaying ? '暂停' : '播放'"
         @click="$emit('toggle-play')"
       >
@@ -23,15 +24,24 @@
         @keydown.left.prevent="nudge(-5)"
         @keydown.right.prevent="nudge(5)"
       >
+        <span
+          v-for="segment in segments"
+          :key="segment.id"
+          class="video-progress__segment"
+          :class="{ 'is-locked': segment.locked, 'is-ready': !segment.locked }"
+          :style="{ left: `${segment.left}%`, width: `${segment.width}%` }"
+        ></span>
         <span class="video-progress__fill" :style="{ width: `${safeProgress}%` }"></span>
         <button
           v-for="marker in markers"
           :key="marker.id"
           type="button"
           class="video-progress__marker"
+          :class="{ 'is-locked': marker.locked }"
+          :disabled="marker.locked"
           :style="{ left: `${marker.percent}%` }"
           :title="marker.label"
-          @click.stop="$emit('seek', marker.time)"
+          @click.stop="seekToMarker(marker)"
         ></button>
         <span class="video-progress__thumb" :style="{ left: `${safeProgress}%` }"></span>
       </div>
@@ -59,6 +69,14 @@ const props = defineProps({
   markers: {
     type: Array,
     default: () => []
+  },
+  segments: {
+    type: Array,
+    default: () => []
+  },
+  canPlay: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -81,11 +99,19 @@ const safeProgress = computed(() => {
 const currentLabel = computed(() => formatTime(props.currentTime))
 const durationLabel = computed(() => formatTime(props.duration))
 
+const segmentAt = time => props.segments.find(segment => time >= segment.start && time < segment.end)
+
+const emitSeek = time => {
+  const segment = segmentAt(time) || props.segments.at(-1)
+  if (segment?.locked) return
+  emit('seek', time)
+}
+
 const seekByClientX = clientX => {
   if (!trackRef.value || !props.duration) return
   const rect = trackRef.value.getBoundingClientRect()
   const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
-  emit('seek', ratio * props.duration)
+  emitSeek(ratio * props.duration)
 }
 
 const handlePointer = event => {
@@ -101,7 +127,11 @@ const handlePointer = event => {
 }
 
 const nudge = amount => {
-  emit('seek', Math.min(Math.max(props.currentTime + amount, 0), props.duration || 0))
+  emitSeek(Math.min(Math.max(props.currentTime + amount, 0), props.duration || 0))
+}
+
+const seekToMarker = marker => {
+  if (!marker.locked) emitSeek(marker.time)
 }
 </script>
 
@@ -140,6 +170,12 @@ const nudge = amount => {
   place-items: center;
   cursor: pointer;
   box-shadow: 0 0 0 1px rgba(111, 168, 220, 0.18);
+}
+
+.video-progress__play.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(0.35);
 }
 
 .video-progress__play span {
@@ -184,6 +220,29 @@ const nudge = amount => {
   bottom: 3px;
   max-width: calc(100% - 6px);
   background: var(--player-blue);
+  z-index: 2;
+}
+
+.video-progress__segment {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.video-progress__segment.is-ready {
+  background: rgba(111, 168, 220, 0.2);
+}
+
+.video-progress__segment.is-locked {
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(245, 158, 11, 0.38) 0 6px,
+      rgba(245, 158, 11, 0.14) 6px 12px
+    );
 }
 
 .video-progress__marker {
@@ -197,6 +256,15 @@ const nudge = amount => {
   background: var(--player-blue-strong);
   cursor: pointer;
   transform: translate(-50%, -50%);
+  z-index: 3;
+}
+
+.video-progress__marker.is-locked {
+  width: 8px;
+  height: 8px;
+  background: #9ca3af;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+  cursor: not-allowed;
 }
 
 .video-progress__thumb {
@@ -210,6 +278,7 @@ const nudge = amount => {
   box-shadow: 0 0 0 2px rgba(79, 143, 202, 0.4);
   pointer-events: none;
   transform: translate(-50%, -50%);
+  z-index: 4;
 }
 
 @media (max-width: 640px) {

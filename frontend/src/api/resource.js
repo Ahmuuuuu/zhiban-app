@@ -25,6 +25,7 @@ export async function streamResourceGeneration(data, { onProgress, onDone, onErr
       resource_types: data.resource_types,
       chat_group_id: Number(data.chat_group_id || 0),
       bind_chat_history: Boolean(data.bind_chat_history),
+      save_to_chat_history: data.save_to_chat_history !== false,
       answers: data.answers || undefined,
       ppt_theme_id: data.ppt_theme_id || data.pptThemeId || undefined,
       skip_review: Boolean(data.skip_review)
@@ -256,6 +257,7 @@ export function createResourceGenerationTask(data) {
       resource_types: data.resource_types,
       chat_group_id: Number(data.chat_group_id || 0),
       bind_chat_history: Boolean(data.bind_chat_history),
+      save_to_chat_history: data.save_to_chat_history !== false,
       answers: data.answers || undefined,
       ppt_theme_id: data.ppt_theme_id || data.pptThemeId || undefined,
       skip_review: Boolean(data.skip_review),

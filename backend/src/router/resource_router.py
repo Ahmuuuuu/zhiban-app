@@ -96,7 +96,7 @@ async def generate_resource(
     if not await check_rate_limit("resource_gen", user_id, 5, 60):
         raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     try :
-        result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history, ppt_theme_id=data.ppt_theme_id)
+        result = await ResourceService.generate_and_save(data.topic, user_id, data.resource_types, data.chat_group_id, bind_chat_history=data.bind_chat_history, ppt_theme_id=data.ppt_theme_id, save_to_chat_history=data.save_to_chat_history)
         return ok(result)
     except HTTPException :
         raise
@@ -121,6 +121,7 @@ async def generate_resource_stream(
             skip_review=data.skip_review,
             answers=data.answers,
             ppt_theme_id=data.ppt_theme_id,
+            save_to_chat_history=data.save_to_chat_history,
         ),
         media_type = "text/event-stream",
         headers = {
@@ -143,7 +144,7 @@ async def create_generation_task(
     if not await check_rate_limit("resource_task", user_id, 5, 60):
         raise HTTPException(429, "请求过于频繁，请 1 分钟后再试")
     try:
-        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers, bind_chat_history=data.bind_chat_history, skip_review=data.skip_review, ppt_theme_id=data.ppt_theme_id)
+        result = await ResourceService.create_task(data.topic, user_id, data.resource_types, data.chat_group_id, data.answers, bind_chat_history=data.bind_chat_history, skip_review=data.skip_review, ppt_theme_id=data.ppt_theme_id, save_to_chat_history=data.save_to_chat_history)
         if result.get("duplicated"):
             return ok(result, msg="该话题已在生成中")
         return ok(result)

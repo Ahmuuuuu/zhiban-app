@@ -266,6 +266,7 @@
           class="bubble rich-bubble markdown-body"
           :class="{ 'generation-bubble': message.generationTaskId || message.thinkingProcess }"
           v-html="renderMarkdown(message.content)"
+          @click.capture="handleRenderedMarkdownClick"
         ></div>
 
         <div v-else class="bubble">
@@ -534,8 +535,10 @@
     <button
       v-if="showAgentFlowLauncher"
       class="agent-flow-launcher"
+      :class="{ 'is-empty': !hasAgentFlowTask }"
       type="button"
-      title="查看智能体工作流"
+      :title="agentFlowLauncherTitle"
+      :disabled="!hasAgentFlowTask"
       @click="reopenAgentFlowDrawer"
     >
       <Bot :size="20" stroke-width="1.8" />
@@ -610,13 +613,15 @@ const {
   startTask: startGenerationTask,
   hydrateTasks: hydrateGenerationTasks,
   maybeGeneratePresentation,
-  answerQuestionsAndGenerate
+  answerQuestionsAndGenerate,
+  removeTasksForConversation
 } = useGenerationTaskQueue()
 const boundGenerationTaskMessages = new Map()
 const ACTIVE_GENERATION_TASK_KEY = 'zhiban_active_generation_task_id'
 const agentFlowDrawerOpen = ref(false)
 const selectedAgentFlowTaskId = ref('')
 const dismissedAgentFlowTaskIds = ref(new Set())
+const deletedGenerationTaskIds = ref(new Set())
 
 const normalizeConversationId = value => {
   const text = String(value ?? '').trim()
@@ -634,16 +639,111 @@ const taskHasVisibleMessage = task => {
 
 const isTaskInCurrentConversation = task => {
   if (!task || !(task as any).agentFlow?.visible) return false
+  if (deletedGenerationTaskIds.value.has(String(task.id))) return false
   const currentChatId = normalizeConversationId(activeConversationId.value)
   const taskChatId = normalizeConversationId(task.chatGroupId || task.chat_group_id)
+  const hasVisibleMessage = taskHasVisibleMessage(task)
+  const isRunning = task.status === 'running'
   if (currentChatId && historyLoading.value && !taskChatId) return false
   if (currentChatId) {
-    return taskChatId === currentChatId || (!taskChatId && taskHasVisibleMessage(task))
+    if (taskChatId === currentChatId) return isRunning || hasVisibleMessage
+    return !taskChatId && hasVisibleMessage
   }
-  return !taskChatId && taskHasVisibleMessage(task)
+  return !taskChatId && hasVisibleMessage
 }
 
-const currentAgentFlowTasks = computed(() => generationTasks.filter(isTaskInCurrentConversation))
+const normalizeAgentFlowTaskText = task => {
+  return String(task?.text || '')
+    .replace(/^帮我生成(?:一个|一份)?\s*/u, '')
+    .replace(/^(学习视频|视频|PPT|ppt|Word|word|文档|思维导图|练习题|习题)[：:\s]*/u, '')
+    .replace(/\s+/g, '')
+    .toLowerCase()
+}
+
+const agentFlowTaskKind = task => {
+  const mode = task?.tool?.generateMode || 'resource'
+  const types = Array.isArray(task?.tool?.resourceTypes)
+    ? task.tool.resourceTypes.map(type => String(type || '').toLowerCase()).sort().join(',')
+    : ''
+  return `${mode}:${types || task?.tool?.label || ''}`
+}
+
+const agentFlowTaskOutputKey = task => {
+  const files = Array.isArray(task?.files) ? task.files : []
+  const presentation = task?.doneEvent?.presentation || {}
+  const file = files.find(item => {
+    const kind = String(item?.resourceKind || item?.kind || '').toLowerCase()
+    const type = String(item?.file_type || item?.fileType || item?.resource_type || item?.resourceType || '').toLowerCase()
+    return kind === 'presentation' || type === 'video'
+  }) || files[0] || {}
+  return String(
+    task?.backendTaskId ||
+    presentation.id ||
+    presentation.presentation_id ||
+    presentation.presentationId ||
+    presentation.file_url ||
+    presentation.fileUrl ||
+    file.presentation_id ||
+    file.presentationId ||
+    file.resource_id ||
+    file.resourceId ||
+    file.file_id ||
+    file.fileId ||
+    file.file_url ||
+    file.fileUrl ||
+    ''
+  )
+}
+
+const agentFlowTaskBaseKey = task => [
+  normalizeConversationId(task?.chatGroupId || task?.chat_group_id),
+  agentFlowTaskKind(task),
+  normalizeAgentFlowTaskText(task)
+].join('|')
+
+const agentFlowTaskHasOutput = task => {
+  const files = Array.isArray(task?.files) ? task.files : []
+  const doneEvent = task?.doneEvent || {}
+  return files.length > 0 || Boolean(doneEvent.presentation || doneEvent.resources?.length)
+}
+
+const agentFlowTaskScore = task => {
+  const status = String(task?.status || '').toLowerCase()
+  const statusScore = status === 'running' ? 30 : status === 'done' ? 20 : status === 'failed' ? 10 : 0
+  const outputScore = agentFlowTaskHasOutput(task) ? 25 : 0
+  const backendScore = task?.backendTaskId ? 5 : 0
+  return statusScore + outputScore + backendScore + Number(task?.updatedAt || 0) / 1e13
+}
+
+const areDuplicateAgentFlowTasks = (left, right) => {
+  if (!left || !right) return false
+  if (agentFlowTaskBaseKey(left) !== agentFlowTaskBaseKey(right)) return false
+
+  const leftOutput = agentFlowTaskOutputKey(left)
+  const rightOutput = agentFlowTaskOutputKey(right)
+  if (leftOutput && rightOutput && leftOutput === rightOutput) return true
+  if (left?.backendTaskId && right?.backendTaskId && left.backendTaskId === right.backendTaskId) return true
+  return true
+}
+
+const dedupeAgentFlowTasks = source => {
+  const result = []
+  for (const task of source) {
+    const existingIndex = result.findIndex(item => areDuplicateAgentFlowTasks(item, task))
+    if (existingIndex === -1) {
+      result.push(task)
+      continue
+    }
+    if (agentFlowTaskScore(task) > agentFlowTaskScore(result[existingIndex])) {
+      result[existingIndex] = task
+    }
+  }
+  return result
+}
+
+const currentAgentFlowTasks = computed(() => dedupeAgentFlowTasks(
+  generationTasks.filter(isTaskInCurrentConversation)
+))
 
 const activeAgentFlowTask = computed(() => {
   if (selectedAgentFlowTaskId.value) {
@@ -654,7 +754,11 @@ const activeAgentFlowTask = computed(() => {
     currentAgentFlowTasks.value[0] ||
     null
 })
-const showAgentFlowLauncher = computed(() => Boolean(activeAgentFlowTask.value && !agentFlowDrawerOpen.value))
+const hasAgentFlowTask = computed(() => Boolean(activeAgentFlowTask.value))
+const showAgentFlowLauncher = computed(() => !agentFlowDrawerOpen.value)
+const agentFlowLauncherTitle = computed(() => (
+  hasAgentFlowTask.value ? '查看智能体工作流' : '当前聊天暂无智能体工作流'
+))
 
 const openAgentFlowForTask = task => {
   if (!task?.id) return
@@ -684,6 +788,20 @@ const closeAgentFlowDrawer = () => {
 const clearAgentFlowSelection = () => {
   selectedAgentFlowTaskId.value = ''
   agentFlowDrawerOpen.value = false
+}
+
+const generationTaskIdsFromMessages = (source = messages.value) => {
+  return source
+    .map(message => message.generationTaskId || message._taskId || message.taskId || '')
+    .filter(Boolean)
+    .map(id => String(id))
+}
+
+const markGenerationTasksDeleted = taskIds => {
+  if (!taskIds?.length) return
+  const next = new Set(deletedGenerationTaskIds.value)
+  taskIds.forEach(id => next.add(String(id)))
+  deletedGenerationTaskIds.value = next
 }
 
 const reopenAgentFlowDrawer = () => {
@@ -1100,6 +1218,40 @@ const escapeHtml = (value) => {
     .replace(/'/g, '&#39;')
 }
 
+const resolveMarkdownHref = url => {
+  const raw = String(url || '').trim()
+  if (!raw || /^(javascript|data|vbscript):/i.test(raw)) return ''
+  if (/^mailto:/i.test(raw)) return raw
+  if (/^(https?:\/\/|\/)/i.test(raw)) return resolveApiUrl(raw)
+  return ''
+}
+
+const isSafeRenderedHref = href => {
+  const raw = String(href || '').trim()
+  if (!raw || /^(javascript|data|vbscript):/i.test(raw)) return false
+  try {
+    const url = new URL(raw, window.location.origin)
+    if (url.protocol === 'mailto:') return true
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+    const query = url.searchParams.get('q') || ''
+    if (/(^|\.)bing\.com$/i.test(url.hostname) && url.pathname.startsWith('/search') && query.length > 80) {
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+const handleRenderedMarkdownClick = event => {
+  const anchor = event.target?.closest?.('a')
+  if (!anchor) return
+  if (isSafeRenderedHref(anchor.getAttribute('href') || '')) return
+  event.preventDefault()
+  event.stopPropagation()
+  console.warn('[ChatView] 已拦截异常富文本链接:', anchor.getAttribute('href'))
+}
+
 const renderInlineMarkdown = (value) => {
   let text = escapeHtml(value)
 
@@ -1109,11 +1261,13 @@ const renderInlineMarkdown = (value) => {
   text = text.replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
   text = text.replace(/_([^_\n]+)_/g, '<em>$1</em>')
   text = text.replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g, (_, label, url) => {
-    const href = escapeHtml(resolveApiUrl(url))
+    const href = escapeHtml(resolveMarkdownHref(url))
+    if (!href) return label
     return `<a class="md-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="md-generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`
   })
   text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/)[^\s)]+)\)/g, (_, label, url) => {
-    const href = escapeHtml(resolveApiUrl(url))
+    const href = escapeHtml(resolveMarkdownHref(url))
+    if (!href) return label
 
     if (!/^mailto:/i.test(url) && isImageResourceUrl(url)) {
       return `<a class="md-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="md-generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`
@@ -1335,7 +1489,10 @@ watch(
 
     const running = currentAgentFlowTasks.value.find(task => task.status === 'running')
     if (!running || dismissedAgentFlowTaskIds.value.has(running.id)) return
-    if (agentFlowDrawerOpen.value && selectedAgentFlowTaskId.value && selectedAgentFlowTaskId.value !== running.id) return
+    if (agentFlowDrawerOpen.value && selectedAgentFlowTaskId.value && selectedAgentFlowTaskId.value !== running.id) {
+      const selected = currentAgentFlowTasks.value.find(task => task.id === selectedAgentFlowTaskId.value)
+      if (selected?.status === 'running') return
+    }
     openAgentFlowForTask(running)
   },
   { immediate: true }
@@ -3267,8 +3424,10 @@ const restoreGenerationTasksInChat = () => {
     const belongsToActiveTask = !hasActiveChat && activeTaskId && task.id === activeTaskId
     if (!belongsToCurrentChat && !belongsToActiveTask) return
 
+    const hasVisibleMessage = taskHasVisibleMessage(task)
     const isRecent = Date.now() - task.updatedAt < 10 * 60 * 1000
-    if (task.status === 'running' || isRecent) {
+    if (task.status !== 'running' && !hasVisibleMessage) return
+    if (task.status === 'running' || isRecent || hasVisibleMessage) {
       // 自动激活生成任务所属的对话，避免返回时看到空白新对话
       if (!activeConversationId.value && task.chatGroupId) {
         activeConversationId.value = task.chatGroupId
@@ -3629,9 +3788,11 @@ const loadConversationList = async () => {
       }
     })
 
-    // 把有生成任务但没 chat_history 记录的对话也加进去
+    // 把仍在运行、但暂时没 chat_history 记录的任务补进列表。
+    // 已完成任务不再补，避免删除聊天组后被本地缓存“复活”。
     const existingIds = new Set(chatGroups.map(g => String(g.id)))
     for (const task of generationTasks) {
+      if (task.status !== 'running') continue
       const gid = String(task.chatGroupId)
       const gidNum = Number(gid)
       if (!gid || gid === '0' || gid === 'null' || gid === 'undefined' || !Number.isFinite(gidNum) || gidNum <= 0 || existingIds.has(gid)) continue
@@ -3716,7 +3877,10 @@ const deleteHistoryConversation = async (item) => {
 
   deletingConversationId.value = String(conversationId)
   try {
+    const taskIds = generationTaskIdsFromMessages(messages.value)
     await deleteConversation(numericId)
+    markGenerationTasksDeleted(taskIds)
+    removeTasksForConversation(conversationId, taskIds)
     recentChats.value = recentChats.value.filter(chat => String(chat.id) !== String(conversationId))
     if (String(activeConversationId.value || '') === String(conversationId)) {
       activeConversationId.value = null
@@ -3737,6 +3901,22 @@ const deleteHistoryConversation = async (item) => {
 const routeChatGroupId = () => {
   const raw = route.query.chat_group_id || route.query.chatGroupId || route.query.conversationId
   return Array.isArray(raw) ? raw[0] : raw
+}
+
+const resetChatViewForUserContext = async () => {
+  window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
+  activeConversationId.value = null
+  preventAutoConversationSwitch.value = true
+  inputValue.value = ''
+  selectedResourceTool.value = null
+  messages.value = []
+  recentChats.value = []
+  deletedGenerationTaskIds.value = new Set()
+  boundGenerationTaskMessages.clear()
+  showHistoryPanel.value = false
+  showAddMenu.value = false
+  clearAgentFlowSelection()
+  await loadConversationList()
 }
 
 const openConversationFromRoute = async () => {
@@ -3762,15 +3942,21 @@ const createNewChat = () => {
 
 //enter发送 enter+shift换行
 const handleEnter = (event) => {
-  if (event.shiftKey) {
+  if (event.shiftKey || event.isComposing) {
     return
   }
 
   event.preventDefault()
-  sendMessage()
+  event.stopPropagation()
+  if (loading.value) return
+  void sendMessage()
 }
 
 onMounted(async () => {
+  window.addEventListener('zhiban-login-success', resetChatViewForUserContext)
+  window.addEventListener('zhiban:user-logged-out', resetChatViewForUserContext)
+  window.addEventListener('zhiban-auth-expired', resetChatViewForUserContext)
+
   await Promise.all([
     hydrateGenerationTasks().catch(error => {
       console.warn('[ChatView] restore generation tasks failed:', error)
@@ -3794,6 +3980,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('zhiban-login-success', resetChatViewForUserContext)
+  window.removeEventListener('zhiban:user-logged-out', resetChatViewForUserContext)
+  window.removeEventListener('zhiban-auth-expired', resetChatViewForUserContext)
+
   for (const messageId of thinkingTypewriterStates.keys()) {
     stopThinkingTypewriter(messageId)
   }
@@ -3978,10 +4168,11 @@ watch(
 }
 
 .agent-flow-launcher {
-  position: absolute;
+  position: fixed;
   z-index: 72;
   right: clamp(18px, 2.4vw, 32px);
-  top: clamp(18px, 2.4vw, 32px);
+  top: calc(64px + clamp(18px, 2.4vw, 32px));
+  width: 168px;
   height: 46px;
   padding: 0 14px;
   border: 1px solid rgba(22, 63, 143, 0.16);
@@ -4005,6 +4196,23 @@ watch(
   border-color: rgba(95, 143, 195, 0.55);
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 18px 42px rgba(22, 63, 143, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.agent-flow-launcher:disabled,
+.agent-flow-launcher.is-empty {
+  cursor: default;
+  color: rgba(91, 119, 157, 0.72);
+  border-color: rgba(124, 157, 194, 0.16);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 10px 24px rgba(22, 63, 143, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+
+.agent-flow-launcher:disabled:hover,
+.agent-flow-launcher.is-empty:hover {
+  transform: none;
+  border-color: rgba(124, 157, 194, 0.16);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 10px 24px rgba(22, 63, 143, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.68);
 }
 
 .agent-flow-launcher:focus-visible {
@@ -5615,7 +5823,7 @@ textarea::placeholder {
 
   .agent-flow-launcher {
     right: 14px;
-    top: 14px;
+    top: calc(56px + 14px);
     width: 44px;
     height: 44px;
     padding: 0;

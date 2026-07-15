@@ -1,6 +1,6 @@
 export const isAdminRole = role => {
   const value = String(role || '').trim().toLowerCase()
-  return ['admin', 'administrator', 'super_admin', 'manager'].includes(value)
+  return ['admin', 'administrator', 'super_admin', 'superadmin', 'system_admin', 'manager', 'root'].includes(value)
 }
 
 const parseJwtPayload = token => {
@@ -16,11 +16,25 @@ const parseJwtPayload = token => {
 }
 
 export const currentUserRole = () => {
-  const storedRole = localStorage.getItem('role') || localStorage.getItem('identity') || ''
-  if (storedRole) return storedRole
   const tokenRole = parseJwtPayload(localStorage.getItem('token'))?.role || ''
   if (tokenRole) localStorage.setItem('role', tokenRole)
-  return tokenRole
+  if (tokenRole) return tokenRole
+  return localStorage.getItem('role') || localStorage.getItem('identity') || ''
 }
 
 export const isCurrentUserAdmin = () => isAdminRole(currentUserRole())
+
+export const resolveUserRole = (...sources) => {
+  for (const source of sources) {
+    const role = source?.role || source?.identity || source?.user_role || source?.userRole || source?.permission
+    if (role) return role
+  }
+  return currentUserRole()
+}
+
+export const saveCurrentUserRole = role => {
+  const value = String(role || '').trim()
+  if (!value) return ''
+  localStorage.setItem('role', value)
+  return value
+}

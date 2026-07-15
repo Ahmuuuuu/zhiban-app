@@ -217,7 +217,7 @@ async def send_email_code(email: str, purpose: str = "login"):
     code = f"{random.randint(100000, 999999)}"
     expires_at = datetime.now() + timedelta(minutes=10)
 
-    await EmailVerificationCode.create(
+    record = await EmailVerificationCode.create(
         email=email, code=code, purpose=purpose, expires_at=expires_at
     )
 
@@ -227,6 +227,7 @@ async def send_email_code(email: str, purpose: str = "login"):
         body=f"您的验证码是：{code}，有效期 10 分钟。如非本人操作，请忽略。",
     )
     if not ok:
+        await record.delete()
         return None, "邮件发送失败，请检查邮箱地址或稍后重试"
     return {"msg": "验证码已发送"}, "success"
 

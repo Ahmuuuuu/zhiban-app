@@ -11,11 +11,12 @@ from backend.src.service.resource.metadata import FILE_EXT_MAP
 logger = logging.getLogger(__name__)
 
 
-def resource_history_response(resources: list[dict]) -> str:
+def resource_history_response(resources: list[dict], topic: str = "") -> str:
     if not resources:
         return json.dumps(
             {
                 "type": "resource_list",
+                "topic": topic,
                 "resources": [],
                 "message": "资源生成完成，但没有生成可保存的文件。",
             },
@@ -56,7 +57,7 @@ def resource_history_response(resources: list[dict]) -> str:
                     item[key] = resource[key]
         items.append(item)
 
-    return json.dumps({"type": "resource_list", "resources": items}, ensure_ascii=False)
+    return json.dumps({"type": "resource_list", "topic": topic, "resources": items}, ensure_ascii=False)
 
 
 async def save_generation_to_history(
@@ -64,6 +65,8 @@ async def save_generation_to_history(
     chat_group_id: int,
     req: str,
     resources: list[dict],
+    *,
+    include_request: bool = True,
 ) -> None:
     if not chat_group_id or chat_group_id <= 0:
         logger.warning("跳过历史保存：chat_group_id=%s user_id=%s", chat_group_id, user_id)
@@ -72,8 +75,8 @@ async def save_generation_to_history(
         await ChatHistory.create(
             user_id=user_id,
             chat_group_id=chat_group_id,
-            req=req,
-            res=resource_history_response(resources),
+            req=req if include_request else "",
+            res=resource_history_response(resources, topic=req),
         )
         logger.info(
             "资源生成历史已保存 user_id=%s chat_group_id=%s resources=%d",

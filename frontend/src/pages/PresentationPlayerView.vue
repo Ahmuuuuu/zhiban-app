@@ -40,12 +40,18 @@
                 :current-time="globalCurrentTime"
                 :duration="totalDuration"
                 :is-playing="isPlaying"
+                :can-play="activeSlideReady"
                 :markers="progressMarkers"
+                :segments="progressSegments"
                 @toggle-play="togglePlay"
                 @seek="seekToGlobalTime"
               />
             </template>
           </VideoSlideCanvas>
+          <div v-if="activeSlide?.isLocked" class="lesson-lock">
+            <strong>片段制作中</strong>
+            <span>音频尚未生成完成，完成后会自动解锁。</span>
+          </div>
         </div>
 
         <audio
@@ -249,6 +255,7 @@ const slides = computed(() => {
     const chapterTitle = chapter.title || `章节 ${chapterIndex + 1}`
     if (Array.isArray(chapter.slides) && chapter.slides.length) {
       chapter.slides.forEach((slide, slideIndex) => {
+        const rawAudioUrl = slide.audio_url || slide.audioUrl || ''
         const html = slide.content_html || ''
         const items = slideItems(slide)
         const formulas = slideFormulas(slide)
@@ -266,7 +273,8 @@ const slides = computed(() => {
           subject: slide.subject || slide.discipline || chapter.subject || chapter.discipline || '',
           visual: slide.visual || slide.visual_hint || chapter.visual || null,
           theme: slide.theme || chapter.theme || '',
-          audioUrl: resolveApiUrl(slide.audio_url || slide.audioUrl || ''),
+          audioUrl: resolveApiUrl(rawAudioUrl),
+          isLocked: !rawAudioUrl,
           wordTimestamps: slide.word_timestamps || [],
           slideDurationMs: slide.duration_ms || 0
         })
@@ -289,13 +297,15 @@ const slides = computed(() => {
       subject: chapter.subject || chapter.discipline || '',
       visual: chapter.visual || null,
       theme: chapter.theme || '',
-      audioUrl: ''
+      audioUrl: '',
+      isLocked: true
     })
   })
   return flattened
 })
 
 const activeSlide = computed(() => slides.value[activeIndex.value] || null)
+const activeSlideReady = computed(() => Boolean(activeSlide.value && !activeSlide.value.isLocked))
 const activeAudioUrl = computed(() => activeSlide.value?.audioUrl || '')
 const playableAudioUrl = ref('')
 let playableAudioObjectUrl = ''
@@ -321,6 +331,7 @@ const timelineSegments = computed(() => {
       id: slide.id,
       index,
       title: slide.title,
+      locked: Boolean(slide.isLocked),
       start,
       duration: segmentDuration,
       end: start + segmentDuration
@@ -339,7 +350,20 @@ const progressMarkers = computed(() => timelineSegments.value
     id: segment.id,
     label: segment.title,
     time: segment.start,
-    percent: (segment.start / totalDuration.value) * 100
+    percent: (segment.start / totalDuration.value) * 100,
+    locked: segment.locked
+  })))
+
+const progressSegments = computed(() => timelineSegments.value
+  .filter(segment => totalDuration.value > 0)
+  .map(segment => ({
+    id: segment.id,
+    label: segment.title,
+    start: segment.start,
+    end: segment.end,
+    locked: segment.locked,
+    left: (segment.start / totalDuration.value) * 100,
+    width: (segment.duration / totalDuration.value) * 100
   })))
 
 const chapterNav = computed(() => slides.value.map(slide => ({
@@ -585,6 +609,7 @@ const handleAudioEnded = () => {
 
 const togglePlay = async () => {
   hasStarted.value = true
+  if (!activeSlideReady.value) return
   if (!audioRef.value || !activeAudioUrl.value || !playableAudioUrl.value) {
     if (isPlaying.value) {
       window.clearInterval(silentPlaybackTimer)
@@ -611,8 +636,11 @@ const togglePlay = async () => {
 }
 
 const setSlide = async (index, offset = 0) => {
+  const targetIndex = Math.min(Math.max(index, 0), slides.value.length - 1)
+  const target = slides.value[targetIndex]
+  if (!target || target.isLocked) return false
   stopLessonMedia()
-  activeIndex.value = Math.min(Math.max(index, 0), slides.value.length - 1)
+  activeIndex.value = targetIndex
   currentTime.value = Math.max(0, offset)
   duration.value = getSlideDuration(activeSlide.value)
   await nextTick()
@@ -621,12 +649,15 @@ const setSlide = async (index, offset = 0) => {
     audioRef.value.currentTime = Math.min(offset, audioRef.value.duration || getSlideDuration(activeSlide.value))
     syncAudioTime()
   }
+  return true
 }
 
 const prevSlide = () => setSlide(activeIndex.value - 1)
 const nextSlide = autoplay => {
-  setSlide(activeIndex.value + 1).then(() => {
-    if (autoplay) togglePlay()
+  const nextIndex = slides.value.findIndex((slide, index) => index > activeIndex.value && !slide.isLocked)
+  if (nextIndex < 0) return
+  setSlide(nextIndex).then(ok => {
+    if (ok && autoplay) togglePlay()
   })
 }
 
@@ -635,10 +666,11 @@ const seekToGlobalTime = async targetTime => {
   const clamped = Math.min(Math.max(Number(targetTime) || 0, 0), totalDuration.value)
   const segment = timelineSegments.value.find(item => clamped >= item.start && clamped < item.end)
     || timelineSegments.value.at(-1)
+  if (!segment || segment.locked) return
   const offset = Math.max(0, clamped - segment.start)
   const shouldResume = isPlaying.value
-  await setSlide(segment.index, offset)
-  if (shouldResume) togglePlay()
+  const ok = await setSlide(segment.index, offset)
+  if (ok && shouldResume) togglePlay()
 }
 
 const selectNavSlide = chapter => {
@@ -1066,6 +1098,36 @@ onBeforeUnmount(() => {
   bottom: 18px;
 }
 
+.lesson-lock {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: 76px;
+  min-width: min(360px, calc(100% - 48px));
+  padding: 12px 16px;
+  border: 1px solid rgba(251, 191, 36, 0.56);
+  border-radius: 8px;
+  background: rgba(18, 24, 38, 0.78);
+  color: #fff7d6;
+  display: grid;
+  gap: 4px;
+  text-align: center;
+  transform: translateX(-50%);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+  pointer-events: none;
+}
+
+.lesson-lock strong {
+  font-size: 14px;
+}
+
+.lesson-lock span {
+  color: rgba(255, 247, 214, 0.82);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .lesson-side {
   display: none;
   position: relative;
@@ -1241,25 +1303,31 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.karaoke-word {
+.presentation-player :deep(.karaoke-word) {
+  position: relative;
+  z-index: 30 !important;
   display: inline;
   opacity: 0.36;
-  transition: opacity 0.1s ease, background 0.15s ease, color 0.15s ease;
-  border-radius: 2px;
-  padding: 0 1px;
+  transition: opacity 0.1s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  border-radius: 4px;
+  padding: 0 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
-.karaoke-word.is-done {
+.presentation-player :deep(.karaoke-word.is-done) {
   opacity: 1;
-  color: var(--player-text, #fff);
+  color: var(--video-text, var(--player-text, #fff));
 }
 
-.karaoke-word.is-current {
+.presentation-player :deep(.karaoke-word.is-current) {
   opacity: 1;
-  color: #fff;
-  background: #e8406c;
-  font-weight: 600;
-  box-shadow: 0 0 10px rgba(232, 64, 108, 0.55);
+  color: #111827 !important;
+  background: var(--video-warm, #ffd166) !important;
+  font-weight: 900;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.72),
+    0 0 18px rgba(255, 209, 102, 0.72);
 }
 
 @keyframes mouth-patch-talk {

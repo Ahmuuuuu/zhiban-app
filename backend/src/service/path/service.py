@@ -759,6 +759,10 @@ class PathService:
                 async for event_str in ResourceService.generate_stream(
                     topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
                     ppt_prompt_key="ppt_video",
+                    chat_group_id=0,
+                    bind_chat_history=False,
+                    include_request_in_history=False,
+                    save_to_chat_history=False,
                 ):
                     yield event_str
                     if event_str.startswith("data:") and "[DONE]" not in event_str:
@@ -808,6 +812,10 @@ class PathService:
                     resource_types=gen_types,
                     ppt_prompt_key="ppt_video",
                     skip_review=True,
+                    chat_group_id=0,
+                    bind_chat_history=False,
+                    include_request_in_history=False,
+                    save_to_chat_history=False,
                 )
                 generated_ids = [r.get("resource_id") or r.get("id") for r in saved if r]
             except Exception:
@@ -1355,6 +1363,10 @@ class PathService:
             resource_types=["ppt"],
             ppt_prompt_key="ppt_video",
             skip_review=True,
+            chat_group_id=0,
+            bind_chat_history=False,
+            include_request_in_history=False,
+            save_to_chat_history=False,
         )
         ppt_id = None
         for r in saved:

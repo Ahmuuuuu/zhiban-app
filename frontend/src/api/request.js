@@ -41,6 +41,7 @@ const clearAuthStorage = () => {
   localStorage.removeItem('identity')
   localStorage.removeItem('avatar')
   localStorage.removeItem('zhiban_generation_tasks_v2')
+  localStorage.removeItem('zhiban_active_generation_task_id')
 }
 
 const notifyAuthExpired = () => {

@@ -28,7 +28,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getUserProfile, normalizeAvatarUrl } from '../api/apis'
-import { isAdminRole } from '../utils/auth'
+import { currentUserRole, isAdminRole, resolveUserRole, saveCurrentUserRole } from '../utils/auth'
 import LoginView from './LoginView.vue'
 
 const props = defineProps({
@@ -44,7 +44,7 @@ const emit = defineEmits(['login'])
 const router = useRouter()
 const token = ref(localStorage.getItem('token') || '')
 const username = ref(localStorage.getItem('username') || '')
-const userRole = ref(localStorage.getItem('role') || localStorage.getItem('identity') || '')
+const userRole = ref(currentUserRole())
 const major = ref('')
 const avatarUrl = ref(normalizeAvatarUrl(localStorage.getItem('avatar') || ''))
 const showLogin = ref(false)
@@ -88,7 +88,7 @@ const loadAccountInfo = async () => {
     const profile = normalizeProfile(await getUserProfile())
 
     username.value = profile.username || localStorage.getItem('username') || '已登录账户'
-    userRole.value = profile.role || profile.identity || localStorage.getItem('role') || ''
+    userRole.value = resolveUserRole(profile)
     major.value = profile.major || ''
     avatarUrl.value = normalizeAvatarUrl(profile.avatar || localStorage.getItem('avatar') || '')
 
@@ -96,8 +96,8 @@ const loadAccountInfo = async () => {
       localStorage.setItem('username', profile.username)
     }
 
-    if (profile.role || profile.identity) {
-      localStorage.setItem('role', profile.role || profile.identity)
+    if (userRole.value) {
+      saveCurrentUserRole(userRole.value)
     }
     if (profile.avatar) {
       localStorage.setItem('avatar', profile.avatar)

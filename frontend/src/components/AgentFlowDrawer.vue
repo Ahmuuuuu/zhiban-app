@@ -154,6 +154,12 @@ const flow = computed(() => props.task?.agentFlow || {})
 const nodes = computed(() => flow.value.nodes || {})
 const events = computed(() => Array.isArray(flow.value.events) ? flow.value.events : [])
 const activeTaskId = computed(() => props.selectedTaskId || props.task?.id || '')
+const terminalStatus = computed(() => {
+  const taskStatus = normalizeStatus(props.task?.status)
+  if (taskStatus === 'done' || taskStatus === 'failed') return taskStatus
+  const completeStatus = normalizeStatus(nodes.value.complete?.status)
+  return completeStatus === 'done' || completeStatus === 'failed' ? completeStatus : ''
+})
 
 const taskTitle = computed(() => {
   const text = props.task?.text || props.task?.tool?.label || '学习资源'
@@ -169,6 +175,7 @@ const taskLabel = task => {
 }
 
 const taskMeta = task => {
+  if (task?.tool?.generateMode === 'video') return '视频'
   const types = Array.isArray(task?.tool?.resourceTypes) ? task.tool.resourceTypes : []
   if (types.length) return types.map(type => resourceTypeShortName(type)).join(' / ')
   return statusText(task?.status)
@@ -248,6 +255,8 @@ const highestReachedPhaseRank = computed(() => {
 })
 
 const aggregatePhaseStatus = phase => {
+  if (terminalStatus.value === 'done') return 'done'
+  if (terminalStatus.value === 'failed') return phase === 'complete' ? 'failed' : 'done'
   const candidates = phaseNodes(phase)
   if (!candidates.length) return 'pending'
   if (candidates.some(node => normalizeStatus(node.status) === 'failed')) return 'failed'
@@ -285,6 +294,7 @@ const primaryNodes = computed(() => {
 })
 
 const requestedResourceTypes = computed(() => {
+  if (props.task?.tool?.generateMode === 'video') return ['video']
   const fromTool = props.task?.tool?.resourceTypes || []
   const fromEvents = Object.values(nodes.value)
     .map(node => node.resource_type || node.resourceType)
@@ -332,15 +342,19 @@ const childNodesForType = type => {
 const branchNodes = computed(() => {
   return requestedResourceTypes.value.map(type => {
     const direct = nodes.value[`executor:${type}`] ||
+      (type === 'video' ? nodes.value.executor : null) ||
       Object.values(nodes.value).find(node => (
         node.phase === 'executor' &&
         String(node.resource_type || node.resourceType || '').toLowerCase() === type &&
         !String(node.agent_id || node.agentId || '').includes('section')
       ))
-    const status = normalizeStatus(direct?.status || 'pending')
+    const status = terminalStatus.value === 'done'
+      ? 'done'
+      : normalizeStatus(direct?.status || 'pending')
     const children = childNodesForType(type)
+    const current = status === 'done' && direct?.total ? direct.total : direct?.current
     const progressText = direct?.total
-      ? `${direct.current || 0}/${direct.total}`
+      ? `${current || 0}/${direct.total}`
       : ''
     return {
       id: `branch:${type}`,
@@ -355,7 +369,7 @@ const branchNodes = computed(() => {
 })
 
 const recentEvents = computed(() => {
-  return events.value
+  const normalized = events.value
     .slice(-8)
     .reverse()
     .map((event, index) => ({
@@ -363,6 +377,18 @@ const recentEvents = computed(() => {
       key: `${event.agent_id || event.agentId || index}-${event.updatedAt || event.elapsed_ms || index}`,
       status: normalizeStatus(event.status)
     }))
+  if (!terminalStatus.value) return normalized
+  const terminalEvents = normalized.filter(event => (
+    event.phase === 'complete' ||
+    event.status === terminalStatus.value ||
+    event.status === 'failed'
+  ))
+  return terminalEvents.length ? terminalEvents : [{
+    key: `terminal-${terminalStatus.value}`,
+    agent_name: terminalStatus.value === 'failed' ? '生成失败' : '完成',
+    status: terminalStatus.value,
+    message: terminalStatus.value === 'failed' ? '生成失败' : '生成完成'
+  }]
 })
 
 const isLinkLit = index => {

@@ -7,6 +7,7 @@ import {
   getResourceGenerationTask,
   getResourceGenerationTasks,
   isBackendUnavailableError,
+  streamPresentationProgress,
   streamResourceGenerationTask,
 } from '../api/apis'
 import { executeGeneration, type ResourceToolConfig } from './useResourceGeneration'
@@ -37,6 +38,7 @@ export interface AgentFlowState {
 
 export interface GenerationTask {
   id: string
+  ownerUserId?: string
   backendTaskId: string
   text: string
   tool: ResourceToolConfig
@@ -57,8 +59,51 @@ const tasks = reactive<GenerationTask[]>([])
 const pollingTaskIds = new Set<string>()
 const streamingTaskIds = new Set<string>()
 const GENERATION_TASKS_STORAGE_KEY = 'zhiban_generation_tasks_v2'
+const ACTIVE_GENERATION_TASK_KEY = 'zhiban_active_generation_task_id'
 let hasHydratedTasks = false
 let hydratePromise: Promise<GenerationTask[]> | null = null
+let activeTaskOwnerId = ''
+
+const currentStoredUserId = () => {
+  if (typeof window === 'undefined') return ''
+  return String(window.localStorage.getItem('user_id') || '').trim()
+}
+
+const taskStorageKey = () => {
+  const ownerId = activeTaskOwnerId || currentStoredUserId()
+  return ownerId ? `${GENERATION_TASKS_STORAGE_KEY}:${ownerId}` : GENERATION_TASKS_STORAGE_KEY
+}
+
+const clearTaskRuntimeState = () => {
+  tasks.splice(0, tasks.length)
+  pollingTaskIds.clear()
+  streamingTaskIds.clear()
+  hasHydratedTasks = false
+  hydratePromise = null
+  if (typeof window !== 'undefined') {
+    window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
+  }
+}
+
+const syncTaskOwnerContext = () => {
+  const nextOwnerId = currentStoredUserId()
+  if (nextOwnerId === activeTaskOwnerId) return
+  clearTaskRuntimeState()
+  activeTaskOwnerId = nextOwnerId
+}
+
+const currentTaskOwnerId = () => {
+  syncTaskOwnerContext()
+  return activeTaskOwnerId
+}
+
+const taskBelongsToCurrentUser = (task: Partial<GenerationTask> | null | undefined) => {
+  const ownerId = currentTaskOwnerId()
+  if (!ownerId) return false
+  return String(task?.ownerUserId || '') === ownerId
+}
+
+activeTaskOwnerId = currentStoredUserId()
 
 const isViewingGenerationPage = () => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return false
@@ -105,6 +150,13 @@ const FLOW_PHASE_DONE_MESSAGES: Record<string, string> = {
   reviewer: '质量审核完成',
   saver: '资源保存完成',
   complete: '生成完成',
+}
+const FLOW_PHASE_FAILED_MESSAGES: Record<string, string> = {
+  leader: '需求规划失败',
+  executor: '资源生成失败',
+  reviewer: '质量审核失败',
+  saver: '资源保存失败',
+  complete: '生成失败',
 }
 const ACTIVE_AGENT_STATUSES = ['running', 'reviewing', 'retrying', 'saving']
 
@@ -289,12 +341,87 @@ const normalizeAgentFlow = (flow: any, tool?: ResourceToolConfig): AgentFlowStat
   }
 }
 
+const finishedNodeMessage = (node: AgentFlowNode, failed: boolean) => {
+  if (failed) {
+    return FLOW_PHASE_FAILED_MESSAGES[node.phase] || '生成失败'
+  }
+  if (FLOW_PHASE_DONE_MESSAGES[node.phase]) {
+    return FLOW_PHASE_DONE_MESSAGES[node.phase]
+  }
+  const resourceType = String(node.resource_type || (node as any).resourceType || '').toLowerCase()
+  if (node.phase === 'executor' && resourceType) {
+    const label = RESOURCE_AGENT_LABELS[resourceType] || `${resourceType}智能体`
+    return `${label.replace(/智能体$/u, '')}完成`
+  }
+  return '已完成'
+}
+
+const normalizeRestoredAgentFlow = (
+  flow: any,
+  tool: ResourceToolConfig | undefined,
+  taskStatus: GenerationTaskStatus,
+): AgentFlowState => {
+  const restored = normalizeAgentFlow(flow, tool)
+  if (taskStatus === 'running') return restored
+
+  const now = Date.now()
+  const finalStatus: AgentFlowStatus = taskStatus === 'failed' ? 'failed' : 'done'
+  for (const node of Object.values(restored.nodes)) {
+    if (node.status !== 'failed') {
+      node.status = finalStatus
+      node.message = finishedNodeMessage(node, taskStatus === 'failed')
+      node.updatedAt = now
+    }
+  }
+  restored.nodes.complete = {
+    ...(restored.nodes.complete || makeAgentNode('complete', '完成', 'complete')),
+    status: finalStatus,
+    message: taskStatus === 'failed' ? '生成失败' : '生成完成',
+    updatedAt: now,
+  }
+  restored.events = Array.isArray(restored.events) && restored.events.length
+    ? restored.events
+    : [{
+        type: 'agent_event',
+        agent_id: 'complete',
+        agent_name: '完成',
+        phase: 'complete',
+        status: finalStatus,
+        message: taskStatus === 'failed' ? '生成失败' : '生成完成',
+        timestamp: now,
+      }]
+  restored.activeAgentId = 'complete'
+  restored.visible = false
+  restored.updatedAt = now
+  return restored
+}
+
+const isCompletedPresentationPayload = (value: any) => {
+  if (!value || typeof value !== 'object') return false
+  const fileUrl = value.file_url || value.fileUrl || value.preview_url || value.previewUrl || value.presentation_url || value.presentationUrl
+  return Boolean(fileUrl)
+}
+
+const hasCompletedPresentation = (value: any) => {
+  const files = Array.isArray(value?.files) ? value.files : []
+  const fromFiles = files.some((file: any) => {
+    const resourceKind = String(file?.resourceKind || file?.kind || '').toLowerCase()
+    const fileType = String(file?.file_type || file?.fileType || file?.resource_type || file?.resourceType || '').toLowerCase()
+    return (resourceKind === 'presentation' || fileType === 'video') && isCompletedPresentationPayload(file)
+  })
+  return fromFiles || isCompletedPresentationPayload(value?.doneEvent?.presentation)
+}
+
 const persistTasks = () => {
   try {
+    const ownerId = currentTaskOwnerId()
+    if (!ownerId) return
+    const ownedTasks = tasks.filter(task => taskBelongsToCurrentUser(task))
     window.localStorage.setItem(
-      GENERATION_TASKS_STORAGE_KEY,
-      JSON.stringify(tasks.slice(0, 30).map(task => ({
+      taskStorageKey(),
+      JSON.stringify(ownedTasks.slice(0, 30).map(task => ({
         id: task.id,
+        ownerUserId: task.ownerUserId || ownerId,
         backendTaskId: task.backendTaskId,
         text: task.text,
         tool: task.tool,
@@ -311,6 +438,7 @@ const persistTasks = () => {
         updatedAt: task.updatedAt,
       }))),
     )
+    window.localStorage.removeItem(GENERATION_TASKS_STORAGE_KEY)
   } catch {
     // localStorage may be unavailable in private browsing or during SSR-like tests.
   }
@@ -318,30 +446,37 @@ const persistTasks = () => {
 
 const restorePersistedTasks = () => {
   try {
-    const raw = window.localStorage.getItem(GENERATION_TASKS_STORAGE_KEY)
+    const ownerId = currentTaskOwnerId()
+    if (!ownerId) return
+    const raw = window.localStorage.getItem(taskStorageKey())
     const list = raw ? JSON.parse(raw) : []
     if (!Array.isArray(list)) return
 
     list.forEach(item => {
+      if (String(item?.ownerUserId || ownerId) !== ownerId) return
       if (!item?.id || tasks.some(task => task.id === item.id)) return
       const isRecent = Date.now() - Number(item.updatedAt || 0) < 60 * 60 * 1000
       if (item.status !== 'running' && !isRecent) return
       // 超过 30 分钟的 running 任务视为已失效，不再恢复轮询
       const stale = Date.now() - Number(item.createdAt || 0) > 30 * 60 * 1000
       if (item.status === 'running' && stale) return
+      const status = item.tool?.generateMode === 'video' && item.status !== 'failed' && hasCompletedPresentation(item)
+        ? 'done'
+        : (item.status || 'running')
       tasks.push(reactive({
         id: item.id,
+        ownerUserId: ownerId,
         backendTaskId: item.backendTaskId || '',
         text: item.text || '',
         tool: item.tool || { label: 'resource', generateMode: 'resource', resourceTypes: ['document'] },
         chatGroupId: item.chatGroupId ?? null,
-        status: item.status || 'running',
+        status,
         progress: item.progress || '正在生成资源...',
         thinkingProcess: item.thinkingProcess || '',
         error: item.error || '',
         files: Array.isArray(item.files) ? item.files : [],
         images: Array.isArray(item.images) ? item.images : [],
-        agentFlow: normalizeAgentFlow(item.agentFlow, item.tool),
+        agentFlow: normalizeRestoredAgentFlow(item.agentFlow, item.tool, status),
         doneEvent: item.doneEvent || null,
         createdAt: Number(item.createdAt || Date.now()),
         updatedAt: Number(item.updatedAt || Date.now()),
@@ -350,6 +485,27 @@ const restorePersistedTasks = () => {
   } catch {
     // Ignore malformed cache.
   }
+}
+
+const resetTaskQueueForCurrentUser = () => {
+  clearTaskRuntimeState()
+  activeTaskOwnerId = currentStoredUserId()
+  try {
+    window.localStorage.removeItem(GENERATION_TASKS_STORAGE_KEY)
+  } catch {
+    // Ignore storage cleanup failures.
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('zhiban-login-success', resetTaskQueueForCurrentUser)
+  window.addEventListener('zhiban:user-logged-out', resetTaskQueueForCurrentUser)
+  window.addEventListener('zhiban-auth-expired', resetTaskQueueForCurrentUser)
+  window.addEventListener('storage', event => {
+    if (event.key === 'user_id' || event.key === 'token') {
+      syncTaskOwnerContext()
+    }
+  })
 }
 
 restorePersistedTasks()
@@ -445,6 +601,14 @@ const upsertAgentFlowNode = (task: GenerationTask, eventData: any) => {
   const phase = String(eventData.phase || (agentId.split(':')[0] || 'executor'))
   const resourceType = String(eventData.resource_type || eventData.resourceType || '').toLowerCase()
   const status = normalizeAgentStatus(eventData.status)
+  const completeStatus = normalizeAgentStatus(flow.nodes.complete?.status)
+  if (
+    ['done', 'failed'].includes(completeStatus) &&
+    phase !== 'complete' &&
+    status !== 'failed'
+  ) {
+    return
+  }
   const previous = flow.nodes[agentId] || makeAgentNode(agentId, eventData.agent_name || eventData.agentName || agentId, phase)
   const isSectionAgent = agentId.includes(':section-')
 
@@ -607,8 +771,11 @@ const finishAgentFlow = (task: GenerationTask, failed = false) => {
   for (const node of Object.values(flow.nodes)) {
     if (node.status !== 'failed') {
       node.status = finalStatus
+      node.message = finishedNodeMessage(node, failed)
+      if (!failed && node.total != null) {
+        node.current = node.total
+      }
       node.updatedAt = now
-      if (!failed && !node.message) node.message = '已完成'
     }
   }
 
@@ -618,9 +785,28 @@ const finishAgentFlow = (task: GenerationTask, failed = false) => {
     message: failed ? '生成失败' : '生成完成',
     updatedAt: now,
   }
+  flow.events = [
+    ...(Array.isArray(flow.events) ? flow.events : []),
+    {
+      type: 'agent_event',
+      agent_id: 'complete',
+      agent_name: '完成',
+      phase: 'complete',
+      status: finalStatus,
+      message: failed ? '生成失败' : '生成完成',
+      timestamp: now,
+    },
+  ].slice(-80)
   flow.activeAgentId = 'complete'
   flow.visible = true
   flow.updatedAt = now
+  ;(task as any).agentFlow = flow
+}
+
+const setAgentFlowVisibility = (task: GenerationTask, visible: boolean) => {
+  const flow = normalizeAgentFlow((task as any).agentFlow, task.tool)
+  flow.visible = visible
+  flow.updatedAt = Date.now()
   ;(task as any).agentFlow = flow
 }
 
@@ -654,6 +840,7 @@ const normalizeTaskFiles = (taskData: any) => {
 }
 
 const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
+  if (!taskBelongsToCurrentUser(task)) return
   const prevStatus = task.status
   task.backendTaskId = taskData?.task_id || taskData?.taskId || task.backendTaskId
   task.chatGroupId = taskData?.chat_group_id || taskData?.chatGroupId || task.chatGroupId
@@ -670,7 +857,10 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
   const existingVideoFiles = task.files.filter(
     f => (f as any).file_type === 'video' || (f as any).resource_type === 'video' || (f as any).resourceKind === 'presentation'
   )
-  task.files.splice(0, task.files.length, ...normalizeTaskFiles(taskData))
+  const backendFiles = normalizeTaskFiles(taskData)
+  if (backendFiles.length || task.status === 'done' || task.status === 'failed') {
+    task.files.splice(0, task.files.length, ...backendFiles)
+  }
   // 把视频文件追加回去（放在资源文件后面）
   if (existingVideoFiles.length) {
     task.files.push(...existingVideoFiles)
@@ -697,14 +887,17 @@ const applyBackendTaskData = (task: GenerationTask, taskData: any) => {
   }
 }
 
-const upsertBackendTask = (taskData: any, tool?: ResourceToolConfig) => {
+const upsertBackendTask = (taskData: any, tool?: ResourceToolConfig, ownerSnapshot = currentTaskOwnerId()) => {
+  const ownerId = currentTaskOwnerId()
+  if (!ownerId || ownerSnapshot !== ownerId) return null
   const backendTaskId = taskData?.task_id || taskData?.taskId || ''
   if (!backendTaskId) return null
 
-  let task = tasks.find(item => item.backendTaskId === backendTaskId)
+  let task = tasks.find(item => item.backendTaskId === backendTaskId && item.ownerUserId === ownerId)
   if (!task) {
     task = reactive({
       id: makeLocalTaskId(backendTaskId),
+      ownerUserId: ownerId,
       backendTaskId,
       text: taskData?.topic || '',
       tool: tool || {
@@ -731,10 +924,15 @@ const upsertBackendTask = (taskData: any, tool?: ResourceToolConfig) => {
 }
 
 const pollBackendTask = (task: GenerationTask) => {
+  if (!taskBelongsToCurrentUser(task)) return
   if (!task.backendTaskId || pollingTaskIds.has(task.backendTaskId)) return
   pollingTaskIds.add(task.backendTaskId)
 
   const tick = async () => {
+    if (!taskBelongsToCurrentUser(task)) {
+      pollingTaskIds.delete(task.backendTaskId)
+      return
+    }
     try {
       const result = await getResourceGenerationTask(task.backendTaskId)
       const data = unwrapResponseData(result)
@@ -834,6 +1032,25 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
   }
 
   applyBackendProgressToAgentFlow(task, eventData)
+
+  if (eventData.type === 'file') {
+    const [file] = normalizeTaskFiles({ resources: [eventData] })
+    if (file) {
+      const fileId = file.resource_id || file.file_id || file.download_url
+      const exists = task.files.some((item: any) => (
+        String(item?.resource_id || item?.file_id || item?.download_url || '') === String(fileId || '')
+      ))
+      if (!exists) {
+        task.files.push(file)
+      }
+      if (task.tool.generateMode === 'video') {
+        void maybeGeneratePresentation(task)
+      }
+    }
+    task.updatedAt = Date.now()
+    persistTasks()
+    return
+  }
 
   if (eventData.type === 'stream_start') {
     ;(task as any)._pptStream = { slides: [] }
@@ -1011,14 +1228,20 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
 }
 
 const streamBackendTask = (task: GenerationTask) => {
+  if (!taskBelongsToCurrentUser(task)) return
   if (!task.backendTaskId || streamingTaskIds.has(task.backendTaskId)) return
   streamingTaskIds.add(task.backendTaskId)
 
   void streamResourceGenerationTask(task.backendTaskId, {
     onEvent: eventData => {
+      if (!taskBelongsToCurrentUser(task)) return
       applyTaskStreamEvent(task, eventData)
     },
     onDone: async () => {
+      if (!taskBelongsToCurrentUser(task)) {
+        streamingTaskIds.delete(task.backendTaskId)
+        return
+      }
       try {
         const result = await getResourceGenerationTask(task.backendTaskId)
         applyBackendTaskData(task, unwrapResponseData(result))
@@ -1027,6 +1250,7 @@ const streamBackendTask = (task: GenerationTask) => {
       }
     },
     onError: error => {
+      if (!taskBelongsToCurrentUser(task)) return
       task.error = error || task.error
       task.updatedAt = Date.now()
       persistTasks()
@@ -1160,8 +1384,16 @@ const runLegacyFrontendTask = (task: GenerationTask) => {
 }
 
 const maybeGeneratePresentation = async (task: GenerationTask) => {
-  if (task.tool.generateMode !== 'video' || task.status !== 'done') return
-  if ((task.doneEvent as any)?.presentation || !task.files.length) return
+  if (task.tool.generateMode !== 'video') return
+  const hasSourceResource = task.files.some((file: any) => (
+    file?.resourceKind !== 'presentation' &&
+    file?.file_type !== 'video' &&
+    file?.resource_type !== 'video'
+  ))
+  const canStartFromDone = task.status === 'done'
+  const canStartEarly = task.status === 'running' && Boolean((task as any)._answers) && hasSourceResource
+  if (!canStartFromDone && !canStartEarly) return
+  if ((task.doneEvent as any)?.presentation || !hasSourceResource) return
   // 防止重复进入（watcher 可能在 files.push 时再次触发）
   if ((task as any)._presentationGenerating) return
   ;(task as any)._presentationGenerating = true
@@ -1179,6 +1411,7 @@ const maybeGeneratePresentation = async (task: GenerationTask) => {
         task.status = 'failed'
         task.error = e?.response?.data?.detail || e?.message || '学习视频生成失败'
         task.progress = task.error
+        finishAgentFlow(task, true)
       } finally {
         task.updatedAt = Date.now()
         persistTasks()
@@ -1203,6 +1436,7 @@ const maybeGeneratePresentation = async (task: GenerationTask) => {
         ;(task as any).pendingQuestions = questions
         task.status = 'done'
         task.progress = '请选择视频方向以继续...'
+        setAgentFlowVisibility(task, false)
       } else {
         // 无问题则直接生成
         await _doGeneratePresentation(task)
@@ -1216,6 +1450,7 @@ const maybeGeneratePresentation = async (task: GenerationTask) => {
         task.status = 'failed'
         task.error = e?.response?.data?.detail || e?.message || '学习视频生成失败'
         task.progress = task.error
+        finishAgentFlow(task, true)
       }
     } finally {
       task.updatedAt = Date.now()
@@ -1227,6 +1462,7 @@ const maybeGeneratePresentation = async (task: GenerationTask) => {
 }
 
 const _doGeneratePresentation = async (task: GenerationTask) => {
+  if (!taskBelongsToCurrentUser(task)) return
   const chatGroupId = task.chatGroupId || (task.doneEvent as any)?.chat_group_id || 0
   const answers = (task as any)._answers || undefined
   const presentationResult: any = await generatePresentation({
@@ -1236,15 +1472,87 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
     video_mode: false,
   })
   let presentation = unwrapResponseData(presentationResult)
+  const earlySourceResource: any = task.files.find((file: any) => (
+    file?.resourceKind !== 'presentation' &&
+    file?.file_type !== 'video' &&
+    file?.resource_type !== 'video'
+  )) || {}
+  const earlyResourceId = earlySourceResource?.resource_id || earlySourceResource?.file_id || ''
+  const earlyTitle = earlySourceResource?.topic || earlySourceResource?.title || task.text || '学习视频'
+  const pendingPresentationFile = {
+    ...earlySourceResource,
+    file_id: presentation?.id || presentation?.presentation_id || `presentation-${earlyResourceId}`,
+    presentation_id: presentation?.id || presentation?.presentation_id || '',
+    source_resource_id: earlyResourceId,
+    file_type: 'video',
+    resource_type: 'video',
+    resourceKind: 'presentation',
+    filename: `${earlyTitle}.html`,
+    presentation,
+    preview_url: presentation?.file_url || presentation?.fileUrl || '',
+    file_url: presentation?.file_url || presentation?.fileUrl || '',
+    download_url: '',
+    source_download_url: earlySourceResource?.download_url || earlySourceResource?.downloadUrl || (earlyResourceId ? `/resource/${earlyResourceId}/download` : ''),
+  }
+  task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: [...task.files, pendingPresentationFile] }
+  task.files.push(pendingPresentationFile)
   task.progress = '视频任务已提交，正在生成课件骨架...'
   task.updatedAt = Date.now()
   persistTasks()
-  presentation = await waitForPresentationFile(presentation, message => {
-    task.progress = message
-    task.updatedAt = Date.now()
-    persistTasks()
-  })
-  const sourceResource: any = task.files[0]
+
+  const presentationId = presentation?.id || presentation?.presentation_id || presentation?.presentationId
+  const streamController = presentationId && typeof AbortController !== 'undefined'
+    ? new AbortController()
+    : null
+  const streamPromise = presentationId
+    ? streamPresentationProgress(presentationId, {
+        signal: streamController?.signal,
+        onEvent: eventData => {
+          const payload: any = eventData || {}
+          if (payload.type !== 'agent_event') return
+
+          applyTaskStreamEvent(task, payload)
+          const flowStatus = String(payload.status || '').toLowerCase()
+          if (flowStatus === 'failed') {
+            task.status = 'failed'
+            task.error = payload.message || '学习视频生成失败'
+            task.progress = task.error
+            finishAgentFlow(task, true)
+          } else if (task.status === 'running' && payload.phase !== 'complete' && payload.message) {
+            task.progress = payload.message
+          }
+          task.updatedAt = Date.now()
+          persistTasks()
+        },
+        onError: error => {
+          if (task.status === 'running' && error) {
+            task.progress = String(error)
+            task.updatedAt = Date.now()
+            persistTasks()
+          }
+        },
+      }).catch(error => {
+        if (error?.name === 'AbortError') return
+        console.warn('[GenerationTask] 视频进度订阅失败，继续使用轮询:', error)
+      })
+    : Promise.resolve()
+
+  try {
+    presentation = await waitForPresentationFile(presentation, message => {
+      task.progress = message
+      task.updatedAt = Date.now()
+      persistTasks()
+    })
+  } finally {
+    streamController?.abort()
+    void streamPromise
+  }
+
+  const sourceResource: any = task.files.find((file: any) => (
+    file?.resourceKind !== 'presentation' &&
+    file?.file_type !== 'video' &&
+    file?.resource_type !== 'video'
+  )) || {}
   const resourceId = sourceResource?.resource_id || sourceResource?.file_id || ''
   const title = sourceResource?.topic || sourceResource?.title || task.text || '学习视频'
 
@@ -1261,20 +1569,35 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
     preview_url: presentation?.file_url || presentation?.fileUrl || '',
     file_url: presentation?.file_url || presentation?.fileUrl || '',
     download_url: '',
-    source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || `/resource/${resourceId}/download`,
+    source_download_url: sourceResource?.download_url || sourceResource?.downloadUrl || (resourceId ? `/resource/${resourceId}/download` : ''),
   }
   // doneEvent.presentation 必须先于 files.push 设置，
   // 否则 watcher 触发 maybeGeneratePresentation 时会因 guard 缺失而重复生成视频
-  task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: [...task.files, presentationFile] }
-  task.files.push(presentationFile)
+  const existingPresentationFile = task.files.find((file: any) => (
+    file === pendingPresentationFile ||
+    file?.resourceKind === 'presentation' ||
+    file?.file_type === 'video' ||
+    file?.resource_type === 'video'
+  ))
+  if (existingPresentationFile) {
+    Object.assign(existingPresentationFile, presentationFile)
+  } else {
+    task.files.push(presentationFile)
+  }
+  task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: task.files }
   task.status = 'done'
   task.progress = '学习视频已生成，可以打开预览。'
   delete (task as any).pendingQuestions
   ;(task as any).questionsShown = true
+  finishAgentFlow(task, false)
+  task.updatedAt = Date.now()
+  persistTasks()
+  dispatchNotificationUpdateIfAway()
 }
 
 export function useGenerationTaskQueue() {
   const _submitBackendTask = (task: GenerationTask) => {
+    if (!taskBelongsToCurrentUser(task)) return
     task.status = 'running'
     task.progress = '正在提交生成任务...'
     task.updatedAt = Date.now()
@@ -1286,10 +1609,12 @@ export function useGenerationTaskQueue() {
       chat_group_id: task.chatGroupId || 0,
       // 视频模式：中间资源不写入聊天记录，最终视频卡片才是用户想看到的
       bind_chat_history: task.tool.generateMode !== 'video',
+      save_to_chat_history: task.tool.generateMode !== 'video',
       answers: (task as any)._answers || undefined,
       ppt_theme_id: task.tool.pptThemeId || undefined,
       skip_review: Boolean((task as any).skipReview || task.tool.generateMode === 'video'),
     }).then(result => {
+      if (!taskBelongsToCurrentUser(task)) return
       const data = unwrapResponseData(result)
       task.backendTaskId = data?.task_id || data?.taskId || ''
       // 后端创建任务时会分配 chat_group_id，前端及时同步避免后续步骤创建新对话
@@ -1303,6 +1628,7 @@ export function useGenerationTaskQueue() {
       streamBackendTask(task)
       pollBackendTask(task)
     }).catch(error => {
+      if (!taskBelongsToCurrentUser(task)) return
       task.status = 'failed'
       task.error = isBackendUnavailableError(error)
         ? '后端暂时不可用，请确认后端服务或代理已启动。'
@@ -1313,8 +1639,10 @@ export function useGenerationTaskQueue() {
   }
 
   const startTask = (text: string, tool: ResourceToolConfig, chatGroupId: number | string | null) => {
+    const ownerId = currentTaskOwnerId()
     const task: GenerationTask = reactive({
       id: makeLocalTaskId(),
+      ownerUserId: ownerId,
       backendTaskId: '',
       text,
       tool,
@@ -1344,7 +1672,8 @@ export function useGenerationTaskQueue() {
       task.progress = '正在分析话题...'
       persistTasks()
       void getPresentationQuestions({ topic: text, chat_group_id: chatGroupId || 0 })
-        .then(result => {
+        .then(async result => {
+          if (!taskBelongsToCurrentUser(task)) return
           const data = unwrapResponseData(result)
           const questions = data?.questions || data
           // 后端可能为追问创建 chat_group，及时同步
@@ -1355,13 +1684,37 @@ export function useGenerationTaskQueue() {
             ;(task as any).pendingQuestions = questions
             task.status = 'done'
             task.progress = '请选择视频方向以继续...'
+            setAgentFlowVisibility(task, false)
           } else {
-            _submitBackendTask(task)
+            task.status = 'running'
+            task.progress = '正在生成学习视频...'
+            try {
+              await _doGeneratePresentation(task)
+            } catch (error: any) {
+              task.status = 'failed'
+              task.error = error?.response?.data?.detail || error?.message || '学习视频生成失败'
+              task.progress = task.error
+              finishAgentFlow(task, true)
+            }
           }
           persistTasks()
         })
-        .catch(() => {
-          _submitBackendTask(task)
+        .catch(async () => {
+          if (!taskBelongsToCurrentUser(task)) return
+          task.status = 'running'
+          task.progress = '正在生成学习视频...'
+          task.updatedAt = Date.now()
+          persistTasks()
+          try {
+            await _doGeneratePresentation(task)
+          } catch (error: any) {
+            task.status = 'failed'
+            task.error = error?.response?.data?.detail || error?.message || '学习视频生成失败'
+            task.progress = task.error
+            finishAgentFlow(task, true)
+            task.updatedAt = Date.now()
+            persistTasks()
+          }
         })
       return task
     }
@@ -1371,19 +1724,36 @@ export function useGenerationTaskQueue() {
   }
 
   const answerQuestionsAndGenerate = async (task: GenerationTask, answers: Record<string, any>) => {
+    if (!taskBelongsToCurrentUser(task)) return
     ;(task as any)._answers = answers
     ;(task as any).questionsShown = true
     delete (task as any).pendingQuestions
 
     // 新流程（追问前置）：还没有后端任务 → 先提交生成任务，答案注入 prompt 精准生成
     if (!task.backendTaskId) {
-      _submitBackendTask(task)
+      task.status = 'running'
+      task.progress = '正在生成学习视频...'
+      setAgentFlowVisibility(task, true)
+      task.updatedAt = Date.now()
+      persistTasks()
+      try {
+        await _doGeneratePresentation(task)
+      } catch (error: any) {
+        task.status = 'failed'
+        task.error = error?.response?.data?.detail || error?.message || '学习视频生成失败'
+        task.progress = task.error
+        finishAgentFlow(task, true)
+      } finally {
+        task.updatedAt = Date.now()
+        persistTasks()
+      }
       return
     }
 
     // 旧流程兼容：资源已生成 → 直接生成视频
     task.status = 'running'
     task.progress = '正在生成学习视频...'
+    setAgentFlowVisibility(task, true)
     task.updatedAt = Date.now()
     persistTasks()
 
@@ -1393,6 +1763,7 @@ export function useGenerationTaskQueue() {
       task.status = 'failed'
       task.error = error?.response?.data?.detail || error?.message || '学习视频生成失败'
       task.progress = task.error
+      finishAgentFlow(task, true)
     } finally {
       task.updatedAt = Date.now()
       persistTasks()
@@ -1400,9 +1771,12 @@ export function useGenerationTaskQueue() {
   }
 
   const hydrateTasks = async () => {
+    syncTaskOwnerContext()
+    const ownerSnapshot = currentTaskOwnerId()
+    if (!ownerSnapshot) return []
     if (hydratePromise) return hydratePromise
     if (hasHydratedTasks) {
-      tasks.filter(task => task.status === 'running').forEach(task => {
+      tasks.filter(task => task.status === 'running' && taskBelongsToCurrentUser(task)).forEach(task => {
         streamBackendTask(task)
         pollBackendTask(task)
       })
@@ -1411,14 +1785,16 @@ export function useGenerationTaskQueue() {
 
     hydratePromise = (async () => {
       const result = await getResourceGenerationTasks()
+      if (ownerSnapshot !== currentTaskOwnerId()) return []
       const list = unwrapResponseData(result)
       const hydrated = (Array.isArray(list) ? list : [])
-        .map(item => upsertBackendTask(item))
+        .map(item => upsertBackendTask(item, undefined, ownerSnapshot))
         .filter(Boolean) as GenerationTask[]
 
       await Promise.all(hydrated.map(async task => {
         try {
           const detail = unwrapResponseData(await getResourceGenerationTask(task.backendTaskId))
+          if (ownerSnapshot !== currentTaskOwnerId()) return
           applyBackendTaskData(task, detail)
         } catch {
           // Keep list-level task state if detail lookup is temporarily unavailable.
@@ -1428,7 +1804,9 @@ export function useGenerationTaskQueue() {
           pollBackendTask(task)
         }
       }))
-      hasHydratedTasks = true
+      if (ownerSnapshot === currentTaskOwnerId()) {
+        hasHydratedTasks = true
+      }
       return hydrated
     })().finally(() => {
       hydratePromise = null
@@ -1437,7 +1815,23 @@ export function useGenerationTaskQueue() {
     return hydratePromise
   }
 
-  const getTask = (taskId: string) => tasks.find(task => task.id === taskId || task.backendTaskId === taskId)
+  const getTask = (taskId: string) => tasks.find(task => taskBelongsToCurrentUser(task) && (task.id === taskId || task.backendTaskId === taskId))
+
+  const removeTasksForConversation = (chatGroupId: number | string | null, taskIds: Array<number | string> = []) => {
+    const gid = String(chatGroupId ?? '').trim()
+    const idSet = new Set(taskIds.map(id => String(id || '')).filter(Boolean))
+    if (!gid && !idSet.size) return
+
+    for (let index = tasks.length - 1; index >= 0; index -= 1) {
+      const task = tasks[index]
+      if (!taskBelongsToCurrentUser(task)) continue
+      const taskChatId = String(task.chatGroupId ?? (task as any).chat_group_id ?? '').trim()
+      if ((gid && taskChatId === gid) || idSet.has(String(task.id)) || idSet.has(String(task.backendTaskId))) {
+        tasks.splice(index, 1)
+      }
+    }
+    persistTasks()
+  }
 
   return {
     tasks,
@@ -1446,5 +1840,6 @@ export function useGenerationTaskQueue() {
     maybeGeneratePresentation,
     answerQuestionsAndGenerate,
     getTask,
+    removeTasksForConversation,
   }
 }

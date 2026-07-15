@@ -66,6 +66,12 @@ export function getPortraitRadar(): Promise<unknown>;
 
 export function initPortrait(data: unknown): Promise<unknown>;
 
+export function getNextPortraitInterviewQuestion(data: {
+  dialogue?: Array<{ question: string; answer: string }>;
+  step?: number;
+  max_steps?: number;
+}): Promise<unknown>;
+
 export function initPortraitFromDialogue(data: { dialogue: Array<{ question: string; answer: string }> }): Promise<unknown>;
 
 export function uploadStudyMaterial(data: unknown): Promise<unknown>;
@@ -92,6 +98,7 @@ export function streamResourceGeneration(
     resource_types: string[];
     chat_group_id?: number | string | null;
     bind_chat_history?: boolean;
+    save_to_chat_history?: boolean;
     answers?: Record<string, unknown>;
     skip_review?: boolean;
     ppt_theme_id?: string;
@@ -173,6 +180,7 @@ export function createResourceGenerationTask(data: {
   resource_types: string[];
   chat_group_id?: number | string | null;
   bind_chat_history?: boolean;
+  save_to_chat_history?: boolean;
   answers?: Record<string, unknown>;
   skip_review?: boolean;
   ppt_theme_id?: string;
@@ -215,6 +223,7 @@ export function getNarrationVoices(): Promise<unknown>;
 export function getPresentationQuestions(data: {
   topic: string;
   chat_group_id?: number;
+  voice?: string;
 }): Promise<unknown>;
 
 export function generatePresentation(data: {
@@ -231,6 +240,16 @@ export function previewPresentation(data: { topic: string }): Promise<unknown>;
 export function getPresentations(): Promise<unknown>;
 
 export function getPresentation(presentationId: number | string): Promise<unknown>;
+
+export function streamPresentationProgress(
+  presentationId: number | string,
+  handlers?: {
+    onEvent?: (eventData: unknown) => void;
+    onDone?: (eventData?: unknown) => void;
+    onError?: (error: string) => void;
+    signal?: AbortSignal;
+  },
+): Promise<void>;
 
 export function deleteGeneratedResource(resourceId: number | string): Promise<unknown>;
 

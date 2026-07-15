@@ -120,7 +120,8 @@ async def read(user_id : int = Depends(get_user_id_from_token)):
                     "email" : user.email,
                     "phonenum" : user.phonenum,
                     "profile" : user.profile,
-                    "avatar" : user.avatar
+                    "avatar" : user.avatar,
+                    "role" : user.role or "user",
                 }
             }
     except HTTPException:

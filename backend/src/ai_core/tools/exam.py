@@ -14,7 +14,15 @@ async def generate_exam_questions(topic: str, user_id: str, count: str = "5", di
     types = [t.strip() for t in question_types.split(",") if t.strip()] if question_types else ["single_choice"]
     cnt = int(count) if str(count).isdigit() else 5
 
-    result = await ExamService.generate_and_save(topic, uid, types, cnt, difficulty, chat_group_id=gid)
+    result = await ExamService.generate_and_save(
+        topic,
+        uid,
+        types,
+        cnt,
+        difficulty,
+        chat_group_id=gid,
+        include_request_in_history=False,
+    )
     questions = result.get("questions", []) if isinstance(result, dict) else result
     if not questions:
         return "题目生成失败，请稍后重试。"

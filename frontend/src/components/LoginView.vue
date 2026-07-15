@@ -107,6 +107,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { login, registerByEmail, sendEmailCode } from '../api/apis'
+import { resolveUserRole, saveCurrentUserRole } from '../utils/auth'
 import AnimatedCharacters from './AnimatedCharacters.vue'; 
 const props = defineProps({
   visible: {
@@ -208,6 +209,7 @@ const saveLoginUser = (result) => {
   const user = result?.data || result?.user || result
 
   localStorage.removeItem('zhiban_generation_tasks_v2')
+  localStorage.removeItem('zhiban_active_generation_task_id')
 
   if (user?.token) {
     localStorage.setItem('token', user.token)
@@ -225,9 +227,7 @@ const saveLoginUser = (result) => {
     localStorage.setItem('username', user.username)
   }
 
-  if (user?.role || user?.identity) {
-    localStorage.setItem('role', user.role || user.identity)
-  }
+  saveCurrentUserRole(resolveUserRole(user, result))
 }
 
 const checkResponse = (result) => {

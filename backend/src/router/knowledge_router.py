@@ -19,7 +19,7 @@ VIDEO_DIR = STATIC_DIR / "videos"
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库"])
 
-ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".mp4"}
+ALLOWED_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".pdf", ".docx", ".mp4"}
 MAX_UPLOAD_SIZE = 1 * 1024 * 1024 * 1024  # 1GB
 
 
@@ -47,6 +47,11 @@ async def upload_document(
     tmp_path = None
     requested_visibility = visibility
     try:
+        visibility = str(visibility or "private").strip().lower()
+        if visibility not in {"private", "public", "pending"}:
+            visibility = "private"
+        category = str(category or "knowledge_point").strip() or "knowledge_point"
+
         # ── 公开上传需管理员 ──
         if visibility == "public" and not await is_admin(user_id):
             visibility = "pending"
@@ -182,7 +187,8 @@ async def list_entries(
 ):
     """列出知识库条目。mine=true 只看自己的，visibility 过滤公开/私有"""
     try:
-        filter_user = user_id if mine else None
+        admin = await is_admin(user_id)
+        filter_user = None if admin and not mine else user_id
         records = await list_grouped(user_id=filter_user, visibility=visibility)
         return {"code": 200, "msg": "success", "data": records}
     except Exception as e:

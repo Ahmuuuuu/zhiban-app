@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Depends, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 from backend.src.service.portrait.service import PortraitChatHistory_Service, PortraitRadarService
 from backend.src.schemas.portrait import Init_Portrait
@@ -79,6 +79,32 @@ class DialogueTurn(BaseModel):
 
 class InitFromDialogueRequest(BaseModel):
     dialogue: List[DialogueTurn]
+
+
+class NextInterviewQuestionRequest(BaseModel):
+    dialogue: List[DialogueTurn] = Field(default_factory=list)
+    step: int = 0
+    max_steps: int = 5
+
+
+@router.post("/interview/next")
+async def next_interview_question(
+    user_id: int = Depends(get_user_id_from_token),
+    data: NextInterviewQuestionRequest = Body(...),
+):
+    """根据已有回答生成下一句学生画像访谈问题，轮数受 max_steps 限制。"""
+    try:
+        result = await PortraitChatHistory_Service.next_interview_question(
+            user_id,
+            [{"question": t.question, "answer": t.answer} for t in data.dialogue],
+            step=data.step,
+            max_steps=data.max_steps,
+        )
+        return {"code": 200, "msg": "success", "data": result}
+    except Exception:
+        logger = logging.getLogger(__name__)
+        logger.exception("画像访谈下一问生成失败 user_id=%s", user_id)
+        raise HTTPException(500, "服务器错误")
 
 
 @router.post("/init_from_dialogue")

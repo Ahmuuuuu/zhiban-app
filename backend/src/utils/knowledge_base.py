@@ -39,6 +39,11 @@ def _int_env(name: str, default: int) -> int:
 _RAG_SEARCH_SEM = asyncio.Semaphore(max(1, _int_env("RAG_GLOBAL_SEARCH_CONCURRENCY", 20)))
 
 
+def _make_doc_id(title: str, content: str, scope: str = "") -> str:
+    raw = f"{scope}|{title}|{content[:100]}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
 async def _get_embed_model_async():
     """异步加载 BGE 模型（首次使用时才 import sentence_transformers，避免拖慢启动）"""
     global _embed_model
@@ -63,12 +68,15 @@ async def _encode_async(text: str):
     import numpy as np
 
     # Redis 缓存：相同文本 24 小时内不重复计算向量
+    cache_key = None
+    cache_ttl = None
     if text and len(text.strip()) > 2:
         try:
             from backend.src.utils.redis_client import cache_get, cache_set, _cache_key, _text_hash
             from backend.src.utils.constants import EMBED_CACHE_TTL
-            _ck = _cache_key("embed", _text_hash(text.strip()))
-            cached = await cache_get(_ck)
+            cache_key = _cache_key("embed", _text_hash(text.strip()))
+            cache_ttl = EMBED_CACHE_TTL
+            cached = await cache_get(cache_key)
             if cached is not None and isinstance(cached, list):
                 return np.array(cached, dtype=np.float32)
         except Exception:
@@ -78,9 +86,10 @@ async def _encode_async(text: str):
     vector = await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
 
     # 异步回填缓存（不阻塞返回）
-    if text and len(text.strip()) > 2:
+    if cache_key and cache_ttl:
         try:
-            await cache_set(_ck, vector.tolist(), EMBED_CACHE_TTL)
+            from backend.src.utils.redis_client import cache_set
+            await cache_set(cache_key, vector.tolist(), cache_ttl)
         except Exception:
             pass
 
@@ -171,16 +180,24 @@ async def ingest(
         if len(content.strip()) < 50:
             return "内容过短（<50字），未入库"
 
-        doc_id = hashlib.sha256((title + content[:100]).encode()).hexdigest()[:16]
+        doc_id = _make_doc_id(title, content)
         vector = await _encode_async(content)
 
         existing = await KnowledgeVector.filter(doc_id=doc_id).first()
         if existing:
+            same_owner = existing.user_id == user_id
+            same_system_scope = existing.user_id is None and user_id is None
+            globally_reusable = existing.visibility == "public" and visibility == "public"
+            if not (same_owner or same_system_scope or globally_reusable):
+                doc_id = _make_doc_id(title, content, scope=f"user:{user_id or 'system'}:{visibility}")
+                existing = await KnowledgeVector.filter(doc_id=doc_id).first()
+
+        if existing:
             updated = False
-            if existing.visibility == "private" and visibility == "public":
-                existing.visibility = "public"
+            if existing.visibility == "private" and visibility in {"public", "pending"}:
+                existing.visibility = visibility
                 updated = True
-            if existing.user_id is None and user_id is not None:
+            if existing.user_id is None and user_id is not None and existing.visibility != "public":
                 existing.user_id = user_id
                 updated = True
             if category != existing.category:
@@ -212,7 +229,7 @@ async def ingest(
             category=category,
             cover_url=cover_url,
         )
-        label = "公开" if visibility == "public" else "私有"
+        label = "公开" if visibility == "public" else "待审核" if visibility == "pending" else "私有"
         return f"「{title}」已入库（{len(content)}字，{label}，{category}）"
 
     except Exception as e:
@@ -325,7 +342,7 @@ async def update(
         if content is not None:
             if len(content.strip()) < 50:
                 return "内容过短（<50字），更新失败"
-            new_doc_id = hashlib.sha256((title or record.title + content[:100]).encode()).hexdigest()[:16]
+            new_doc_id = _make_doc_id(title or record.title, content, scope=f"user:{user_id or 'system'}")
             vector = await _encode_async(content)
             record.doc_id = new_doc_id
             record.content = content

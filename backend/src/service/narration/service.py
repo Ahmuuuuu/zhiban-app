@@ -15,8 +15,28 @@ from backend.src.utils.constants import AUDIO_DIR
 
 logger = logging.getLogger(__name__)
 
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 # EdgeTTS 并发上限（微软免费服务，减少并发避免带宽挤占和超时）
-_TTS_SEMAPHORE = asyncio.Semaphore(10)
+TTS_GLOBAL_CONCURRENCY = max(1, _int_env("TTS_GLOBAL_CONCURRENCY", 8))
+TTS_PER_USER_CONCURRENCY = max(1, _int_env("TTS_PER_USER_CONCURRENCY", 8))
+_TTS_SEMAPHORE = asyncio.Semaphore(TTS_GLOBAL_CONCURRENCY)
+_TTS_USER_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
+
+
+def _get_tts_user_semaphore(user_id: int | str | None) -> asyncio.Semaphore:
+    key = str(user_id or "anonymous")
+    sem = _TTS_USER_SEMAPHORES.get(key)
+    if sem is None:
+        sem = asyncio.Semaphore(TTS_PER_USER_CONCURRENCY)
+        _TTS_USER_SEMAPHORES[key] = sem
+    return sem
 
 _tts_cache_key = lambda text, voice: hashlib.md5(f"{text}_{voice}".encode()).hexdigest()[:12]
 
@@ -89,7 +109,7 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     base_dir = AUDIO_DIR / str(resource_id)
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    results = await _generate_sections_audio(sections, voice, base_dir, resource_id)
+    results = await _generate_sections_audio(sections, voice, base_dir, resource_id, user_id=resource.user_id)
 
     # 入库
     record = await Narration.create(
@@ -107,14 +127,14 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     }
 
 
-async def _generate_tts(text: str, voice: str, output_path: str) -> list[dict] | None:
+async def _generate_tts(text: str, voice: str, output_path: str, user_id: int | str | None = None) -> list[dict] | None:
     """核心 TTS 生成：限流 + 重试 + 超时处理 + 保存 JSON 时间戳。
     长文本自动按句子切分，各分段并行生成后按序拼接 MP3。"""
     json_path = output_path.rsplit(".", 1)[0] + ".json"
 
     chunks = _split_long_text(text)
     if len(chunks) == 1:
-        return await _generate_tts_one(text, voice, output_path, json_path)
+        return await _generate_tts_one(text, voice, output_path, json_path, user_id=user_id)
 
     # 长文本：并行生成各分段 → 按序拼接 MP3 + 时间戳
     import tempfile
@@ -123,7 +143,7 @@ async def _generate_tts(text: str, voice: str, output_path: str) -> list[dict] |
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             part_path = tmp.name
         part_json = part_path.rsplit(".", 1)[0] + ".json"
-        timestamps = await _generate_tts_one(chunk, voice, part_path, part_json)
+        timestamps = await _generate_tts_one(chunk, voice, part_path, part_json, user_id=user_id)
         if timestamps is None:
             for f in (part_path, part_json):
                 try:
@@ -168,9 +188,10 @@ async def _generate_tts(text: str, voice: str, output_path: str) -> list[dict] |
     return all_timestamps
 
 
-async def _generate_tts_one(text: str, voice: str, output_path: str, json_path: str) -> list[dict] | None:
+async def _generate_tts_one(text: str, voice: str, output_path: str, json_path: str, user_id: int | str | None = None) -> list[dict] | None:
     """单段 TTS 生成（不切分），限流 + 重试 + 超时处理"""
-    async with _TTS_SEMAPHORE:
+    user_sem = _get_tts_user_semaphore(user_id)
+    async with user_sem, _TTS_SEMAPHORE:
         t0 = _time.perf_counter()
         last_err = None
         for attempt in range(3):
@@ -207,7 +228,7 @@ async def _generate_tts_one(text: str, voice: str, output_path: str, json_path: 
         _tts_done_count += 1
         done = _tts_done_count
 
-    logger.info("[TTS] #%d len=%d cost=%.1fs", done, len(text), cost)
+    logger.info("[TTS] #%d user=%s len=%d cost=%.1fs", done, user_id or "-", len(text), cost)
     return word_timestamps
 
 
@@ -266,7 +287,7 @@ def _split_long_text(text: str, max_chars: int = _MAX_TTS_CHARS) -> list[str]:
 
 
 
-async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: Path, resource_id: int) -> list[dict]:
+async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: Path, resource_id: int, user_id: int | str | None = None) -> list[dict]:
     """并行生成所有段落的 TTS 音频，复用内容哈希缓存"""
     total = len(sections)
     cache_hits = 0
@@ -300,7 +321,7 @@ async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: P
             except (json.JSONDecodeError, IOError):
                 pass
 
-        word_timestamps = await _generate_tts(text, voice, output_path)
+        word_timestamps = await _generate_tts(text, voice, output_path, user_id=user_id)
         if word_timestamps is None:
             return None
 

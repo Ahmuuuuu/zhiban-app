@@ -63,6 +63,7 @@ class ResourceTaskService:
         bind_chat_history: bool = False,
         skip_review: bool = False,
         ppt_theme_id: str | None = None,
+        save_to_chat_history: bool = True,
         *,
         ensure_chat_group_id: EnsureChatGroup,
         run_task: RunGenerationTask,
@@ -111,6 +112,7 @@ class ResourceTaskService:
                 answers,
                 skip_review=skip_review,
                 ppt_theme_id=ppt_theme_id,
+                save_to_chat_history=save_to_chat_history,
             )
         )
         return {"task_id": task_id, "status": "pending", "chat_group_id": chat_group_id}

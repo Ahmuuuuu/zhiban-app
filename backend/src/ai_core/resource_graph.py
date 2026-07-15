@@ -647,6 +647,23 @@ async def generate_ppt_parallel(
             except Exception:
                 logger.exception("[PPT-Parallel] 章节 %d 推送异常", _idx)
 
+    def _push_section_complete(_idx: int, _content: str, _section_title: str = ""):
+        """Emit a final PPT section for downstream consumers such as video TTS."""
+        if not stream_writer:
+            return
+        try:
+            stream_writer({
+                "type": "ppt_section_complete",
+                "file_type": "ppt",
+                "resource_type": "ppt",
+                "section_idx": _idx,
+                "section_title": _section_title,
+                "section_total": total,
+                "content": _content,
+            })
+        except Exception:
+            logger.debug("[PPT-Parallel] section_complete emit failed idx=%s", _idx, exc_info=True)
+
     async def _review_ppt_section(content: str, section_title: str, format_checked: bool = False) -> dict:
         """调用 reviewer 审核单个章节，返回 {passed, score, feedback}
 
@@ -857,6 +874,7 @@ async def generate_ppt_parallel(
                         total=total,
                     )
                     _push_section(idx, fallback_content, section_title)
+                    _push_section_complete(idx, fallback_content, section_title)
                     return
 
             if not gen_ok:
@@ -876,9 +894,30 @@ async def generate_ppt_parallel(
                     total=total,
                 )
                 _push_section(idx, fallback_content, section_title)
+                _push_section_complete(idx, fallback_content, section_title)
                 return
 
             elapsed = time.perf_counter() - t0
+
+            if skip_review_sections:
+                _results[idx] = {"idx": idx, "content": content}
+                if is_first_round:
+                    _mark_first_pass_done(idx)
+                _push_section(idx, content, section_title)
+                _push_section_complete(idx, content, section_title)
+                _push_agent_event(
+                    stream_writer,
+                    section_agent_id,
+                    f"PPT第 {idx + 1} 章",
+                    "executor",
+                    "done",
+                    f"「{section_title}」已生成",
+                    resource_type="ppt",
+                    current=idx + 1,
+                    total=total,
+                    elapsed_ms=int(elapsed * 1000),
+                )
+                return
 
             # Step B: 快检
             quick_ok = False
@@ -916,6 +955,7 @@ async def generate_ppt_parallel(
                     current=idx + 1,
                     total=total,
                 )
+                _push_section_complete(idx, content, section_title)
                 return
 
             if is_first_round:
@@ -960,6 +1000,7 @@ async def generate_ppt_parallel(
                     _push_section_replace(idx, content, section_title)
                 else:
                     _push_section(idx, content, section_title)
+                _push_section_complete(idx, content, section_title)
                 _push_agent_event(
                     stream_writer,
                     section_agent_id,
@@ -991,6 +1032,7 @@ async def generate_ppt_parallel(
                 _push_section_replace(idx, fallback_content, section_title)
             else:
                 _push_section(idx, fallback_content, section_title)
+            _push_section_complete(idx, fallback_content, section_title)
             logger.warning("[PPT-Review] idx=%d section=%s 达最大审核次数 %d/生成轮次 %d，使用安全兜底版本",
                            idx, section_title, review_checks, round_idx)
             _push_agent_event(
@@ -1303,11 +1345,8 @@ async def executor_node(state: ResourceState) -> dict:
         t_start = time.perf_counter()
         _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "running", f"正在生成 {rt}", resource_type=rt)
         try:
-            if rt == "image":
-                result = _generate_image_sync(prompts[rt], user_id, user_id_int, llm_priority)
-            else:
-                response = llm.invoke(prompts[rt], priority=llm_priority, user_id=user_id_int, pool="thread")
-                result = rt, response.content
+            response = llm.invoke(prompts[rt], priority=llm_priority, user_id=user_id_int, pool="thread")
+            result = rt, response.content
             elapsed = time.perf_counter() - t_start
             _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "done", f"{rt} 生成完成", resource_type=rt, elapsed_ms=int(elapsed * 1000))
             logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
@@ -1323,10 +1362,24 @@ async def executor_node(state: ResourceState) -> dict:
     # PPT / 文档 / 其余 全部并行执行
     loop = asyncio.get_running_loop()
 
+    def _emit_resource_complete(rt: str, content, file_url: str | None = None):
+        if not writer or content is None:
+            return
+        try:
+            writer({
+                "type": "resource_complete",
+                "resource_type": rt,
+                "file_type": rt,
+                "content": content,
+                "file_url": file_url or "",
+            })
+        except Exception:
+            logger.debug("[Executor] resource_complete emit failed rt=%s", rt, exc_info=True)
+
     async def _run_ppt():
         if not has_ppt:
             return None
-        return await generate_ppt_parallel(
+        content = await generate_ppt_parallel(
             topic, portrait=portrait, kb=kb, guidance=guidance,
             feedback=feedback, user_notes=user_notes,
             custom_prompts=custom_prompts,
@@ -1335,15 +1388,17 @@ async def executor_node(state: ResourceState) -> dict:
             ppt_prompt_key=state.get("ppt_prompt_key", "ppt"),
             llm_priority=llm_priority,
             user_id=user_id_int,
-            skip_review_sections=False,
+            skip_review_sections=bool(state.get("skip_review", False)),
             ppt_theme_id=state.get("ppt_theme_id", ""),
             rag_mode=rag_mode,
         )
+        _emit_resource_complete("ppt", content)
+        return content
 
     async def _run_doc():
         if not has_doc:
             return None
-        return await generate_document_parallel(
+        content = await generate_document_parallel(
             topic, portrait=portrait, kb=kb, guidance=guidance,
             feedback=feedback, user_notes=user_notes,
             custom_prompts=custom_prompts,
@@ -1353,6 +1408,8 @@ async def executor_node(state: ResourceState) -> dict:
             user_id=user_id_int,
             rag_mode=rag_mode,
         )
+        _emit_resource_complete("document", content)
+        return content
 
     async def _run_image():
         if not has_image:

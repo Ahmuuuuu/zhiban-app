@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { deleteConversation, getConversationList, getConversationMessages, initPortraitFromDialogue, resolveApiUrl, streamChatMessage } from "../api/apis";
+import { deleteConversation, getConversationList, getConversationMessages, getNextPortraitInterviewQuestion, initPortraitFromDialogue, resolveApiUrl, streamChatMessage } from "../api/apis";
 import { useRouter } from "vue-router";
 import { detectGenerationIntent, executeGeneration } from "../composables/useResourceGeneration";
 import { useVoiceInput } from "../composables/useVoiceInput";
@@ -331,15 +331,13 @@ const deletePetHistory = async (item: PetHistoryItem) => {
 };
 
 const createNewPetChat = () => {
+  persistPortraitQAOnExit();
   petChatGroupId.value = null;
   petMessages.value = [createWelcomeMessage()];
   chatInput.value = "";
   chatError.value = "";
   historyOpen.value = false;
-  portraitQAMode.value = false;
-  portraitQAStep.value = 0;
-  portraitQAAnswers.value = [];
-  portraitQASaving.value = false;
+  resetPortraitQAState();
 };
 
 const scrollPetMessagesToBottom = async () => {
@@ -364,14 +362,51 @@ const escapeHtml = (value: string) =>
 const isImageUrl = (url: string) =>
   /\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(String(url || ""));
 
+const resolvePetMarkdownHref = (url: string) => {
+  const raw = String(url || "").trim();
+  if (!raw || /^(javascript|data|vbscript):/i.test(raw)) return "";
+  if (/^mailto:/i.test(raw)) return raw;
+  if (/^(https?:\/\/|\/)/i.test(raw)) return resolveApiUrl(raw);
+  return "";
+};
+
+const isSafePetRenderedHref = (href: string) => {
+  const raw = String(href || "").trim();
+  if (!raw || /^(javascript|data|vbscript):/i.test(raw)) return false;
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.protocol === "mailto:") return true;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    const query = url.searchParams.get("q") || "";
+    if (/(^|\.)bing\.com$/i.test(url.hostname) && url.pathname.startsWith("/search") && query.length > 80) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const handlePetRenderedMessageClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  const anchor = target?.closest?.("a") as HTMLAnchorElement | null;
+  if (!anchor) return;
+  if (isSafePetRenderedHref(anchor.getAttribute("href") || "")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  console.warn("[PetChat] 已拦截异常富文本链接:", anchor.getAttribute("href"));
+};
+
 const renderPetMarkdown = (value: string) => {
   let text = escapeHtml(value);
   text = text.replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g, (_, label, url) => {
-    const href = escapeHtml(resolveApiUrl(url));
+    const href = escapeHtml(resolvePetMarkdownHref(url));
+    if (!href) return label;
     return `<a class="pet-chat__image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="pet-chat__generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`;
   });
   text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/)[^\s)]+)\)/g, (_, label, url) => {
-    const href = escapeHtml(resolveApiUrl(url));
+    const href = escapeHtml(resolvePetMarkdownHref(url));
+    if (!href) return label;
     if (!/^mailto:/i.test(url) && isImageUrl(url)) {
       return `<a class="pet-chat__image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="pet-chat__generated-image" src="${href}" alt="${label}" loading="lazy" /></a>`;
     }
@@ -495,48 +530,153 @@ const closePetQuizPreview = () => {
 };
 
 // ── 画像问答 onboarding ──
-const PORTRAIT_QUESTION_GROUPS = [
-  [
-    "你好呀！很高兴认识你！🎉 先说说你平时有什么兴趣爱好吧？比如喜欢做什么事情？",
-    "我们先从轻松一点的开始~ 你平时最愿意花时间做的事情是什么？可以是学习里的，也可以是生活里的。",
-    "为了以后给你更合适的学习建议，我想先了解一下你：最近有什么让你特别感兴趣的领域或活动吗？",
-  ],
-  [
-    "那你学习的时候，是更喜欢自己安安静静看书、听老师或视频讲解，还是动手做实验/练习题呀？",
-    "遇到新知识时，你通常更习惯怎么学？比如先看例子、听讲解、自己推导，还是直接上手做题。",
-    "如果要学一个全新的知识点，你最喜欢哪种方式？阅读资料、看视频、跟着老师走、还是边做边学？",
-  ],
-  [
-    "你现在学习主要是为了什么呢？比如准备考试、参加竞赛、考个证书、纯粹兴趣学习，还是为了找工作？",
-    "现阶段你最想通过学习达成什么目标？可以是考试、项目、竞赛、升学、就业，或者单纯想变强。",
-    "接下来一段时间，你最希望在哪件学习相关的事情上看到进步？",
-  ],
-  [
-    "你觉得自己在学习上有什么特点或者擅长的方面吗？比如逻辑分析能力强、记忆力好、想象力丰富、动手能力强？",
-    "回想一下，以前学得比较顺的时候，你通常是靠什么优势推进的？比如理解快、记得牢、会总结、能坚持。",
-    "别人如果评价你的学习方式，你觉得他们可能会说你哪方面比较突出？",
-  ],
-  [
-    "最后一个问题~ 你平时会做学习计划吗？是自律性很强的类型，还是随性一点想学就学？",
-    "最后想了解下你的节奏感：你更喜欢提前规划每天学什么，还是根据当天状态灵活安排？",
-    "最后一个小问题：当任务比较多的时候，你一般会列计划推进，还是先挑最想做/最紧急的开始？",
-  ],
-];
+const PORTRAIT_MAX_STEPS = 5;
 
-const pickPortraitQuestions = () =>
-  PORTRAIT_QUESTION_GROUPS.map((questions) => questions[Math.floor(Math.random() * questions.length)]);
+const pickOne = (items: string[]) => items[Math.floor(Math.random() * items.length)] || items[0] || "";
+
+const compactPortraitAnswer = (answer = "", fallback = "这件事") => {
+  const text = answer
+    .replace(/\s+/g, " ")
+    .replace(/[。！？!?，,；;：:]+$/g, "")
+    .trim();
+  if (!text) return fallback;
+  return text.length > 24 ? `${text.slice(0, 24)}...` : text;
+};
+
+const isVaguePortraitAnswer = (answer = "") => {
+  const text = answer.trim();
+  return !text || text.length <= 2 || /^(不知道|没有|还好|都行|随便|一般|无|none|no)$/i.test(text);
+};
+
+const buildPortraitQuestion = (step: number, answers: string[]) => {
+  const first = compactPortraitAnswer(answers[0], "你最近关心的东西");
+  const second = compactPortraitAnswer(answers[1], "这种学习方式");
+  const third = compactPortraitAnswer(answers[2], "卡住的时候");
+  const fourth = compactPortraitAnswer(answers[3], "你的学习状态");
+
+  if (step === 0) {
+    return pickOne([
+      "我们不选标签，像聊天一样来。最近你真正投入过，或者想认真搞明白的一件事是什么？比如一门课、一个项目、一次考试，或者一个技能。",
+      "先从真实状态开始：这段时间你最想学会、最想做成，或者最放不下的一件学习相关的事是什么？比如期末、比赛、作品集、实习准备。",
+      "不用想标准答案。你最近会反复琢磨什么？比如一门课、一个项目、一个比赛、找工作方向，或者单纯一个兴趣。",
+    ]);
+  }
+
+  if (step === 1) {
+    if (isVaguePortraitAnswer(answers[0])) {
+      return "那换个更具体的角度：最近有没有哪门课、项目、考试或技能让你觉得必须提升？比如微机原理、Gin 后端、比赛答辩，为什么是它？";
+    }
+    return pickOne([
+      `你刚才提到「${first}」。围绕它学习时，你更容易被哪种方式带进去？比如看别人讲、自己查资料、动手做、刷题，或者和人讨论。`,
+      `如果要把「${first}」学扎实，你通常会先从哪里下手？比如先看教程、先做一个东西、先啃概念，或者先找题练。`,
+      `听起来「${first}」对你挺重要。你学这类东西时，什么情况下会觉得“我进入状态了”？比如跑通代码、做对题、讲给别人听。`,
+    ]);
+  }
+
+  if (step === 2) {
+    return pickOne([
+      `那如果用「${second}」学着学着卡住了，你一般会怎么处理？比如硬啃、换资料、问人、先跳过，或者直接开做试错。`,
+      `遇到一个怎么都不通的点时，你通常最难受的是哪里？比如看不懂概念、记不住、不会做题、不会迁移，或者容易分心。`,
+      `我想知道你真正需要我补位的地方：学习卡住时，你希望我怎么帮？比如讲透原理、给例子、拆步骤、出题练，或者做计划。`,
+    ]);
+  }
+
+  if (step === 3) {
+    return pickOne([
+      `你刚才说到「${third}」。压力大或者任务多的时候，你通常会更像哪种状态？比如越催越冲、需要人拉一把、先乱后稳，或者容易转去做别的。`,
+      "聊点性格和自我管理：你学习时更像哪种类型？比如目标明确的冲刺型、好奇钻研型、需要外部监督型，或者灵感来了很猛但节奏不稳定。",
+      "当学习任务堆起来时，你一般会怎么安排自己？比如列计划推进、先做最急的、先做最感兴趣的，或者拖到最后爆发。",
+    ]);
+  }
+
+  return pickOne([
+    `最后把「${fourth}」落到知伴怎么帮你：我以后应该怎么配合你？比如给路线图、拆每日计划、讲例题、出题练，或者提醒你推进。`,
+    "最后一个偏规划的问题：如果我给你安排学习路径，你更希望是什么节奏？比如宽松大方向、每天小任务、阶段目标，或者复盘提醒。",
+    "最后给我一份你的“使用说明书”：我提醒你学习时应该怎么来？比如严厉催你、一步步拆给你、先给例子，或者像搭子一样陪你推进。",
+  ]);
+};
 
 const portraitQAMode = ref(false);
 const portraitQAStep = ref(0);
 const portraitQAAnswers = ref<string[]>([]);
 const portraitQAQuestions = ref<string[]>([]);
 const portraitQASaving = ref(false);
+let portraitQASaveInFlight = false;
+
+const buildPortraitDialogue = () =>
+  portraitQAQuestions.value
+    .map((question, index) => ({
+      question,
+      answer: portraitQAAnswers.value[index] || "",
+    }))
+    .filter((turn) => turn.question || turn.answer);
+
+const getAnsweredPortraitDialogue = () =>
+  buildPortraitDialogue().filter((turn) => turn.answer.trim());
+
+const savePortraitDialogue = async (dialogue = getAnsweredPortraitDialogue()) => {
+  if (!dialogue.length || portraitQASaveInFlight) return false;
+  portraitQASaveInFlight = true;
+  portraitQASaving.value = true;
+  try {
+    await initPortraitFromDialogue({ dialogue });
+    return true;
+  } finally {
+    portraitQASaveInFlight = false;
+    portraitQASaving.value = false;
+  }
+};
+
+const persistPortraitQAOnExit = () => {
+  if (!portraitQAMode.value) return;
+  const dialogue = getAnsweredPortraitDialogue();
+  if (!dialogue.length) return;
+  void savePortraitDialogue(dialogue).catch((error) => {
+    console.warn("[PetChat] 中途退出画像访谈，静默保存失败:", error);
+  });
+};
+
+const resetPortraitQAState = () => {
+  portraitQAMode.value = false;
+  portraitQAStep.value = 0;
+  portraitQAAnswers.value = [];
+  portraitQAQuestions.value = [];
+  portraitQASaving.value = false;
+};
+
+const setPortraitQuestionLoading = (loading: boolean) => {
+  chatLoading.value = loading;
+  emit("update:loading", loading);
+};
+
+const fetchPortraitQuestion = async () => {
+  const step = portraitQAStep.value;
+  const fallback = buildPortraitQuestion(step, portraitQAAnswers.value);
+  if (step <= 0) return fallback;
+
+  try {
+    const result = await getNextPortraitInterviewQuestion({
+      dialogue: buildPortraitDialogue(),
+      step,
+      max_steps: PORTRAIT_MAX_STEPS,
+    });
+    const response = getResponseData(result);
+    const data = response?.data || response || {};
+    const question = String(data.question || "").trim();
+    if (question) return question;
+    if (data.finish) return "";
+  } catch (error) {
+    console.warn("[PetChat] 画像访谈下一问生成失败，使用本地兜底:", error);
+  }
+
+  return fallback;
+};
 
 const startPortraitQA = () => {
   portraitQAMode.value = true;
   portraitQAStep.value = 0;
   portraitQAAnswers.value = [];
-  portraitQAQuestions.value = pickPortraitQuestions();
+  portraitQAQuestions.value = [];
   portraitQASaving.value = false;
 
   emit("update:modelValue", true);
@@ -551,18 +691,33 @@ const startPortraitQA = () => {
     },
   ];
 
-  window.setTimeout(() => sendNextPortraitQuestion(), 1200);
+  window.setTimeout(() => void sendNextPortraitQuestion(), 900);
 };
 
-const sendNextPortraitQuestion = () => {
-  if (portraitQAStep.value >= portraitQAQuestions.value.length) {
+const sendNextPortraitQuestion = async () => {
+  if (!portraitQAMode.value) return;
+  if (portraitQAStep.value >= PORTRAIT_MAX_STEPS) {
     void finishPortraitQA();
     return;
   }
+
+  let question = "";
+  setPortraitQuestionLoading(portraitQAStep.value > 0);
+  try {
+    question = await fetchPortraitQuestion();
+  } finally {
+    setPortraitQuestionLoading(false);
+  }
+  if (!portraitQAMode.value) return;
+  if (!question) {
+    void finishPortraitQA();
+    return;
+  }
+  portraitQAQuestions.value[portraitQAStep.value] = question;
   petMessages.value.push({
     id: `portrait-q-${portraitQAStep.value}-${Date.now()}`,
     role: "assistant",
-    content: portraitQAQuestions.value[portraitQAStep.value],
+    content: question,
   });
   void scrollPetMessagesToBottom();
 };
@@ -571,8 +726,9 @@ const handlePortraitAnswer = async (answer: string) => {
   portraitQAAnswers.value.push(answer);
   portraitQAStep.value++;
 
-  if (portraitQAStep.value < portraitQAQuestions.value.length) {
-    window.setTimeout(() => sendNextPortraitQuestion(), 800);
+  if (portraitQAStep.value < PORTRAIT_MAX_STEPS) {
+    setPortraitQuestionLoading(true);
+    window.setTimeout(() => void sendNextPortraitQuestion(), 650);
   } else {
     await finishPortraitQA();
   }
@@ -580,22 +736,18 @@ const handlePortraitAnswer = async (answer: string) => {
 
 const finishPortraitQA = async () => {
   if (portraitQASaving.value) return;
-  portraitQASaving.value = true;
   chatLoading.value = true;
   emit("update:loading", true);
 
   try {
-    const dialogue = portraitQAQuestions.value.map((q, i) => ({
-      question: q,
-      answer: portraitQAAnswers.value[i] || "",
-    }));
-
-    await initPortraitFromDialogue({ dialogue });
+    const saved = await savePortraitDialogue();
 
     petMessages.value.push({
       id: `portrait-done-${Date.now()}`,
       role: "assistant",
-      content: "太好了，我现在对你有了一些了解！以后多和我聊天，我会越来越了解你，给你更好的学习建议哦~ 🎉",
+      content: saved
+        ? "太好了，我现在对你有了一些了解！以后多和我聊天，我会越来越了解你，给你更好的学习建议哦~ 🎉"
+        : "没关系，我们先跳过基础画像。以后聊天和学习记录里，我也会慢慢了解你。",
     });
   } catch (err: any) {
     console.error("[PetChat] 画像保存失败:", err);
@@ -605,8 +757,7 @@ const finishPortraitQA = async () => {
       content: "抱歉，保存时出了一点问题，不过别担心，我们以后可以在聊天中慢慢相互了解！",
     });
   } finally {
-    portraitQAMode.value = false;
-    portraitQASaving.value = false;
+    resetPortraitQAState();
     chatLoading.value = false;
     emit("update:loading", false);
     void scrollPetMessagesToBottom();
@@ -858,6 +1009,7 @@ const sendPetMessage = async () => {
 
 const closeChat = () => {
   stopVoiceInput();
+  persistPortraitQAOnExit();
   emit("update:modelValue", false);
   emit("update:expanded", false);
   chatExpanded.value = false;
@@ -865,11 +1017,7 @@ const closeChat = () => {
   chatError.value = "";
   petChatGroupId.value = null;
   petMessages.value = [createWelcomeMessage()];
-  // 重置画像问答状态
-  portraitQAMode.value = false;
-  portraitQAStep.value = 0;
-  portraitQAAnswers.value = [];
-  portraitQASaving.value = false;
+  resetPortraitQAState();
 };
 
 const handleChatEnter = (event: KeyboardEvent) => {
@@ -886,11 +1034,8 @@ watch(
       void loadPetHistory();
     } else {
       historyOpen.value = false;
-      // 外部关闭时重置画像问答状态
-      portraitQAMode.value = false;
-      portraitQAStep.value = 0;
-      portraitQAAnswers.value = [];
-      portraitQASaving.value = false;
+      persistPortraitQAOnExit();
+      resetPortraitQAState();
     }
   },
   { immediate: true },
@@ -993,7 +1138,10 @@ onUnmounted(() => {
         class="pet-chat__message"
         :class="`pet-chat__message--${message.role}`"
       >
-        <span v-html="renderPetMarkdown(message.content || 'Thinking...')"></span>
+        <span
+          v-html="renderPetMarkdown(message.content || 'Thinking...')"
+          @click.capture="handlePetRenderedMessageClick"
+        ></span>
         <button
           v-if="message.role === 'assistant' && isPetVideoFile(message) && message.resourcePreviewUrl"
           type="button"
@@ -1041,7 +1189,7 @@ onUnmounted(() => {
 
     <p v-if="chatError" class="pet-chat__error">{{ chatError }}</p>
 
-    <form ref="chatFormRef" class="pet-chat__form" @submit.prevent="sendPetMessage">
+    <form ref="chatFormRef" class="pet-chat__form" @submit.prevent.stop="sendPetMessage">
       <textarea
         v-model="chatInput"
         rows="1"

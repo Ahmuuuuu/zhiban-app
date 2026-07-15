@@ -43,6 +43,55 @@ async def _generate_resource_title(topic: str, type_names: list[str]) -> str:
     return f"「{topic}」{types_str}"
 
 
+async def _save_single_generated_resource(
+    topic: str,
+    user: User | None,
+    resource_type: str,
+    content: str,
+    *,
+    file_url: str | None = None,
+    review_passed: bool = False,
+    retry_count: int = 0,
+    ppt_theme_id: str | None = None,
+) -> dict | None:
+    if not user or not resource_type or content is None:
+        return None
+
+    item_content = (
+        _apply_ppt_theme_to_content(content, ppt_theme_id)
+        if resource_type == "ppt"
+        else content
+    )
+    record = await GeneratedResource.create(
+        topic=topic,
+        resource_type=resource_type,
+        content=item_content,
+        review_passed=review_passed,
+        retry_count=retry_count,
+        file_url=file_url,
+        user=user,
+    )
+    cover_url = build_cover_url(resource_type, file_url, record.id)
+    if cover_url:
+        await GeneratedResource.filter(id=record.id).update(cover_url=cover_url)
+
+    saved = {
+        "resource_id": record.id,
+        "topic": record.topic,
+        "resource_type": record.resource_type,
+        "content": record.content,
+        "review_passed": record.review_passed,
+        "retry_count": record.retry_count,
+        "file_url": record.file_url,
+        "cover_url": cover_url,
+        "visibility": record.visibility or "private",
+    }
+    if resource_type == "ppt":
+        saved["ppt_theme_id"] = _extract_ppt_theme_id(record.content)
+    logger.info("[Resource] 提前入库 %s id=%s topic=%s", resource_type, record.id, topic)
+    return saved
+
+
 # ─── 任务 SSE 通知队列（基于 Redis Pub/Sub + Stream，兼容多进程）───
 # 使用 redis_client 的统一 SSE 机制：本地进程走内存队列，跨进程走 Redis
 
@@ -73,7 +122,7 @@ async def _cache_task_state(task_id: str, state: dict):
 class ResourceService:
 
     @staticmethod
-    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", skip_review: bool = False, bind_chat_history: bool = False, ppt_theme_id: str | None = None) -> list[dict]:
+    async def generate_and_save(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "", exam_count: int = 5, exam_difficulty: str = "medium", user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", skip_review: bool = False, bind_chat_history: bool = False, ppt_theme_id: str | None = None, include_request_in_history: bool = True, save_to_chat_history: bool = True) -> list[dict]:
         import time as _time
         _t_total = _time.perf_counter()
         chat_group_id = await _ensure_generation_chat_group_id(user_id, chat_group_id, bind_chat_history)
@@ -91,8 +140,8 @@ class ResourceService:
             file_urls=result.get("file_urls"),
             ppt_theme_id=ppt_theme_id,
         )
-        if chat_group_id > 0:
-            await _save_generation_to_history(user_id, chat_group_id, topic, saved)
+        if save_to_chat_history and chat_group_id > 0:
+            await _save_generation_to_history(user_id, chat_group_id, topic, saved, include_request=include_request_in_history)
 
         # exercise 类型：解析 graph 输出的 JSON 题目 → 按 reviewer 逐题审核过滤 → 存 ExamQuestion 表
         reviewer_questions = result.get("reviewer_questions", [])
@@ -130,7 +179,7 @@ class ResourceService:
         return saved
 
     @staticmethod
-    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", bind_chat_history: bool = False, answers: dict | None = None, ppt_theme_id: str | None = None):
+    async def generate_stream(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, exam_question_types: str = "single_choice, multi_choice, true_false", exam_count: int = 5, exam_difficulty: str = "medium", skip_review: bool = False, user_notes: str = "", ppt_prompt_key: str = "ppt", llm_priority: str = "high", bind_chat_history: bool = False, answers: dict | None = None, ppt_theme_id: str | None = None, include_request_in_history: bool = True, save_to_chat_history: bool = True):
         """astream(stream_mode=["values", "custom"]) — PPT 通过 custom 事件逐页推送，其他类型通过 values 事件推送"""
         import time as _time
         _t_total = _time.perf_counter()
@@ -159,10 +208,32 @@ class ResourceService:
         final_passed = False
         final_retry = 0
         yielded_types: set[str] = set()
+        saved_types: set[str] = set()
         saved_resources: list[dict] = []
 
         async for mode, chunk in resource_graph.astream(initial_state, stream_mode=["values", "custom"]):
             if mode == "custom":
+                if chunk.get("type") == "resource_complete":
+                    rt = str(chunk.get("resource_type") or chunk.get("file_type") or "").strip()
+                    content = chunk.get("content")
+                    if rt and rt not in saved_types and user and content is not None:
+                        item_content = _apply_ppt_theme_to_content(content, ppt_theme_id) if rt == "ppt" else content
+                        saved = await _save_single_generated_resource(
+                            topic,
+                            user,
+                            rt,
+                            item_content,
+                            file_url=chunk.get("file_url") or None,
+                            review_passed=False,
+                            retry_count=0,
+                            ppt_theme_id=ppt_theme_id,
+                        )
+                        if saved:
+                            saved_resources.append(saved)
+                            saved_types.add(rt)
+                            yielded_types.add(rt)
+                            yield _make_file_event(topic, rt, item_content, resource_id=saved["resource_id"], download_url=f"/resource/{saved['resource_id']}/download")
+                    continue
                 # PPT 逐页流式事件（stream_start / stream_slide），直接转发
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
@@ -170,7 +241,7 @@ class ResourceService:
                 resources = chunk.get("generated_resources", {})
                 if resources:
                     for rt, content in resources.items():
-                        if rt not in yielded_types and user:
+                        if rt not in saved_types and rt not in yielded_types and user:
                             item_content = _apply_ppt_theme_to_content(content, ppt_theme_id) if rt == "ppt" else content
                             record = await GeneratedResource.create(
                                 topic=topic, resource_type=rt, content=item_content,
@@ -190,6 +261,7 @@ class ResourceService:
                             if rt == "ppt":
                                 saved_resources[-1]["ppt_theme_id"] = _extract_ppt_theme_id(item_content)
                             logger.info("[SSE] 即时存库 %s id=%s topic=%s", rt, record.id, topic)
+                            saved_types.add(rt)
                             yielded_types.add(rt)
                             yield _make_file_event(topic, rt, item_content, resource_id=record.id, download_url=f"/resource/{record.id}/download")
                 final_passed = chunk.get("review_passed", False)
@@ -204,8 +276,8 @@ class ResourceService:
             )
             r["review_passed"] = final_passed
             r["retry_count"] = final_retry
-        if chat_group_id > 0:
-            await _save_generation_to_history(user_id, chat_group_id, topic, saved_resources)
+        if save_to_chat_history and chat_group_id > 0:
+            await _save_generation_to_history(user_id, chat_group_id, topic, saved_resources, include_request=include_request_in_history)
 
         # 后台预生成旁白（播放时秒开）
         done_data = {
@@ -282,7 +354,7 @@ class ResourceService:
 
     # Task management
     @staticmethod
-    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None, bind_chat_history: bool = False, skip_review: bool = False, ppt_theme_id: str | None = None) -> dict:
+    async def create_task(topic: str, user_id: int, resource_types: list[str], chat_group_id: int = 0, answers: dict | None = None, bind_chat_history: bool = False, skip_review: bool = False, ppt_theme_id: str | None = None, save_to_chat_history: bool = True) -> dict:
         return await ResourceTaskService.create_task(
             topic,
             user_id,
@@ -292,6 +364,7 @@ class ResourceService:
             bind_chat_history,
             skip_review,
             ppt_theme_id,
+            save_to_chat_history,
             ensure_chat_group_id=_ensure_generation_chat_group_id,
             run_task=_run_generation_task,
         )
@@ -313,7 +386,7 @@ class ResourceService:
 #  后台任务执行
 # ═══════════════════════════════════════════════
 
-async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = None, skip_review: bool = False, ppt_theme_id: str | None = None):
+async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = None, skip_review: bool = False, ppt_theme_id: str | None = None, save_to_chat_history: bool = True):
     """后台运行资源生成任务，更新 DB 进度并推送 SSE"""
     import time as _time
     _t_total = _time.perf_counter()
@@ -341,7 +414,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": 5, "progress_msg": "正在初始化…", "user_id": user_id}))
 
         # 提前搜索外部视频（仅用户请求了视频资源时才搜索，避免思维导图等也弹出）
-        if topic and len(topic) > 1 and "video" in resource_types:
+        if save_to_chat_history and topic and len(topic) > 1 and "video" in resource_types:
             asyncio.ensure_future(_search_external_videos_early(
                 task_id, topic, user_id, chat_group_id,
             ))
@@ -355,11 +428,14 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
             task.topic = topic
             await task.save()
 
+        user = await User.filter(id=user_id).first()
         final_resources: dict = {}
         final_passed = False
         final_retry = 0
         final_file_urls: dict = {}
         yielded_types: set[str] = set()
+        saved_types: set[str] = set()
+        saved_resources: list[dict] = []
         total_types = len(resource_types)
         _t_per_type: dict[str, float] = {}
         _t_stream_start = _time.perf_counter()
@@ -374,6 +450,56 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         async for mode, chunk in resource_graph.astream(initial_state, stream_mode=["values", "custom"]):
             if mode == "custom":
                 _custom_count += 1
+                if chunk.get("type") == "resource_complete":
+                    rt = str(chunk.get("resource_type") or chunk.get("file_type") or "").strip()
+                    content = chunk.get("content")
+                    if rt and rt not in saved_types and user and content is not None:
+                        saved = await _save_single_generated_resource(
+                            topic,
+                            user,
+                            rt,
+                            content,
+                            file_url=chunk.get("file_url") or None,
+                            review_passed=False,
+                            retry_count=0,
+                            ppt_theme_id=ppt_theme_id,
+                        )
+                        if saved:
+                            saved_resources.append(saved)
+                            saved_types.add(rt)
+                            yielded_types.add(rt)
+                            ext = _FILE_EXT_MAP.get(rt, "md")
+                            done = len(yielded_types)
+                            pct = 20 + int((done / max(total_types, 1)) * 40)
+                            rt_elapsed = int((_time.perf_counter() - _t_stream_start) * 1000)
+                            task.progress = min(pct, 85)
+                            task.progress_msg = f"「{rt}」已生成并保存，耗时 {rt_elapsed / 1000:.1f}s"
+                            await task.save()
+                            await _notify_task_sse(task_id, {
+                                "type": "file",
+                                "file_type": rt,
+                                "resource_type": rt,
+                                "filename": f"{topic}_{rt}.{ext}",
+                                "resource_id": saved["resource_id"],
+                                "download_url": f"/resource/{saved['resource_id']}/download",
+                                "topic": topic,
+                                **({"ppt_theme_id": saved.get("ppt_theme_id")} if rt == "ppt" else {}),
+                            })
+                            await _notify_task_sse(task_id, {
+                                "type": "progress",
+                                "resource_type": rt,
+                                "progress": task.progress,
+                                "progress_msg": task.progress_msg,
+                                "elapsed_ms": rt_elapsed,
+                            })
+                            asyncio.ensure_future(_cache_task_state(task_id, {
+                                "task_id": task_id,
+                                "status": "running",
+                                "progress": task.progress,
+                                "progress_msg": task.progress_msg,
+                                "user_id": user_id,
+                            }))
+                    continue
                 if _custom_count <= 3 or chunk.get("type") in ("stream_slide", "stream_section_replace", "stream_start"):
                     logger.info("[TaskStream] custom event #%d mode=%s type=%s keys=%s",
                                 _custom_count, mode, chunk.get("type", "?"), list(chunk.keys())[:5])
@@ -384,7 +510,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
             if resources:
                 final_resources = resources
                 for rt in resources.keys():
-                    if rt not in yielded_types:
+                    if rt not in saved_types and rt not in yielded_types:
                         yielded_types.add(rt)
                         done = len(yielded_types)
                         pct = 20 + int((done / max(total_types, 1)) * 40)
@@ -431,12 +557,35 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
         await _notify_task_sse(task_id, {"type": "status", "progress": 85, "progress_msg": "正在保存…"})
         asyncio.ensure_future(_cache_task_state(task_id, {"task_id": task_id, "status": "running", "progress": 85, "progress_msg": "正在保存…", "user_id": user_id}))
 
-        saved = await _save_resources(topic, user_id, final_resources, final_passed, final_retry,
-                                      file_urls=final_file_urls, ppt_theme_id=ppt_theme_id)
+        remaining_resources = {
+            rt: content
+            for rt, content in final_resources.items()
+            if rt not in saved_types
+        }
+        saved = list(saved_resources)
+        if remaining_resources:
+            saved.extend(await _save_resources(
+                topic,
+                user_id,
+                remaining_resources,
+                final_passed,
+                final_retry,
+                file_urls=final_file_urls,
+                ppt_theme_id=ppt_theme_id,
+            ))
+
+        for item in saved:
+            await GeneratedResource.filter(id=item["resource_id"]).update(
+                review_passed=final_passed,
+                retry_count=final_retry,
+            )
+            item["review_passed"] = final_passed
+            item["retry_count"] = final_retry
 
         # 后台预生成旁白音频（PPT/文档等文字类资源），播放时秒开
         # 保存到聊天历史
-        await _save_generation_to_history(user_id, chat_group_id, topic, saved)
+        if save_to_chat_history and chat_group_id > 0:
+            await _save_generation_to_history(user_id, chat_group_id, topic, saved)
 
         # 记录结果
         result_data = [

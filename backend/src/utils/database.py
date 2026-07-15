@@ -1,3 +1,5 @@
+import asyncio
+
 from tortoise import Tortoise
 import os
 
@@ -9,6 +11,7 @@ if "mysql://" in database and "minsize" not in database:
 
 #幂等初始化连接数据库，防止数据库重复连接
 _DB_INITIALIZED = False
+_DB_INIT_LOCK = asyncio.Lock()
 
 async def _ensure_generated_resource_visibility_column():
     import logging
@@ -27,13 +30,16 @@ async def init_db():
     global _DB_INITIALIZED
     if _DB_INITIALIZED :
         return 
-    await Tortoise.init(
-        db_url=database,
-        modules={"models": ["backend.src.models.usermodel", "backend.src.models.chat_history_model", "backend.src.models.portraitmodel", "backend.src.models.portrait_radar_model", "backend.src.models.knowledgemodel", "backend.src.models.resource_model", "backend.src.models.agent_skill_model", "backend.src.models.image_model", "backend.src.models.exam_model", "backend.src.models.path_model", "backend.src.models.narration_model", "backend.src.models.study_model", "backend.src.models.video_model", "backend.src.models.task_model", "backend.src.models.email_code_model", "backend.src.models.notification_model", "backend.src.models.curriculum_model", "backend.src.models.annotation_model"]}
-    )
-    await Tortoise.generate_schemas()
-    await _ensure_generated_resource_visibility_column()
-    _DB_INITIALIZED = True
+    async with _DB_INIT_LOCK:
+        if _DB_INITIALIZED:
+            return
+        await Tortoise.init(
+            db_url=database,
+            modules={"models": ["backend.src.models.usermodel", "backend.src.models.chat_history_model", "backend.src.models.portraitmodel", "backend.src.models.portrait_radar_model", "backend.src.models.knowledgemodel", "backend.src.models.resource_model", "backend.src.models.agent_skill_model", "backend.src.models.image_model", "backend.src.models.exam_model", "backend.src.models.path_model", "backend.src.models.narration_model", "backend.src.models.study_model", "backend.src.models.video_model", "backend.src.models.task_model", "backend.src.models.email_code_model", "backend.src.models.notification_model", "backend.src.models.curriculum_model", "backend.src.models.annotation_model"]}
+        )
+        await Tortoise.generate_schemas()
+        await _ensure_generated_resource_visibility_column()
+        _DB_INITIALIZED = True
 
 async def close_db():
     await Tortoise.close_connections()

@@ -36,6 +36,7 @@ export {
 } from './chat'
 
 export {
+  getNextPortraitInterviewQuestion,
   getPortrait,
   getPortraitRadar,
   initPortrait,
@@ -90,7 +91,8 @@ export {
   getPresentation,
   getPresentationQuestions,
   getPresentations,
-  previewPresentation
+  previewPresentation,
+  streamPresentationProgress
 } from './presentation'
 
 export {

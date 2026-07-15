@@ -40,6 +40,7 @@ class PreviewRequest(BaseModel):
 class QuestionsRequest(BaseModel):
     topic: str = Field(description="学习话题")
     chat_group_id: int = Field(default=0, description="聊天组 ID，用于写入聊天历史")
+    voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="预热用 TTS 语音名称")
 
 
 @router.post("/generate")
@@ -54,7 +55,7 @@ async def generate_presentation(data: GenerateRequest, user_id: int = Depends(ge
 @router.post("/questions")
 async def get_questions(data: QuestionsRequest, user_id: int = Depends(get_user_id_from_token)):
     """AI 分析资源内容，返回 2-3 个选择题帮助用户聚焦视频方向"""
-    result = await generate_questions(data.topic, user_id, chat_group_id=data.chat_group_id)
+    result = await generate_questions(data.topic, user_id, chat_group_id=data.chat_group_id, voice=data.voice)
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -102,6 +103,21 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
     # 二次检查：订阅后再查一次，防止在初次检查和订阅之间已完成
     refreshed = await get_presentation(presentation_id, user_id)
 
+    def _is_stream_done(payload: dict | None) -> bool:
+        if not payload:
+            return False
+        status = payload.get("status")
+        if status == "failed":
+            return True
+        if payload.get("type") == "audio_progress" and status == "all_ready":
+            return True
+        if status != "ready":
+            return False
+        chapters = payload.get("chapters")
+        if not isinstance(chapters, list):
+            return False
+        return bool(chapters) and all(ch.get("is_audio_ready") for ch in chapters)
+
     async def event_stream():
         try:
             yield f"data: {json.dumps(refreshed or result, ensure_ascii=False)}\n\n"
@@ -109,18 +125,18 @@ async def presentation_sse(presentation_id: int, user_id: int = Depends(get_user
             for evt in await _replay_pres_sse(f"pres:{presentation_id}"):
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
             current = refreshed or result
-            if current["status"] in ("ready", "failed"):
+            if _is_stream_done(current):
                 return
 
             while True:
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=60)
                     yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-                    if msg.get("status") in ("ready", "failed"):
+                    if _is_stream_done(msg):
                         return
                 except asyncio.TimeoutError:
                     current = await get_presentation(presentation_id, user_id)
-                    if current and current["status"] in ("ready", "failed"):
+                    if _is_stream_done(current):
                         yield f"data: {json.dumps(current, ensure_ascii=False)}\n\n"
                         return
                     yield f"data: {json.dumps({'status': 'keepalive'}, ensure_ascii=False)}\n\n"

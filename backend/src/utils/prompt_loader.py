@@ -4,6 +4,7 @@ import yaml
 from pathlib import Path
 
 PROMPTS_DIR = Path(__file__).parent.parent / "ai_core" / "prompts"
+_PROMPT_CACHE: dict[str, str] = {}
 
 
 def fill_prompt(template: str, **kwargs) -> str:
@@ -19,6 +20,9 @@ def load_prompt(name: str) -> str:
     读取 prompts/{name}.yaml 并返回 system 字段。
     支持分类路径，如 "resource/leader" → prompts/resource/leader.yaml
     """
+    if name in _PROMPT_CACHE:
+        return _PROMPT_CACHE[name]
+
     path = PROMPTS_DIR / f"{name}.yaml"
     if not path.exists():
         raise FileNotFoundError(f"Prompt 文件不存在: {path}")
@@ -26,4 +30,6 @@ def load_prompt(name: str) -> str:
         data = yaml.safe_load(f)
         if not isinstance(data, dict) or "system" not in data:
             raise KeyError(f"Prompt 文件缺少 system 字段: {path}")
-        return data["system"]
+        prompt = data["system"]
+        _PROMPT_CACHE[name] = prompt
+        return prompt

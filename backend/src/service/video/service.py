@@ -1,11 +1,15 @@
 """学习视频 HTML 生成服务 — 先出骨架，后台补音频"""
 
 import asyncio
+import copy
+import hashlib
 import json
 import logging
 import os
 import re
+import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,6 +33,7 @@ TEMPLATE_PATH = SRC_DIR / "ai_core" / "prompts" / "presentation" / "template.htm
 TEMPLATE_VIDEO_PATH = SRC_DIR / "ai_core" / "prompts" / "presentation" / "template_video.html"
 PRESENTATION_TEMPLATE_VERSION = "visual-v6"
 VIDEO_TEMPLATE_VERSION = "video-v4"
+DEFAULT_VIDEO_VOICE = "zh-CN-XiaoxiaoNeural"
 
 
 def _int_env(name: str, default: int) -> int:
@@ -48,8 +53,232 @@ def _bool_env(name: str, default: bool = True) -> bool:
 VIDEO_AUDIO_AUTO_GENERATE = _bool_env("VIDEO_AUDIO_AUTO_GENERATE", True)
 AUDIO_FRONTLOAD_CHAPTERS = max(0, _int_env("VIDEO_AUDIO_FRONTLOAD_CHAPTERS", 0))
 AUDIO_FRONTLOAD_SLIDES = max(0, _int_env("VIDEO_AUDIO_FRONTLOAD_SLIDES", 0))
-AUDIO_CHAPTER_CONCURRENCY = max(1, _int_env("VIDEO_AUDIO_CHAPTER_CONCURRENCY", 3))
-AUDIO_SLIDE_CONCURRENCY = max(1, _int_env("VIDEO_AUDIO_SLIDE_CONCURRENCY", 4))
+AUDIO_CHAPTER_CONCURRENCY = max(1, _int_env("VIDEO_AUDIO_CHAPTER_CONCURRENCY", 4))
+AUDIO_SLIDE_CONCURRENCY = max(1, _int_env("VIDEO_AUDIO_SLIDE_CONCURRENCY", 6))
+VIDEO_HTML_FLUSH_INTERVAL_MS = max(0, _int_env("VIDEO_HTML_FLUSH_INTERVAL_MS", 900))
+VIDEO_INTRO_PREWARM_TTL_SECONDS = max(60, _int_env("VIDEO_INTRO_PREWARM_TTL_SECONDS", 1800))
+_VIDEO_AUDIO_FLUSH_LOCKS: dict[int, asyncio.Lock] = {}
+_VIDEO_HTML_LAST_FLUSH_AT: dict[int, float] = {}
+_HTML_TEMPLATE_VERSION_BY_FILE: dict[str, str] = {}
+_PORTRAIT_INTRO_PREWARM: dict[str, dict] = {}
+_PORTRAIT_INTRO_PREWARM_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _tts_cache_key(text: str, voice: str) -> str:
+    return hashlib.md5(f"{text}_{voice}".encode()).hexdigest()[:12]
+
+
+def _portrait_intro_cache_key(user_id: int | str, topic: str, voice: str) -> str:
+    raw = f"{user_id}|{voice}|{str(topic or '').strip()}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _get_cached_portrait_intro(cache_key: str) -> dict | None:
+    item = _PORTRAIT_INTRO_PREWARM.get(cache_key)
+    if not item:
+        return None
+    if item.get("expires_at", 0) < time.monotonic():
+        _PORTRAIT_INTRO_PREWARM.pop(cache_key, None)
+        return None
+    intro = item.get("intro")
+    return copy.deepcopy(intro) if intro else None
+
+
+def _store_cached_portrait_intro(cache_key: str, intro: dict) -> None:
+    _PORTRAIT_INTRO_PREWARM[cache_key] = {
+        "intro": copy.deepcopy(intro),
+        "expires_at": time.monotonic() + VIDEO_INTRO_PREWARM_TTL_SECONDS,
+    }
+    if len(_PORTRAIT_INTRO_PREWARM) > 128:
+        oldest_key = min(_PORTRAIT_INTRO_PREWARM, key=lambda k: _PORTRAIT_INTRO_PREWARM[k].get("expires_at", 0))
+        _PORTRAIT_INTRO_PREWARM.pop(oldest_key, None)
+
+
+def _schedule_portrait_intro_prewarm(topic: str, user, user_id: int, voice: str = DEFAULT_VIDEO_VOICE) -> None:
+    if not user:
+        return
+    cache_key = _portrait_intro_cache_key(user_id, topic, voice)
+    cached = _get_cached_portrait_intro(cache_key)
+    if cached and cached.get("is_audio_ready"):
+        return
+    existing = _PORTRAIT_INTRO_PREWARM_TASKS.get(cache_key)
+    if existing and not existing.done():
+        return
+
+    task = asyncio_create_task(_prewarm_portrait_intro(topic, user, user_id, voice, cache_key))
+    if not task:
+        return
+    _PORTRAIT_INTRO_PREWARM_TASKS[cache_key] = task
+
+    def _cleanup(done: asyncio.Task):
+        if _PORTRAIT_INTRO_PREWARM_TASKS.get(cache_key) is done:
+            _PORTRAIT_INTRO_PREWARM_TASKS.pop(cache_key, None)
+        try:
+            done.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("[视频] 画像引入预热失败 topic=%s", topic, exc_info=True)
+
+    task.add_done_callback(_cleanup)
+
+
+async def _get_prewarmed_portrait_intro(topic: str, user_id: int, voice: str, wait_ms: int = 1200) -> dict | None:
+    cache_key = _portrait_intro_cache_key(user_id, topic, voice)
+    cached = _get_cached_portrait_intro(cache_key)
+    if cached:
+        return cached
+
+    task = _PORTRAIT_INTRO_PREWARM_TASKS.get(cache_key)
+    if task and not task.done() and wait_ms > 0:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=wait_ms / 1000)
+        except asyncio.TimeoutError:
+            pass
+        except Exception:
+            logger.debug("[视频] 等待画像引入预热失败 topic=%s", topic, exc_info=True)
+    return _get_cached_portrait_intro(cache_key)
+
+
+async def _prewarm_portrait_intro(topic: str, user, user_id: int, voice: str, cache_key: str) -> dict | None:
+    t0 = time.perf_counter()
+    intro = await _build_portrait_intro(topic, user)
+    if not intro:
+        return None
+
+    _store_cached_portrait_intro(cache_key, intro)
+    raw_text = intro.get("_raw_text", "")
+    if VIDEO_AUDIO_AUTO_GENERATE and raw_text:
+        segments = await _prewarm_intro_tts_cache(raw_text, voice, user_id)
+        if segments:
+            _patch_intro_audio(intro, {"sections": segments})
+            slides = intro.get("slides", [])
+            intro["is_audio_ready"] = bool(slides) and all(s.get("audio_url") for s in slides)
+            _store_cached_portrait_intro(cache_key, intro)
+
+    logger.info(
+        "[视频] 画像引入预热完成 user=%s topic=%s audio_ready=%s cost=%.1fs",
+        user_id, str(topic)[:40], intro.get("is_audio_ready"), time.perf_counter() - t0,
+    )
+    return copy.deepcopy(intro)
+
+
+async def _prewarm_intro_tts_cache(raw_text: str, voice: str, user_id: int) -> list[dict]:
+    from backend.src.service.narration.service import _generate_tts
+    from backend.src.utils.tts_utils import parse_text_sections
+
+    sections = parse_text_sections(raw_text or "")
+    if not sections:
+        return []
+
+    cache_dir = AUDIO_DIR / "_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    async def _one(i: int, section: dict) -> dict | None:
+        text = section.get("text", "")
+        if not text:
+            return None
+        cache_key = _tts_cache_key(text, voice)
+        mp3_path = cache_dir / f"{cache_key}.mp3"
+        json_path = cache_dir / f"{cache_key}.json"
+
+        word_timestamps = None
+        if mp3_path.exists() and json_path.exists():
+            try:
+                word_timestamps = json.loads(json_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                word_timestamps = None
+
+        if word_timestamps is None:
+            word_timestamps = await _generate_tts(text, voice, str(mp3_path), user_id=user_id)
+        if word_timestamps is None:
+            return None
+
+        return {
+            "index": i,
+            "title": section.get("title") or "",
+            "text": text,
+            "audio_url": f"/static/audio/_cache/{cache_key}.mp3",
+            "duration_ms": _real_duration_from_timestamps(word_timestamps, section.get("duration_ms", 5000)),
+            "word_timestamps": word_timestamps,
+        }
+
+    raw_results = await asyncio.gather(*(_one(i, s) for i, s in enumerate(sections)), return_exceptions=True)
+    results: list[dict] = []
+    for result in raw_results:
+        if isinstance(result, dict):
+            results.append(result)
+        elif isinstance(result, Exception):
+            logger.debug(
+                "[视频] 画像引入 TTS 预热分段失败",
+                exc_info=(type(result), result, result.__traceback__),
+            )
+    results.sort(key=lambda item: item.get("index", 0))
+    return results
+
+
+def _get_video_audio_flush_lock(record_id: int) -> asyncio.Lock:
+    lock = _VIDEO_AUDIO_FLUSH_LOCKS.get(record_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _VIDEO_AUDIO_FLUSH_LOCKS[record_id] = lock
+    return lock
+
+
+def _write_text_atomic(file_path: Path, text: str, encoding: str = "utf-8") -> None:
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        tmp_path.write_text(text, encoding=encoding)
+        tmp_path.replace(file_path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                logger.warning("清理临时 HTML 文件失败 path=%s", tmp_path)
+
+
+def _should_flush_video_html(record_id: int, force: bool = False) -> bool:
+    now = time.monotonic()
+    if force or VIDEO_HTML_FLUSH_INTERVAL_MS <= 0:
+        _VIDEO_HTML_LAST_FLUSH_AT[record_id] = now
+        return True
+    last = _VIDEO_HTML_LAST_FLUSH_AT.get(record_id, 0.0)
+    if (now - last) * 1000 >= VIDEO_HTML_FLUSH_INTERVAL_MS:
+        _VIDEO_HTML_LAST_FLUSH_AT[record_id] = now
+        return True
+    return False
+
+
+@lru_cache(maxsize=8)
+def _read_template_cached(path: str, mtime_ns: int) -> str:
+    return Path(path).read_text(encoding="utf-8")
+
+
+def _read_template(template_path: Path) -> str:
+    stat = template_path.stat()
+    return _read_template_cached(str(template_path), stat.st_mtime_ns)
+
+
+def _remember_template_version(file_path: Path, version: str) -> None:
+    _HTML_TEMPLATE_VERSION_BY_FILE[str(file_path)] = version
+
+
+def _detect_template_version(file_path: Path) -> str:
+    cache_key = str(file_path)
+    cached = _HTML_TEMPLATE_VERSION_BY_FILE.get(cache_key)
+    if cached:
+        return cached
+    version = PRESENTATION_TEMPLATE_VERSION
+    try:
+        head = file_path.read_text(encoding="utf-8", errors="ignore")[:220]
+        if f"template-version:{VIDEO_TEMPLATE_VERSION}" in head or "template-version:video-v" in head:
+            version = VIDEO_TEMPLATE_VERSION
+    except Exception:
+        logger.warning("读取 HTML 模板版本失败 path=%s", file_path)
+    _HTML_TEMPLATE_VERSION_BY_FILE[cache_key] = version
+    return version
 
 
 def _format_duration(seconds: int | float | str | None) -> str:
@@ -254,12 +483,9 @@ async def preview(topic: str, user_id: int) -> dict:
 
 
 
-async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -> dict:
+async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0, voice: str = DEFAULT_VIDEO_VOICE) -> dict:
     """分析资源内容或话题本身，生成 2-3 个选择题帮助用户聚焦视频方向"""
     from backend.src.models.usermodel import User
-
-    doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
-    has_resources = any([doc, mindmap_data, ppt_data])
 
     # 画像上下文
     portrait_context = ""
@@ -271,25 +497,15 @@ async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -
         if user.grade:
             parts.append(f"年级：{user.grade}")
         portrait_context = "；".join(parts) if parts else ""
+        _schedule_portrait_intro_prewarm(topic, user, user_id, voice or DEFAULT_VIDEO_VOICE)
 
-    if has_resources:
-        # 有资源 → 基于实际章节出题
-        questions_list = await _generate_questions_from_content(topic, portrait_context, doc, ppt_data)
-    else:
-        # 无资源 → 基于话题常识出题（与资源生成并行）
-        questions_list = await _generate_questions_from_topic(topic, portrait_context)
+    questions_list = _normalize_video_questions(
+        await _generate_questions_from_topic(topic, portrait_context, user_id=user_id),
+        topic,
+    )
 
     if not questions_list:
-        questions_list = [{
-            "id": "depth",
-            "question": "需要多深的内容？",
-            "multi": False,
-            "options": [
-                {"label": "极速概览，了解核心概念", "value": "overview"},
-                {"label": "标准讲解，理解原理和应用", "value": "standard"},
-                {"label": "逐页详解，包含推导和案例", "value": "deep"},
-            ],
-        }]
+        questions_list = [_default_depth_question()]
 
     # 写入聊天历史 — 新对话自动分配 chat_group_id
     chat_group_id = chat_group_id if chat_group_id and chat_group_id > 0 else await allocate_chat_group_id(user_id)
@@ -307,56 +523,101 @@ async def generate_questions(topic: str, user_id: int, chat_group_id: int = 0) -
     return {"questions": questions_list, "chat_group_id": chat_group_id}
 
 
-async def _generate_questions_from_content(topic: str, portrait_context: str, doc, ppt_data) -> list[dict]:
-    """基于已有资源内容生成问题"""
-    lines: list[str] = []
-    if doc:
-        content = doc.content or ""
-        raw_parts = re.split(r"\n(?=## )", content.strip())
-        if len(raw_parts) <= 1:
-            raw_parts = re.split(r"\n(?=# )", content.strip())
-        titles = []
-        for part in raw_parts:
-            part = part.strip()
-            if not part:
+def _default_depth_question() -> dict:
+    return {
+        "id": "depth",
+        "question": "需要多深的内容？",
+        "multi": False,
+        "options": [
+            {"label": "极速概览，了解核心概念", "value": "overview"},
+            {"label": "标准讲解，理解原理和应用", "value": "standard"},
+            {"label": "逐页详解，包含推导和案例", "value": "deep"},
+        ],
+    }
+
+
+def _default_focus_question(topic: str = "") -> dict:
+    base = re.sub(r"\s+", "", str(topic or "").strip())[:12] or "本主题"
+    options = [
+        f"核心概念 — 围绕{base}讲清定义、术语和整体框架",
+        f"原理流程 — 拆解{base}的关键机制、步骤和因果关系",
+        f"方法操作 — 梳理{base}常用方法、步骤和适用条件",
+        f"例题案例 — 用典型题目或实际场景串联{base}应用",
+        f"易错对比 — 对比{base}相似概念并指出常见误区",
+    ]
+    return {
+        "id": "focus",
+        "question": "你想重点讲哪几个方向？",
+        "multi": True,
+        "options": [{"label": item, "value": item} for item in options],
+    }
+
+
+def _normalize_video_questions(questions: list[dict] | None, topic: str = "") -> list[dict]:
+    """Make question ids/values useful for downstream prompt constraints."""
+    if not isinstance(questions, list):
+        return []
+
+    normalized: list[dict] = []
+    has_focus = False
+    has_depth = False
+
+    def _depth_value(label: str, value: str) -> str:
+        raw = f"{label} {value}".lower()
+        if any(k in raw for k in ("overview", "概览", "核心", "快速", "极速")):
+            return "overview"
+        if any(k in raw for k in ("deep", "深入", "详解", "推导", "案例")):
+            return "deep"
+        if any(k in raw for k in ("standard", "标准", "原理", "应用")):
+            return "standard"
+        return value or "standard"
+
+    for idx, item in enumerate(questions[:3]):
+        if not isinstance(item, dict):
+            continue
+        q = dict(item)
+        qid = str(q.get("id") or "").strip().lower()
+        qtext = str(q.get("question") or "").strip()
+        is_focus = qid.startswith("focus") or "聚焦" in qtext or "重点" in qtext or "方向" in qtext
+        is_depth = qid == "depth" or "深度" in qtext or "多深" in qtext or "层次" in qtext
+
+        if is_focus and not has_focus:
+            q["id"] = "focus"
+            q["multi"] = True
+            has_focus = True
+        elif is_depth and not has_depth:
+            q["id"] = "depth"
+            q["multi"] = False
+            has_depth = True
+        else:
+            continue
+
+        options = []
+        for opt in q.get("options") or []:
+            if not isinstance(opt, dict):
                 continue
-            title = part.split("\n")[0].lstrip("#").strip()
-            titles.append(title)
-        if titles:
-            lines.append(f"【学科介绍】章节：{' | '.join(titles[:10])}")
-    if ppt_data:
-        from backend.src.utils.tts_utils import parse_slides
-        slides_meta = parse_slides(ppt_data.content or "")
-        titles = [m.get("title", "") for m in slides_meta if m.get("title")]
-        if titles:
-            lines.append(f"【PPT讲解】幻灯片：{' | '.join(titles[:15])}")
+            label = str(opt.get("label") or opt.get("value") or "").strip()
+            if not label:
+                continue
+            value = str(opt.get("value") or label).strip()
+            if q["id"] == "focus":
+                value = label
+            elif q["id"] == "depth":
+                value = _depth_value(label, value)
+            options.append({"label": label, "value": value})
+        q["options"] = options
+        if q["options"]:
+            normalized.append(q)
 
-    content_summary = "\n".join(lines) if lines else "暂无章节信息"
+    if not has_focus:
+        normalized.insert(0, _default_focus_question(topic))
+    if not has_depth:
+        normalized.append(_default_depth_question())
 
-    prompt = fill_prompt(
-        load_prompt("presentation/questions"),
-        topic=topic,
-        portrait_context=portrait_context or "暂无画像",
-        content_summary=content_summary,
-    )
-
-    try:
-        resp = await asyncio.wait_for(llm.ainvoke(prompt), timeout=8)
-        raw = resp.content.strip()
-        if raw.startswith("```"):
-            raw = re.sub(r"^```\w*\n?", "", raw)
-            raw = re.sub(r"\n?```$", "", raw)
-        questions_data = json.loads(raw)
-        return questions_data.get("questions", [])
-    except (asyncio.TimeoutError, json.JSONDecodeError):
-        logger.warning("AI 问题生成超时或解析失败，降级为默认问题")
-        return _default_questions(doc, ppt_data)
-    except Exception:
-        logger.exception("AI 问题生成失败")
-        return _default_questions(doc, ppt_data)
+    return normalized
 
 
-async def _generate_questions_from_topic(topic: str, portrait_context: str) -> list[dict]:
+async def _generate_questions_from_topic(topic: str, portrait_context: str, user_id: int = 0) -> list[dict]:
     """无资源时，基于话题常识生成问题"""
     prompt = fill_prompt(
         load_prompt("presentation/questions_topic_only"),
@@ -365,7 +626,7 @@ async def _generate_questions_from_topic(topic: str, portrait_context: str) -> l
     )
 
     try:
-        resp = await asyncio.wait_for(llm.ainvoke(prompt), timeout=8)
+        resp = await asyncio.wait_for(llm.ainvoke(prompt, priority="high", user_id=user_id, pool="leader"), timeout=8)
         raw = resp.content.strip()
         if raw.startswith("```"):
             raw = re.sub(r"^```\w*\n?", "", raw)
@@ -380,64 +641,7 @@ async def _generate_questions_from_topic(topic: str, portrait_context: str) -> l
         return []
 
 
-def _default_questions(doc, ppt_data) -> list[dict]:
-    """LLM 失败时的降级：从资源中提取章节标题作为选项"""
-    options: list[dict] = []
-    if doc:
-        content = doc.content or ""
-        raw_parts = re.split(r"\n(?=## )", content.strip())
-        if len(raw_parts) <= 1:
-            raw_parts = re.split(r"\n(?=# )", content.strip())
-        for part in raw_parts[:6]:
-            part = part.strip()
-            if not part:
-                continue
-            title = part.split("\n")[0].lstrip("#").strip()[:30]
-            if title:
-                slug = re.sub(r"\s+", "_", title)
-                options.append({"label": title, "value": slug})
-    if not options and ppt_data:
-        from backend.src.utils.tts_utils import parse_slides
-        slides = parse_slides(ppt_data.content or "")
-        for m in slides[:6]:
-            title = m.get("title", "")[:30]
-            if title:
-                slug = re.sub(r"\s+", "_", title)
-                options.append({"label": title, "value": slug})
-
-    questions = []
-    if options:
-        questions.append({
-            "id": "focus",
-            "question": "你想重点讲哪几个方向？",
-            "multi": True,
-            "options": options,
-        })
-    questions.append({
-        "id": "depth",
-        "question": "需要多深的内容？",
-        "multi": False,
-        "options": [
-            {"label": "极速概览，了解核心概念", "value": "overview"},
-            {"label": "标准讲解，理解原理和应用", "value": "standard"},
-            {"label": "逐页详解，包含推导和案例", "value": "deep"},
-        ],
-    })
-    return questions
-
-
 # ─── 内容裁剪 ───
-
-def _crop_content_by_answers(doc, mindmap_data, ppt_data, answers: dict) -> tuple:
-    """根据用户答案裁剪资源内容，返回裁剪后的副本"""
-    focus_vals = _parse_focus_values(answers)
-    depth = answers.get("depth", "standard")
-
-    cropped_doc = _crop_document(doc, focus_vals, depth) if doc else None
-    cropped_ppt = _crop_ppt(ppt_data, focus_vals, depth) if ppt_data else None
-    # mindmap 暂不支持裁剪，保留原样
-    return cropped_doc, mindmap_data, cropped_ppt
-
 
 def _parse_focus_values(answers: dict) -> set[str]:
     """从 answers 中提取 focus 关键词"""
@@ -555,8 +759,10 @@ def _trim_content_depth(content: str, depth: str, is_ppt: bool = False) -> str:
                 kept_lines.append(line)
         trimmed.append("\n".join(kept_lines))
     return sep.join(trimmed)
+
+
 _sse_queues: dict[int, list[asyncio.Queue]] = {}
-_sse_forward_tasks: dict[int, asyncio.Task] = {}
+_sse_forward_tasks: dict[int, tuple[asyncio.Task, list]] = {}
 
 
 def _subscribe_sse(presentation_id: int) -> asyncio.Queue:
@@ -567,20 +773,21 @@ def _subscribe_sse(presentation_id: int) -> asyncio.Queue:
 
     # 注册 redis_client 统一订阅，使跨进程消息能转发到此队列
     _rq = subscribe_sse(f"pres:{presentation_id}")
-    _chan = f"pres:{presentation_id}"
 
     async def _forward_loop():
         """将 redis_client 订阅队列中的消息转发到 asyncio.Queue"""
         try:
-            while _chan in {c: qs for c, qs in _sse_queues.items() if q in qs}:
+            while q in _sse_queues.get(presentation_id, []):
                 while _rq:
                     msg = _rq.pop(0)
                     q.put_nowait(msg)
                 await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.debug("SSE 转发结束 presentation_id=%s", presentation_id)
 
-    _sse_forward_tasks[presentation_id] = asyncio.ensure_future(_forward_loop())
+    _sse_forward_tasks[id(q)] = (asyncio.ensure_future(_forward_loop()), _rq)
     return q
 
 
@@ -590,10 +797,12 @@ def _unsubscribe_sse(presentation_id: int, q: asyncio.Queue):
         queues.remove(q)
     if not queues:
         _sse_queues.pop(presentation_id, None)
-        # 清理 redis_client 订阅
-        unsubscribe_sse(f"pres:{presentation_id}", q)
-    # 取消转发任务
-    task = _sse_forward_tasks.pop(presentation_id, None)
+    # 取消当前连接的转发任务并清理 redis_client 订阅
+    task_info = _sse_forward_tasks.pop(id(q), None)
+    if not task_info:
+        return
+    task, redis_queue = task_info
+    unsubscribe_sse(f"pres:{presentation_id}", redis_queue)
     if task and not task.done():
         task.cancel()
 
@@ -603,45 +812,87 @@ async def _notify_sse(presentation_id: int, data: dict):
     await _redis_notify_sse(f"pres:{presentation_id}", data)
 
 
+_VIDEO_PROGRESS_AGENT_MAP = {
+    "portrait_intro": ("leader", "LeaderAgent", "leader", None),
+    "build_intro": ("executor:document", "文档生成智能体", "executor", "document"),
+    "build_ppt": ("executor:ppt", "PPT生成智能体", "executor", "ppt"),
+    "generate_resources": ("executor", "视频生成智能体", "executor", None),
+    "render_html": ("saver", "ResourceService", "saver", None),
+    "audio": ("executor:audio", "TTS生成智能体", "executor", None),
+    "done": ("complete", "完成", "complete", None),
+    "error": ("complete", "生成失败", "complete", None),
+}
+
+
+def _video_agent_status(step: str, status: str, phase: str) -> str:
+    value = str(status or "").lower()
+    if value in {"error", "failed"} or step == "error":
+        return "failed"
+    if step == "done" or value == "done":
+        return "done"
+    if phase == "saver":
+        return "saving"
+    return "running"
+
+
+def _push_agent_progress(
+    presentation_id: int,
+    step: str,
+    label: str,
+    status: str = "running",
+    elapsed_ms: int | None = None,
+    *,
+    current: int | None = None,
+    total: int | None = None,
+):
+    """给前端智能体工作流面板推送统一事件。"""
+    agent_id, agent_name, phase, resource_type = _VIDEO_PROGRESS_AGENT_MAP.get(
+        step,
+        ("executor", "视频生成智能体", "executor", None),
+    )
+    event = {
+        "type": "agent_event",
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "phase": phase,
+        "status": _video_agent_status(step, status, phase),
+        "message": label,
+        "elapsed_ms": elapsed_ms,
+        "source_event_type": "video_progress",
+        "step": step,
+    }
+    if resource_type:
+        event["resource_type"] = resource_type
+    if current is not None:
+        event["current"] = current
+    if total is not None:
+        event["total"] = total
+    asyncio.ensure_future(_redis_notify_sse(f"pres:{presentation_id}", event))
+
+
 def _push_progress(presentation_id: int, step: str, label: str, status: str = "running", elapsed_ms: int | None = None):
     """推送生成进度（统一走 redis_client，异步 fire-and-forget）"""
     event = {"type": "progress", "step": step, "label": label, "status": status, "elapsed_ms": elapsed_ms}
     asyncio.ensure_future(_redis_notify_sse(f"pres:{presentation_id}", event))
+    _push_agent_progress(presentation_id, step, label, status, elapsed_ms)
+
 
 
 # ═══════════════════════════════════════════════
 #  对外 API
 # ═══════════════════════════════════════════════
 
-async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural",
+async def generate(topic: str, user_id: int, voice: str = DEFAULT_VIDEO_VOICE,
                   chapters: list[str] | None = None, answers: dict | None = None,
                   chat_group_id: int = 0, video_mode: bool = False,
                   background: bool = False, save_history: bool = True) -> dict:
     """创建视频。background=True 立即返回 {id, status:'generating'}，进度走 SSE；background=False 同步等完整结果"""
     import time as _time
-    from datetime import datetime, timedelta
     from backend.src.models.usermodel import User
-    from backend.src.utils.mindmap import parse_mindmap_text
 
     user = await User.filter(id=user_id).first()
     if not user:
         raise ServiceError("用户不存在")
-
-    # 去重
-    _expected_tag = f"template-version:{VIDEO_TEMPLATE_VERSION}" if video_mode else f"template-version:{PRESENTATION_TEMPLATE_VERSION}"
-    cutoff = datetime.now() - timedelta(minutes=2)
-    existing = await Video.filter(
-        user_id=user_id, topic=topic, created_at__gte=cutoff,
-    ).order_by("-created_at").first()
-    if existing and _presentation_file_matches_template(existing.file_url, _expected_tag):
-        logger.info("视频去重命中 user=%s topic=%s existing_id=%s video_mode=%s", user_id, topic, existing.id, video_mode)
-        return {
-            "id": existing.id,
-            "file_url": _versioned_presentation_url(existing.file_url),
-            "status": existing.status,
-            "cached": True,
-            "template_version": VIDEO_TEMPLATE_VERSION if video_mode else PRESENTATION_TEMPLATE_VERSION,
-        }
 
     # 立即创建记录，拿到 ID 用于 SSE 进度推送
     record = await Video.create(user=user, topic=topic, status="generating")
@@ -651,62 +902,191 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     async def _do_generate():
         nonlocal chat_group_id
         try:
-            # — 第1步：获取资源 —
-            t0 = _time.perf_counter()
-            _push_progress(pid, "fetch_resources", "正在获取学习资源…", "running")
-            doc, mindmap_data, ppt_data = await _fetch_resources(topic, user_id)
-            if not any([doc, mindmap_data, ppt_data]):
-                raise ServiceError(f"话题「{topic}」暂无已生成的资源，请先通过 /resource/generate 生成")
-            _push_progress(pid, "fetch_resources", "学习资源获取完毕", "done", int((_time.perf_counter() - t0) * 1000))
-
-            if answers:
-                doc, mindmap_data, ppt_data = _crop_content_by_answers(doc, mindmap_data, ppt_data, answers)
-
-            # — 第2步：个性化引入 —
-            t0 = _time.perf_counter()
-            _push_progress(pid, "portrait_intro", "正在生成个性化引入…", "running")
-            portrait_intro = await _build_portrait_intro(topic, user)
-            _push_progress(pid, "portrait_intro", "个性化引入生成完毕", "done", int((_time.perf_counter() - t0) * 1000))
-
-            # — 第3-5步：逐个构建章节骨架 —
+            # — 先准备章节骨架与 TTS 调度器：资源流一产出就能立刻补音频 —
             chapters_list: list[dict] = []
             audio_tasks: list[dict] = []
+            audio_background_tasks: list[asyncio.Task] = []
+            ppt_streamed_sections: set[int] = set()
+            doc_chapter_idx: int | None = None
+            ppt_base_idx: int | None = None
+            doc_ready = False
+            ppt_full_ready = False
 
-            if doc:
-                t0 = _time.perf_counter()
+            async def _persist_partial_chapters(status: str = "ready"):
+                record.chapters_json = json.dumps(chapters_list, ensure_ascii=False)
+                record.total_duration_ms = sum(c.get("total_duration_ms", 0) for c in chapters_list)
+                record.status = status
+                await record.save()
+                await _notify_sse(pid, {
+                    "status": status,
+                    "chapters": len(chapters_list),
+                    "file_url": _versioned_presentation_url(record.file_url),
+                })
+
+            def _schedule_chapter_audio(task: dict):
+                if not VIDEO_AUDIO_AUTO_GENERATE:
+                    return
+                handle = asyncio_create_task(
+                    _add_audio_to_presentation(
+                        record.id, topic, user_id, voice, chapters_list, [task],
+                        notify_complete=False,
+                    )
+                )
+                if handle:
+                    audio_background_tasks.append(handle)
+
+            def _pending_chapter(title: str, chapter_type: str = "ppt") -> dict:
+                return {
+                    "type": chapter_type,
+                    "title": title,
+                    "slides": [],
+                    "total_duration_ms": 0,
+                    "is_audio_ready": False,
+                    "pending": True,
+                }
+
+            async def _add_or_replace_chapter(idx: int, chapter: dict, task: dict):
+                if 0 <= idx < len(chapters_list):
+                    chapters_list[idx] = chapter
+                else:
+                    while len(chapters_list) < idx:
+                        chapters_list.append(_pending_chapter("生成中"))
+                    chapters_list.append(chapter)
+                audio_tasks.append(task)
+                await _persist_partial_chapters()
+                _schedule_chapter_audio(task)
+
+            async def _add_document_chapter(doc_resource):
+                nonlocal doc_ready
+                if doc_ready:
+                    return
+                doc_ready = True
+                t_doc = _time.perf_counter()
                 _push_progress(pid, "build_intro", "正在构建文档章节…", "running")
-                ch = _build_intro_skeleton(doc)
-                chapters_list.append(ch)
-                audio_tasks.append({"chapter_idx": len(chapters_list) - 1, "resource": doc})
-                _push_progress(pid, "build_intro", "文档章节构建完毕", "done", int((_time.perf_counter() - t0) * 1000))
+                if answers:
+                    doc_resource = _crop_document(
+                        doc_resource,
+                        _parse_focus_values(answers),
+                        (answers or {}).get("depth", "standard"),
+                    )
+                ch = _build_intro_skeleton(doc_resource)
+                idx = doc_chapter_idx if doc_chapter_idx is not None else len(chapters_list)
+                task = {"chapter_idx": idx, "resource": doc_resource}
+                await _add_or_replace_chapter(idx, ch, task)
+                _push_progress(pid, "build_intro", "文档章节构建完毕", "done", int((_time.perf_counter() - t_doc) * 1000))
 
-            if mindmap_data:
-                t0 = _time.perf_counter()
-                _push_progress(pid, "build_mindmap", "正在构建思维导图章节…", "running")
-                parsed = parse_mindmap_text(mindmap_data.content or "")
-                svg = _mindmap_to_svg(parsed)
-                ch = _build_mindmap_skeleton(mindmap_data, svg)
-                chapters_list.append(ch)
-                audio_tasks.append({"chapter_idx": len(chapters_list) - 1, "resource": mindmap_data})
-                _push_progress(pid, "build_mindmap", "思维导图章节构建完毕", "done", int((_time.perf_counter() - t0) * 1000))
+            def _ensure_ppt_slots(section_total: int):
+                nonlocal ppt_base_idx
+                total = max(1, int(section_total or 1))
+                if ppt_base_idx is None:
+                    ppt_base_idx = len(chapters_list)
+                while len(chapters_list) < ppt_base_idx + total:
+                    offset = len(chapters_list) - ppt_base_idx + 1
+                    chapters_list.append(_pending_chapter(f"PPT 第 {offset} 章生成中", "ppt"))
 
-            if ppt_data:
-                t0 = _time.perf_counter()
+            async def _add_ppt_section(section_idx: int, section_title: str, section_total: int, content: str):
+                if section_idx in ppt_streamed_sections or not str(content or "").strip():
+                    return
+                ppt_streamed_sections.add(section_idx)
+                _ensure_ppt_slots(section_total or (section_idx + 1))
+                from types import SimpleNamespace as _SN
+                ppt_resource = _SN(
+                    id=record.id * 1000 + 100 + section_idx,
+                    topic=section_title or f"{topic} 第 {section_idx + 1} 章",
+                    resource_type="ppt",
+                    content=content,
+                )
+                ch = _build_ppt_skeleton(ppt_resource, plain=video_mode)
+                ch["title"] = section_title or ch.get("title") or f"PPT 第 {section_idx + 1} 章"
+                ch["section_idx"] = section_idx
+                idx = (ppt_base_idx or 0) + section_idx
+                task = {"chapter_idx": idx, "resource": ppt_resource}
+                await _add_or_replace_chapter(idx, ch, task)
+                logger.info("[视频] PPT章节已进入TTS record=%d section=%d/%d title=%s", record.id, section_idx + 1, section_total, ch["title"])
+
+            async def _add_full_ppt_chapter(ppt_resource):
+                nonlocal ppt_full_ready
+                if ppt_full_ready or ppt_streamed_sections:
+                    return
+                ppt_full_ready = True
+                t_ppt = _time.perf_counter()
                 _push_progress(pid, "build_ppt", "正在构建PPT章节…", "running")
-                ch = _build_ppt_skeleton(ppt_data, plain=video_mode)
-                chapters_list.append(ch)
-                audio_tasks.append({"chapter_idx": len(chapters_list) - 1, "resource": ppt_data})
-                _push_progress(pid, "build_ppt", "PPT章节构建完毕", "done", int((_time.perf_counter() - t0) * 1000))
+                if answers:
+                    ppt_resource = _crop_ppt(
+                        ppt_resource,
+                        _parse_focus_values(answers),
+                        (answers or {}).get("depth", "standard"),
+                    )
+                ch = _build_ppt_skeleton(ppt_resource, plain=video_mode)
+                idx = len(chapters_list)
+                task = {"chapter_idx": idx, "resource": ppt_resource}
+                await _add_or_replace_chapter(idx, ch, task)
+                _push_progress(pid, "build_ppt", "PPT章节构建完毕", "done", int((_time.perf_counter() - t_ppt) * 1000))
 
-            # 画像引入置顶
+            async def _on_resource_complete(resource_type: str, resource):
+                if resource_type == "document":
+                    await _add_document_chapter(resource)
+                elif resource_type == "ppt":
+                    await _add_full_ppt_chapter(resource)
+
+            async def _on_ppt_section_complete(section_idx: int, section_title: str, section_total: int, content: str):
+                await _add_ppt_section(section_idx, section_title, section_total, content)
+
+            # — 第1步：个性化引入，生成完马上开始 TTS —
+            t0 = _time.perf_counter()
+            _push_progress(pid, "portrait_intro", "正在生成个性化引入…", "running")
+            portrait_intro = await _get_prewarmed_portrait_intro(topic, user_id, voice or DEFAULT_VIDEO_VOICE)
+            if not portrait_intro:
+                portrait_intro = await _build_portrait_intro(topic, user)
+            _push_progress(pid, "portrait_intro", "个性化引入生成完毕", "done", int((_time.perf_counter() - t0) * 1000))
+
             if portrait_intro:
-                chapters_list.insert(0, portrait_intro)
                 from types import SimpleNamespace as _SN
                 intro_raw = portrait_intro.pop("_raw_text", "")
                 intro_resource = _SN(id=0, content=intro_raw, resource_type="document")
-                audio_tasks.insert(0, {"chapter_idx": 0, "resource": intro_resource})
-                for t in audio_tasks[1:]:
-                    t["chapter_idx"] += 1
+                chapters_list.append(portrait_intro)
+                task = {"chapter_idx": len(chapters_list) - 1, "resource": intro_resource}
+                intro_audio_ready = bool(portrait_intro.get("is_audio_ready"))
+                if intro_audio_ready:
+                    logger.info("[视频] 画像引入使用预热音频 record=%d topic=%s", record.id, topic[:60])
+                else:
+                    audio_tasks.append(task)
+                await _persist_partial_chapters()
+                if not intro_audio_ready:
+                    _schedule_chapter_audio(task)
+
+            # 预留文档位置，PPT 章节可以先完成但不会把播放顺序顶乱。
+            doc_chapter_idx = len(chapters_list)
+            chapters_list.append(_pending_chapter("文档章节生成中", "intro"))
+            await _persist_partial_chapters("generating")
+
+            # — 第2步：流式重新生成本次视频资料；PPT 单章完成就立刻 TTS —
+            t0 = _time.perf_counter()
+            _push_progress(pid, "generate_resources", "正在重新生成视频资料…", "running")
+            doc, mindmap_data, ppt_data = await _generate_fresh_video_resources(
+                topic,
+                user_id,
+                record.id,
+                answers,
+                chat_group_id,
+                on_resource_complete=_on_resource_complete,
+                on_ppt_section_complete=_on_ppt_section_complete,
+            )
+            if not any([doc, mindmap_data, ppt_data]) and not ppt_streamed_sections:
+                raise ServiceError(f"话题「{topic}」视频资料生成失败，请稍后重试")
+            if doc and not doc_ready:
+                await _add_document_chapter(doc)
+            if ppt_data and not ppt_streamed_sections and not ppt_full_ready:
+                await _add_full_ppt_chapter(ppt_data)
+            if not doc_ready and doc_chapter_idx is not None and 0 <= doc_chapter_idx < len(chapters_list):
+                chapters_list[doc_chapter_idx] = {
+                    **chapters_list[doc_chapter_idx],
+                    "title": "文档章节暂不可用",
+                    "is_audio_ready": True,
+                    "pending": False,
+                }
+                await _persist_partial_chapters()
+            _push_progress(pid, "generate_resources", "视频资料重新生成完毕", "done", int((_time.perf_counter() - t0) * 1000))
 
             # — 第6步：渲染 HTML —
             file_url = ""
@@ -714,10 +1094,12 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
                 t0 = _time.perf_counter()
                 _push_progress(pid, "render_html", "正在渲染视频…", "running")
                 VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-                html = _render_html(topic, chapters_list, template_path=None)
+                html = _render_html(topic, chapters_list, _build_audio_segments(chapters_list), template_path=None)
                 filename = f"{_safe_filename(topic)}_{uuid.uuid4().hex[:8]}.html"
                 file_path = VIDEOS_DIR / filename
-                file_path.write_text(html, encoding="utf-8")
+                async with _get_video_audio_flush_lock(record.id):
+                    _write_text_atomic(file_path, html)
+                    _remember_template_version(file_path, PRESENTATION_TEMPLATE_VERSION)
                 file_url = f"/static/presentations/{filename}"
                 _push_progress(pid, "render_html", "视频渲染完毕", "done", int((_time.perf_counter() - t0) * 1000))
 
@@ -769,8 +1151,39 @@ async def generate(topic: str, user_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
                 logger.exception("视频通知推送失败")
 
             # 后台补音频
-            if VIDEO_AUDIO_AUTO_GENERATE and audio_tasks:
+            if VIDEO_AUDIO_AUTO_GENERATE and audio_tasks and not audio_background_tasks:
                 asyncio_create_task(_add_audio_to_presentation(record.id, topic, user_id, voice, chapters_list, audio_tasks))
+            elif audio_background_tasks:
+                async def _notify_audio_tasks_done():
+                    await asyncio.gather(*audio_background_tasks, return_exceptions=True)
+                    audio_ready_chapters = sum(1 for c in chapters_list if c.get("is_audio_ready"))
+                    audio_segments = len(_build_audio_segments(chapters_list))
+                    await _notify_sse(pid, {
+                        "type": "audio_progress",
+                        "status": "all_ready",
+                        "audio_ready_chapters": audio_ready_chapters,
+                        "audio_segments": audio_segments,
+                    })
+                    _push_agent_progress(
+                        pid,
+                        "audio",
+                        "TTS 音频全部就绪",
+                        "done",
+                        current=audio_ready_chapters,
+                        total=len(chapters_list),
+                    )
+                    try:
+                        await Notification.create(
+                            type="resource",
+                            title="视频制作完成",
+                            content=f"「{topic}」视频音频已补齐，共 {len(chapters_list)} 章，可播放",
+                            target_url=f"/presentation?id={record.id}",
+                            target_user_id=user_id,
+                        )
+                    except Exception:
+                        logger.debug("[视频] audio complete notification failed", exc_info=True)
+
+                asyncio_create_task(_notify_audio_tasks_done())
 
             total_ms = int((_time.perf_counter() - _t_total) * 1000)
             chapter_names = [c.get("title", "") for c in chapters_list]
@@ -870,44 +1283,15 @@ async def delete_presentation(presentation_id: int, user_id: int) -> bool:
     return True
 
 
-# ═══════════════════════════════════════════════
-#  两阶段生成：骨架 → 音频
-# ═══════════════════════════════════════════════
-
-def _build_chapter_skeletons(doc=None, mindmap_data=None, ppt_data=None, plain: bool = False) -> tuple[list[dict], list[dict]]:
-    """从资源构建无音频的章节骨架，返回 (chapters, audio_tasks)"""
-    from backend.src.utils.mindmap import parse_mindmap_text
-
-    chapters: list[dict] = []
-    audio_tasks: list[dict] = []
-
-    if doc:
-        ch = _build_intro_skeleton(doc)
-        chapters.append(ch)
-        audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": doc})
-    if mindmap_data:
-        parsed = parse_mindmap_text(mindmap_data.content or "")
-        svg = _mindmap_to_svg(parsed)
-        ch = _build_mindmap_skeleton(mindmap_data, svg)
-        chapters.append(ch)
-        audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": mindmap_data})
-    if ppt_data:
-        ch = _build_ppt_skeleton(ppt_data, plain=plain)
-        chapters.append(ch)
-        audio_tasks.append({"chapter_idx": len(chapters) - 1, "resource": ppt_data})
-
-    return chapters, audio_tasks
-
-
 async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, voice: str,
-                                      chapters: list[dict], audio_tasks: list[dict]):
+                                      chapters: list[dict], audio_tasks: list[dict],
+                                      notify_complete: bool = True):
     """骨架已出，优先复用旁白 DB 缓存，无缓存时才逐 slide 生成音频"""
-    import hashlib
     import os as _os
     import time as _time
     from backend.src.models.narration_model import Narration
-    from backend.src.service.narration.service import _generate_tts
-    from backend.src.utils.tts_utils import parse_by_type as _parse_by_type, generate_audio_with_timestamps
+    from backend.src.service.narration.service import _generate_tts, TTS_GLOBAL_CONCURRENCY, TTS_PER_USER_CONCURRENCY
+    from backend.src.utils.tts_utils import parse_by_type as _parse_by_type
 
     _t_start = _time.perf_counter()
 
@@ -915,11 +1299,19 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
     if not record:
         return
 
-    _flush_lock = asyncio.Lock()
+    _flush_lock = _get_video_audio_flush_lock(record_id)
+    logger.info(
+        "[Video-TTS] limits record=%d user=%s per_user=%d global=%d chapter=%d slide=%d",
+        record_id, user_id, TTS_PER_USER_CONCURRENCY, TTS_GLOBAL_CONCURRENCY, AUDIO_CHAPTER_CONCURRENCY, AUDIO_SLIDE_CONCURRENCY,
+    )
+
+    logger.info(
+        "[视频] TTS任务启动 record=%d chapters=%d tasks=%d chapter_concurrency=%d slide_concurrency=%d global_tts=%d notify=%s",
+        record_id, len(chapters), len(audio_tasks), AUDIO_CHAPTER_CONCURRENCY, AUDIO_SLIDE_CONCURRENCY, TTS_GLOBAL_CONCURRENCY, notify_complete,
+    )
 
     _TTS_CACHE = AUDIO_DIR / "_cache"
     _TTS_CACHE.mkdir(parents=True, exist_ok=True)
-    _tts_cache_key = lambda text, v: hashlib.md5(f"{text}_{v}".encode()).hexdigest()[:12]
 
     async def _tts_one_slide(text: str, resource_id: int, slide_idx: int) -> dict | None:
         """生成单张 slide 的 TTS 音频，返回 {audio_url, duration_ms, word_timestamps} 或 None"""
@@ -952,7 +1344,7 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
                 pass
 
         t0 = _time.perf_counter()
-        word_timestamps = await _generate_tts(text, voice, output_path)
+        word_timestamps = await _generate_tts(text, voice, output_path, user_id=user_id)
         if word_timestamps is None:
             return None
 
@@ -964,16 +1356,28 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
 
     async def _flush_audio_state(ch_idx: int | None = None, slide_idx: int | None = None, status: str = "running"):
         partial_segments = _build_audio_segments(chapters)
+        force_flush = status != "slide_ready"
+        audio_ready_chapters = sum(1 for c in chapters if c.get("is_audio_ready"))
         async with _flush_lock:
-            await _flush(record, topic, chapters, "ready", segments=partial_segments)
+            if _should_flush_video_html(record_id, force=force_flush):
+                await _flush(record, topic, chapters, "ready", segments=partial_segments)
         await _notify_sse(record_id, {
             "type": "audio_progress",
             "status": status,
             "chapter_idx": ch_idx,
             "slide_idx": slide_idx,
-            "audio_ready_chapters": sum(1 for c in chapters if c.get("is_audio_ready")),
+            "audio_ready_chapters": audio_ready_chapters,
             "audio_segments": len(partial_segments),
         })
+        if status == "chapter_ready":
+            _push_agent_progress(
+                record_id,
+                "audio",
+                f"TTS 音频已完成 {audio_ready_chapters}/{len(chapters)} 章",
+                "running",
+                current=audio_ready_chapters,
+                total=len(chapters),
+            )
 
     async def _process_chapter(task: dict, frontload: bool = False):
         t_ch_start = _time.perf_counter()
@@ -1057,28 +1461,32 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
             await asyncio.gather(*(front_runs + background_runs), return_exceptions=True)
 
         segments = _build_audio_segments(chapters)
-        await _flush(record, topic, chapters, "ready", segments=segments)
+        async with _flush_lock:
+            await _flush(record, topic, chapters, "ready", segments=segments)
         total_cost = _time.perf_counter() - _t_start
         audio_ready = sum(1 for c in chapters if c.get("is_audio_ready"))
         total_segments = len(segments)
         total_dur = sum(s.get("duration_ms", 0) for s in segments)
         logger.info("[视频] 完成 record=%d chapters=%d/%d segments=%d duration=%dms cost=%.1fs",
                     record_id, audio_ready, len(chapters), total_segments, total_dur, total_cost)
-        await Notification.create(
-            type="resource",
-            title="视频制作完成",
-            content=f"「{topic}」视频已生成，共 {len(chapters)} 章，可播放",
-            target_url=f"/presentation?id={record_id}",
-            target_user_id=user_id,
-        )
+        if notify_complete:
+            await Notification.create(
+                type="resource",
+                title="视频制作完成",
+                content=f"「{topic}」视频已生成，共 {len(chapters)} 章，可播放",
+                target_url=f"/presentation?id={record_id}",
+                target_user_id=user_id,
+            )
 
     except Exception as e:
         logger.exception("[视频] 生成失败 record=%d", record_id)
-        await _flush(record, topic, chapters, "failed")
+        async with _flush_lock:
+            await _flush(record, topic, chapters, "failed")
         record = await Video.filter(id=record_id).first()
         if record:
             record.error_message = str(e)[:500]
             await record.save()
+        _push_agent_progress(record_id, "audio", f"TTS 生成失败：{str(e)[:100]}", "failed")
         await _notify_sse(record_id, {"status": "failed", "error": str(e)[:200]})
         await Notification.create(
             type="resource",
@@ -1126,23 +1534,19 @@ def _real_duration_from_timestamps(word_timestamps: list[dict], fallback_ms: int
 
 async def _flush(record, topic: str, chapters: list, status: str, segments: list[dict] | None = None):
     """更新 HTML 文件（如有）+ DB + SSE 通知"""
-    file_path = _presentation_file_path(record.file_url)
-    if file_path and file_path.exists():
-        # 检测当前 HTML 是否使用视频模板，保持模板一致
-        _tp = None
-        try:
-            _head = file_path.read_text(encoding="utf-8", errors="ignore")[:200]
-            if f"template-version:{VIDEO_TEMPLATE_VERSION}" in _head or "template-version:video-v3" in _head or "template-version:video-v2" in _head:
-                _tp = TEMPLATE_VIDEO_PATH
-        except Exception:
-            logger.warning("读取 HTML 模板版本失败，使用默认模板 record=%s", record.id)
-        html = _render_html(topic, chapters, segments or [], template_path=_tp)
-        VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(html, encoding="utf-8")
-
     record = await Video.filter(id=record.id).first()
     if not record:
         return
+
+    file_path = _presentation_file_path(record.file_url)
+    if file_path and file_path.exists():
+        version = _detect_template_version(file_path)
+        _tp = TEMPLATE_VIDEO_PATH if version == VIDEO_TEMPLATE_VERSION else None
+        html = _render_html(topic, chapters, segments or [], template_path=_tp)
+        VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+        _write_text_atomic(file_path, html)
+        _remember_template_version(file_path, version)
+
     record.status = status
     record.chapters_json = json.dumps(chapters, ensure_ascii=False)
     record.total_duration_ms = sum(c.get("total_duration_ms", 0) for c in chapters)
@@ -1173,6 +1577,104 @@ def asyncio_create_task(coro):
 # ═══════════════════════════════════════════════
 #  资源获取
 # ═══════════════════════════════════════════════
+
+async def _generate_fresh_video_resources(
+    topic: str,
+    user_id: int,
+    record_id: int,
+    answers: dict | None = None,
+    chat_group_id: int = 0,
+    on_resource_complete=None,
+    on_ppt_section_complete=None,
+) -> tuple:
+    from backend.src.ai_core.resource_graph import resource_graph
+    from backend.src.service.resource.generation_context import make_generation_state
+
+    initial_state = await make_generation_state(
+        topic,
+        user_id,
+        ["document", "ppt"],
+        chat_group_id=chat_group_id,
+        answers=answers,
+        skip_review=True,
+        ppt_prompt_key="ppt",
+        llm_priority="high",
+    )
+    actual_topic = initial_state.get("topic") or topic
+    generated: dict[str, object] = {}
+    notified_resources: set[str] = set()
+
+    async def _call_handler(handler, *args):
+        if not handler:
+            return
+        result = handler(*args)
+        if asyncio.iscoroutine(result):
+            await result
+
+    async for mode, chunk in resource_graph.astream(initial_state, stream_mode=["values", "custom"]):
+        if not isinstance(chunk, dict):
+            continue
+
+        if mode == "custom":
+            event_type = chunk.get("type")
+            if event_type == "ppt_section_complete":
+                content = str(chunk.get("content") or "").strip()
+                if content:
+                    await _call_handler(
+                        on_ppt_section_complete,
+                        int(chunk.get("section_idx") or 0),
+                        str(chunk.get("section_title") or ""),
+                        int(chunk.get("section_total") or 0),
+                        content,
+                    )
+                continue
+
+            if event_type == "resource_complete":
+                rt = str(chunk.get("resource_type") or chunk.get("file_type") or "").strip()
+                content = chunk.get("content")
+                if rt and content is not None:
+                    generated[rt] = content
+                    if rt not in notified_resources:
+                        resource_id = record_id * 10 + (1 if rt == "document" else 2 if rt == "ppt" else 9)
+                        resource = SimpleNamespace(
+                            id=resource_id,
+                            topic=actual_topic,
+                            resource_type=rt,
+                            content=str(content or ""),
+                        )
+                        await _call_handler(on_resource_complete, rt, resource)
+                        notified_resources.add(rt)
+                continue
+
+        elif mode == "values":
+            resources = chunk.get("generated_resources", {}) or {}
+            if isinstance(resources, dict):
+                generated.update({rt: content for rt, content in resources.items() if content is not None})
+
+    doc_content = str(generated.get("document") or "").strip()
+    ppt_content = str(generated.get("ppt") or "").strip()
+
+    doc = SimpleNamespace(
+        id=record_id * 10 + 1,
+        topic=actual_topic,
+        resource_type="document",
+        content=doc_content,
+    ) if doc_content else None
+    ppt_data = SimpleNamespace(
+        id=record_id * 10 + 2,
+        topic=actual_topic,
+        resource_type="ppt",
+        content=ppt_content,
+    ) if ppt_content else None
+
+    logger.info(
+        "[视频] fresh resources generated record=%d doc=%s ppt=%s",
+        record_id,
+        bool(doc),
+        bool(ppt_data),
+    )
+    return doc, None, ppt_data
+
 
 async def _fetch_resources(topic: str, user_id: int) -> tuple:
     records = await GeneratedResource.filter(
@@ -1233,7 +1735,7 @@ async def _build_portrait_intro(topic: str, user) -> dict | None:
     )
 
     try:
-        resp = await llm.ainvoke(prompt)
+        resp = await llm.ainvoke(prompt, priority="high", user_id=getattr(user, "id", 0) or 0, pool="leader")
         intro_text = resp.content.strip()
         if intro_text.startswith("```"):
             intro_text = re.sub(r"^```\w*\n?", "", intro_text)
@@ -1571,14 +2073,7 @@ def _versioned_presentation_url(url: str | None) -> str:
         return ""
     base = str(url).split("?", 1)[0]
     path = _presentation_file_path(url)
-    tag = PRESENTATION_TEMPLATE_VERSION
-    if path and path.exists():
-        try:
-            head = path.read_text(encoding="utf-8", errors="ignore")[:220]
-            if f"template-version:{VIDEO_TEMPLATE_VERSION}" in head:
-                tag = VIDEO_TEMPLATE_VERSION
-        except Exception:
-            logger.warning("读取 HTML 文件失败，使用默认版本号 url=%s", url)
+    tag = _detect_template_version(path) if path and path.exists() else PRESENTATION_TEMPLATE_VERSION
     return f"{base}?v={tag}"
 
 
@@ -1721,7 +2216,7 @@ def _render_video_slides_html(sections: list[dict]) -> str:
 
 
 def _render_html(topic: str, sections: list[dict], segments: list[dict] | None = None, template_path: Path | None = None) -> str:
-    template = (template_path or TEMPLATE_PATH).read_text(encoding="utf-8")
+    template = _read_template(template_path or TEMPLATE_PATH)
     sections_json = json.dumps(sections, ensure_ascii=False, indent=2)
     topic_json = json.dumps(topic, ensure_ascii=False)
     segments_json = json.dumps(segments or [], ensure_ascii=False)
