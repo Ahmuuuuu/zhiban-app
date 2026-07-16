@@ -1019,6 +1019,7 @@ const handleChatScroll = () => {
   if (!el) return
   const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
   userScrolledUp.value = distanceFromBottom > SCROLL_THRESHOLD
+  schedulePersistChatViewState()
 }
 
 const saveDialog = ref({
@@ -1454,6 +1455,99 @@ const getNowTime = () => {
 // 初始空状态展示草图里的学习资源引导
 const messages = ref([])
 const expandedThinkingMessageIds = ref(new Set())
+const CHAT_VIEW_STATE_KEY = 'zhiban_chat_view_short_state'
+const CHAT_VIEW_STATE_TTL = 30 * 60 * 1000
+let persistChatViewTimer = 0
+let pendingRestoreScrollTop = 0
+
+const cloneForChatViewState = value => {
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch {
+    return null
+  }
+}
+
+const clearChatViewState = () => {
+  try {
+    window.sessionStorage.removeItem(CHAT_VIEW_STATE_KEY)
+  } catch {}
+}
+
+const readChatViewState = () => {
+  try {
+    const raw = window.sessionStorage.getItem(CHAT_VIEW_STATE_KEY)
+    if (!raw) return null
+    const state = JSON.parse(raw)
+    if (!state?.savedAt || Date.now() - Number(state.savedAt) > CHAT_VIEW_STATE_TTL) {
+      clearChatViewState()
+      return null
+    }
+    return state
+  } catch {
+    clearChatViewState()
+    return null
+  }
+}
+
+const persistChatViewState = () => {
+  if (persistChatViewTimer) {
+    window.clearTimeout(persistChatViewTimer)
+    persistChatViewTimer = 0
+  }
+
+  const clonedMessages = cloneForChatViewState(messages.value)
+  if (!clonedMessages) return
+
+  try {
+    window.sessionStorage.setItem(CHAT_VIEW_STATE_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      activeConversationId: activeConversationId.value,
+      inputValue: inputValue.value,
+      selectedResourceTool: cloneForChatViewState(selectedResourceTool.value),
+      messages: clonedMessages,
+      scrollTop: chatContentRef.value?.scrollTop || 0
+    }))
+  } catch {}
+}
+
+function schedulePersistChatViewState() {
+  if (persistChatViewTimer) window.clearTimeout(persistChatViewTimer)
+  persistChatViewTimer = window.setTimeout(persistChatViewState, 250)
+}
+
+const restoreChatViewState = () => {
+  if (routeChatGroupId()) return false
+  const state = readChatViewState()
+  if (!state) return false
+
+  activeConversationId.value = state.activeConversationId ?? null
+  inputValue.value = String(state.inputValue || '')
+  selectedResourceTool.value = state.selectedResourceTool || null
+  messages.value = Array.isArray(state.messages) ? state.messages : []
+  pendingRestoreScrollTop = Number(state.scrollTop || 0)
+  return true
+}
+
+const restoreChatViewScroll = async () => {
+  if (!pendingRestoreScrollTop) return
+  await nextTick()
+  if (chatContentRef.value) {
+    chatContentRef.value.scrollTop = pendingRestoreScrollTop
+  }
+  pendingRestoreScrollTop = 0
+}
+
+watch(
+  () => ({
+    activeConversationId: activeConversationId.value,
+    inputValue: inputValue.value,
+    selectedResourceTool: selectedResourceTool.value,
+    messages: messages.value
+  }),
+  schedulePersistChatViewState,
+  { deep: true }
+)
 
 watch(
   () => [
@@ -3903,6 +3997,7 @@ const deleteHistoryConversation = async (item) => {
     removeTasksForConversation(conversationId, taskIds)
     recentChats.value = recentChats.value.filter(chat => String(chat.id) !== String(conversationId))
     if (String(activeConversationId.value || '') === String(conversationId)) {
+      clearChatViewState()
       activeConversationId.value = null
       messages.value = []
       inputValue.value = ''
@@ -3924,6 +4019,7 @@ const routeChatGroupId = () => {
 }
 
 const resetChatViewForUserContext = async () => {
+  clearChatViewState()
   window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
   activeConversationId.value = null
   preventAutoConversationSwitch.value = true
@@ -3949,6 +4045,7 @@ const openConversationFromRoute = async () => {
 // 新建对话
 const createNewChat = () => {
   // 清除活跃任务引用，避免旧对话的生成任务泄漏到新对话
+  clearChatViewState()
   window.localStorage.removeItem(ACTIVE_GENERATION_TASK_KEY)
   activeConversationId.value = null
   preventAutoConversationSwitch.value = true
@@ -3958,6 +4055,7 @@ const createNewChat = () => {
   showHistoryPanel.value = false
   showAddMenu.value = false
   clearAgentFlowSelection()
+  persistChatViewState()
 }
 
 //enter发送 enter+shift换行
@@ -3977,6 +4075,8 @@ onMounted(async () => {
   window.addEventListener('zhiban:user-logged-out', resetChatViewForUserContext)
   window.addEventListener('zhiban-auth-expired', resetChatViewForUserContext)
 
+  const restoredChatView = restoreChatViewState()
+
   await Promise.all([
     hydrateGenerationTasks().catch(error => {
       console.warn('[ChatView] restore generation tasks failed:', error)
@@ -3984,6 +4084,12 @@ onMounted(async () => {
     loadConversationList()
   ])
   if (await openConversationFromRoute()) return
+
+  if (restoredChatView && (messages.value.length || inputValue.value || activeConversationId.value)) {
+    restoreGenerationTasksInChat()
+    await restoreChatViewScroll()
+    return
+  }
 
   // 如果有正在运行的生成任务，自动打开对应的对话（而非展示空白新对话）
   const runningTask = generationTasks.find(t => t.chatGroupId && t.status === 'running')
@@ -4000,6 +4106,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  persistChatViewState()
   window.removeEventListener('zhiban-login-success', resetChatViewForUserContext)
   window.removeEventListener('zhiban:user-logged-out', resetChatViewForUserContext)
   window.removeEventListener('zhiban-auth-expired', resetChatViewForUserContext)
