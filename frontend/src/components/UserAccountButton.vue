@@ -2,10 +2,11 @@
   <div :class="['account-entry-wrap', { corner }]">
     <button
       type="button"
-      :class="['account-entry', variant]"
+      :class="['account-entry', variant, { 'needs-profile': profileIncomplete }]"
       :aria-label="isLoggedIn ? '个人信息' : '登录'"
       @click="handleClick"
     >
+      <span v-if="profileIncomplete" class="account-profile-dot" aria-label="个人信息未完善"></span>
       <span class="account-avatar">
         <img v-if="avatarUrl" :src="avatarUrl" alt="" />
         <span v-else>{{ avatarText }}</span>
@@ -48,6 +49,7 @@ const userRole = ref(currentUserRole())
 const major = ref('')
 const avatarUrl = ref(normalizeAvatarUrl(localStorage.getItem('avatar') || ''))
 const showLogin = ref(false)
+const profileIncomplete = ref(false)
 
 const isLoggedIn = computed(() => Boolean(token.value))
 const accountName = computed(() => {
@@ -73,6 +75,42 @@ const normalizeProfile = result => {
   return result?.data || result?.user || result || {}
 }
 
+const profileRequiredFields = ['major', 'grade', 'profile']
+
+const isProfileComplete = profile => {
+  return profileRequiredFields.every(key => String(profile?.[key] || '').trim())
+}
+
+const getProfilePromptKey = profile => {
+  const userKey = String(profile?.id || profile?.username || localStorage.getItem('user_id') || username.value || 'current').trim()
+  return `zhiban_profile_complete_prompted_${userKey}`
+}
+
+const updateProfileCompletion = profile => {
+  const complete = isProfileComplete(profile)
+  profileIncomplete.value = isLoggedIn.value && !complete
+  localStorage.setItem('zhiban_profile_complete', complete ? '1' : '0')
+  window.dispatchEvent(new CustomEvent('zhiban:user-profile-complete-changed', {
+    detail: { complete }
+  }))
+
+  if (complete || !isLoggedIn.value) return
+  const promptKey = getProfilePromptKey(profile)
+  if (localStorage.getItem(promptKey)) return
+  localStorage.setItem(promptKey, '1')
+  window.setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('zhiban-pet-modal', {
+      detail: {
+        title: '先完善个人信息',
+        message: '完善专业、年级和个人简介后，小知才能更准确地生成你的学习画像，并推送个性化学习路径。',
+        primaryText: '去完善',
+        primaryAction: 'profile',
+        secondaryText: '稍后'
+      }
+    }))
+  }, 300)
+}
+
 const loadAccountInfo = async () => {
   token.value = localStorage.getItem('token') || ''
 
@@ -81,6 +119,7 @@ const loadAccountInfo = async () => {
     userRole.value = ''
     major.value = ''
     avatarUrl.value = ''
+    profileIncomplete.value = false
     return
   }
 
@@ -102,6 +141,7 @@ const loadAccountInfo = async () => {
     if (profile.avatar) {
       localStorage.setItem('avatar', profile.avatar)
     }
+    updateProfileCompletion(profile)
   } catch (error) {
     username.value = localStorage.getItem('username') || '已登录账户'
   }
@@ -135,6 +175,7 @@ const handleLogout = () => {
   userRole.value = ''
   major.value = ''
   avatarUrl.value = ''
+  profileIncomplete.value = false
 }
 
 const handleAuthExpired = () => {
@@ -144,6 +185,7 @@ const handleAuthExpired = () => {
 
 onMounted(() => {
   window.addEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  window.addEventListener('zhiban:user-profile-updated', loadAccountInfo)
   window.addEventListener('zhiban:user-logged-out', handleLogout)
   window.addEventListener('zhiban-auth-expired', handleAuthExpired)
   loadAccountInfo()
@@ -151,6 +193,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('zhiban:user-avatar-updated', handleAvatarUpdated)
+  window.removeEventListener('zhiban:user-profile-updated', loadAccountInfo)
   window.removeEventListener('zhiban:user-logged-out', handleLogout)
   window.removeEventListener('zhiban-auth-expired', handleAuthExpired)
 })
@@ -169,6 +212,7 @@ onBeforeUnmount(() => {
 }
 
 .account-entry {
+  position: relative;
   min-height: 56px;
   padding: 7px 12px 7px 7px;
   border-radius: 999px;
@@ -192,6 +236,22 @@ onBeforeUnmount(() => {
     box-shadow 0.22s ease,
     background 0.22s ease,
     border-color 0.22s ease;
+}
+
+.account-entry.needs-profile {
+  border-color: rgba(229, 72, 77, 0.44);
+}
+
+.account-profile-dot {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(250, 250, 250, 0.96);
+  border-radius: 50%;
+  background: #e5484d;
+  box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.16);
 }
 
 .account-entry:hover {
@@ -281,6 +341,10 @@ onBeforeUnmount(() => {
 .account-entry.dark:hover {
   background: #1d5dab;
   border-color: #1d5dab;
+}
+
+.account-entry.dark .account-profile-dot {
+  border-color: #163f8f;
 }
 
 .account-entry.dark .account-avatar {

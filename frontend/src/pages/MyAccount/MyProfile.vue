@@ -295,6 +295,14 @@ const notifyPet = (message, duration = 5200) => {
   }))
 }
 
+const showPetModal = detail => {
+  window.dispatchEvent(new CustomEvent('zhiban-pet-modal', { detail }))
+}
+
+const dispatchProfileUpdated = () => {
+  window.dispatchEvent(new CustomEvent('zhiban:user-profile-updated'))
+}
+
 const unwrapApiData = result => result?.data?.data ?? result?.data ?? result
 
 const triggerProfilePathGeneration = async previousProfile => {
@@ -325,6 +333,15 @@ const triggerProfilePathGeneration = async previousProfile => {
     window.dispatchEvent(new CustomEvent('zhiban:path-generated', {
       detail: { path: firstPath, paths, major, grade, courses: data.courses || [] }
     }))
+    if (paths.length) {
+      showPetModal({
+        title: '小知已推送学习路径',
+        message: '这是根据你的学习画像，为你匹配的个性化学习路径。你可以先按推荐路线学习，后续资料和练习情况也会继续优化路径。',
+        primaryText: '去看看',
+        primaryAction: 'learning-path',
+        secondaryText: '稍后'
+      })
+    }
     notifyPet(paths.length
       ? `已按${grade}${major}生成 ${paths.length} 条学习路径，学习路径页已准备好。`
       : `已根据${grade}${major}更新学习路径。`, 7200)
@@ -385,6 +402,7 @@ const saveProfile = async () => {
     await updateUserProfile(buildProfilePayload())
     const profileResult = await getUserProfile()
     fillProfile(normalizeProfile(profileResult))
+    dispatchProfileUpdated()
     successMessage.value = '个人信息已保存'
     isEditing.value = false
     void triggerProfilePathGeneration(previousProfile)
