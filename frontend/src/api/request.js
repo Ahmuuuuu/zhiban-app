@@ -21,7 +21,7 @@ const isPublicUrl = url => {
 }
 
 const request = axios.create({
-  baseURL: apiBaseURL || '',
+  baseURL: "https://compel-dividable-unfasten.ngrok-free.dev",
   timeout: 300000
 })
 

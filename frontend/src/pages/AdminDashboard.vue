@@ -65,10 +65,23 @@
           </div>
         </div>
 
-        <div v-if="loadingReview" class="empty-line">正在加载待审核资源...</div>
-        <div v-else-if="!pendingResources.length" class="empty-line">当前没有待审核申请。</div>
+        <div class="type-filter-row" aria-label="资源类型筛选">
+          <button
+            v-for="filter in typeFilters"
+            :key="filter.key"
+            type="button"
+            :class="{ active: activeResourceType === filter.key }"
+            @click="activeResourceType = filter.key"
+          >
+            <span>{{ filter.label }}</span>
+            <small>{{ reviewTypeCounts[filter.key] || 0 }}</small>
+          </button>
+        </div>
 
-        <article v-for="resource in pendingResources" :key="resource.id" class="review-item">
+        <div v-if="loadingReview" class="empty-line">正在加载待审核资源...</div>
+        <div v-else-if="!filteredPendingResources.length" class="empty-line">当前没有待审核申请。</div>
+
+        <article v-for="resource in filteredPendingResources" :key="resource.id" class="review-item">
           <div class="resource-main">
             <span class="type-chip">{{ resource.typeLabel }}</span>
             <h3>{{ resource.title }}</h3>
@@ -97,6 +110,19 @@
             <Search :size="16" />
             <input v-model.trim="keyword" type="search" placeholder="搜索标题、作者、类型" />
           </label>
+        </div>
+
+        <div class="type-filter-row" aria-label="资源类型筛选">
+          <button
+            v-for="filter in typeFilters"
+            :key="filter.key"
+            type="button"
+            :class="{ active: activeResourceType === filter.key }"
+            @click="activeResourceType = filter.key"
+          >
+            <span>{{ filter.label }}</span>
+            <small>{{ managedTypeCounts[filter.key] || 0 }}</small>
+          </button>
         </div>
 
         <div class="table-wrap">
@@ -269,6 +295,7 @@ import {
 
 const activeTab = ref('review')
 const keyword = ref('')
+const activeResourceType = ref('all')
 const loadingReview = ref(false)
 const loadingResources = ref(false)
 const loadingBase = ref(false)
@@ -303,10 +330,58 @@ const tabs = computed(() => [
   { key: 'import', label: '基础导入', icon: Database, count: null }
 ])
 
+const typeFilters = [
+  { key: 'all', label: '全部' },
+  { key: 'document', label: '文档' },
+  { key: 'ppt', label: 'PPT' },
+  { key: 'image', label: '图片' },
+  { key: 'video', label: '视频' },
+  { key: 'exercise', label: '题库' },
+  { key: 'mindmap', label: '思维导图' }
+]
+
+const resourceTypeAliases = {
+  document: ['document', 'reference', 'resource', 'doc', 'word', 'pdf', 'markdown', 'md', 'txt'],
+  ppt: ['ppt', 'powerpoint', 'presentation', 'slide', 'slides'],
+  image: ['image', 'img', 'picture', 'png', 'jpg', 'jpeg', 'webp'],
+  video: ['video', 'mp4', 'presentation_video'],
+  exercise: ['exercise', 'quiz', 'question', 'exam', 'test'],
+  mindmap: ['mindmap', 'mind_map', 'mind-map', 'xmind']
+}
+
+const normalizeTypeKey = resource => {
+  const raw = String(`${resource?.resourceType || ''} ${resource?.typeLabel || ''} ${resource?.title || ''}`).toLowerCase()
+  const matched = Object.entries(resourceTypeAliases)
+    .find(([, aliases]) => aliases.some(alias => raw.includes(alias)))
+  return matched?.[0] || 'document'
+}
+
+const matchesTypeFilter = resource => {
+  return activeResourceType.value === 'all' || normalizeTypeKey(resource) === activeResourceType.value
+}
+
+const countByType = list => {
+  const counts = { all: list.length }
+  typeFilters.forEach(filter => {
+    if (filter.key !== 'all') counts[filter.key] = 0
+  })
+  list.forEach(resource => {
+    const key = normalizeTypeKey(resource)
+    counts[key] = (counts[key] || 0) + 1
+  })
+  return counts
+}
+
+const reviewTypeCounts = computed(() => countByType(pendingResources.value))
+const managedTypeCounts = computed(() => countByType(managedResources.value))
+
+const filteredPendingResources = computed(() => pendingResources.value.filter(matchesTypeFilter))
+
 const filteredResources = computed(() => {
   const key = keyword.value.toLowerCase()
-  if (!key) return managedResources.value
   return managedResources.value.filter(item => {
+    if (!matchesTypeFilter(item)) return false
+    if (!key) return true
     return [item.title, item.ownerName, item.typeLabel, item.visibility]
       .some(value => String(value || '').toLowerCase().includes(key))
   })
@@ -335,9 +410,17 @@ const unwrapList = result => {
 
 const typeLabels = {
   document: '文档',
+  reference: '文档',
+  doc: '文档',
+  word: '文档',
+  pdf: '文档',
   ppt: 'PPT',
+  powerpoint: 'PPT',
+  presentation: 'PPT',
   mindmap: '思维导图',
+  mind_map: '思维导图',
   exercise: '练习题',
+  quiz: '练习题',
   image: '图片',
   video: '视频',
   resource: '资源'
@@ -953,6 +1036,79 @@ onMounted(refreshAll)
   color: #163f8f;
   font-size: 12px;
   font-weight: 900;
+}
+
+.type-filter-row {
+  margin: -2px 0 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.type-filter-row button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: rgba(250, 250, 250, 0.74);
+  color: #5f8fc3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.type-filter-row button:hover {
+  transform: translateY(-1px);
+  background: #c9dce9;
+  border-color: #5f8fc3;
+  color: #163f8f;
+}
+
+.type-filter-row button.active {
+  background: #163f8f;
+  border-color: #163f8f;
+  color: #ffffff;
+}
+
+.type-filter-row small {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(95, 143, 195, 0.14);
+  color: currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+html[data-theme="dark"] .type-filter-row button {
+  background: #1a2535;
+  border-color: #3a4556;
+  color: #c8d6e5;
+}
+
+html[data-theme="dark"] .type-filter-row button:hover {
+  background: #1f2c3d;
+  border-color: #5f8fc3;
+  color: #e4e6ed;
+}
+
+html[data-theme="dark"] .type-filter-row button.active {
+  background: #174a8a;
+  border-color: #2b6fbd;
+  color: #ffffff;
+}
+
+html[data-theme="dark"] .type-filter-row small {
+  background: rgba(122, 162, 247, 0.16);
 }
 
 .resource-main h3 {

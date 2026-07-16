@@ -90,7 +90,16 @@
           </div>
           <small>{{ visibleNodes.filter(node => node.status === 'done').length }}/{{ visibleNodes.length }} 已完成</small>
         </div>
-        <div class="path-map__scroller">
+        <button
+          class="path-map__nav path-map__nav--left"
+          type="button"
+          aria-label="向左移动路径地图"
+          :disabled="!canScrollPathMapLeft"
+          @click="scrollPathMap('left')"
+        >
+          ‹
+        </button>
+        <div ref="pathMapScroller" class="path-map__scroller" @scroll="updatePathMapScrollState">
           <div class="path-map__route">
             <button
               v-for="(node, index) in visibleNodes"
@@ -110,6 +119,15 @@
             </button>
           </div>
         </div>
+        <button
+          class="path-map__nav path-map__nav--right"
+          type="button"
+          aria-label="向右移动路径地图"
+          :disabled="!canScrollPathMapRight"
+          @click="scrollPathMap('right')"
+        >
+          ›
+        </button>
       </section>
 
       <section class="path-layout">
@@ -556,7 +574,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AlertCircle, Check, LockKeyhole, Presentation, GitBranch, FileImage, FileText, PauseCircle, Volume2, MonitorPlay } from 'lucide-vue-next'
 import {
@@ -618,6 +636,9 @@ const selectedPathStats = ref(null)
 const pathStatsRequestId = ref(0)
 const pathVideo = ref(null)
 const pathVideoLoading = ref(false)
+const pathMapScroller = ref(null)
+const canScrollPathMapLeft = ref(false)
+const canScrollPathMapRight = ref(false)
 let heartbeatTimer = null
 const announcedGenerationRunIds = new Set()
 const nodeGenerationState = usePathNodeGenerationState()
@@ -1458,6 +1479,29 @@ const progressPercent = computed(() => {
   const doneCount = nodes.filter(n => n.status === 'done').length
   return Math.min(100, Math.round((doneCount / total) * 100))
 })
+
+const updatePathMapScrollState = () => {
+  const el = pathMapScroller.value
+  if (!el) {
+    canScrollPathMapLeft.value = false
+    canScrollPathMapRight.value = false
+    return
+  }
+  const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+  canScrollPathMapLeft.value = el.scrollLeft > 2
+  canScrollPathMapRight.value = el.scrollLeft < maxScroll - 2
+}
+
+const scrollPathMap = direction => {
+  const el = pathMapScroller.value
+  if (!el) return
+  const amount = Math.max(220, Math.round(el.clientWidth * 0.55))
+  el.scrollBy({
+    left: direction === 'left' ? -amount : amount,
+    behavior: 'smooth'
+  })
+  window.setTimeout(updatePathMapScrollState, 320)
+}
 
 const pathSituationCards = computed(() => {
   const stats = selectedPathStats.value
@@ -3049,6 +3093,7 @@ const handleGeneratedPathEvent = async event => {
 
 const mountStudyPath = async () => {
   window.addEventListener('zhiban:path-generated', handleGeneratedPathEvent)
+  window.addEventListener('resize', updatePathMapScrollState)
   const queryPathId = route.query.pathId || route.query.path_id
   if (queryPathId) {
     loading.value = true
@@ -3076,8 +3121,14 @@ const mountStudyPath = async () => {
 }
 
 onMounted(mountStudyPath)
+watch(visibleNodes, async () => {
+  await nextTick()
+  updatePathMapScrollState()
+}, { immediate: true })
+
 onBeforeUnmount(() => {
   window.removeEventListener('zhiban:path-generated', handleGeneratedPathEvent)
+  window.removeEventListener('resize', updatePathMapScrollState)
   stopPathHeartbeat()
 })
 </script>
@@ -3346,6 +3397,7 @@ onBeforeUnmount(() => {
 
 .path-map {
   --map-progress: 0%;
+  position: relative;
   margin-top: 10px;
   padding: 10px 14px 12px;
   border: 1px solid rgba(22, 63, 143, 0.14);
@@ -3392,8 +3444,50 @@ onBeforeUnmount(() => {
 .path-map__scroller {
   margin-top: 8px;
   overflow-x: auto;
-  padding: 5px 2px 0;
+  padding: 5px 32px 0;
   scrollbar-width: none;
+}
+
+.path-map__nav {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(95, 143, 195, 0.34);
+  border-radius: 999px;
+  background: rgba(250, 250, 250, 0.88);
+  color: #163f8f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  transform: translateY(-35%);
+  box-shadow: 0 10px 22px rgba(22, 63, 143, 0.12);
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, opacity 0.18s ease, transform 0.18s ease;
+}
+
+.path-map__nav:hover:not(:disabled) {
+  background: #c9dce9;
+  border-color: #5f8fc3;
+  transform: translateY(-35%) scale(1.04);
+}
+
+.path-map__nav:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+.path-map__nav--left {
+  left: 10px;
+}
+
+.path-map__nav--right {
+  right: 10px;
 }
 
 .path-map__scroller::-webkit-scrollbar {
@@ -5417,6 +5511,11 @@ onBeforeUnmount(() => {
   .path-map__route::after {
     width: calc((100% - 118px) * var(--map-progress) / 100);
     max-width: calc(100% - 118px);
+  }
+
+  .path-map__scroller {
+    padding-left: 30px;
+    padding-right: 30px;
   }
 }
 

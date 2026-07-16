@@ -4197,7 +4197,7 @@ watch(
   position: fixed;
   z-index: 72;
   right: clamp(18px, 2.4vw, 32px);
-  top: calc(64px + clamp(18px, 2.4vw, 32px));
+  top: 76px;
   width: 168px;
   height: 46px;
   padding: 0 14px;
@@ -5849,7 +5849,7 @@ textarea::placeholder {
 
   .agent-flow-launcher {
     right: 14px;
-    top: calc(56px + 14px);
+    top: 66px;
     width: 44px;
     height: 44px;
     padding: 0;

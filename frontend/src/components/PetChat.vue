@@ -50,6 +50,9 @@ type StreamChatHandlers = {
   onDone?: (data?: { chat_group_id?: number | string }) => void;
   onError?: (error: string) => void;
   onFile?: (fileData: unknown) => void;
+  onStreamTextStart?: (eventData: unknown) => void | Promise<void>;
+  onStreamTextDelta?: (eventData: unknown) => void | Promise<void>;
+  onStreamTextDone?: (eventData: unknown) => void | Promise<void>;
 };
 
 type StreamChatMessageFn = (
@@ -168,6 +171,42 @@ const petMessages = ref<PetChatMessage[]>([
 
 // 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€
 const sendStreamChatMessage = streamChatMessage as unknown as StreamChatMessageFn;
+
+const waitPetStreamFrame = () => new Promise(resolve => window.setTimeout(resolve, 18));
+
+const createPetStreamWriter = (message: PetChatMessage) => {
+  let queue = "";
+  let running = false;
+
+  const pump = async () => {
+    if (running) return;
+    running = true;
+
+    while (queue) {
+      const takeCount = Math.max(1, Math.min(6, Math.ceil(queue.length / 28)));
+      message.content += queue.slice(0, takeCount);
+      queue = queue.slice(takeCount);
+      await nextTick();
+      void scrollPetMessagesToBottom();
+      await waitPetStreamFrame();
+    }
+
+    running = false;
+  };
+
+  return {
+    push(chunk: string) {
+      if (!chunk) return;
+      queue += chunk;
+      void pump();
+    },
+    async flush() {
+      while (queue || running) {
+        await waitPetStreamFrame();
+      }
+    },
+  };
+};
 
 const readPetHistoryIds = () => {
   try {
@@ -932,18 +971,41 @@ const sendPetMessage = async () => {
     }
 
     let receivedChunk = false;
+    let hasStreamText = false;
+    const streamWriter = createPetStreamWriter(assistantMessage);
+    const startPetTextStream = () => {
+      if (receivedChunk) return;
+      assistantMessage.content = "";
+      receivedChunk = true;
+    };
     await sendStreamChatMessage(
       { user_req: aiMessage, chat_group_id: petChatGroupId.value },
       {
         onChunk: async (chunk: string) => {
-          if (!receivedChunk) {
-            assistantMessage.content = "";
-            receivedChunk = true;
-          }
-          assistantMessage.content += chunk;
+          startPetTextStream();
+          hasStreamText = hasStreamText || Boolean(chunk);
+          streamWriter.push(chunk);
+        },
+        onStreamTextStart: async () => {
+          startPetTextStream();
           await scrollPetMessagesToBottom();
         },
+        onStreamTextDelta: async (eventData: any) => {
+          startPetTextStream();
+          const chunk = String(eventData?.delta || eventData?.content || "");
+          hasStreamText = hasStreamText || Boolean(chunk);
+          streamWriter.push(chunk);
+        },
+        onStreamTextDone: async (eventData: any) => {
+          startPetTextStream();
+          const finalText = String(eventData?.content || "");
+          if (finalText && !hasStreamText) {
+            hasStreamText = true;
+            streamWriter.push(finalText);
+          }
+        },
         onFile: async (fileData: any) => {
+          await streamWriter.flush();
           if (isPetExerciseFile(fileData)) {
             await applyPetQuizFile(assistantMessage, fileData);
             receivedChunk = true;
@@ -976,7 +1038,8 @@ const sendPetMessage = async () => {
             : assistantMessage.centerSaveStatus;
           receivedChunk = true;
         },
-        onDone: (data: { chat_group_id?: number | string } = {}) => {
+        onDone: async (data: { chat_group_id?: number | string } = {}) => {
+          await streamWriter.flush();
           if (data?.chat_group_id) {
             petChatGroupId.value = data.chat_group_id;
             rememberPetHistoryId(data.chat_group_id);
@@ -989,6 +1052,8 @@ const sendPetMessage = async () => {
         },
       },
     );
+
+    await streamWriter.flush();
 
     if (receivedChunk) {
       replacePetTextWithQuiz(assistantMessage);

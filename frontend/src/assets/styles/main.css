@@ -387,12 +387,20 @@ html[data-theme="dark"] .quick-panel a span {
 }
 
 html[data-theme="dark"] .primary-action {
-  background: #2f6b2f !important;
+  background: #174a8a !important;
+  box-shadow: 0 14px 30px rgba(23, 74, 138, 0.28) !important;
   color: #fff !important;
 }
 
 html[data-theme="dark"] .sun-mark {
-  background: #2f6b2f !important;
+  background:
+    linear-gradient(#f0a73a, #f0a73a) center / 100% 2px no-repeat,
+    linear-gradient(#f0a73a, #f0a73a) center / 2px 100% no-repeat !important;
+}
+
+html[data-theme="dark"] .sun-mark::before,
+html[data-theme="dark"] .sun-mark::after {
+  background: #f0a73a !important;
 }
 
 html[data-theme="dark"] .feature-tile.tile-chat,
@@ -808,4 +816,615 @@ html[data-theme="dark"] .doc-dialog__header h2,
 html[data-theme="dark"] .ppt-dialog__header span,
 html[data-theme="dark"] .doc-dialog__header span {
   color: #c8d6e5 !important;
+}
+
+/* ============================================================
+   Dark mode hardening: remove leftover white UI surfaces
+   ============================================================ */
+html[data-theme="dark"] body,
+html[data-theme="dark"] #app,
+html[data-theme="dark"] .slide-stage {
+  background: var(--color-bg) !important;
+  color: var(--color-text) !important;
+}
+
+html[data-theme="dark"] .notification-page,
+html[data-theme="dark"] .video-lab,
+html[data-theme="dark"] .pet-chat,
+html[data-theme="dark"] .pet-panel {
+  background: #0f1724 !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .notification-page .page-header,
+html[data-theme="dark"] .video-lab .lab-section,
+html[data-theme="dark"] .video-lab .stack-demo,
+html[data-theme="dark"] .question-bank-page .quiz-card,
+html[data-theme="dark"] .question-bank-page .empty-state,
+html[data-theme="dark"] .quiz-runner-page .runner-shell,
+html[data-theme="dark"] .quiz-runner-page .empty-state,
+html[data-theme="dark"] .quiz-runner-page .question-panel,
+html[data-theme="dark"] .quiz-runner-page .score-panel,
+html[data-theme="dark"] .profile-page .profile-card,
+html[data-theme="dark"] .profile-page .profile-panel,
+html[data-theme="dark"] .profile-page .avatar-card,
+html[data-theme="dark"] .profile-page .setting-card,
+html[data-theme="dark"] .profile-page .form-card,
+html[data-theme="dark"] .pet-chat [class*="panel"],
+html[data-theme="dark"] .pet-chat [class*="card"],
+html[data-theme="dark"] .pet-chat [class*="bubble"],
+html[data-theme="dark"] .pet-panel [class*="panel"],
+html[data-theme="dark"] .pet-panel [class*="card"] {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.25) !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .notification-page .msg-card,
+html[data-theme="dark"] .notification-page .msg-card.read,
+html[data-theme="dark"] .notification-page .msg-card.unread,
+html[data-theme="dark"] .notification-page .back-btn,
+html[data-theme="dark"] .notification-page .mark-all-btn,
+html[data-theme="dark"] .notification-page .pager button,
+html[data-theme="dark"] .question-bank-page .back-link,
+html[data-theme="dark"] .question-bank-page .refresh-btn,
+html[data-theme="dark"] .quiz-runner-page .progress,
+html[data-theme="dark"] .quiz-runner-page .soft-btn,
+html[data-theme="dark"] .quiz-runner-page .options button,
+html[data-theme="dark"] .quiz-runner-page .score-list div,
+html[data-theme="dark"] .presentation-player .theme-select,
+html[data-theme="dark"] .resource-center-page .filter-btn,
+html[data-theme="dark"] .resource-center-page .sort-btn,
+html[data-theme="dark"] .resource-center-page .view-btn,
+html[data-theme="dark"] .study-panel .filter-btn,
+html[data-theme="dark"] .study-panel .sort-btn {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .notification-page .msg-card:hover,
+html[data-theme="dark"] .notification-page .back-btn:hover,
+html[data-theme="dark"] .notification-page .mark-all-btn:hover:not(:disabled),
+html[data-theme="dark"] .notification-page .pager button:hover:not(:disabled),
+html[data-theme="dark"] .question-bank-page .back-link:hover,
+html[data-theme="dark"] .question-bank-page .refresh-btn:hover,
+html[data-theme="dark"] .quiz-runner-page .soft-btn:hover:not(:disabled),
+html[data-theme="dark"] .quiz-runner-page .options button:hover {
+  background: #1f2c3d !important;
+  border-color: #3a4556 !important;
+}
+
+html[data-theme="dark"] .question-bank-page .start-btn,
+html[data-theme="dark"] .quiz-runner-page .primary-btn,
+html[data-theme="dark"] .quiz-runner-page .options button.selected,
+html[data-theme="dark"] .chat-page .send-btn,
+html[data-theme="dark"] .resource-center-page .primary-btn,
+html[data-theme="dark"] .resource-center-page .create-btn,
+html[data-theme="dark"] .study-panel .primary-btn,
+html[data-theme="dark"] .study-panel .create-btn {
+  background: #2f6b2f !important;
+  border-color: #3d8f56 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .notification-page h1,
+html[data-theme="dark"] .notification-page h2,
+html[data-theme="dark"] .notification-page strong,
+html[data-theme="dark"] .video-lab h1,
+html[data-theme="dark"] .video-lab h2,
+html[data-theme="dark"] .video-lab b,
+html[data-theme="dark"] .question-bank-page h1,
+html[data-theme="dark"] .question-bank-page h2,
+html[data-theme="dark"] .quiz-runner-page h1,
+html[data-theme="dark"] .quiz-runner-page h2,
+html[data-theme="dark"] .quiz-runner-page strong,
+html[data-theme="dark"] .quiz-runner-page .score-value {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .notification-page p,
+html[data-theme="dark"] .notification-page time,
+html[data-theme="dark"] .notification-page .msg-tag,
+html[data-theme="dark"] .notification-page .pager span,
+html[data-theme="dark"] .video-lab p,
+html[data-theme="dark"] .video-lab span,
+html[data-theme="dark"] .question-bank-page p,
+html[data-theme="dark"] .question-bank-page small,
+html[data-theme="dark"] .question-bank-page .quiz-card__top,
+html[data-theme="dark"] .quiz-runner-page p,
+html[data-theme="dark"] .quiz-runner-page small,
+html[data-theme="dark"] .quiz-runner-page .question-meta {
+  color: #8a94a6 !important;
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select {
+  background-color: #0f1724 !important;
+  border-color: #2a3546 !important;
+  color: #e4e6ed !important;
+}
+
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: #5a6578 !important;
+}
+
+html[data-theme="dark"] button:disabled,
+html[data-theme="dark"] a[aria-disabled="true"] {
+  opacity: 0.55;
+}
+
+html[data-theme="dark"] .annotation-popover,
+html[data-theme="dark"] .annotation-panel,
+html[data-theme="dark"] .annotation-popover button,
+html[data-theme="dark"] .annotation-panel button,
+html[data-theme="dark"] .mindmap-preview,
+html[data-theme="dark"] .mindmap-preview .map-container,
+html[data-theme="dark"] .mindmap-fallback,
+html[data-theme="dark"] .pet-quiz-preview__panel,
+html[data-theme="dark"] .pet-quiz-preview__question,
+html[data-theme="dark"] .pet-onboarding,
+html[data-theme="dark"] .pet-onboarding__ghost,
+html[data-theme="dark"] .login-modal,
+html[data-theme="dark"] .login-content,
+html[data-theme="dark"] .monster-panel,
+html[data-theme="dark"] .code-box button,
+html[data-theme="dark"] .close-btn {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .mindmap-preview me-tpc,
+html[data-theme="dark"] .mindmap-overlay me-tpc {
+  background: #1f2c3d !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24) !important;
+}
+
+html[data-theme="dark"] .mindmap-preview me-root > me-tpc,
+html[data-theme="dark"] .mindmap-overlay me-root > me-tpc {
+  background: #2f6b2f !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .mindmap-preview .lines path,
+html[data-theme="dark"] .mindmap-preview .subLines path,
+html[data-theme="dark"] .mindmap-overlay .lines path,
+html[data-theme="dark"] .mindmap-overlay .subLines path {
+  stroke: #4b5b70 !important;
+}
+
+html[data-theme="dark"] .annotation-popover strong,
+html[data-theme="dark"] .annotation-panel strong,
+html[data-theme="dark"] .pet-quiz-preview__header h2,
+html[data-theme="dark"] .pet-quiz-preview__stem p,
+html[data-theme="dark"] .pet-quiz-preview__question strong,
+html[data-theme="dark"] .mindmap-fallback {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .annotation-popover p,
+html[data-theme="dark"] .annotation-panel p,
+html[data-theme="dark"] .pet-quiz-preview__header span {
+  color: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .annotation-popover .primary,
+html[data-theme="dark"] .pet-onboarding__primary,
+html[data-theme="dark"] .pet-quiz-preview__header button,
+html[data-theme="dark"] .pet-quiz-preview__actions button,
+html[data-theme="dark"] .login-modal button[type="submit"] {
+  background: #2f6b2f !important;
+  border-color: #3d8f56 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .pet-chat__message--assistant,
+html[data-theme="dark"] .pet-chat__generated-image {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22) !important;
+}
+
+html[data-theme="dark"] .pet-chat__message--user,
+html[data-theme="dark"] .pet-chat__save-resource {
+  background: #2f6b2f !important;
+  border-color: #3d8f56 !important;
+  color: #ffffff !important;
+}
+
+/* Chat controls and top-nav buttons must not turn white in dark mode. */
+html[data-theme="dark"] .chat-page .menu-btn,
+html[data-theme="dark"] .chat-page .add-btn,
+html[data-theme="dark"] .chat-page .more-tool,
+html[data-theme="dark"] .chat-page .voice-btn,
+html[data-theme="dark"] .chat-page .quick-tool,
+html[data-theme="dark"] .chat-page .add-menu,
+html[data-theme="dark"] .chat-page .add-menu button,
+html[data-theme="dark"] .chat-page .agent-flow-launcher,
+html[data-theme="dark"] .chat-page .agent-flow-launcher:disabled,
+html[data-theme="dark"] .chat-page .agent-flow-launcher.is-empty {
+  background: #1a2535 !important;
+  border-color: #3a4556 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-theme="dark"] .chat-page .menu-btn:hover,
+html[data-theme="dark"] .chat-page .add-btn:hover,
+html[data-theme="dark"] .chat-page .more-tool:hover,
+html[data-theme="dark"] .chat-page .voice-btn:hover,
+html[data-theme="dark"] .chat-page .quick-tool:hover,
+html[data-theme="dark"] .chat-page .add-menu button:hover,
+html[data-theme="dark"] .chat-page .agent-flow-launcher:hover,
+html[data-theme="dark"] .chat-page .agent-flow-launcher:disabled:hover,
+html[data-theme="dark"] .chat-page .agent-flow-launcher.is-empty:hover {
+  background: #1f2c3d !important;
+  border-color: #4b5b70 !important;
+}
+
+html[data-theme="dark"] .chat-page .quick-tool.active {
+  background: #22344b !important;
+  border-color: #5f8fc3 !important;
+  color: #e4e6ed !important;
+}
+
+html[data-theme="dark"] .chat-page .send-btn:not(:disabled) {
+  background: #2f6b2f !important;
+  border-color: #3d8f56 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .chat-page .voice-btn.recording {
+  background: rgba(127, 29, 29, 0.7) !important;
+  border-color: rgba(248, 113, 113, 0.5) !important;
+  color: #fecaca !important;
+}
+
+html[data-theme="dark"] .chat-page .voice-btn.transcribing {
+  background: #22344b !important;
+  border-color: #5f8fc3 !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .nav-actions .bell-btn,
+html[data-theme="dark"] .nav-actions .theme-toggle,
+html[data-theme="dark"] .nav-actions .account-entry,
+html[data-theme="dark"] .nav-actions .account-avatar,
+html[data-theme="dark"] .sketch-topbar .account-entry,
+html[data-theme="dark"] .sketch-topbar .account-avatar {
+  background: #1a2535 !important;
+  border-color: #3a4556 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-theme="dark"] .nav-actions .bell-btn:hover,
+html[data-theme="dark"] .nav-actions .theme-toggle:hover,
+html[data-theme="dark"] .nav-actions .account-entry:hover,
+html[data-theme="dark"] .sketch-topbar .account-entry:hover {
+  background: #1f2c3d !important;
+  border-color: #4b5b70 !important;
+}
+
+html[data-theme="dark"] .nav-actions .account-text strong,
+html[data-theme="dark"] .nav-actions .account-text small,
+html[data-theme="dark"] .sketch-topbar .account-text strong,
+html[data-theme="dark"] .sketch-topbar .account-text small {
+  color: #c8d6e5 !important;
+}
+
+/* Resource center: keep search, filters, and category buttons dark. */
+html[data-theme="dark"] .resource-center-page .search-field,
+html[data-theme="dark"] .resource-center-page .send-search,
+html[data-theme="dark"] .resource-center-page .icon-btn,
+html[data-theme="dark"] .resource-center-page .import-link.secondary,
+html[data-theme="dark"] .resource-center-page .category-panel button,
+html[data-theme="dark"] .resource-center-page .sub-cat-btn,
+html[data-theme="dark"] .resource-center-page .hot-resource-card,
+html[data-theme="dark"] .resource-center-page .notice {
+  background: #1a2535 !important;
+  border-color: #3a4556 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-theme="dark"] .resource-center-page .search-field {
+  border-color: #5f8fc3 !important;
+}
+
+html[data-theme="dark"] .resource-center-page .search-field input {
+  background: transparent !important;
+  color: #e4e6ed !important;
+}
+
+html[data-theme="dark"] .resource-center-page .search-field input::placeholder {
+  color: #6f8096 !important;
+}
+
+html[data-theme="dark"] .resource-center-page .search-field svg,
+html[data-theme="dark"] .resource-center-page .refresh-btn svg {
+  color: #7aa2f7 !important;
+}
+
+html[data-theme="dark"] .resource-center-page .send-search:hover,
+html[data-theme="dark"] .resource-center-page .icon-btn:hover,
+html[data-theme="dark"] .resource-center-page .import-link.secondary:hover,
+html[data-theme="dark"] .resource-center-page .category-panel button:hover,
+html[data-theme="dark"] .resource-center-page .sub-cat-btn:hover,
+html[data-theme="dark"] .resource-center-page .hot-resource-card:hover {
+  background: #1f2c3d !important;
+  border-color: #5f8fc3 !important;
+  color: #e4e6ed !important;
+}
+
+html[data-theme="dark"] .resource-center-page .category-panel button.active,
+html[data-theme="dark"] .resource-center-page .sub-cat-btn.active {
+  background: #22344b !important;
+  border-color: #5f8fc3 !important;
+  color: #e4e6ed !important;
+}
+
+html[data-theme="dark"] .resource-center-page .sub-cat-btn span,
+html[data-theme="dark"] .resource-center-page .sub-cat-btn.active span {
+  background: #174a8a !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .resource-center-page .import-link:not(.secondary) {
+  background: #174a8a !important;
+  border-color: #2b6fbd !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .resource-center-page .import-link:not(.secondary):hover {
+  background: #1d5dab !important;
+  border-color: #5f8fc3 !important;
+}
+
+html[data-theme="dark"] .resource-center-page .hot-resource-card__body strong,
+html[data-theme="dark"] .resource-center-page .hot-resource-card__body small,
+html[data-theme="dark"] .resource-center-page .hot-resource-card__stats,
+html[data-theme="dark"] .resource-center-page .hot-empty {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .resource-center-page .resource-card {
+  background: #1a2535 !important;
+  border-color: #2a3546 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme="dark"] .resource-center-page .resource-card:hover,
+html[data-theme="dark"] .resource-center-page .resource-card.selected {
+  background: #1f2c3d !important;
+  border-color: #5f8fc3 !important;
+}
+
+html[data-theme="dark"] .resource-center-page .resource-cover {
+  position: relative;
+  background: #111b29 !important;
+  box-shadow: inset 0 0 0 1px #2a3546 !important;
+}
+
+html[data-theme="dark"] .resource-center-page .resource-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(15, 23, 36, 0.34);
+  mix-blend-mode: multiply;
+}
+
+html[data-theme="dark"] .resource-center-page .resource-cover img {
+  filter: brightness(0.78) contrast(1.06) saturate(0.9);
+}
+
+html[data-theme="dark"] .resource-center-page .resource-card h2,
+html[data-theme="dark"] .resource-center-page .resource-card p {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .resource-center-page .resource-card-meta span,
+html[data-theme="dark"] .resource-center-page .resource-card-meta span:first-child,
+html[data-theme="dark"] .resource-center-page .reaction-btn,
+html[data-theme="dark"] .resource-center-page .reaction-btn--meta,
+html[data-theme="dark"] .resource-center-page .resource-action {
+  background: #1f2c3d !important;
+  border-color: #3a4556 !important;
+  color: #c8d6e5 !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="dark"] .resource-center-page .reaction-btn:hover:not(:disabled),
+html[data-theme="dark"] .resource-center-page .resource-action:hover:not(:disabled) {
+  background: #22344b !important;
+  border-color: #5f8fc3 !important;
+  color: #e4e6ed !important;
+}
+
+html[data-theme="dark"] .resource-center-page .reaction-btn.active,
+html[data-theme="dark"] .resource-center-page .resource-action.primary {
+  background: #174a8a !important;
+  border-color: #2b6fbd !important;
+  color: #ffffff !important;
+}
+
+/* Study path: route map and node resource cards should stay dark. */
+html[data-theme="dark"] .study-panel .path-map {
+  background: #1a2535 !important;
+  border-color: #3a4556 !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-theme="dark"] .study-panel .path-map-node__dot {
+  background: #1a2535 !important;
+  border-color: #5f8fc3 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24) !important;
+}
+
+html[data-theme="dark"] .study-panel .path-map-node strong,
+html[data-theme="dark"] .study-panel .path-map-node small,
+html[data-theme="dark"] .study-panel .path-map-node.is-current strong,
+html[data-theme="dark"] .study-panel .path-map-node.is-current small,
+html[data-theme="dark"] .study-panel .path-map-node.is-done strong,
+html[data-theme="dark"] .study-panel .path-map-node.is-done small,
+html[data-theme="dark"] .study-panel .path-map-node.is-locked strong,
+html[data-theme="dark"] .study-panel .path-map-node.is-locked small {
+  background: #1f2c3d !important;
+  border-color: #3a4556 !important;
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .study-panel .path-map-node.is-done .path-map-node__dot,
+html[data-theme="dark"] .study-panel .path-map-node.is-current .path-map-node__dot {
+  background: #174a8a !important;
+  border-color: #5f8fc3 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .study-panel .path-map-node.is-locked .path-map-node__dot {
+  background: #1f2c3d !important;
+  border-color: #4b5b70 !important;
+  color: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .study-panel .path-map__route::before {
+  background:
+    repeating-linear-gradient(90deg, rgba(75, 91, 112, 0.9) 0 12px, rgba(75, 91, 112, 0.38) 12px 18px) !important;
+}
+
+html[data-theme="dark"] .study-panel .path-map__route::after {
+  background: #5f8fc3 !important;
+  box-shadow: 0 0 12px rgba(95, 143, 195, 0.28) !important;
+}
+
+html[data-theme="dark"] .study-panel .branch-card,
+html[data-theme="dark"] .study-panel .branch-resource-card,
+html[data-theme="dark"] .study-panel .branch-resource-meta span,
+html[data-theme="dark"] .study-panel .branch-resource-meta span.read,
+html[data-theme="dark"] .study-panel .branch-mini-action,
+html[data-theme="dark"] .study-panel .branch-action:not(.primary),
+html[data-theme="dark"] .study-panel .resource-read-row,
+html[data-theme="dark"] .study-panel .resource-read-row button,
+html[data-theme="dark"] .study-panel .resource-usage-row {
+  background: #1a2535 !important;
+  border-color: #3a4556 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme="dark"] .study-panel .branch-resource-card:hover,
+html[data-theme="dark"] .study-panel .branch-mini-action:hover,
+html[data-theme="dark"] .study-panel .branch-action:not(.primary):hover,
+html[data-theme="dark"] .study-panel .resource-read-row button:hover {
+  background: #1f2c3d !important;
+  border-color: #5f8fc3 !important;
+}
+
+html[data-theme="dark"] .study-panel .branch-resource-title-row strong,
+html[data-theme="dark"] .study-panel .branch-resource-meta span,
+html[data-theme="dark"] .study-panel .branch-quiz,
+html[data-theme="dark"] .study-panel .resource-read-row span,
+html[data-theme="dark"] .study-panel .resource-read-row span.read,
+html[data-theme="dark"] .study-panel .resource-usage-row span {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .study-panel .branch-resource__icon,
+html[data-theme="dark"] .study-panel .branch-resource-cover {
+  background: #1f2c3d !important;
+  border-color: #3a4556 !important;
+  color: #7aa2f7 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme="dark"] .study-panel .branch-action.primary,
+html[data-theme="dark"] .study-panel .quiz-action-btn {
+  background: #174a8a !important;
+  border-color: #2b6fbd !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .study-panel .path-map__nav {
+  background: #1a2535 !important;
+  border-color: #3a4556 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme="dark"] .study-panel .path-map__nav:hover:not(:disabled) {
+  background: #1f2c3d !important;
+  border-color: #5f8fc3 !important;
+  color: #ffffff !important;
+}
+
+/* Study situation: portrait/radar cards and empty states should not use white fills. */
+html[data-theme="dark"] .study-panel .profile-chart-card,
+html[data-theme="dark"] .study-panel .profile-badge,
+html[data-theme="dark"] .study-panel .path-empty,
+html[data-theme="dark"] .study-panel .duration-ring,
+html[data-theme="dark"] .study-panel .knowledge-focus__chart,
+html[data-theme="dark"] .study-panel .simple-chart {
+  background: #1a2535 !important;
+  border-color: #3a4556 !important;
+  color: #c8d6e5 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme="dark"] .study-panel .profile-badge strong,
+html[data-theme="dark"] .study-panel .profile-badge span,
+html[data-theme="dark"] .study-panel .profile-chart-card__head span,
+html[data-theme="dark"] .study-panel .profile-chart-card__head small,
+html[data-theme="dark"] .study-panel .path-empty,
+html[data-theme="dark"] .study-panel .duration-ring strong,
+html[data-theme="dark"] .study-panel .duration-ring span,
+html[data-theme="dark"] .study-panel .knowledge-focus__head span,
+html[data-theme="dark"] .study-panel .knowledge-focus__head small {
+  color: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .study-panel .profile-badge svg {
+  color: #7aa2f7 !important;
+}
+
+html[data-theme="dark"] .study-panel .radar-grid {
+  stroke: rgba(122, 162, 247, 0.42) !important;
+}
+
+html[data-theme="dark"] .study-panel .radar-axis {
+  stroke: rgba(122, 162, 247, 0.28) !important;
+}
+
+html[data-theme="dark"] .study-panel .radar-score {
+  fill: rgba(95, 143, 195, 0.24) !important;
+  stroke: #7aa2f7 !important;
+}
+
+html[data-theme="dark"] .study-panel .radar-wrap text,
+html[data-theme="dark"] .study-panel .line-chart text {
+  fill: #c8d6e5 !important;
+}
+
+html[data-theme="dark"] .study-panel .radar-wrap .radar-value {
+  fill: #e4e6ed !important;
+}
+
+html[data-theme="dark"] .study-panel .radar-wrap .radar-label-en {
+  fill: #8a94a6 !important;
+}
+
+html[data-theme="dark"] .study-panel .simple-chart path {
+  stroke: #1a2535 !important;
+}
+
+html[data-theme="dark"] .study-panel .simple-chart circle {
+  fill: #1a2535 !important;
 }

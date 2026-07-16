@@ -604,10 +604,18 @@ onBeforeUnmount(revokeCropUrl)
 
 <style scoped>
 .profile-page {
+  --profile-primary: #143761;
+  --profile-accent: #6da3d2;
+  --profile-muted: #5d7d97;
+  --profile-soft: #dcebf2;
+  --profile-bg: #f1f7fb;
+  --profile-ring: #e9eff3;
+  --profile-warm: #f0a73a;
+
   min-height: 100vh;
   padding: 26px 30px 30px;
-  background: #fdfcf7;
-  color: #163f8f;
+  background: var(--profile-bg);
+  color: var(--profile-primary);
   font-family: "Open Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   box-sizing: border-box;
 }
@@ -615,10 +623,10 @@ onBeforeUnmount(revokeCropUrl)
 .profile-header,
 .info-card,
 .side-card > div {
-  border: 1px solid #c9dce9;
+  border: 1px solid var(--profile-soft);
   border-radius: 28px;
-  background: rgba(250, 250, 250, 0.78);
-  box-shadow: 0 14px 34px rgba(22, 63, 143, 0.1);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 14px 34px rgba(20, 55, 97, 0.1);
 }
 
 .profile-header {
@@ -642,7 +650,7 @@ onBeforeUnmount(revokeCropUrl)
   min-height: 28px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(22, 63, 143, 0.9);
+  background: rgba(20, 55, 97, 0.9);
   color: #fff;
   font-size: 12px;
   font-weight: 900;
@@ -673,7 +681,7 @@ onBeforeUnmount(revokeCropUrl)
   height: 16px;
   border: 4px solid #fff;
   border-radius: 50%;
-  background: #5f8fc3;
+  background: var(--profile-accent);
 }
 
 .user-text {
@@ -696,7 +704,7 @@ onBeforeUnmount(revokeCropUrl)
 .card-title span,
 .state-text,
 .status-box p {
-  color: #5f8fc3;
+  color: var(--profile-muted);
 }
 
 .header-actions,
@@ -708,10 +716,10 @@ onBeforeUnmount(revokeCropUrl)
 button {
   min-height: 40px;
   padding: 0 16px;
-  border: 1px solid #c9dce9;
+  border: 1px solid var(--profile-soft);
   border-radius: 18px;
   background: #fff;
-  color: #163f8f;
+  color: var(--profile-primary);
   font: inherit;
   font-weight: 800;
   cursor: pointer;
@@ -720,7 +728,7 @@ button {
 .edit-btn,
 .save-btn,
 .status-tag {
-  background: #163f8f;
+  background: var(--profile-primary);
   color: #fff;
 }
 
@@ -775,10 +783,10 @@ input,
 select,
 textarea {
   width: 100%;
-  border: 1px solid #c9dce9;
+  border: 1px solid var(--profile-soft);
   border-radius: 16px;
   background: #fff;
-  color: #163f8f;
+  color: var(--profile-primary);
   font: inherit;
   box-sizing: border-box;
 }
@@ -809,11 +817,11 @@ textarea {
   min-height: 48px;
   padding: 0 16px;
   border-radius: 18px;
-  background: rgba(237, 249, 252, 0.72);
+  background: rgba(220, 235, 242, 0.72);
 }
 
 .label {
-  color: #5f8fc3;
+  color: var(--profile-muted);
   font-weight: 800;
 }
 
@@ -827,15 +835,15 @@ textarea {
 }
 
 .delete-account-btn {
-  color: #b24141;
+  color: var(--profile-warm);
 }
 
 .error-message {
-  color: #b24141;
+  color: var(--profile-warm);
 }
 
 .success-message {
-  color: #2f7d57;
+  color: var(--profile-accent);
 }
 
 .crop-backdrop {
@@ -843,7 +851,7 @@ textarea {
   inset: 0;
   z-index: 60;
   padding: 24px;
-  background: rgba(8, 24, 55, 0.42);
+  background: rgba(20, 55, 97, 0.42);
   display: grid;
   place-items: center;
 }
@@ -851,10 +859,10 @@ textarea {
 .crop-dialog {
   width: min(92vw, 420px);
   padding: 20px;
-  border: 1px solid #c9dce9;
+  border: 1px solid var(--profile-soft);
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 24px 60px rgba(22, 63, 143, 0.24);
+  box-shadow: 0 24px 60px rgba(20, 55, 97, 0.24);
 }
 
 .crop-title,
@@ -890,7 +898,7 @@ textarea {
   margin: 0 auto;
   overflow: hidden;
   border-radius: 8px;
-  background: #edf6fa;
+  background: var(--profile-ring);
   touch-action: none;
   cursor: grab;
 }
@@ -913,7 +921,7 @@ textarea {
   inset: 0;
   border: 2px solid rgba(255, 255, 255, 0.95);
   border-radius: 50%;
-  box-shadow: 0 0 0 999px rgba(8, 24, 55, 0.24);
+  box-shadow: 0 0 0 999px rgba(20, 55, 97, 0.24);
   pointer-events: none;
 }
 
