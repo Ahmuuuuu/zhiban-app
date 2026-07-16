@@ -20,6 +20,119 @@ logger = logging.getLogger(__name__)
 _GROUP_SIZE = 4
 
 
+_COGNITIVE_LEVELS = ["记忆", "理解", "应用", "分析", "评价", "创造"]
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_topic_outline(raw, subject: str, node_count: int = 0) -> list[dict]:
+    if not isinstance(raw, list):
+        return []
+
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw, 1):
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic") or item.get("title") or "").strip()
+        if not topic or topic in seen:
+            continue
+        seen.add(topic)
+        level = str(item.get("cognitive_level") or _COGNITIVE_LEVELS[min(index - 1, len(_COGNITIVE_LEVELS) - 1)])
+        normalized.append({
+            "topic": topic,
+            "module": str(item.get("module") or item.get("category") or subject).strip(),
+            "cognitive_level": level,
+            "learning_goal": str(item.get("learning_goal") or f"理解并掌握{topic}").strip(),
+            "prerequisite_topics": item.get("prerequisite_topics") if isinstance(item.get("prerequisite_topics"), list) else [],
+            "key_points": item.get("key_points") if isinstance(item.get("key_points"), list) else [topic],
+            "micro_example": str(item.get("micro_example") or f"完成一个关于{topic}的小练习").strip(),
+        })
+        if node_count and len(normalized) >= node_count:
+            break
+    return normalized
+
+
+def _fallback_topic_outline(subject: str, node_count: int = 0) -> list[dict]:
+    target = max(8, min(18, _safe_int(node_count, 12) or 12))
+    templates = [
+        ("学习目标与知识地图", "概念奠基"),
+        ("核心概念与基本术语", "概念奠基"),
+        ("基础结构与表示方法", "概念奠基"),
+        ("基本规则与操作流程", "方法操作"),
+        ("典型方法一：基础应用", "方法操作"),
+        ("典型方法二：组合应用", "方法操作"),
+        ("关键例题与解题步骤", "案例应用"),
+        ("常见错误与辨析", "误区辨析"),
+        ("小型综合任务", "综合迁移"),
+        ("阶段复盘与知识迁移", "综合迁移"),
+        ("进阶应用场景", "案例应用"),
+        ("最终综合练习", "综合迁移"),
+    ]
+    outline = []
+    for index in range(target):
+        name, module = templates[index % len(templates)]
+        topic = f"{subject}：{name}"
+        outline.append({
+            "topic": topic,
+            "module": module,
+            "cognitive_level": _COGNITIVE_LEVELS[min(index, len(_COGNITIVE_LEVELS) - 1)],
+            "learning_goal": f"围绕「{subject}」掌握{name}，并能完成对应检查任务",
+            "prerequisite_topics": [outline[-1]["topic"]] if outline else [],
+            "key_points": [subject, name, module],
+            "micro_example": f"用一个小例子检查「{name}」是否掌握",
+        })
+    return outline
+
+
+async def parse_or_repair_leader_result(raw_text: str, state: dict, *, retry_llm: bool = True) -> dict:
+    """Parse Path Leader JSON; repair once, then fall back to a stable outline."""
+    subject = str(state.get("subject") or "通用学习")
+    requested_count = _safe_int(state.get("node_count"), 0)
+    difficulty = str(state.get("difficulty") or "medium")
+    user_id_int = _safe_int(state.get("user_id"), 0)
+    llm_priority = state.get("llm_priority", "high")
+
+    try:
+        result = parse_llm_json(raw_text)
+        if not isinstance(result, dict):
+            result = {}
+    except Exception as parse_error:
+        logger.warning("[PathLeader] JSON 解析失败，尝试修复: %s", parse_error)
+        result = {}
+        if retry_llm:
+            repair_prompt = (
+                "你是 JSON 修复器。请只修复下面内容为合法 JSON，不要新增解释文字，不要使用 markdown。\n"
+                "要求：第一个字符必须是 {，最后一个字符必须是 }；保留原有 topic_outline 结构；无法确定的字段用合理短文本补齐。\n\n"
+                f"原始内容：\n{str(raw_text or '')[:6000]}"
+            )
+            try:
+                repaired = await llm.ainvoke(repair_prompt, priority=llm_priority, user_id=user_id_int, pool="path")
+                parsed = parse_llm_json(repaired.content)
+                if isinstance(parsed, dict):
+                    result = parsed
+            except Exception:
+                logger.exception("[PathLeader] JSON 修复失败，使用本地兜底大纲")
+
+    topic_outline = _normalize_topic_outline(result.get("topic_outline"), subject, requested_count)
+    if not topic_outline:
+        logger.warning("[PathLeader] topic_outline 为空，使用本地兜底大纲 subject=%s", subject)
+        topic_outline = _fallback_topic_outline(subject, requested_count)
+
+    node_count = _safe_int(result.get("node_count"), len(topic_outline)) or len(topic_outline)
+    node_count = max(1, min(node_count, len(topic_outline)))
+    return {
+        "topic_outline": topic_outline[:node_count],
+        "node_count": node_count,
+        "difficulty": str(result.get("difficulty") or difficulty),
+    }
+
+
 # ═══════════════════════════════════════
 #  State
 # ═══════════════════════════════════════
@@ -67,12 +180,10 @@ async def leader_node(state: PathState) -> dict:
 
     try:
         response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="path")
-        result = parse_llm_json(response.content)
-        if not isinstance(result, dict):
-            result = {}
+        result = await parse_or_repair_leader_result(response.content, state)
     except Exception:
         logger.exception("[PathLeader] LLM 调用失败")
-        return {}
+        result = await parse_or_repair_leader_result("", state, retry_llm=False)
 
     topic_outline = result.get("topic_outline", [])
     node_count = result.get("node_count", len(topic_outline))

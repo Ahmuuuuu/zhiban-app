@@ -254,6 +254,23 @@ async def list_all(user_id: int = None, visibility: str = None) -> list[dict]:
     return list(records)
 
 
+def _merge_overlapped_chunks(chunks: list[str]) -> str:
+    parts = [str(chunk or "").strip() for chunk in chunks if str(chunk or "").strip()]
+    if not parts:
+        return ""
+
+    merged = parts[0]
+    for chunk in parts[1:]:
+        max_overlap = min(220, len(merged), len(chunk))
+        overlap = 0
+        for size in range(max_overlap, 39, -1):
+            if merged.endswith(chunk[:size]):
+                overlap = size
+                break
+        merged = f"{merged}{chunk[overlap:]}" if overlap else f"{merged}\n\n{chunk}"
+    return merged
+
+
 async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict]:
     """
     按原始文档分组展示，合并 BGE 切片避免前端展示混乱。
@@ -271,6 +288,10 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
         "doc_id", "title", "content", "category", "user_id", "visibility", "cover_url", "created_at"
     )
 
+    def _chunk_index(title: str) -> int:
+        match = re.search(r"[（(]第(\d+)部分[）)]", title or "")
+        return int(match.group(1)) if match else 1
+
     groups: dict[str, dict] = {}
     for r in records:
         title = r["title"]
@@ -281,22 +302,38 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
             groups[base] = {
                 "title": base,
                 "category": r.get("category", "knowledge_point"),
+                "doc_id": r["doc_id"],
                 "doc_ids": [],
+                "_parts": [],
                 "chunks": 0,
                 "total_chars": 0,
                 "preview": r["content"][:200],
+                "content": "",
                 "visibility": r["visibility"],
                 "uploader_id": r["user_id"],
                 "cover_url": r.get("cover_url"),
                 "created_at": str(r["created_at"]),
             }
-        groups[base]["doc_ids"].append(r["doc_id"])
+        groups[base]["_parts"].append({
+            "index": _chunk_index(title),
+            "doc_id": r["doc_id"],
+            "content": r["content"],
+        })
         groups[base]["chunks"] += 1
         groups[base]["total_chars"] += len(r["content"])
         if str(r["created_at"]) < groups[base]["created_at"]:
             groups[base]["created_at"] = str(r["created_at"])
 
-    return sorted(groups.values(), key=lambda x: x["created_at"], reverse=True)
+    result = []
+    for group in groups.values():
+        parts = sorted(group.pop("_parts", []), key=lambda item: item["index"])
+        group["doc_ids"] = [item["doc_id"] for item in parts]
+        group["content"] = _merge_overlapped_chunks([item["content"] for item in parts])
+        if group["doc_ids"]:
+            group["doc_id"] = group["doc_ids"][0]
+        result.append(group)
+
+    return sorted(result, key=lambda x: x["created_at"], reverse=True)
 
 
 async def get_by_id(doc_id: str) -> dict | None:

@@ -10,12 +10,12 @@ logger = logging.getLogger(__name__)
 import asyncio
 
 from backend.src.ai_core.llm_config import llm
-from backend.src.ai_core.path_graph import path_graph
+from backend.src.ai_core.path_graph import parse_or_repair_leader_result, path_graph
 from backend.src.utils.constants import VIDEOS_DIR
 
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
-from backend.src.models.exam_model import ExamRecord, KnowledgeMastery
+from backend.src.models.exam_model import ExamQuestion, ExamRecord, KnowledgeMastery
 from backend.src.service.notification.service import check_and_create_node_unlocked, check_and_create_quiz_failed
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
@@ -34,6 +34,7 @@ from backend.src.service.path.helpers import (
     update_portrait_from_mastery,
     update_progress_resource_ids,
 )
+from backend.src.service.path.generation_locks import get_node_generation_lock
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -245,7 +246,16 @@ class PathService:
                 )
                 user_id_int = int(user_id)
                 leader_response = await llm.ainvoke(leader_prompt, priority="high", user_id=user_id_int, pool="path")
-                leader_result = parse_llm_json(leader_response.content)
+                leader_result = await parse_or_repair_leader_result(
+                    leader_response.content,
+                    {
+                        "user_id": str(user_id),
+                        "subject": subject,
+                        "difficulty": difficulty,
+                        "node_count": node_count,
+                        "llm_priority": "high",
+                    },
+                )
                 topic_outline = leader_result.get("topic_outline", []) if isinstance(leader_result, dict) else []
                 node_count = int(leader_result.get("node_count", len(topic_outline)) or len(topic_outline)) if isinstance(leader_result, dict) else len(topic_outline)
                 difficulty = leader_result.get("difficulty", difficulty) if isinstance(leader_result, dict) else difficulty
@@ -732,57 +742,62 @@ class PathService:
             yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径'}, ensure_ascii=False)}\n\n"
             return
 
-        topic = node.topic
-        node_resource_types = ["document", "ppt", "mindmap"]
-        existing_records, missing_types = await check_existing_resources(user_id, topic, node_resource_types)
+        lock = await get_node_generation_lock(user_id, path_id, node_id, "resources")
+        if lock.locked():
+            yield f"data: {json.dumps({'type': 'status', 'msg': '该节点资料正在生成，正在等待已有任务完成...'}, ensure_ascii=False)}\n\n"
 
-        for r in existing_records:
-            yield _resource_sse(r)
+        async with lock:
+            topic = node.topic
+            node_resource_types = ["document", "ppt", "mindmap"]
+            existing_records, missing_types = await check_existing_resources(user_id, topic, node_resource_types)
 
-        if not missing_types:
-            all_ids = [r.id for r in existing_records]
-            await update_progress_resource_ids(progress, all_ids)
-            yield _sse_done(all_ids)
-            return
+            for r in existing_records:
+                yield _resource_sse(r)
 
-        gen_types = [t for t in missing_types if t != "exercise"]
-        if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
-            gen_types.insert(0, "ppt")
+            if not missing_types:
+                all_ids = [r.id for r in existing_records]
+                await update_progress_resource_ids(progress, all_ids)
+                yield _sse_done(all_ids)
+                return
 
-        if gen_types:
-            yield f"data: {json.dumps({'type': 'status', 'msg': f'开始生成 {len(gen_types)} 种资源...'}, ensure_ascii=False)}\n\n"
+            gen_types = [t for t in missing_types if t != "exercise"]
+            if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
+                gen_types.insert(0, "ppt")
 
-        generated_ids = []
-        try:
             if gen_types:
-                from backend.src.service.resource.service import ResourceService
-                async for event_str in ResourceService.generate_stream(
-                    topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
-                    ppt_prompt_key="ppt_video",
-                    chat_group_id=0,
-                    bind_chat_history=False,
-                    include_request_in_history=False,
-                    save_to_chat_history=False,
-                ):
-                    yield event_str
-                    if event_str.startswith("data:") and "[DONE]" not in event_str:
-                        try:
-                            data = json.loads(event_str[5:].strip())
-                            if data.get("done"):
-                                for r in data.get("resources", []):
-                                    rid = r.get("resource_id")
-                                    if rid:
-                                        generated_ids.append(rid)
-                        except (json.JSONDecodeError, KeyError):
-                            pass
+                yield f"data: {json.dumps({'type': 'status', 'msg': f'开始生成 {len(gen_types)} 种资源...'}, ensure_ascii=False)}\n\n"
 
-            all_ids = [r.id for r in existing_records] + generated_ids
-            await update_progress_resource_ids(progress, all_ids)
-            yield _sse_done(all_ids)
-        except Exception:
-            # 客户端断开或异常时，至少把已收集到的资源 ID 写回进度
-            all_ids = [r.id for r in existing_records] + generated_ids
-            await update_progress_resource_ids(progress, all_ids)
+            generated_ids = []
+            try:
+                if gen_types:
+                    from backend.src.service.resource.service import ResourceService
+                    async for event_str in ResourceService.generate_stream(
+                        topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
+                        ppt_prompt_key="ppt_video",
+                        chat_group_id=0,
+                        bind_chat_history=False,
+                        include_request_in_history=False,
+                        save_to_chat_history=False,
+                    ):
+                        yield event_str
+                        if event_str.startswith("data:") and "[DONE]" not in event_str:
+                            try:
+                                data = json.loads(event_str[5:].strip())
+                                if data.get("done"):
+                                    for r in data.get("resources", []):
+                                        rid = r.get("resource_id")
+                                        if rid:
+                                            generated_ids.append(rid)
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+
+                all_ids = [r.id for r in existing_records] + generated_ids
+                await update_progress_resource_ids(progress, all_ids)
+                yield _sse_done(all_ids)
+            except Exception:
+                # 客户端断开或异常时，至少把已收集到的资源 ID 写回进度
+                all_ids = [r.id for r in existing_records] + generated_ids
+                await update_progress_resource_ids(progress, all_ids)
 
     @staticmethod
     async def generate_node_resources(path_id: int, node_id: int, user_id: int) -> dict:
@@ -795,67 +810,69 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        topic = node.topic
-        node_resource_types = ["document", "ppt", "mindmap"]
-        existing_records, missing_types = await check_existing_resources(user_id, topic, node_resource_types)
+        lock = await get_node_generation_lock(user_id, path_id, node_id, "resources")
+        async with lock:
+            topic = node.topic
+            node_resource_types = ["document", "ppt", "mindmap"]
+            existing_records, missing_types = await check_existing_resources(user_id, topic, node_resource_types)
 
-        gen_types = [t for t in missing_types if t != "exercise"]
-        if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
-            gen_types.insert(0, "ppt")
+            gen_types = [t for t in missing_types if t != "exercise"]
+            if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
+                gen_types.insert(0, "ppt")
 
-        generated_ids = []
-        if gen_types:
-            try:
-                saved = await ResourceService.generate_and_save(
-                    topic=topic,
-                    user_id=user_id,
-                    resource_types=gen_types,
-                    ppt_prompt_key="ppt_video",
-                    skip_review=True,
-                    chat_group_id=0,
-                    bind_chat_history=False,
-                    include_request_in_history=False,
-                    save_to_chat_history=False,
-                )
-                generated_ids = [r.get("resource_id") or r.get("id") for r in saved if r]
-            except Exception:
-                logger.exception("ResourceService.generate_and_save 失败 topic=%s types=%s", topic, gen_types)
+            generated_ids = []
+            if gen_types:
+                try:
+                    saved = await ResourceService.generate_and_save(
+                        topic=topic,
+                        user_id=user_id,
+                        resource_types=gen_types,
+                        ppt_prompt_key="ppt_video",
+                        skip_review=True,
+                        chat_group_id=0,
+                        bind_chat_history=False,
+                        include_request_in_history=False,
+                        save_to_chat_history=False,
+                    )
+                    generated_ids = [r.get("resource_id") or r.get("id") for r in saved if r]
+                except Exception:
+                    logger.exception("ResourceService.generate_and_save 失败 topic=%s types=%s", topic, gen_types)
 
-        all_ids = [r.id for r in existing_records] + generated_ids
-        await update_progress_resource_ids(progress, all_ids)
+            all_ids = [r.id for r in existing_records] + generated_ids
+            await update_progress_resource_ids(progress, all_ids)
 
-        resources = []
-        if all_ids:
-            records = await GeneratedResource.filter(id__in=all_ids, user_id=user_id).all()
-            record_map = {r.id: r for r in records}
-            for rid in all_ids:
-                r = record_map.get(rid)
-                if not r:
-                    continue
-                item = {
-                    "resource_id": r.id,
-                    "topic": r.topic,
-                    "resource_type": r.resource_type,
-                    "content": r.content,
-                    "review_passed": r.review_passed,
-                    "download_url": f"/resource/{r.id}/download",
-                    "cover_url": r.cover_url,
-                    "view_count": r.view_count,
-                    "download_count": r.download_count,
-                }
-                if r.file_url:
-                    item["file_url"] = r.file_url
-                    item["url"] = r.file_url
-                    item["preview_url"] = r.file_url
-                resources.append(item)
+            resources = []
+            if all_ids:
+                records = await GeneratedResource.filter(id__in=all_ids, user_id=user_id).all()
+                record_map = {r.id: r for r in records}
+                for rid in all_ids:
+                    r = record_map.get(rid)
+                    if not r:
+                        continue
+                    item = {
+                        "resource_id": r.id,
+                        "topic": r.topic,
+                        "resource_type": r.resource_type,
+                        "content": r.content,
+                        "review_passed": r.review_passed,
+                        "download_url": f"/resource/{r.id}/download",
+                        "cover_url": r.cover_url,
+                        "view_count": r.view_count,
+                        "download_count": r.download_count,
+                    }
+                    if r.file_url:
+                        item["file_url"] = r.file_url
+                        item["url"] = r.file_url
+                        item["preview_url"] = r.file_url
+                    resources.append(item)
 
-        return {
-            "node_id": node_id,
-            "resource_ids": all_ids,
-            "resources": resources,
-            "generated_count": len(generated_ids),
-            "reused_count": len(existing_records),
-        }
+            return {
+                "node_id": node_id,
+                "resource_ids": all_ids,
+                "resources": resources,
+                "generated_count": len(generated_ids),
+                "reused_count": len(existing_records),
+            }
 
     @staticmethod
     async def generate_node_quiz(path_id: int, node_id: int, user_id: int, pre_generate: bool = False) -> dict:
@@ -871,75 +888,81 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
+        lock = await get_node_generation_lock(user_id, path_id, node_id, "quiz")
+        async with lock:
+            progress = await UserPathProgress.filter(id=progress.id).first()
+            if not progress:
+                raise ValueError("未加入该路径")
 
-        # 已有预生成的 session → 直接复用
-        if progress.quiz_session_id:
-            existing = await ExamService.get_session(progress.quiz_session_id, user_id)
-            if existing and existing.get("total_questions", 0) > 0:
-                # 查该 session 的 difficulty（从第一题推测）
-                first_record = await ExamRecord.filter(session_id=progress.quiz_session_id).prefetch_related("question").first()
-                return {
-                    "node_id": node_id,
-                    "session_id": progress.quiz_session_id,
-                    "questions": existing.get("records", []),
-                    "quiz_config": quiz_config,
-                    "reused": True,
-                    "difficulty": first_record.question.difficulty if first_record and first_record.question else "medium",
-                }
+            quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
 
-        # 没有则生成
-        count = quiz_config.get("count", 10)
+            # 已有预生成的 session → 直接复用
+            if progress.quiz_session_id:
+                existing = await ExamService.get_session(progress.quiz_session_id, user_id)
+                if existing and existing.get("total_questions", 0) > 0:
+                    # 查该 session 的 difficulty（从第一题推测）
+                    first_record = await ExamRecord.filter(session_id=progress.quiz_session_id).prefetch_related("question").first()
+                    return {
+                        "node_id": node_id,
+                        "session_id": progress.quiz_session_id,
+                        "questions": existing.get("records", []),
+                        "quiz_config": quiz_config,
+                        "reused": True,
+                        "difficulty": first_record.question.difficulty if first_record and first_record.question else "medium",
+                    }
 
-        if not pre_generate:
-            # 检查资源是否已查看，根据查看次数决定难度
-            has_viewed, total_views = await check_resource_viewed(node_id, user_id)
-            if not has_viewed:
-                return {"blocked": True, "reason": "请先学习当前节点的学习资料后再进行检测"}
+            # 没有则生成
+            count = quiz_config.get("count", 10)
 
-            if total_views <= 1:
-                difficulty = "easy"
-            elif total_views <= 3:
-                difficulty = "medium"
+            if not pre_generate:
+                # 检查资源是否已查看，根据查看次数决定难度
+                has_viewed, total_views = await check_resource_viewed(node_id, user_id)
+                if not has_viewed:
+                    return {"blocked": True, "reason": "请先学习当前节点的学习资料后再进行检测"}
+
+                if total_views <= 1:
+                    difficulty = "easy"
+                elif total_views <= 3:
+                    difficulty = "medium"
+                else:
+                    difficulty = "hard"
             else:
-                difficulty = "hard"
-        else:
-            difficulty = "medium"
+                difficulty = "medium"
 
-        # 收集节点关联资源上的用户笔记，注入出题上下文
-        user_notes = ""
-        try:
-            resource_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
-            if resource_ids:
-                from backend.src.service.annotation import service as annotation_service
-                user_notes = await annotation_service.collect_notes_for_quiz(user_id, resource_ids)
-        except Exception:
-            logger.exception("收集笔记失败 path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
+            # 收集节点关联资源上的用户笔记，注入出题上下文
+            user_notes = ""
+            try:
+                resource_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
+                if resource_ids:
+                    from backend.src.service.annotation import service as annotation_service
+                    user_notes = await annotation_service.collect_notes_for_quiz(user_id, resource_ids)
+            except Exception:
+                logger.exception("收集笔记失败 path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
 
-        result = await ExamService.generate_and_save(
-            topic=node.topic,
-            user_id=user_id,
-            question_types=["single_choice"] * 5 + ["multi_choice"] + ["true_false"] * 2 + ["fill_blank"] * 2,
-            count=count,
-            difficulty=difficulty,
-            node_id=node_id,
-            user_notes=user_notes,
-            skip_review=pre_generate,
-            llm_priority="low" if pre_generate else "high",
-        )
+            result = await ExamService.generate_and_save(
+                topic=node.topic,
+                user_id=user_id,
+                question_types=["single_choice"] * 5 + ["multi_choice"] + ["true_false"] * 2 + ["fill_blank"] * 2,
+                count=count,
+                difficulty=difficulty,
+                node_id=node_id,
+                user_notes=user_notes,
+                skip_review=pre_generate,
+                llm_priority="low" if pre_generate else "high",
+            )
 
-        sid = result.get("session_id")
-        if sid:
-            await UserPathProgress.filter(id=progress.id).update(quiz_session_id=sid)
+            sid = result.get("session_id")
+            if sid:
+                await UserPathProgress.filter(id=progress.id).update(quiz_session_id=sid)
 
-        return {
-            "node_id": node_id,
-            "session_id": sid,
-            "questions": result.get("questions", []),
-            "quiz_config": quiz_config,
-            "difficulty": difficulty,
-            "reused": False,
-        }
+            return {
+                "node_id": node_id,
+                "session_id": sid,
+                "questions": result.get("questions", []),
+                "quiz_config": quiz_config,
+                "difficulty": difficulty,
+                "reused": False,
+            }
 
     @staticmethod
     async def generate_node_quiz_stream(path_id: int, node_id: int, user_id: int):
@@ -954,74 +977,84 @@ class PathService:
             yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径'}, ensure_ascii=False)}\n\n"
             return
 
-        quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
+        lock = await get_node_generation_lock(user_id, path_id, node_id, "quiz")
+        if lock.locked():
+            yield f"data: {json.dumps({'type': 'status', 'msg': '该节点检测正在生成，正在等待已有任务完成...'}, ensure_ascii=False)}\n\n"
 
-        # 已有预生成的 session → 秒返
-        if progress.quiz_session_id:
-            existing = await ExamService.get_session(progress.quiz_session_id, user_id)
-            if existing and existing.get("total_questions", 0) > 0:
-                yield f"data: {json.dumps({'type': 'status', 'msg': '复用已有测验题目'}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'session_id': progress.quiz_session_id, 'quiz_config': quiz_config, 'question_count': existing.get('total_questions', 0), 'reused': True}, ensure_ascii=False)}\n\n"
+        async with lock:
+            progress = await UserPathProgress.filter(id=progress.id).first()
+            if not progress:
+                yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径'}, ensure_ascii=False)}\n\n"
+                return
+
+            quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
+
+            # 已有预生成的 session → 秒返
+            if progress.quiz_session_id:
+                existing = await ExamService.get_session(progress.quiz_session_id, user_id)
+                if existing and existing.get("total_questions", 0) > 0:
+                    yield f"data: {json.dumps({'type': 'status', 'msg': '复用已有测验题目'}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'session_id': progress.quiz_session_id, 'quiz_config': quiz_config, 'question_count': existing.get('total_questions', 0), 'reused': True}, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+
+            count = quiz_config.get("count", 10)
+            difficulty = "medium"
+
+            # 检查资源是否已查看，根据查看次数决定难度
+            has_viewed, total_views = await check_resource_viewed(node_id, user_id)
+            if not has_viewed:
+                yield f"data: {json.dumps({'type': 'blocked', 'reason': '请先学习当前节点的学习资料后再进行检测'}, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
-        count = quiz_config.get("count", 10)
-        difficulty = "medium"
-
-        # 检查资源是否已查看，根据查看次数决定难度
-        has_viewed, total_views = await check_resource_viewed(node_id, user_id)
-        if not has_viewed:
-            yield f"data: {json.dumps({'type': 'blocked', 'reason': '请先学习当前节点的学习资料后再进行检测'}, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
-        if total_views <= 1:
-            difficulty = "easy"
-        elif total_views <= 3:
-            difficulty = "medium"
-        else:
-            difficulty = "hard"
-
-        # 收集节点关联资源上的用户笔记，注入出题上下文
-        user_notes = ""
-        try:
-            resource_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
-            if resource_ids:
-                from backend.src.service.annotation import service as annotation_service
-                user_notes = await annotation_service.collect_notes_for_quiz(user_id, resource_ids)
-        except Exception:
-            logger.exception("收集笔记失败 path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
-
-        # 流式生成并透传事件，截获 done 写 quiz_session_id
-        async for event in ExamService.generate_and_save_stream(
-            topic=node.topic,
-            user_id=user_id,
-            question_types=["single_choice"] * 5 + ["multi_choice"] + ["true_false"] * 2 + ["fill_blank"] * 2,
-            count=count,
-            difficulty=difficulty,
-            node_id=node_id,
-            user_notes=user_notes,
-        ):
-            if isinstance(event, str) and event.startswith("data:"):
-                data_str = event[5:].strip()
-                if data_str == "[DONE]":
-                    yield event
-                    continue
-                try:
-                    payload = json.loads(data_str)
-                    if payload.get("type") == "done":
-                        session_id = payload.get("session_id")
-                        if session_id:
-                            await UserPathProgress.filter(id=progress.id).update(quiz_session_id=session_id)
-                        payload["quiz_config"] = quiz_config
-                        payload["difficulty"] = difficulty
-                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                        continue
-                    yield event
-                except json.JSONDecodeError:
-                    yield event
+            if total_views <= 1:
+                difficulty = "easy"
+            elif total_views <= 3:
+                difficulty = "medium"
             else:
-                yield event
+                difficulty = "hard"
+
+            # 收集节点关联资源上的用户笔记，注入出题上下文
+            user_notes = ""
+            try:
+                resource_ids = json.loads(progress.resource_ids) if progress.resource_ids else []
+                if resource_ids:
+                    from backend.src.service.annotation import service as annotation_service
+                    user_notes = await annotation_service.collect_notes_for_quiz(user_id, resource_ids)
+            except Exception:
+                logger.exception("收集笔记失败 path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
+
+            # 流式生成并透传事件，截获 done 写 quiz_session_id
+            async for event in ExamService.generate_and_save_stream(
+                topic=node.topic,
+                user_id=user_id,
+                question_types=["single_choice"] * 5 + ["multi_choice"] + ["true_false"] * 2 + ["fill_blank"] * 2,
+                count=count,
+                difficulty=difficulty,
+                node_id=node_id,
+                user_notes=user_notes,
+            ):
+                if isinstance(event, str) and event.startswith("data:"):
+                    data_str = event[5:].strip()
+                    if data_str == "[DONE]":
+                        yield event
+                        continue
+                    try:
+                        payload = json.loads(data_str)
+                        if payload.get("type") == "done":
+                            session_id = payload.get("session_id")
+                            if session_id:
+                                await UserPathProgress.filter(id=progress.id).update(quiz_session_id=session_id)
+                            payload["quiz_config"] = quiz_config
+                            payload["difficulty"] = difficulty
+                            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                            continue
+                        yield event
+                    except json.JSONDecodeError:
+                        yield event
+                else:
+                    yield event
 
     @staticmethod
     async def submit_node_quiz(path_id: int, node_id: int, user_id: int, session_id: str, answers: dict[str, str] | None = None, correct_answers: dict[str, str] | None = None) -> dict:

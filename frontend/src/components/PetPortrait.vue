@@ -23,6 +23,25 @@ const hasSavedPortraitTags = (portrait: any) => {
   return false;
 };
 
+const hasMeaningfulTraitValue = (value: any): boolean => {
+  if (value == null) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") {
+    if ("value" in value) return String(value.value ?? "").trim().length > 0;
+    return Object.values(value).some(hasMeaningfulTraitValue);
+  }
+  return String(value).trim().length > 0;
+};
+
+const hasSavedPortrait = (portrait: any) => {
+  if (!portrait || typeof portrait !== "object") return false;
+  if (hasSavedPortraitTags(portrait)) return true;
+  if (String(portrait.cognition || "").trim()) return true;
+  if (String(portrait.learning_goal || "").trim()) return true;
+  if (String(portrait.profile_summary || "").trim()) return true;
+  return hasMeaningfulTraitValue(portrait.traits);
+};
+
 const loadPortraitUsername = async () => {
   portraitUsername.value =
     localStorage.getItem("username") || localStorage.getItem("account") || localStorage.getItem("user_id") || "同学";
@@ -42,32 +61,37 @@ const portraitSkipKey = () => {
   return `zhiban_portrait_setup_skipped_${userId}`;
 };
 
+const markPortraitOnboardingHandled = () => {
+  localStorage.setItem(portraitSkipKey(), "1");
+};
+
 const checkPortraitOnboarding = async () => {
-  if (portraitChecking.value || !localStorage.getItem("token")) return;
+  if (portraitChecking.value || portraitPromptVisible.value || !localStorage.getItem("token")) return;
   if (localStorage.getItem(portraitSkipKey()) === "1") return;
 
   portraitChecking.value = true;
   try {
     await loadPortraitUsername();
     const portrait = getResponseData(await getPortrait());
-    if (!hasSavedPortraitTags(portrait)) {
+    if (!hasSavedPortrait(portrait)) {
       portraitPromptVisible.value = true;
     }
-  } catch {
+  } catch (error) {
+    console.warn("[PetPortrait] 画像状态检查失败，跳过初次见面弹窗:", error);
     await loadPortraitUsername();
-    portraitPromptVisible.value = true;
   } finally {
     portraitChecking.value = false;
   }
 };
 
 const startPortraitQA = () => {
+  markPortraitOnboardingHandled();
   portraitPromptVisible.value = false;
   window.dispatchEvent(new CustomEvent("zhiban-start-portrait-qa"));
 };
 
 const skipPortraitOnboarding = () => {
-  localStorage.setItem(portraitSkipKey(), "1");
+  markPortraitOnboardingHandled();
   portraitPromptVisible.value = false;
 };
 

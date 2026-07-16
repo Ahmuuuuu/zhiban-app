@@ -294,13 +294,19 @@ const primaryNodes = computed(() => {
 })
 
 const requestedResourceTypes = computed(() => {
-  if (props.task?.tool?.generateMode === 'video') return ['video']
   const fromTool = props.task?.tool?.resourceTypes || []
   const fromEvents = Object.values(nodes.value)
     .map(node => node.resource_type || node.resourceType)
     .filter(Boolean)
-  return [...new Set([...fromTool, ...fromEvents].map(item => String(item || '').toLowerCase()))]
+  const types = [...new Set([...fromTool, ...fromEvents].map(item => String(item || '').toLowerCase()))]
     .filter(item => item && item !== 'external_video')
+
+  if (props.task?.tool?.generateMode === 'video') {
+    const concreteTypes = types.filter(item => item !== 'video')
+    return concreteTypes.length ? concreteTypes : ['video']
+  }
+
+  return types
 })
 
 const hasParallelBranches = computed(() => requestedResourceTypes.value.length > 1)

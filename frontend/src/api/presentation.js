@@ -46,7 +46,7 @@ export function getPresentation(presentationId) {
   return request.get(`/video/${presentationId}`)
 }
 
-export async function streamPresentationProgress(presentationId, { onEvent, onDone, onError, signal } = {}) {
+export async function streamPresentationProgress(presentationId, { onEvent, onDone, onError, signal, doneOnAudio = false } = {}) {
   const url = `${API_BASE_URL}video/${encodeURIComponent(presentationId)}/sse`
   const token = localStorage.getItem('token')
   const response = await fetch(url, {
@@ -109,11 +109,15 @@ export async function streamPresentationProgress(presentationId, { onEvent, onDo
           eventData.phase === 'complete' &&
           ['done', 'failed'].includes(String(eventData.status || '').toLowerCase())
         const isAudioDone = eventData.type === 'audio_progress' && eventData.status === 'all_ready'
+        const isReadyWithAudio = eventData.status === 'ready' &&
+          Array.isArray(eventData.chapters) &&
+          eventData.chapters.length > 0 &&
+          eventData.chapters.every(ch => ch?.is_audio_ready)
         const isFailed = eventData.status === 'failed'
         if (isFailed) {
           onError?.(eventData.error || eventData.message || '视频生成失败')
           notifyDone(eventData)
-        } else if (isAgentDone || isAudioDone) {
+        } else if (isAudioDone || isReadyWithAudio || (isAgentDone && !doneOnAudio)) {
           notifyDone(eventData)
         }
       }

@@ -76,6 +76,8 @@ export function initPortraitFromDialogue(data: { dialogue: Array<{ question: str
 
 export function uploadStudyMaterial(data: unknown): Promise<unknown>;
 
+export function getStudyResource(resourceId: number | string): Promise<unknown>;
+
 export function getStudyResources(params?: Record<string, unknown>): Promise<unknown>;
 
 export function deleteStudyResource(resourceId: number | string): Promise<unknown>;
@@ -248,6 +250,7 @@ export function streamPresentationProgress(
     onDone?: (eventData?: unknown) => void;
     onError?: (error: string) => void;
     signal?: AbortSignal;
+    doneOnAudio?: boolean;
   },
 ): Promise<void>;
 

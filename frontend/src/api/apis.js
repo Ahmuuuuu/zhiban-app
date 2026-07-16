@@ -49,6 +49,7 @@ export {
   getLearningGuidance,
   getStudyCollections,
   getStudyExamWeekly,
+  getStudyResource,
   getStudyPathStats,
   getStudyResources,
   getStudyStats,

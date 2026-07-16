@@ -617,6 +617,7 @@ const {
   removeTasksForConversation
 } = useGenerationTaskQueue()
 const boundGenerationTaskMessages = new Map()
+const boundGenerationTaskStops = new Map()
 const ACTIVE_GENERATION_TASK_KEY = 'zhiban_active_generation_task_id'
 const agentFlowDrawerOpen = ref(false)
 const selectedAgentFlowTaskId = ref('')
@@ -643,10 +644,9 @@ const isTaskInCurrentConversation = task => {
   const currentChatId = normalizeConversationId(activeConversationId.value)
   const taskChatId = normalizeConversationId(task.chatGroupId || task.chat_group_id)
   const hasVisibleMessage = taskHasVisibleMessage(task)
-  const isRunning = task.status === 'running'
   if (currentChatId && historyLoading.value && !taskChatId) return false
   if (currentChatId) {
-    if (taskChatId === currentChatId) return isRunning || hasVisibleMessage
+    if (taskChatId === currentChatId) return true
     return !taskChatId && hasVisibleMessage
   }
   return !taskChatId && hasVisibleMessage
@@ -1162,16 +1162,6 @@ const appendPresentationCardsFromHistory = async (records, targetMessages) => {
       if (presentationId) existingIds.add(presentationId)
     }
 
-    // 已有视频 → 移除冗余的中间资源卡片（PPT/文档），避免过程文件干扰
-    if (existingUrls.size > 0 || existingIds.size > 0) {
-      for (let i = targetMessages.length - 1; i >= 0; i--) {
-        const msg = targetMessages[i]
-        const ft = String(msg.file_type || msg.fileType || '').toLowerCase()
-        if ((ft === 'ppt' || ft === 'document') && !msg.presentation) {
-          targetMessages.splice(i, 1)
-        }
-      }
-    }
   } catch (error) {
     if (isBackendUnavailableError(error)) return
     console.warn('[ChatView] load presentations for history failed:', error)
@@ -1640,7 +1630,7 @@ const syncThinkingTypewriter = (message: any) => {
 
   message._thinkingTyping = true
   if (!state.timer) {
-    state.timer = window.setInterval(() => advanceThinkingTypewriter(message, messageId), 18)
+    state.timer = window.setInterval(() => advanceThinkingTypewriter(message, messageId), 60)
   }
 }
 
@@ -1671,7 +1661,6 @@ watch(
       if (!aliveIds.has(messageId)) stopThinkingTypewriter(messageId)
     }
   },
-  { deep: true }
 )
 
 const documentPreview = ref({
@@ -1903,9 +1892,12 @@ const normalizeHistoryAssistantMessage = (item, id, time) => {
 }
 
 const isPptFile = fileData => {
+  const explicitType = String(fileData?.fileType || fileData?.file_type || fileData?.resource_type || fileData?.resourceType || '').toLowerCase()
+  const resourceKind = String(fileData?.resourceKind || fileData?.kind || '').toLowerCase()
+  if (resourceKind === 'presentation' || explicitType === 'video' || explicitType === 'external_video') return false
   return String(fileData?.fileType || fileData?.file_type || fileData?.resource_type || fileData?.filename || '')
     .toLowerCase()
-    .match(/ppt|powerpoint|presentation|slide/)
+    .match(/ppt|pptx|powerpoint/)
 }
 
 const getFileResourceId = fileData => {
@@ -3087,14 +3079,23 @@ const getTaskThinkingProcess = task => {
 }
 
 const attachGenerationTaskToMessage = (task, messageId) => {
-  if (!task?.id || boundGenerationTaskMessages.get(task.id) === messageId) return
+  if (!task?.id) return
+  const boundMessageId = boundGenerationTaskMessages.get(task.id)
+  const boundMessageAlive = boundMessageId && messages.value.some(item => item.id === boundMessageId)
+  if (boundMessageId === messageId && boundMessageAlive) return
+
+  const stopPrevious = boundGenerationTaskStops.get(task.id)
+  if (stopPrevious) {
+    stopPrevious()
+    boundGenerationTaskStops.delete(task.id)
+  }
   boundGenerationTaskMessages.set(task.id, messageId)
 
   let fileCursor = 0
   let imageCursor = 0
   let doneHandled = false
 
-  watch(
+  const stop = watch(
     () => [task.progress, task.thinkingProcess, task.status, task.files.length, task.images.length, task.updatedAt, task.tool?.pptThemeId, (task as any)._pptStream?.slides?.length, (task as any)._pptStream?._version, (task as any)._pptStream?._needsRebuild],
     async () => {
       // 任务是否属于当前显示的对话：chatGroupId 未分配或未匹配时视为外来任务
@@ -3160,7 +3161,20 @@ const attachGenerationTaskToMessage = (task, messageId) => {
       }
 
       // PPT 任务：后端开始生成后立即推占位卡片（只有预览可用）
-      // 视频模式下不放 PPT 占位（后续直接弹视频卡片）
+      if (!taskIsForeign && task.tool?.generateMode === 'video' && (task as any)._pptPlaceholderId) {
+        const placeholderIdx = messages.value.findIndex(m => m.id === (task as any)._pptPlaceholderId)
+        if (placeholderIdx !== -1) messages.value.splice(placeholderIdx, 1)
+        ;(task as any)._pptPlaceholderId = null
+      }
+
+      if (!taskIsForeign && task.tool?.generateMode !== 'video' && (task as any)._pptPlaceholderId) {
+        const placeholderAlive = messages.value.some(m => m.id === (task as any)._pptPlaceholderId)
+        if (!placeholderAlive) {
+          ;(task as any)._pptPlaceholderId = null
+        }
+      }
+
+      // PPT 任务：后端开始生成后立即推占位卡片（只有预览可用）
       if (!taskIsForeign && !(task as any)._pptPlaceholderId && task.status === 'running' && task.tool?.generateMode !== 'video') {
         const isPptTask = task.tool?.resourceTypes?.includes('ppt')
         if (isPptTask) {
@@ -3214,7 +3228,12 @@ const attachGenerationTaskToMessage = (task, messageId) => {
         while (fileCursor < task.files.length) {
           const file = task.files[fileCursor]
           fileCursor += 1
-          if (task.tool?.generateMode === 'video' && file.file_type !== 'video' && file.resource_type !== 'video' && file.resource_type !== 'external_video') {
+          if (
+            task.tool?.generateMode === 'video' &&
+            file.file_type !== 'video' &&
+            file.resource_type !== 'video' &&
+            file.resource_type !== 'external_video'
+          ) {
             continue
           }
 
@@ -3227,7 +3246,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
 
           // 真实文件到达前，先移除 PPT 占位卡片
           const pptPlaceholderId = (task as any)._pptPlaceholderId
-          if (pptPlaceholderId) {
+          if (pptPlaceholderId && isPptFile(file)) {
             const placeholderIdx = messages.value.findIndex(m => m.id === pptPlaceholderId)
             if (placeholderIdx !== -1) messages.value.splice(placeholderIdx, 1)
             ;(task as any)._pptPlaceholderId = null
@@ -3370,6 +3389,7 @@ const attachGenerationTaskToMessage = (task, messageId) => {
     },
     { immediate: true }
   )
+  boundGenerationTaskStops.set(task.id, stop)
 }
 
 const addGenerationTaskMessage = task => {
@@ -3983,6 +4003,12 @@ onUnmounted(() => {
   window.removeEventListener('zhiban-login-success', resetChatViewForUserContext)
   window.removeEventListener('zhiban:user-logged-out', resetChatViewForUserContext)
   window.removeEventListener('zhiban-auth-expired', resetChatViewForUserContext)
+
+  for (const stop of boundGenerationTaskStops.values()) {
+    stop()
+  }
+  boundGenerationTaskStops.clear()
+  boundGenerationTaskMessages.clear()
 
   for (const messageId of thinkingTypewriterStates.keys()) {
     stopThinkingTypewriter(messageId)

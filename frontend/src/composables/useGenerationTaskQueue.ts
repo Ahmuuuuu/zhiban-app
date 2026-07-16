@@ -60,6 +60,7 @@ const pollingTaskIds = new Set<string>()
 const streamingTaskIds = new Set<string>()
 const GENERATION_TASKS_STORAGE_KEY = 'zhiban_generation_tasks_v2'
 const ACTIVE_GENERATION_TASK_KEY = 'zhiban_active_generation_task_id'
+const STREAM_UI_FLUSH_MS = 500
 let hasHydratedTasks = false
 let hydratePromise: Promise<GenerationTask[]> | null = null
 let activeTaskOwnerId = ''
@@ -256,6 +257,14 @@ const syncResourceBranchFromChildren = (
   const active = children.find(node => isActiveAgentStatus(normalizeAgentStatus(node.status)))
   const doneCount = children.filter(node => normalizeAgentStatus(node.status) === 'done').length
   const total = Math.max(Number(branch.total || 0), children.length)
+
+  const previousStatus = normalizeAgentStatus(branch.status)
+  if (previousStatus === 'done' && !failed) {
+    branch.current = Math.max(Number(branch.current || 0), Number(branch.total || 0), doneCount)
+    branch.total = Math.max(Number(branch.total || 0), total || 0) || branch.total
+    branch.updatedAt = now
+    return
+  }
 
   if (failed) {
     branch.status = 'failed'
@@ -594,6 +603,26 @@ const appendTaskThinking = (task: GenerationTask, value: any) => {
   task.thinkingProcess = lines.slice(-80).join('\n')
 }
 
+const shouldFlushStreamUi = (task: GenerationTask, key: string, immediate = false) => {
+  const now = Date.now()
+  const state = ((task as any)._streamUiFlush ||= {})
+  if (immediate || now - Number(state[key] || 0) >= STREAM_UI_FLUSH_MS) {
+    state[key] = now
+    return true
+  }
+  return false
+}
+
+const touchTask = (task: GenerationTask) => {
+  task.updatedAt = Date.now()
+  persistTasks()
+}
+
+const applyStreamProgressMessage = (task: GenerationTask, eventData: any) => {
+  const message = eventData?.progress_msg || eventData?.progressMsg || eventData?.message
+  if (message) task.progress = message
+}
+
 const upsertAgentFlowNode = (task: GenerationTask, eventData: any) => {
   const flow = normalizeAgentFlow((task as any).agentFlow, task.tool)
   const now = Date.now()
@@ -611,11 +640,25 @@ const upsertAgentFlowNode = (task: GenerationTask, eventData: any) => {
   }
   const previous = flow.nodes[agentId] || makeAgentNode(agentId, eventData.agent_name || eventData.agentName || agentId, phase)
   const isSectionAgent = agentId.includes(':section-')
+  const previousStatus = normalizeAgentStatus(previous.status)
+  const incomingCurrent = eventData.current != null ? Number(eventData.current) : undefined
+  const incomingTotal = eventData.total != null ? Number(eventData.total) : undefined
+  const previousCurrent = previous.current != null ? Number(previous.current) : undefined
+  const previousTotal = previous.total != null ? Number(previous.total) : undefined
+  const nextCurrent = Math.max(
+    Number.isFinite(previousCurrent) ? previousCurrent as number : 0,
+    Number.isFinite(incomingCurrent) ? incomingCurrent as number : 0,
+  ) || undefined
+  const nextTotal = Math.max(
+    Number.isFinite(previousTotal) ? previousTotal as number : 0,
+    Number.isFinite(incomingTotal) ? incomingTotal as number : 0,
+  ) || undefined
+  const nextStatus = previousStatus === 'done' && status !== 'failed' ? 'done' : status
 
   markPreviousPhasesDone(flow, phase, now)
   if (phaseRank(phase) !== -1) {
-    if (isActiveAgentStatus(status) || agentId === phase || phase === 'saver' || phase === 'complete') {
-      setPhaseStatus(flow, phase, status, eventData.message || previous.message || '', now)
+    if (isActiveAgentStatus(nextStatus) || agentId === phase || phase === 'saver' || phase === 'complete') {
+      setPhaseStatus(flow, phase, nextStatus, eventData.message || previous.message || '', now)
     }
   }
 
@@ -625,9 +668,11 @@ const upsertAgentFlowNode = (task: GenerationTask, eventData: any) => {
     agent_id: agentId,
     agent_name: eventData.agent_name || eventData.agentName || previous.agent_name || agentId,
     phase,
-    status,
+    status: nextStatus,
     message: eventData.message || previous.message || '',
     resource_type: resourceType || previous.resource_type,
+    current: nextCurrent ?? previous.current,
+    total: nextTotal ?? previous.total,
     updatedAt: now,
   }
 
@@ -640,14 +685,23 @@ const upsertAgentFlowNode = (task: GenerationTask, eventData: any) => {
       RESOURCE_AGENT_LABELS[resourceType] || `${resourceType} 智能体`,
       'executor',
     )
-    const shouldWriteBranchStatus = !isSectionAgent || isActiveAgentStatus(status) || status === 'failed'
+    const branchStatus = normalizeAgentStatus(branchPrevious.status)
+    const shouldWriteBranchStatus = branchStatus !== 'done' && (!isSectionAgent || isActiveAgentStatus(nextStatus) || nextStatus === 'failed')
+    const branchCurrent = Math.max(
+      Number(branchPrevious.current || 0),
+      Number(eventData.current || 0),
+    ) || branchPrevious.current
+    const branchTotal = Math.max(
+      Number(branchPrevious.total || 0),
+      Number(eventData.total || 0),
+    ) || branchPrevious.total
     flow.nodes[branchId] = {
       ...branchPrevious,
-      status: shouldWriteBranchStatus ? status : branchPrevious.status,
+      status: shouldWriteBranchStatus ? nextStatus : branchPrevious.status,
       message: shouldWriteBranchStatus ? nextNode.message : branchPrevious.message,
       resource_type: resourceType,
-      current: eventData.current ?? branchPrevious.current,
-      total: eventData.total ?? branchPrevious.total,
+      current: branchCurrent,
+      total: branchTotal,
       elapsed_ms: eventData.elapsed_ms ?? branchPrevious.elapsed_ms,
       updatedAt: now,
     }
@@ -655,10 +709,10 @@ const upsertAgentFlowNode = (task: GenerationTask, eventData: any) => {
     syncExecutorPhaseFromBranches(flow, task.tool, now)
   }
 
-  if (['running', 'reviewing', 'retrying', 'saving'].includes(status)) {
+  if (['running', 'reviewing', 'retrying', 'saving'].includes(nextStatus)) {
     flow.activeAgentId = agentId
   }
-  if (phaseRank(phase) !== -1 && (isActiveAgentStatus(status) || phase === 'complete')) {
+  if (phaseRank(phase) !== -1 && (isActiveAgentStatus(nextStatus) || phase === 'complete')) {
     flow.activeAgentId = phase
   }
 
@@ -669,7 +723,7 @@ const upsertAgentFlowNode = (task: GenerationTask, eventData: any) => {
       agent_id: agentId,
       agent_name: nextNode.agent_name,
       phase,
-      status,
+      status: nextStatus,
       resource_type: resourceType || nextNode.resource_type,
       updatedAt: now,
     }
@@ -1031,7 +1085,32 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     return
   }
 
-  applyBackendProgressToAgentFlow(task, eventData)
+  const internalVideoStreamTypes = new Set([
+    'stream_start',
+    'stream_section_replace',
+    'stream_slide_start',
+    'stream_slide_delta',
+    'stream_slide',
+    'stream_slide_done',
+    'stream_text_start',
+    'stream_text_delta',
+    'stream_text_done',
+  ])
+  const isVideoInternalResourceStream = task.tool?.generateMode === 'video' && internalVideoStreamTypes.has(eventData.type)
+  const shouldMirrorToAgentFlow = !(task.tool?.generateMode === 'video' && eventData.type === 'progress')
+  if (shouldMirrorToAgentFlow) {
+    applyBackendProgressToAgentFlow(task, eventData)
+  }
+  if (isVideoInternalResourceStream) {
+    const isDelta = String(eventData.type || '').endsWith('_delta')
+    if (!isDelta || shouldFlushStreamUi(task, 'video-internal')) {
+      if (eventData.progress_msg || eventData.progressMsg || eventData.message) {
+        task.progress = eventData.progress_msg || eventData.progressMsg || eventData.message
+      }
+      touchTask(task)
+    }
+    return
+  }
 
   if (eventData.type === 'file') {
     const [file] = normalizeTaskFiles({ resources: [eventData] })
@@ -1083,6 +1162,9 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     }
     stream.slides = sortPptStreamSlides(stream.slides)
     ;(task as any)._pptStream = bumpPptStreamVersion(stream)
+    applyStreamProgressMessage(task, eventData)
+    touchTask(task)
+    return
   }
 
   if (eventData.type === 'stream_slide_delta') {
@@ -1103,8 +1185,15 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
         streaming: true,
       })
     }
-    stream.slides = sortPptStreamSlides(stream.slides)
-    ;(task as any)._pptStream = bumpPptStreamVersion(stream)
+    if (shouldFlushStreamUi(task, 'ppt')) {
+      stream.slides = sortPptStreamSlides(stream.slides)
+      ;(task as any)._pptStream = bumpPptStreamVersion(stream)
+      applyStreamProgressMessage(task, eventData)
+      touchTask(task)
+    } else {
+      ;(task as any)._pptStream = stream
+    }
+    return
   }
 
   if (eventData.type === 'stream_slide' && eventData.content) {
@@ -1126,6 +1215,9 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     ;(task as any)._pptStream = bumpPptStreamVersion(stream)
     console.log('[GenerationTask] stream_slide taskId=%s section_idx=%s slides=%d',
       task.backendTaskId?.slice(0, 12) || task.id, eventData.section_idx, stream.slides.length)
+    applyStreamProgressMessage(task, eventData)
+    touchTask(task)
+    return
   }
 
   if (eventData.type === 'stream_text_start') {
@@ -1146,6 +1238,9 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     stream.parts = sortTextStreamParts(stream.parts)
     ;(task as any)._textStream = stream
     task.thinkingProcess = formatTextStreamThinking(stream, task)
+    applyStreamProgressMessage(task, eventData)
+    touchTask(task)
+    return
   }
 
   if (eventData.type === 'stream_text_delta') {
@@ -1166,9 +1261,16 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
         streaming: true,
       })
     }
-    stream.parts = sortTextStreamParts(stream.parts)
-    ;(task as any)._textStream = stream
-    task.thinkingProcess = formatTextStreamThinking(stream, task)
+    if (shouldFlushStreamUi(task, 'text')) {
+      stream.parts = sortTextStreamParts(stream.parts)
+      ;(task as any)._textStream = stream
+      task.thinkingProcess = formatTextStreamThinking(stream, task)
+      applyStreamProgressMessage(task, eventData)
+      touchTask(task)
+    } else {
+      ;(task as any)._textStream = stream
+    }
+    return
   }
 
   if (eventData.type === 'stream_text_done') {
@@ -1189,6 +1291,9 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     stream.parts = sortTextStreamParts(stream.parts)
     ;(task as any)._textStream = stream
     task.thinkingProcess = formatTextStreamThinking(stream, task)
+    applyStreamProgressMessage(task, eventData)
+    touchTask(task)
+    return
   }
 
   const thinking = getBackendThinking(eventData)
@@ -1501,6 +1606,25 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
   persistTasks()
 
   const presentationId = presentation?.id || presentation?.presentation_id || presentation?.presentationId
+  let audioReady = false
+  let resolveAudioReady: (value?: any) => void = () => {}
+  const audioReadyPromise = new Promise(resolve => {
+    resolveAudioReady = resolve
+  })
+  const markAudioReady = (eventData?: any) => {
+    if (audioReady) return
+    audioReady = true
+    task.status = 'done'
+    task.progress = '学习视频已全部制作完成，可以播放。'
+    task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: task.files }
+    delete (task as any).pendingQuestions
+    ;(task as any).questionsShown = true
+    finishAgentFlow(task, false)
+    task.updatedAt = Date.now()
+    persistTasks()
+    dispatchNotificationUpdateIfAway()
+    resolveAudioReady(eventData || {})
+  }
   const streamController = presentationId && typeof AbortController !== 'undefined'
     ? new AbortController()
     : null
@@ -1509,20 +1633,54 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
         signal: streamController?.signal,
         onEvent: eventData => {
           const payload: any = eventData || {}
-          if (payload.type !== 'agent_event') return
+          const flowStatus = String(payload.status || '').toLowerCase()
+          const isSkeletonComplete = payload.type === 'agent_event' &&
+            payload.phase === 'complete' &&
+            flowStatus === 'done'
+          const isAudioReady = payload.type === 'audio_progress' && payload.status === 'all_ready'
+          const isReadyWithAudio = payload.status === 'ready' &&
+            Array.isArray(payload.chapters) &&
+            payload.chapters.length > 0 &&
+            payload.chapters.every((chapter: any) => chapter?.is_audio_ready)
+
+          if (isAudioReady || isReadyWithAudio) {
+            markAudioReady(payload)
+            return
+          }
+
+          if (isSkeletonComplete) {
+            task.status = 'running'
+            task.progress = '学习视频已可预览，正在补齐音频和字幕高亮...'
+            task.updatedAt = Date.now()
+            persistTasks()
+            return
+          }
 
           applyTaskStreamEvent(task, payload)
-          const flowStatus = String(payload.status || '').toLowerCase()
           if (flowStatus === 'failed') {
             task.status = 'failed'
             task.error = payload.message || '学习视频生成失败'
             task.progress = task.error
             finishAgentFlow(task, true)
+            resolveAudioReady(payload)
           } else if (task.status === 'running' && payload.phase !== 'complete' && payload.message) {
             task.progress = payload.message
           }
           task.updatedAt = Date.now()
           persistTasks()
+        },
+        onDone: eventData => {
+          const payload: any = eventData || {}
+          const isAudioReady = payload.type === 'audio_progress' && payload.status === 'all_ready'
+          const isReadyWithAudio = payload.status === 'ready' &&
+            Array.isArray(payload.chapters) &&
+            payload.chapters.length > 0 &&
+            payload.chapters.every((chapter: any) => chapter?.is_audio_ready)
+          if (isAudioReady || isReadyWithAudio) {
+            markAudioReady(payload)
+          } else {
+            resolveAudioReady(payload)
+          }
         },
         onError: error => {
           if (task.status === 'running' && error) {
@@ -1530,10 +1688,13 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
             task.updatedAt = Date.now()
             persistTasks()
           }
+          resolveAudioReady({ status: 'failed', error })
         },
+        doneOnAudio: true,
       }).catch(error => {
         if (error?.name === 'AbortError') return
         console.warn('[GenerationTask] 视频进度订阅失败，继续使用轮询:', error)
+        resolveAudioReady({ status: 'stream_error', error })
       })
     : Promise.resolve()
 
@@ -1543,9 +1704,9 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
       task.updatedAt = Date.now()
       persistTasks()
     })
-  } finally {
+  } catch (error) {
     streamController?.abort()
-    void streamPromise
+    throw error
   }
 
   const sourceResource: any = task.files.find((file: any) => (
@@ -1585,14 +1746,33 @@ const _doGeneratePresentation = async (task: GenerationTask) => {
     task.files.push(presentationFile)
   }
   task.doneEvent = { ...(task.doneEvent as object || {}), presentation, resources: task.files }
-  task.status = 'done'
-  task.progress = '学习视频已生成，可以打开预览。'
+  task.status = audioReady ? 'done' : 'running'
+  task.progress = audioReady
+    ? '学习视频已全部制作完成，可以播放。'
+    : '学习视频已可预览，正在补齐音频和字幕高亮...'
   delete (task as any).pendingQuestions
   ;(task as any).questionsShown = true
-  finishAgentFlow(task, false)
   task.updatedAt = Date.now()
   persistTasks()
-  dispatchNotificationUpdateIfAway()
+  if (audioReady) {
+    finishAgentFlow(task, false)
+    dispatchNotificationUpdateIfAway()
+    streamController?.abort()
+    void streamPromise
+    return
+  }
+
+  await Promise.race([
+    audioReadyPromise,
+    wait(15 * 60 * 1000),
+  ])
+  if (!audioReady && task.status === 'running') {
+    task.progress = '学习视频已可预览，音频仍在后台补齐中...'
+    task.updatedAt = Date.now()
+    persistTasks()
+  }
+  streamController?.abort()
+  void streamPromise
 }
 
 export function useGenerationTaskQueue() {
@@ -1736,17 +1916,15 @@ export function useGenerationTaskQueue() {
       setAgentFlowVisibility(task, true)
       task.updatedAt = Date.now()
       persistTasks()
-      try {
-        await _doGeneratePresentation(task)
-      } catch (error: any) {
+      void _doGeneratePresentation(task).catch((error: any) => {
         task.status = 'failed'
         task.error = error?.response?.data?.detail || error?.message || '学习视频生成失败'
         task.progress = task.error
         finishAgentFlow(task, true)
-      } finally {
+      }).finally(() => {
         task.updatedAt = Date.now()
         persistTasks()
-      }
+      })
       return
     }
 
@@ -1757,17 +1935,15 @@ export function useGenerationTaskQueue() {
     task.updatedAt = Date.now()
     persistTasks()
 
-    try {
-      await _doGeneratePresentation(task)
-    } catch (error: any) {
+    void _doGeneratePresentation(task).catch((error: any) => {
       task.status = 'failed'
       task.error = error?.response?.data?.detail || error?.message || '学习视频生成失败'
       task.progress = task.error
       finishAgentFlow(task, true)
-    } finally {
+    }).finally(() => {
       task.updatedAt = Date.now()
       persistTasks()
-    }
+    })
   }
 
   const hydrateTasks = async () => {

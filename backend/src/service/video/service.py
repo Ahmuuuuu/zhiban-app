@@ -814,6 +814,8 @@ async def _notify_sse(presentation_id: int, data: dict):
 
 _VIDEO_PROGRESS_AGENT_MAP = {
     "portrait_intro": ("leader", "LeaderAgent", "leader", None),
+    "generate_document": ("executor:document", "文档生成智能体", "executor", "document"),
+    "generate_ppt": ("executor:ppt", "PPT生成智能体", "executor", "ppt"),
     "build_intro": ("executor:document", "文档生成智能体", "executor", "document"),
     "build_ppt": ("executor:ppt", "PPT生成智能体", "executor", "ppt"),
     "generate_resources": ("executor", "视频生成智能体", "executor", None),
@@ -1026,10 +1028,24 @@ async def generate(topic: str, user_id: int, voice: str = DEFAULT_VIDEO_VOICE,
             async def _on_resource_complete(resource_type: str, resource):
                 if resource_type == "document":
                     await _add_document_chapter(resource)
+                    _push_agent_progress(pid, "generate_document", "文档资料生成完毕", "done")
                 elif resource_type == "ppt":
                     await _add_full_ppt_chapter(resource)
+                    _push_agent_progress(pid, "generate_ppt", "PPT资料生成完毕", "done")
 
             async def _on_ppt_section_complete(section_idx: int, section_title: str, section_total: int, content: str):
+                await _notify_sse(pid, {
+                    "type": "stream_slide",
+                    "resource_type": "ppt",
+                    "file_type": "ppt",
+                    "section_idx": section_idx,
+                    "slide_idx": 0,
+                    "section_title": section_title,
+                    "content": content,
+                    "current": section_idx + 1,
+                    "total": section_total,
+                    "progress_msg": f"PPT 已生成 {section_idx + 1}/{section_total} 章节",
+                })
                 await _add_ppt_section(section_idx, section_title, section_total, content)
 
             # — 第1步：个性化引入，生成完马上开始 TTS —
@@ -1063,6 +1079,13 @@ async def generate(topic: str, user_id: int, voice: str = DEFAULT_VIDEO_VOICE,
             # — 第2步：流式重新生成本次视频资料；PPT 单章完成就立刻 TTS —
             t0 = _time.perf_counter()
             _push_progress(pid, "generate_resources", "正在重新生成视频资料…", "running")
+            _push_agent_progress(pid, "generate_document", "正在生成文档资料…", "running")
+            await _notify_sse(pid, {
+                "type": "stream_start",
+                "resource_type": "ppt",
+                "file_type": "ppt",
+                "progress_msg": "PPT 流式生成已启动",
+            })
             doc, mindmap_data, ppt_data = await _generate_fresh_video_resources(
                 topic,
                 user_id,
@@ -1076,8 +1099,10 @@ async def generate(topic: str, user_id: int, voice: str = DEFAULT_VIDEO_VOICE,
                 raise ServiceError(f"话题「{topic}」视频资料生成失败，请稍后重试")
             if doc and not doc_ready:
                 await _add_document_chapter(doc)
+                _push_agent_progress(pid, "generate_document", "文档资料生成完毕", "done")
             if ppt_data and not ppt_streamed_sections and not ppt_full_ready:
                 await _add_full_ppt_chapter(ppt_data)
+                _push_agent_progress(pid, "generate_ppt", "PPT资料生成完毕", "done")
             if not doc_ready and doc_chapter_idx is not None and 0 <= doc_chapter_idx < len(chapters_list):
                 chapters_list[doc_chapter_idx] = {
                     **chapters_list[doc_chapter_idx],
@@ -1086,6 +1111,17 @@ async def generate(topic: str, user_id: int, voice: str = DEFAULT_VIDEO_VOICE,
                     "pending": False,
                 }
                 await _persist_partial_chapters()
+                _push_agent_progress(pid, "generate_document", "文档资料暂不可用，已跳过文档章节", "done")
+            if ppt_streamed_sections:
+                total = max(len(ppt_streamed_sections), len(chapters_list) - (ppt_base_idx or len(chapters_list)), 1)
+                _push_agent_progress(
+                    pid,
+                    "generate_ppt",
+                    "PPT资料生成完毕",
+                    "done",
+                    current=len(ppt_streamed_sections),
+                    total=total,
+                )
             _push_progress(pid, "generate_resources", "视频资料重新生成完毕", "done", int((_time.perf_counter() - t0) * 1000))
 
             # — 第6步：渲染 HTML —

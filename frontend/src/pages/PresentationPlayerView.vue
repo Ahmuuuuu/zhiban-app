@@ -121,6 +121,7 @@ let audioPollTimer = 0
 let silentPlaybackTimer = 0
 let presentationPollTimer = 0
 let returning = false
+const failedAudioUrls = new Set()
 
 const videoThemes = {
   dark_cinematic: {
@@ -256,6 +257,7 @@ const slides = computed(() => {
     if (Array.isArray(chapter.slides) && chapter.slides.length) {
       chapter.slides.forEach((slide, slideIndex) => {
         const rawAudioUrl = slide.audio_url || slide.audioUrl || ''
+        const wordTimestamps = slide.word_timestamps || slide.wordTimestamps || []
         const html = slide.content_html || ''
         const items = slideItems(slide)
         const formulas = slideFormulas(slide)
@@ -275,8 +277,8 @@ const slides = computed(() => {
           theme: slide.theme || chapter.theme || '',
           audioUrl: resolveApiUrl(rawAudioUrl),
           isLocked: !rawAudioUrl,
-          wordTimestamps: slide.word_timestamps || [],
-          slideDurationMs: slide.duration_ms || 0
+          wordTimestamps,
+          slideDurationMs: slide.duration_ms || slide.durationMs || 0
         })
       })
       return
@@ -597,7 +599,11 @@ const startSilentPlayback = () => {
 }
 
 const handleAudioError = () => {
-  console.warn('[VideoPlayer] audio load failed, fallback to silent timeline:', activeAudioUrl.value)
+  const url = activeAudioUrl.value || ''
+  if (url && !failedAudioUrls.has(url)) {
+    failedAudioUrls.add(url)
+    console.warn('[VideoPlayer] audio load failed, fallback to silent timeline:', url)
+  }
   if (isPlaying.value || hasStarted.value) startSilentPlayback()
 }
 
@@ -680,7 +686,7 @@ const selectNavSlide = chapter => {
 
 const handleFrameLoad = () => {
   window.clearInterval(audioPollTimer)
-  audioPollTimer = window.setInterval(() => {}, 180)
+  audioPollTimer = 0
 }
 
 const refreshPresentationStatus = async () => {

@@ -197,13 +197,13 @@
                   </template>
 
                   <button
-                    v-if="!node._resources?.length || node._resources.length < (node.resourceTypes?.length || 4)"
+                    v-if="!node._resources?.length || node._resources.length < (node.resourceTypes?.length || 3)"
                     class="branch-action"
                     type="button"
-                    :disabled="node.status === 'locked' || node._resLoading"
+                    :disabled="node.status === 'locked' || isNodeResourceGenerating(node)"
                     @click.stop="ensureNodeResources(node, 'resources')"
                   >
-                    {{ node._resources?.length ? '补充更多资料' : '生成资料' }}
+                    {{ isNodeResourceGenerating(node) ? '生成中...' : (node._resources?.length ? '补充更多资料' : '生成资料') }}
                   </button>
                 </article>
               </section>
@@ -217,7 +217,17 @@
                   </div>
 
                   <div v-if="node._quizLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
-                  <div v-else-if="node._quizError" class="branch-message error">{{ node._quizError }}</div>
+                  <div v-else-if="node._quizError" class="branch-error-block">
+                    <div class="branch-message error">{{ node._quizError }}</div>
+                    <button
+                      class="branch-action"
+                      type="button"
+                      :disabled="node.status === 'locked' || isNodeQuizGenerating(node)"
+                      @click.stop="ensureNodeResources(node, 'quiz')"
+                    >
+                      {{ isNodeQuizGenerating(node) ? '生成中...' : '重新生成检测' }}
+                    </button>
+                  </div>
 
                   <template v-else-if="node._quiz">
                     <div class="branch-quiz">
@@ -232,10 +242,10 @@
                     v-else
                     class="branch-action"
                     type="button"
-                    :disabled="node.status === 'locked'"
+                    :disabled="node.status === 'locked' || isNodeQuizGenerating(node)"
                     @click.stop="ensureNodeResources(node, 'quiz')"
                   >
-                    生成检测
+                    {{ isNodeQuizGenerating(node) ? '生成中...' : '生成检测' }}
                   </button>
                 </article>
               </section>
@@ -348,7 +358,7 @@
               <div v-if="showResources" class="node-resources-section">
                 <h3 class="resources-heading">学习资料</h3>
 
-                <div v-if="resourcesLoading" class="resources-loading">
+                <div v-if="isNodeGenerationBusy(selectedNode)" class="resources-loading">
                   AI 正在为你生成学习资料，通常需要 30-90 秒...
                 </div>
 
@@ -420,7 +430,25 @@
                 </template>
 
                 <div v-else-if="selectedNode._quizError || selectedNode._resError" class="resources-empty error">
-                  {{ selectedNode._quizError || selectedNode._resError }}
+                  <span>{{ selectedNode._quizError || selectedNode._resError }}</span>
+                  <button
+                    v-if="selectedNode._quizError"
+                    class="resources-retry-btn"
+                    type="button"
+                    :disabled="selectedNode.status === 'locked' || isNodeQuizGenerating(selectedNode)"
+                    @click.stop="ensureNodeResources(selectedNode, 'quiz')"
+                  >
+                    {{ isNodeQuizGenerating(selectedNode) ? '生成中...' : '重新生成检测' }}
+                  </button>
+                  <button
+                    v-else-if="selectedNode._resError"
+                    class="resources-retry-btn"
+                    type="button"
+                    :disabled="selectedNode.status === 'locked' || isNodeResourceGenerating(selectedNode)"
+                    @click.stop="ensureNodeResources(selectedNode, 'resources')"
+                  >
+                    {{ isNodeResourceGenerating(selectedNode) ? '生成中...' : '重新生成资料' }}
+                  </button>
                 </div>
 
                 <div v-else class="resources-empty">
@@ -432,10 +460,10 @@
                 <button
                   class="start-btn"
                   type="button"
-                  :disabled="selectedNode.status === 'locked' || resourcesLoading"
+                  :disabled="selectedNode.status === 'locked' || isNodeGenerationBusy(selectedNode)"
                   @click="loadNodeResources"
                 >
-                  <template v-if="resourcesLoading">生成中...</template>
+                  <template v-if="isNodeGenerationBusy(selectedNode)">生成中...</template>
                   <template v-else-if="showResources">收起资料</template>
                   <template v-else>开始学习</template>
                 </button>
@@ -545,6 +573,7 @@ import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
 import { useResourceNarration } from '../composables/useResourceNarration'
+import { usePathNodeGenerationState } from '../composables/usePathNodeGenerationState'
 import { getResourceCoverUrl } from '../utils/resourceCover'
 import { renderMath } from '../utils/renderMath'
 import 'katex/dist/katex.min.css'
@@ -591,6 +620,7 @@ const pathVideo = ref(null)
 const pathVideoLoading = ref(false)
 let heartbeatTimer = null
 const announcedGenerationRunIds = new Set()
+const nodeGenerationState = usePathNodeGenerationState()
 const {
   canNarrateResource,
   toggleNarration,
@@ -1921,6 +1951,83 @@ const getNodeQuizSet = (node, data = null) => {
   return sourceId ? getQuizSet(`quiz-resource-${sourceId}`) : null
 }
 
+const getNodeGenerationKey = node =>
+  nodeGenerationState.getNodeKey(pathState.value?.pathId, node)
+
+const isNodeResourceGenerationComplete = node => {
+  const resources = node?._resources?.length ? node._resources : node?.resources
+  const expectedCount = Math.max(1, node?.resourceTypes?.length || 3)
+  return Array.isArray(resources) && resources.length >= expectedCount
+}
+
+const isNodeQuizGenerationComplete = node =>
+  Boolean(node?._quiz || node?.quiz || node?.sessionId)
+
+const syncPersistedGenerationFlags = state => {
+  if (!state?.pathId || !Array.isArray(state.nodes)) return state
+  return {
+    ...state,
+    nodes: state.nodes.map(node => {
+      const baseKey = node?.id ? `${state.pathId}:${node.id}` : ''
+      let resBusy = nodeGenerationState.isLockedByKey(baseKey, 'resources')
+      let quizBusy = nodeGenerationState.isLockedByKey(baseKey, 'quiz')
+      if (resBusy && isNodeResourceGenerationComplete(node)) {
+        nodeGenerationState.forgetByKey(baseKey, 'resources')
+        resBusy = false
+      }
+      if (quizBusy && isNodeQuizGenerationComplete(node)) {
+        nodeGenerationState.forgetByKey(baseKey, 'quiz')
+        quizBusy = false
+      }
+      return {
+        ...node,
+        _resLoading: resBusy,
+        _quizLoading: quizBusy
+      }
+    })
+  }
+}
+
+const syncNodeGenerationFlag = node => {
+  const baseKey = getNodeGenerationKey(node)
+  if (!baseKey) return
+  let resBusy = nodeGenerationState.isLockedByKey(baseKey, 'resources')
+  let quizBusy = nodeGenerationState.isLockedByKey(baseKey, 'quiz')
+  if (resBusy && isNodeResourceGenerationComplete(node)) {
+    nodeGenerationState.forgetByKey(baseKey, 'resources')
+    resBusy = false
+  }
+  if (quizBusy && isNodeQuizGenerationComplete(node)) {
+    nodeGenerationState.forgetByKey(baseKey, 'quiz')
+    quizBusy = false
+  }
+  if (resBusy !== Boolean(node?._resLoading) || quizBusy !== Boolean(node?._quizLoading)) {
+    patchNodeState(node, {
+      _resLoading: resBusy,
+      _quizLoading: quizBusy
+    })
+  }
+}
+
+const isNodeResourceGenerating = node => {
+  const key = getNodeGenerationKey(node)
+  return Boolean(
+    node?._resLoading ||
+    nodeGenerationState.isLockedByKey(key, 'resources')
+  )
+}
+
+const isNodeQuizGenerating = node => {
+  const key = getNodeGenerationKey(node)
+  return Boolean(
+    node?._quizLoading ||
+    nodeGenerationState.isLockedByKey(key, 'quiz')
+  )
+}
+
+const isNodeGenerationBusy = node =>
+  isNodeResourceGenerating(node) || isNodeQuizGenerating(node)
+
 const patchNodeState = (node, patch = {}) => {
   if (!node?.id || !pathState.value?.nodes) return
 
@@ -1948,7 +2055,7 @@ const hydratePathForRender = state => {
   let hasCurrentNode = state.nodes?.some(node => node.status === 'current')
   let promotedCurrent = false
 
-  return {
+  const hydrated = {
     ...state,
     diagnosis: {
       weakPoints: [],
@@ -1983,6 +2090,7 @@ const hydratePathForRender = state => {
       return firstIndex === index
     })
   }
+  return syncPersistedGenerationFlags(hydrated)
 }
 
 const scrollToCurrentNode = async () => {
@@ -2163,6 +2271,16 @@ const buildNodeQuiz = (node, quizData = null) => {
 const ensureNodeResources = async (node, target = 'all') => {
   if (!node || node.status === 'locked') return
 
+  if (target === 'all' && isNodeGenerationBusy(node)) return
+  if (target === 'resources' && isNodeResourceGenerating(node)) {
+    patchNodeState(node, { _resLoading: true, _resError: '' })
+    return
+  }
+  if (target === 'quiz' && isNodeQuizGenerating(node)) {
+    patchNodeState(node, { _quizLoading: true, _quizError: '' })
+    return
+  }
+
   // 优先使用后端预加载的资源
   if (!node._resources && node.resources?.length) {
     patchNodeState(node, { _resources: normalizeNodeResources(node.resources, node) })
@@ -2174,13 +2292,15 @@ const ensureNodeResources = async (node, target = 'all') => {
 
   const resIncomplete = node._resources?.length && node._resources.length < (node.resourceTypes?.length || 3)
   if (shouldLoadResources && (!node._resources?.length || resIncomplete) && pathId) {
+    const resourceKey = getNodeGenerationKey(node)
+    nodeGenerationState.rememberByKey(resourceKey, 'resources')
     patchNodeState(node, { _resLoading: true, _resError: '' })
 
     // 初始化空数组（SSE 增量追加）
     const initialResources = node._resources?.length ? [...node._resources] : []
     patchNodeState(node, { _resources: initialResources })
 
-    generatePathNodeResourcesStream(
+    void generatePathNodeResourcesStream(
       pathId, node.id,
       // onResource: 每生成好一个立即追加
       (data) => {
@@ -2212,6 +2332,7 @@ const ensureNodeResources = async (node, target = 'all') => {
       },
       // onDone
       (data) => {
+        nodeGenerationState.forgetByKey(resourceKey, 'resources')
         patchNodeState(node, {
           _resLoading: false,
           _resError: '',
@@ -2220,13 +2341,20 @@ const ensureNodeResources = async (node, target = 'all') => {
       },
       // onError
       (err) => {
+        nodeGenerationState.forgetByKey(resourceKey, 'resources')
         patchNodeState(node, { _resLoading: false, _resError: err?.message || '生成学习资料失败' })
         console.error('[StudyPath] SSE resource generation failed:', err)
       }
-    )
+    ).finally(() => {
+      nodeGenerationState.forgetByKey(resourceKey, 'resources')
+    })
   }
 
   if (shouldLoadQuiz && !node._quiz && pathId) {
+    if (isNodeQuizGenerating(node)) {
+      patchNodeState(node, { _quizLoading: true, _quizError: '' })
+      return
+    }
     patchNodeState(node, { _quizError: '' })
     const localQuiz = buildNodeQuiz(node)
     if (localQuiz) {
@@ -2234,6 +2362,8 @@ const ensureNodeResources = async (node, target = 'all') => {
       return
     }
 
+    const quizKey = getNodeGenerationKey(node)
+    nodeGenerationState.rememberByKey(quizKey, 'quiz')
     patchNodeState(node, { _quizLoading: true, _quizError: '' })
     try {
       const quizRes = await generatePathNodeQuiz(pathId, node.id)
@@ -2263,17 +2393,21 @@ const ensureNodeResources = async (node, target = 'all') => {
     } catch (err) {
       patchNodeState(node, { _quizLoading: false, _quizError: err?.response?.data?.detail || err?.message || '生成学习检测失败' })
       console.error('[StudyPath] generate node quiz failed:', err)
+    } finally {
+      nodeGenerationState.forgetByKey(quizKey, 'quiz')
     }
   }
 }
 
 const openNode = async node => {
   selectedNode.value = node
+  syncNodeGenerationFlag(node)
+  const activeNode = selectedNode.value || node
   cardFlipped.value = false
   showResources.value = false
-  nodeResources.value = normalizeNodeResources(node._resources?.length ? node._resources : node.resources, node)
-  nodeQuizData.value = node._quiz || buildNodeQuiz(node)
-  nodeSessionId.value = nodeQuizData.value?.sessionId || node.sessionId || ''
+  nodeResources.value = normalizeNodeResources(activeNode._resources?.length ? activeNode._resources : activeNode.resources, activeNode)
+  nodeQuizData.value = activeNode._quiz || buildNodeQuiz(activeNode)
+  nodeSessionId.value = nodeQuizData.value?.sessionId || activeNode.sessionId || ''
   await nextTick()
   window.requestAnimationFrame(() => {
     cardFlipped.value = true
@@ -2290,9 +2424,23 @@ const closeNodeCard = () => {
 }
 
 const loadNodeResources = async () => {
-  if (!selectedNode.value || selectedNode.value.status === 'locked') return
+  const node = selectedNode.value
+  if (!node || node.status === 'locked') return
+  syncNodeGenerationFlag(node)
+  if (isNodeGenerationBusy(node)) {
+    showResources.value = true
+    return
+  }
 
-  if (showResources.value && !resourcesLoading.value) {
+  const isActiveNode = () => selectedNode.value?.id === node.id
+  const syncActiveNodePanel = (resources = nodeResources.value, quiz = nodeQuizData.value, sessionId = nodeSessionId.value) => {
+    if (!isActiveNode()) return
+    nodeResources.value = resources
+    nodeQuizData.value = quiz
+    nodeSessionId.value = sessionId || ''
+  }
+
+  if (showResources.value && !isNodeGenerationBusy(node)) {
     showResources.value = false
     return
   }
@@ -2302,32 +2450,35 @@ const loadNodeResources = async () => {
     return
   }
 
-  if (selectedNode.value.resources?.length > 0) {
-    nodeResources.value = normalizeNodeResources(selectedNode.value.resources, selectedNode.value)
-    patchNodeState(selectedNode.value, {
-      resources: nodeResources.value,
-      _resources: nodeResources.value
+  if (node.resources?.length > 0) {
+    const resources = normalizeNodeResources(node.resources, node)
+    patchNodeState(node, {
+      resources,
+      _resources: resources
     })
     // 先查题库缓存，再用节点预载数据
     const pathId = pathState.value?.pathId
-    const existingQuiz = pathId ? getNodeQuizSet(selectedNode.value) : null
+    const existingQuiz = pathId ? getNodeQuizSet(node) : null
+    let quizData = nodeQuizData.value
+    let sessionId = nodeSessionId.value
     if (existingQuiz) {
-      nodeQuizData.value = existingQuiz
-      nodeSessionId.value = existingQuiz.sessionId || ''
-      patchNodeState(selectedNode.value, { _quiz: existingQuiz })
-    } else if (selectedNode.value.quiz) {
+      quizData = existingQuiz
+      sessionId = existingQuiz.sessionId || ''
+      patchNodeState(node, { _quiz: existingQuiz })
+    } else if (node.quiz) {
       const quiz = upsertQuizSet({
-        sourceId: getNodeQuizSourceId(selectedNode.value),
-        title: `${selectedNode.value.title} - 巩固练习`,
-        content: JSON.stringify(selectedNode.value.quiz),
+        sourceId: getNodeQuizSourceId(node),
+        title: `${node.title} - 巩固练习`,
+        content: JSON.stringify(node.quiz),
         fileType: 'exercise',
-        sessionId: selectedNode.value.sessionId || ''
+        sessionId: node.sessionId || ''
       })
-      if (quiz) nodeQuizData.value = quiz
-      nodeSessionId.value = selectedNode.value.sessionId || ''
-      if (quiz) patchNodeState(selectedNode.value, { _quiz: quiz })
+      if (quiz) quizData = quiz
+      sessionId = node.sessionId || ''
+      if (quiz) patchNodeState(node, { _quiz: quiz })
     }
-    showResources.value = true
+    syncActiveNodePanel(resources, quizData, sessionId)
+    if (isActiveNode()) showResources.value = true
     return
   }
 
@@ -2335,44 +2486,61 @@ const loadNodeResources = async () => {
   if (!pathId) return
 
   resourcesLoading.value = true
+  let resourceKey = ''
+  let quizKey = ''
   try {
-    const res = await generatePathNodeResources(pathId, selectedNode.value.id)
-    nodeResources.value = normalizeNodeResources(extractResourceItems(res, selectedNode.value), selectedNode.value)
-    patchNodeState(selectedNode.value, {
-      resources: nodeResources.value,
-      _resources: nodeResources.value,
+    resourceKey = getNodeGenerationKey(node)
+    nodeGenerationState.rememberByKey(resourceKey, 'resources')
+    patchNodeState(node, { _resLoading: true, _resError: '' })
+    const res = await generatePathNodeResources(pathId, node.id)
+    const resources = normalizeNodeResources(extractResourceItems(res, node), node)
+    if (resourceKey) {
+      nodeGenerationState.forgetByKey(resourceKey, 'resources')
+      resourceKey = ''
+    }
+    patchNodeState(node, {
+      resources,
+      _resources: resources,
       _resLoading: false,
-      status: selectedNode.value.status === 'available' ? 'current' : selectedNode.value.status
+      status: node.status === 'available' ? 'current' : node.status
     })
+    if (!isActiveNode()) return
+    nodeResources.value = resources
 
     // 查题库缓存 -> 节点预载 -> 调生成接口
-    const existingQuiz = getNodeQuizSet(selectedNode.value)
+    const existingQuiz = getNodeQuizSet(node)
     if (existingQuiz) {
       nodeQuizData.value = existingQuiz
       nodeSessionId.value = existingQuiz.sessionId || ''
-      patchNodeState(selectedNode.value, { _quiz: existingQuiz })
+      patchNodeState(node, { _quiz: existingQuiz })
       console.log('[StudyPath] 从题库加载已有题目：', existingQuiz)
-    } else if (selectedNode.value.quiz) {
+    } else if (node.quiz) {
       const quiz = upsertQuizSet({
-        sourceId: getNodeQuizSourceId(selectedNode.value),
-        title: `${selectedNode.value.title} - 巩固练习`,
-        content: JSON.stringify(selectedNode.value.quiz),
+        sourceId: getNodeQuizSourceId(node),
+        title: `${node.title} - 巩固练习`,
+        content: JSON.stringify(node.quiz),
         fileType: 'exercise',
-        sessionId: selectedNode.value.sessionId || ''
+        sessionId: node.sessionId || ''
       })
       if (quiz) nodeQuizData.value = quiz
-      nodeSessionId.value = selectedNode.value.sessionId || ''
-      if (quiz) patchNodeState(selectedNode.value, { _quiz: quiz })
+      nodeSessionId.value = node.sessionId || ''
+      if (quiz) patchNodeState(node, { _quiz: quiz })
     } else {
-      const quizRes = await generatePathNodeQuiz(pathId, selectedNode.value.id)
+      quizKey = getNodeGenerationKey(node)
+      nodeGenerationState.rememberByKey(quizKey, 'quiz')
+      patchNodeState(node, { _quizLoading: true, _quizError: '' })
+      const quizRes = await generatePathNodeQuiz(pathId, node.id)
       console.log('[StudyPath] generatePathNodeQuiz response:', quizRes)
       const quizData = getResponseData(quizRes)
       if (quizData.blocked) {
-        patchNodeState(selectedNode.value, { _quizError: quizData.reason || '请先学习当前节点的学习资料' })
-        showResources.value = true
+        patchNodeState(node, {
+          _quizLoading: false,
+          _quizError: quizData.reason || '请先学习当前节点的学习资料'
+        })
+        if (isActiveNode()) showResources.value = true
         return
       }
-      nodeSessionId.value = quizData.session_id || quizData.sessionId || ''
+      const nextSessionId = quizData.session_id || quizData.sessionId || ''
       const rawQuestions =
         quizData.questions ||
         quizData.question_list ||
@@ -2383,32 +2551,46 @@ const loadNodeResources = async () => {
       const questions = Array.isArray(rawQuestions) ? rawQuestions : []
       if (questions.length || quizData.content) {
         const quiz = upsertQuizSet({
-          sourceId: getNodeQuizSourceId(selectedNode.value, quizData),
-          title: `${selectedNode.value.title} - 巩固练习`,
+          sourceId: getNodeQuizSourceId(node, quizData),
+          title: `${node.title} - 巩固练习`,
           content: JSON.stringify(questions.length ? { questions } : quizData),
           fileType: 'exercise',
-          sessionId: nodeSessionId.value
+          sessionId: nextSessionId
         })
         console.log('[StudyPath] upsertQuizSet result:', quiz)
         if (quiz) {
-          nodeQuizData.value = quiz
-          patchNodeState(selectedNode.value, {
+          patchNodeState(node, {
             quiz: quizData,
-            sessionId: nodeSessionId.value,
-            _quiz: quiz
+            sessionId: nextSessionId,
+            _quiz: quiz,
+            _quizLoading: false,
+            _quizError: ''
           })
+          if (isActiveNode()) {
+            nodeQuizData.value = quiz
+            nodeSessionId.value = nextSessionId
+          }
         }
       } else {
-        patchNodeState(selectedNode.value, { _quizError: '没有生成可用的检测题，请稍后重试' })
+        patchNodeState(node, {
+          _quizLoading: false,
+          _quizError: '没有生成可用的检测题，请稍后重试'
+        })
         console.warn('[StudyPath] 后端未返回题目数据，quizData:', quizData)
       }
     }
 
-    showResources.value = true
+    if (isActiveNode()) showResources.value = true
   } catch (err) {
+    patchNodeState(node, {
+      _resLoading: false,
+      _quizLoading: false
+    })
     console.error('[StudyPath] generate learning resources failed:', err)
     error.value = err?.response?.data?.detail || err?.message || '生成学习资料失败'
   } finally {
+    nodeGenerationState.forgetByKey(resourceKey, 'resources')
+    nodeGenerationState.forgetByKey(quizKey, 'quiz')
     resourcesLoading.value = false
   }
 }
@@ -4241,6 +4423,12 @@ onBeforeUnmount(() => {
   color: #b24141;
 }
 
+.branch-error-block {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
 .branch-quiz {
   display: flex;
   align-items: center;
@@ -4848,13 +5036,34 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 10px;
   color: rgba(22, 63, 143, 0.48);
   font-size: 13px;
   font-weight: 800;
 }
 
 .resources-empty.error {
+  flex-direction: column;
   color: #b24141;
+  text-align: center;
+}
+
+.resources-retry-btn {
+  min-height: 30px;
+  padding: 0 14px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #163f8f;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.resources-retry-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .quiz-item {

@@ -208,6 +208,7 @@ import {
   getGeneratedResource,
   getGeneratedResources,
   getResourceAnnotations,
+  getStudyResource,
   getStudyResources,
   resolveApiUrl,
   updateResourceAnnotation
@@ -266,10 +267,11 @@ const normalizeResources = data => {
 
   return list.map((item, index) => {
     const isVideo = item.category === 'video' || (item.type || item.file_type || '').includes('video')
-    const rawContent = item.preview || item.content || ''
+    const rawContent = item.content || item.preview || ''
     const videoUrl = isVideo ? resolveApiUrl(rawContent) : ''
     const resource = {
       doc_id: String(item.doc_id || item.id || index),
+      docIds: Array.isArray(item.doc_ids) ? item.doc_ids.map(id => String(id)).filter(Boolean) : [],
       source: item.source || 'knowledge',
       sourceId: String(item.resource_id || item.resourceId || item.id || item.doc_id || ''),
       title: item.title || '',
@@ -394,6 +396,20 @@ const loadResources = async () => {
 
 const filteredResources = computed(() => resources.value.filter(matchesCategory))
 
+const mergeKnowledgeChunks = chunks => {
+  const list = chunks.map(chunk => String(chunk || '').trim()).filter(Boolean)
+  if (!list.length) return ''
+  return list.slice(1).reduce((merged, chunk) => {
+    const maxOverlap = Math.min(220, merged.length, chunk.length)
+    for (let size = maxOverlap; size >= 40; size -= 1) {
+      if (merged.endsWith(chunk.slice(0, size))) {
+        return `${merged}${chunk.slice(size)}`
+      }
+    }
+    return `${merged}\n\n${chunk}`
+  }, list[0])
+}
+
 const openResourcePreview = async resource => {
   selectedResource.value = resource
   previewOpen.value = true
@@ -419,6 +435,31 @@ const openResourcePreview = async resource => {
       }
     } catch (error) {
       console.error('加载资源详情失败：', error)
+    }
+  }
+
+  if (resource?.source === 'knowledge' && !resource?.fullContent) {
+    const docIds = (Array.isArray(resource.docIds) && resource.docIds.length)
+      ? resource.docIds
+      : [resource.sourceId || resource.doc_id].filter(Boolean)
+    if (docIds.length) {
+      try {
+        const details = await Promise.all(docIds.map(id => getStudyResource(id)))
+        const chunks = details
+          .map(detail => detail?.data || detail || {})
+          .map(data => String(data.content || '').trim())
+          .filter(Boolean)
+        const fullContent = mergeKnowledgeChunks(chunks)
+        if (fullContent) {
+          selectedResource.value = {
+            ...resource,
+            content: fullContent,
+            fullContent,
+          }
+        }
+      } catch (error) {
+        console.error('加载知识库资源详情失败：', error)
+      }
     }
   }
 
