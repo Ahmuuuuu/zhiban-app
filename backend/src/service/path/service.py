@@ -24,12 +24,13 @@ from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.service.portrait.service import format_portrait, PortraitRadarService, build_learning_guidance
 from backend.src.service.exam.service import ExamService, _normalize_db_answer, _parse_multi_ans
 from backend.src.service.resource.service import ResourceService
+from backend.src.service.resource.metadata import format_mindmap_content
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.json_parser import parse_llm_json
 from backend.src.utils.exceptions import ServiceError
 from backend.src.service.path.helpers import (
-    check_existing_resources,
     check_resource_viewed,
+    get_bound_node_resources,
     unlock_next_node,
     update_portrait_from_mastery,
     update_progress_resource_ids,
@@ -749,15 +750,15 @@ class PathService:
         async with lock:
             topic = node.topic
             node_resource_types = ["document", "ppt", "mindmap"]
-            existing_records, missing_types = await check_existing_resources(user_id, topic, node_resource_types)
+            existing_records, missing_types = await get_bound_node_resources(progress, user_id, node_resource_types)
 
             for r in existing_records:
-                yield _resource_sse(r)
+                yield _resource_sse(r, path_id=path_id, node_id=node_id)
 
             if not missing_types:
                 all_ids = [r.id for r in existing_records]
                 await update_progress_resource_ids(progress, all_ids)
-                yield _sse_done(all_ids)
+                yield _sse_done(all_ids, path_id=path_id, node_id=node_id)
                 return
 
             gen_types = [t for t in missing_types if t != "exercise"]
@@ -769,6 +770,14 @@ class PathService:
 
             generated_ids = []
             try:
+                def _remember_generated_id(value):
+                    try:
+                        rid = int(value)
+                    except (TypeError, ValueError):
+                        return
+                    if rid > 0 and rid not in generated_ids:
+                        generated_ids.append(rid)
+
                 if gen_types:
                     from backend.src.service.resource.service import ResourceService
                     async for event_str in ResourceService.generate_stream(
@@ -779,21 +788,23 @@ class PathService:
                         include_request_in_history=False,
                         save_to_chat_history=False,
                     ):
-                        yield event_str
                         if event_str.startswith("data:") and "[DONE]" not in event_str:
                             try:
                                 data = json.loads(event_str[5:].strip())
-                                if data.get("done"):
+                                if data.get("type") == "file":
+                                    _remember_generated_id(data.get("resource_id"))
+                                    yield _resource_payload_sse(data, path_id=path_id, node_id=node_id)
+                                elif data.get("type") in {"stream_progress", "progress", "status"}:
+                                    yield _path_status_sse(data.get("progress_msg") or data.get("message") or data.get("msg") or "学习路径资源生成中...")
+                                elif data.get("done"):
                                     for r in data.get("resources", []):
-                                        rid = r.get("resource_id")
-                                        if rid:
-                                            generated_ids.append(rid)
+                                        _remember_generated_id(r.get("resource_id"))
                             except (json.JSONDecodeError, KeyError):
                                 pass
 
                 all_ids = [r.id for r in existing_records] + generated_ids
                 await update_progress_resource_ids(progress, all_ids)
-                yield _sse_done(all_ids)
+                yield _sse_done(all_ids, path_id=path_id, node_id=node_id)
             except Exception:
                 # 客户端断开或异常时，至少把已收集到的资源 ID 写回进度
                 all_ids = [r.id for r in existing_records] + generated_ids
@@ -814,7 +825,7 @@ class PathService:
         async with lock:
             topic = node.topic
             node_resource_types = ["document", "ppt", "mindmap"]
-            existing_records, missing_types = await check_existing_resources(user_id, topic, node_resource_types)
+            existing_records, missing_types = await get_bound_node_resources(progress, user_id, node_resource_types)
 
             gen_types = [t for t in missing_types if t != "exercise"]
             if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
@@ -850,6 +861,9 @@ class PathService:
                     if not r:
                         continue
                     item = {
+                        "source": "learning_path",
+                        "path_id": path_id,
+                        "node_id": node_id,
                         "resource_id": r.id,
                         "topic": r.topic,
                         "resource_type": r.resource_type,
@@ -1674,15 +1688,44 @@ class PathService:
 #  SSE 流式辅助函数
 # ═══════════════════════════════════════
 
-def _resource_sse(record, presentation_id: int = 0) -> str:
+def _path_status_sse(message: str) -> str:
+    data = {"type": "status", "source": "learning_path", "msg": message}
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _resource_payload_sse(payload: dict, path_id: int = 0, node_id: int = 0) -> str:
+    resource_type = payload.get("resource_type") or payload.get("file_type") or "document"
+    resource_id = payload.get("resource_id") or payload.get("file_id")
+    data = {
+        "type": "resource",
+        "source": "learning_path",
+        "path_id": path_id,
+        "node_id": node_id,
+        "resource_id": resource_id,
+        "resource_type": resource_type,
+        "title": payload.get("topic") or payload.get("title") or payload.get("filename") or "",
+        "download_url": payload.get("download_url") or (f"/resource/{resource_id}/download" if resource_id else ""),
+    }
+    for key in ("file_url", "url", "preview_url", "presentation_id", "content"):
+        if payload.get(key):
+            data[key] = payload[key]
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _resource_sse(record, presentation_id: int = 0, path_id: int = 0, node_id: int = 0) -> str:
     """单个资源的 SSE 事件"""
     data = {
         "type": "resource",
+        "source": "learning_path",
+        "path_id": path_id,
+        "node_id": node_id,
         "resource_id": record.id,
         "resource_type": record.resource_type,
         "title": record.topic or "",
         "download_url": f"/resource/{record.id}/download",
     }
+    if record.resource_type == "mindmap" and record.content:
+        data["content"] = format_mindmap_content(record.content)
     if record.file_url:
         data["file_url"] = record.file_url
         data["url"] = record.file_url
@@ -1692,9 +1735,9 @@ def _resource_sse(record, presentation_id: int = 0) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _sse_done(all_ids: list[int]) -> str:
+def _sse_done(all_ids: list[int], path_id: int = 0, node_id: int = 0) -> str:
     """生成完成的 SSE 事件"""
-    data = {"type": "done", "resource_ids": all_ids}
+    data = {"type": "done", "source": "learning_path", "path_id": path_id, "node_id": node_id, "resource_ids": all_ids}
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 

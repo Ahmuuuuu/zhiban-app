@@ -213,7 +213,7 @@ export function deleteResourceAnnotation(resourceId, annotationId) {
 
 export async function exportEditedPptx(resourceId, data = {}) {
   const token = localStorage.getItem('token')
-  const targetUrl = new URL(resolveApiUrl(`/resource/${resourceId}/export-pptx`))
+  const targetUrl = new URL(resolveApiUrl(`/resource/${resourceId}/export-pptx`), window.location.origin)
   if (token && !targetUrl.searchParams.has('token')) {
     targetUrl.searchParams.set('token', token)
   }

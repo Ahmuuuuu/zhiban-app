@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
 from backend.src.service.resource.metadata import (
@@ -9,6 +11,13 @@ from backend.src.service.resource.metadata import (
     build_cover_url,
     extract_ppt_theme_id,
 )
+
+
+def clean_generation_topic(topic: str | None) -> str:
+    text = str(topic or "").strip()
+    text = re.sub(r"\n\n【生成类型指令】[\s\S]*$", "", text)
+    text = re.sub(r"\n\n【思维导图模板】[\s\S]*$", "", text)
+    return text.strip() or "学习资源"
 
 
 async def save_resources(
@@ -28,6 +37,7 @@ async def save_resources(
         return []
 
     file_urls = file_urls or {}
+    topic = clean_generation_topic(topic)
     saved: list[dict] = []
 
     async with in_transaction():

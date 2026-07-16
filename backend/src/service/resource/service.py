@@ -33,7 +33,10 @@ from backend.src.service.resource.generation_context import (
 )
 from backend.src.service.resource.history import save_generation_to_history as _save_generation_to_history
 from backend.src.service.resource.library import ResourceLibraryService
-from backend.src.service.resource.persistence import save_resources as _save_resources
+from backend.src.service.resource.persistence import (
+    clean_generation_topic as _clean_generation_topic,
+    save_resources as _save_resources,
+)
 from backend.src.service.resource.tasks import ResourceTaskService
 
 
@@ -56,6 +59,7 @@ async def _save_single_generated_resource(
 ) -> dict | None:
     if not user or not resource_type or content is None:
         return None
+    topic = _clean_generation_topic(topic)
 
     item_content = (
         _apply_ppt_theme_to_content(content, ppt_theme_id)
@@ -94,6 +98,16 @@ async def _save_single_generated_resource(
 
 # ─── 任务 SSE 通知队列（基于 Redis Pub/Sub + Stream，兼容多进程）───
 # 使用 redis_client 的统一 SSE 机制：本地进程走内存队列，跨进程走 Redis
+
+
+def _resource_preview_content(resource_type: str, content):
+    if resource_type != "mindmap" or content in (None, ""):
+        return content
+    try:
+        return parse_mindmap_text(content)
+    except Exception:
+        logger.exception("SSE mindmap preview content parse failed")
+        return content
 
 
 def _subscribe_task_sse(task_id: str):
@@ -483,6 +497,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
                                 "resource_id": saved["resource_id"],
                                 "download_url": f"/resource/{saved['resource_id']}/download",
                                 "topic": topic,
+                                "content": _resource_preview_content(rt, saved.get("content")),
                                 **({"ppt_theme_id": saved.get("ppt_theme_id")} if rt == "ppt" else {}),
                             })
                             await _notify_task_sse(task_id, {
@@ -594,6 +609,7 @@ async def _run_generation_task(db_id: int, task_id: str, answers: dict | None = 
                 "file_type": r["resource_type"],
                 "topic": r["topic"],
                 "download_url": f"/resource/{r['resource_id']}/download",
+                **({"content": _resource_preview_content(r["resource_type"], r.get("content"))} if r["resource_type"] == "mindmap" else {}),
                 **({"ppt_theme_id": r.get("ppt_theme_id")} if r["resource_type"] == "ppt" else {}),
             }
             for r in saved

@@ -588,20 +588,22 @@
       @select-task="selectAgentFlowTask"
     />
 
-    <button
-      v-if="showAgentFlowLauncher"
-      class="agent-flow-launcher"
-      :class="{ 'is-empty': !hasAgentFlowTask }"
-      type="button"
-      :title="agentFlowLauncherTitle"
-      :disabled="!hasAgentFlowTask"
-      @click="reopenAgentFlowDrawer"
-    >
-      <Bot :size="20" stroke-width="1.8" />
-      <span>智能体流程</span>
-      <b v-if="currentAgentFlowTasks.length > 1">{{ currentAgentFlowTasks.length }}</b>
-      <i v-if="activeAgentFlowTask?.status === 'running'" aria-hidden="true"></i>
-    </button>
+    <Teleport to="body">
+      <button
+        v-if="showAgentFlowLauncher"
+        class="agent-flow-launcher"
+        :class="{ 'is-empty': !hasAgentFlowTask, 'is-open': agentFlowDrawerOpen }"
+        type="button"
+        :title="agentFlowLauncherTitle"
+        :disabled="!hasAgentFlowTask"
+        @click="toggleAgentFlowDrawer"
+      >
+        <Bot :size="20" stroke-width="1.8" />
+        <span>智能体流程</span>
+        <b v-if="currentAgentFlowTasks.length > 1">{{ currentAgentFlowTasks.length }}</b>
+        <i v-if="activeAgentFlowTask?.status === 'running'" aria-hidden="true"></i>
+      </button>
+    </Teleport>
   </div>
 </template>
 
@@ -815,9 +817,11 @@ const activeAgentFlowTask = computed(() => {
     null
 })
 const hasAgentFlowTask = computed(() => Boolean(activeAgentFlowTask.value))
-const showAgentFlowLauncher = computed(() => !agentFlowDrawerOpen.value)
+const showAgentFlowLauncher = computed(() => true)
 const agentFlowLauncherTitle = computed(() => (
-  hasAgentFlowTask.value ? '查看智能体工作流' : '当前聊天暂无智能体工作流'
+  hasAgentFlowTask.value
+    ? (agentFlowDrawerOpen.value ? '关闭智能体工作流' : '查看智能体工作流')
+    : '当前聊天暂无智能体工作流'
 ))
 
 const openAgentFlowForTask = task => {
@@ -873,6 +877,14 @@ const reopenAgentFlowDrawer = () => {
   openAgentFlowForTask(task)
 }
 
+const toggleAgentFlowDrawer = () => {
+  if (agentFlowDrawerOpen.value) {
+    closeAgentFlowDrawer()
+    return
+  }
+  reopenAgentFlowDrawer()
+}
+
 const resourceTools = [
   {
     label: 'image',
@@ -924,7 +936,7 @@ const mindmapTemplates = [
     id: 'balanced',
     name: '左右平衡',
     description: '适合知识点梳理，左右分支均衡展开。',
-    prompt: '模板采用左右平衡结构，一级分支左右均匀分布，适合综合知识梳理。',
+    prompt: '模板采用左右平衡结构，主干分支左右均匀分布；这只影响布局方向，不减少知识层级，仍需展开为完整多层知识树。',
     sampleData: {
       topic: '主题',
       children: [
@@ -1951,7 +1963,7 @@ const normalizeFileMessage = data => {
     data.file_name ||
     data.name ||
     `${data.topic || fileTypeLabel(fileType)}.${fileExtension(fileType)}`
-  const filename = normalizeFileName(rawFilename, fileType)
+  const filename = normalizeFileName(stripInternalInstructions(rawFilename), fileType)
   const fileId = data.file_id || data.fileId || data.resource_id || data.resourceId || data.presentation_id || data.presentationId || ''
   const messageId = fileId
     ? `${resourceKind === 'presentation' ? 'presentation' : 'file'}-${fileId}`
@@ -1987,9 +1999,36 @@ const normalizeFileMessage = data => {
 }
 
 const isExerciseFile = fileData => {
-  const type = String(fileData?.file_type || fileData?.fileType || fileData?.resource_type || fileData?.resourceType || '').toLowerCase()
+  const rawType = String(
+    fileData?.file_type ||
+    fileData?.fileType ||
+    fileData?.resource_type ||
+    fileData?.resourceType ||
+    fileData?.category ||
+    ''
+  ).toLowerCase()
+  const filename = String(fileData?.filename || fileData?.file_name || fileData?.name || '').toLowerCase()
+  const isDocumentType = /(^|[\s._-])(document|doc|docx|word|txt|markdown|md|ppt|pptx|mindmap|xmind|video|image)([\s._-]|$)/i
+
+  if (isDocumentType.test(rawType) || isDocumentType.test(filename)) return false
+
+  const isQuizType = /(^|[\s._-])(exercise|quiz|question|questions|exam|test)([\s._-]|$)/i.test(rawType)
+  if (isQuizType) return true
+
+  const hasQuizPayload = Boolean(
+    fileData?.quiz_id ||
+    fileData?.quizId ||
+    fileData?.exam_id ||
+    fileData?.examId ||
+    fileData?.question_count ||
+    fileData?.questionCount ||
+    (Array.isArray(fileData?.questions) && fileData.questions.length > 0)
+  )
+
+  if (!hasQuizPayload) return false
+
   const content = fileData?.content || fileData?.text || fileData?.preview_content || fileData?.previewContent || ''
-  return type.includes('exercise') || type.includes('quiz') || type.includes('question') || looksLikeQuizContent(content)
+  return looksLikeQuizContent(content)
 }
 
 const tryParseJson = value => {
@@ -4506,9 +4545,9 @@ watch(
 
 .agent-flow-launcher {
   position: fixed;
-  z-index: 72;
+  z-index: 3000;
   right: clamp(18px, 2.4vw, 32px);
-  top: 12px;
+  top: 76px;
   width: 168px;
   height: 46px;
   padding: 0 14px;
@@ -4533,6 +4572,12 @@ watch(
   border-color: rgba(95, 143, 195, 0.55);
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 18px 42px rgba(22, 63, 143, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.agent-flow-launcher.is-open {
+  border-color: rgba(24, 164, 111, 0.45);
+  background: rgba(242, 253, 249, 0.96);
+  box-shadow: 0 18px 42px rgba(24, 164, 111, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.82);
 }
 
 .agent-flow-launcher:disabled,

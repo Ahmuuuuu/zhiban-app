@@ -1,8 +1,6 @@
 import axios from 'axios'
 
-export const DEFAULT_API_BASE_URL = typeof window !== 'undefined'
-  ? `${window.location.protocol}//${window.location.hostname}:2221`
-  : 'http://127.0.0.1:2221'
+export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:2221'
 const rawApiBaseURL = import.meta.env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL
 export const apiBaseURL = rawApiBaseURL.replace(/\/+$/, '')
 
@@ -21,7 +19,7 @@ const isPublicUrl = url => {
 }
 
 const request = axios.create({
-  baseURL: "https://compel-dividable-unfasten.ngrok-free.dev",
+  baseURL: apiBaseURL || '',
   timeout: 300000
 })
 

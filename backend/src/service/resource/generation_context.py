@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 
 from backend.src.ai_core.llm_config import llm
@@ -17,6 +18,20 @@ from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.prompt_loader import fill_prompt, load_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def split_internal_generation_notes(topic: str | None, user_notes: str = "") -> tuple[str, str]:
+    text = str(topic or "").strip()
+    notes = [str(user_notes or "").strip()] if str(user_notes or "").strip() else []
+    for pattern in (
+        r"\n\n【生成类型指令】[\s\S]*$",
+        r"\n\n【思维导图模板】[\s\S]*$",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            notes.append(match.group(0).strip())
+            text = text[:match.start()].strip()
+    return text or "通用学习", "\n\n".join(notes)
 
 
 def infer_rag_mode(answers: dict | None = None, user_notes: str = "") -> str:
@@ -85,6 +100,7 @@ async def make_generation_state(
     ppt_theme_id: str | None = None,
 ) -> dict:
     t0 = time.perf_counter()
+    topic, user_notes = split_internal_generation_notes(topic, user_notes)
     rag_mode = infer_rag_mode(answers, user_notes)
     chat_group_id = await ensure_chat_group_id(user_id, chat_group_id)
     t_init = time.perf_counter()
