@@ -153,6 +153,7 @@
             class="chat-mindmap-preview"
             :content="message.content"
             :title="message.filename"
+            :template-id="message.mindmapTemplateId || 'balanced'"
             :open-signal="message.mindmapPreviewSignal || 0"
           />
 
@@ -417,6 +418,61 @@
     />
 
     <Teleport to="body">
+      <section v-if="mindmapTemplateModalVisible" class="mindmap-template-dialog" @click.self="closeMindmapTemplateModal">
+        <article class="mindmap-template-dialog__panel">
+          <header class="mindmap-template-dialog__header">
+            <div>
+              <span>Mind Map Template</span>
+              <h2>选择思维导图模板</h2>
+            </div>
+            <button type="button" aria-label="关闭思维导图模板选择" @click="closeMindmapTemplateModal">
+              <X :size="20" />
+            </button>
+          </header>
+
+          <div class="mindmap-template-grid">
+            <button
+              v-for="template in mindmapTemplates"
+              :key="template.id"
+              type="button"
+              class="mindmap-template-card"
+              :class="{ active: pendingMindmapTemplateId === template.id }"
+              @click="pendingMindmapTemplateId = template.id"
+            >
+              <MindmapPreview
+                class="mindmap-template-real-preview"
+                :content="template.sampleData"
+                :title="template.sampleData.topic"
+                :template-id="template.id"
+                :interactive="false"
+                compact
+              />
+              <strong>{{ template.name }}</strong>
+              <small>{{ template.description }}</small>
+            </button>
+          </div>
+
+          <div class="mindmap-template-input">
+            <label for="mindmap-topic-input">生成要求</label>
+            <textarea
+              id="mindmap-topic-input"
+              v-model="mindmapTemplatePrompt"
+              rows="3"
+              placeholder="例如：帮我生成一份关于高中物理牛顿运动定律的思维导图，包含概念、公式、例题和易错点"
+            ></textarea>
+          </div>
+
+          <footer class="mindmap-template-dialog__actions">
+            <button type="button" @click="closeMindmapTemplateModal">取消</button>
+            <button type="button" class="primary" :disabled="!mindmapTemplatePrompt.trim()" @click="confirmMindmapTemplate">
+              生成思维导图
+            </button>
+          </footer>
+        </article>
+      </section>
+    </Teleport>
+
+    <Teleport to="body">
       <section v-if="documentPreview.visible" class="doc-dialog" @click.self="closeDocumentPreview">
         <article class="doc-dialog__panel">
           <header class="doc-dialog__header">
@@ -606,6 +662,10 @@ const showAddMenu = ref(false)
 const selectedResourceTool = ref(null)
 const pptGenModalVisible = ref(false)
 const pptGenThemeId = ref('minimal-white')
+const mindmapTemplateModalVisible = ref(false)
+const pendingMindmapTemplateId = ref('balanced')
+const pendingMindmapSendText = ref('')
+const mindmapTemplatePrompt = ref('')
 const route = useRoute()
 const router = useRouter()
 const {
@@ -859,9 +919,94 @@ const resourceTools = [
   }
 ]
 
+const mindmapTemplates = [
+  {
+    id: 'balanced',
+    name: '左右平衡',
+    description: '适合知识点梳理，左右分支均衡展开。',
+    prompt: '模板采用左右平衡结构，一级分支左右均匀分布，适合综合知识梳理。',
+    sampleData: {
+      topic: '主题',
+      children: [
+        { topic: '标题一', children: [{ topic: '要点' }] },
+        { topic: '标题二', children: [{ topic: '总结' }] },
+        { topic: '标题三', children: [{ topic: '例题' }] }
+      ]
+    }
+  },
+  {
+    id: 'radial',
+    name: '中心放射',
+    description: '适合主题发散、概念联想和头脑风暴。',
+    prompt: '模板采用中心放射结构，围绕核心主题展开多个短分支，节点标题保持简短。',
+    sampleData: {
+      topic: '主题',
+      children: [
+        { topic: '标题一' },
+        { topic: '标题二' },
+        { topic: '标题三' },
+        { topic: '要点' },
+        { topic: '总结' }
+      ]
+    }
+  },
+  {
+    id: 'outline',
+    name: '阅读提纲',
+    description: '适合长内容、步骤流程和章节式总结。',
+    prompt: '模板采用右向阅读提纲结构，按章节、步骤或递进关系组织，层级清晰。',
+    sampleData: {
+      topic: '主题',
+      children: [
+        { topic: '标题一', children: [{ topic: '要点一' }, { topic: '要点二' }] },
+        { topic: '标题二', children: [{ topic: '步骤' }] },
+        { topic: '总结', children: [{ topic: '复习' }] }
+      ]
+    }
+  },
+  {
+    id: 'compact',
+    name: '紧凑复习',
+    description: '适合节点较多的考前复习和快速记忆。',
+    prompt: '模板采用紧凑复习结构，分支更短、更密集，优先突出关键词和考点。',
+    sampleData: {
+      topic: '主题',
+      children: [
+        { topic: '标题一', children: [{ topic: '考点' }, { topic: '公式' }] },
+        { topic: '标题二', children: [{ topic: '易错' }, { topic: '例题' }] },
+        { topic: '标题三', children: [{ topic: '总结' }, { topic: '记忆' }] },
+        { topic: '复盘', children: [{ topic: '清单' }] }
+      ]
+    }
+  }
+]
+
+const getMindmapTemplate = id => mindmapTemplates.find(item => item.id === id) || mindmapTemplates[0]
+
+const buildMindmapTemplateInstruction = templateId => {
+  const template = getMindmapTemplate(templateId)
+  return `\n\n【思维导图模板】${template.name}：${template.prompt}`
+}
+
+const withMindmapTemplate = tool => {
+  if (!tool?.resourceTypes?.includes('mindmap')) return tool
+  const templateId = tool.mindmapTemplateId || 'balanced'
+  return {
+    ...tool,
+    mindmapTemplateId: templateId,
+    mindmapTemplateName: getMindmapTemplate(templateId).name
+  }
+}
+
 const selectResourceTool = tool => {
   if (tool.label === 'ppt') {
     pptGenModalVisible.value = true
+    return
+  }
+  if (tool.label === 'mindmap') {
+    pendingMindmapTemplateId.value = selectedResourceTool.value?.mindmapTemplateId || 'balanced'
+    mindmapTemplatePrompt.value = inputValue.value.trim()
+    mindmapTemplateModalVisible.value = true
     return
   }
   if (selectedResourceTool.value?.label === tool.label) {
@@ -872,6 +1017,36 @@ const selectResourceTool = tool => {
   selectedResourceTool.value = tool
   nextTick(() => {
     document.querySelector('.input-box textarea')?.focus()
+  })
+}
+
+const closeMindmapTemplateModal = () => {
+  mindmapTemplateModalVisible.value = false
+  pendingMindmapSendText.value = ''
+  mindmapTemplatePrompt.value = ''
+}
+
+const confirmMindmapTemplate = () => {
+  const mindmapTool = resourceTools.find(t => t.label === 'mindmap')
+  if (!mindmapTool) return
+  const promptText = mindmapTemplatePrompt.value.trim()
+  if (!promptText) {
+    nextTick(() => {
+      document.querySelector('#mindmap-topic-input')?.focus()
+    })
+    return
+  }
+  selectedResourceTool.value = withMindmapTemplate({
+    ...mindmapTool,
+    mindmapTemplateId: pendingMindmapTemplateId.value
+  })
+  mindmapTemplateModalVisible.value = false
+  const pendingText = pendingMindmapSendText.value || promptText
+  pendingMindmapSendText.value = ''
+  mindmapTemplatePrompt.value = ''
+  inputValue.value = pendingText
+  nextTick(() => {
+    void sendMessage()
   })
 }
 
@@ -922,7 +1097,9 @@ const inputPlaceholder = computed(() => {
 })
 
 const stripTypedResourceInstruction = value => {
-  return String(value || '').replace(/\n\n【生成类型指令】[\s\S]*$/, '')
+  return String(value || '')
+    .replace(/\n\n【生成类型指令】[\s\S]*$/, '')
+    .replace(/\n\n【思维导图模板】[\s\S]*$/, '')
 }
 
 // 过滤掉 AI 生成的 JSON 资源响应（如视频/视频生成后的 JSON 元数据），保留友好文案
@@ -1792,6 +1969,7 @@ const normalizeFileMessage = data => {
     narration: data.narration || null,
     presentation: data.presentation || null,
     pptThemeId: data.ppt_theme_id || data.pptThemeId || data.theme_id || data.themeId || '',
+    mindmapTemplateId: data.mindmap_template_id || data.mindmapTemplateId || data.template_id || data.templateId || '',
     fileId,
     resourceKind,
     previewUrl: resolveApiUrl(data.preview_url || data.previewUrl || data.presentation_url || data.presentationUrl || data.file_url || data.fileUrl || data.preview || ''),
@@ -3346,9 +3524,15 @@ const attachGenerationTaskToMessage = (task, messageId) => {
             ;(task as any)._pptPlaceholderId = null
           }
 
-          const fileWithTheme = isPptFile(file)
-            ? { ...(file as Record<string, any>), ppt_theme_id: (file as any).ppt_theme_id || (file as any).pptThemeId || task.tool?.pptThemeId || '' }
-            : file
+          const fileWithTheme = {
+            ...(file as Record<string, any>),
+            ...(isPptFile(file)
+              ? { ppt_theme_id: (file as any).ppt_theme_id || (file as any).pptThemeId || task.tool?.pptThemeId || '' }
+              : {}),
+            ...(task.tool?.resourceTypes?.includes('mindmap')
+              ? { mindmap_template_id: (file as any).mindmap_template_id || (file as any).mindmapTemplateId || task.tool?.mindmapTemplateId || 'balanced' }
+              : {})
+          }
           const result = await appendFileMessage(fileWithTheme)
           if (result.isNew) addedNewFiles = true
 
@@ -3562,8 +3746,21 @@ const sendMessage = async () => {
   preventAutoConversationSwitch.value = false
 
   showAddMenu.value = false
-  const activeTool = selectedResourceTool.value
-  const backendText = activeTool?.prompt ? `${activeTool.prompt}${text}` : text
+  const selectedTool = selectedResourceTool.value
+  const preDetectedTool = detectGenerationIntent(text)
+  if (!selectedTool && preDetectedTool?.resourceTypes?.includes('mindmap')) {
+    pendingMindmapTemplateId.value = 'balanced'
+    pendingMindmapSendText.value = text
+    mindmapTemplatePrompt.value = text
+    mindmapTemplateModalVisible.value = true
+    return
+  }
+
+  const activeTool = withMindmapTemplate(selectedTool)
+  const backendTextBase = activeTool?.prompt ? `${activeTool.prompt}${text}` : text
+  const backendText = activeTool?.mindmapTemplateId
+    ? `${backendTextBase}${buildMindmapTemplateInstruction(activeTool.mindmapTemplateId)}`
+    : backendTextBase
   const chatRequestText = text
   const loadingMessageId = Date.now() + 1
 
@@ -3605,9 +3802,12 @@ const sendMessage = async () => {
     }
 
     // 关键词检测 — 自动路由到资源/图片生成
-    const detectedTool = detectGenerationIntent(text)
+    const detectedTool = withMindmapTemplate(preDetectedTool)
     if (detectedTool?.generateMode) {
-      const task = startGenerationTask(text, detectedTool, activeConversationId.value)
+      const detectedText = detectedTool?.mindmapTemplateId
+        ? `${text}${buildMindmapTemplateInstruction(detectedTool.mindmapTemplateId)}`
+        : text
+      const task = startGenerationTask(detectedText, detectedTool, activeConversationId.value)
       window.localStorage.setItem(ACTIVE_GENERATION_TASK_KEY, task.id)
       target.generationTaskId = task.id
       openAgentFlowForTask(task)
@@ -4031,6 +4231,8 @@ const resetChatViewForUserContext = async () => {
   boundGenerationTaskMessages.clear()
   showHistoryPanel.value = false
   showAddMenu.value = false
+  mindmapTemplateModalVisible.value = false
+  pendingMindmapSendText.value = ''
   clearAgentFlowSelection()
   await loadConversationList()
 }
@@ -4054,6 +4256,8 @@ const createNewChat = () => {
   messages.value = []
   showHistoryPanel.value = false
   showAddMenu.value = false
+  mindmapTemplateModalVisible.value = false
+  pendingMindmapSendText.value = ''
   clearAgentFlowSelection()
   persistChatViewState()
 }
@@ -5426,6 +5630,452 @@ textarea::placeholder {
   background: rgba(12, 28, 58, 0.28);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+}
+
+.mindmap-template-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 4300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(12, 28, 58, 0.32);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.mindmap-template-dialog__panel {
+  width: min(760px, 94vw);
+  border: 1px solid rgba(201, 220, 233, 0.86);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 26px 80px rgba(22, 63, 143, 0.22);
+  overflow: hidden;
+}
+
+.mindmap-template-dialog__header,
+.mindmap-template-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 20px;
+}
+
+.mindmap-template-dialog__header {
+  border-bottom: 1px solid rgba(201, 220, 233, 0.72);
+}
+
+.mindmap-template-dialog__header span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.mindmap-template-dialog__header h2 {
+  margin: 0;
+  color: var(--primary);
+  font-size: 22px;
+}
+
+.mindmap-template-dialog__header button,
+.mindmap-template-dialog__actions button {
+  min-height: 38px;
+  border: 1px solid rgba(201, 220, 233, 0.86);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mindmap-template-dialog__header button {
+  width: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mindmap-template-dialog__actions {
+  border-top: 1px solid rgba(201, 220, 233, 0.62);
+  justify-content: flex-end;
+}
+
+.mindmap-template-dialog__actions button {
+  padding: 0 18px;
+}
+
+.mindmap-template-dialog__actions .primary {
+  border-color: #143761;
+  background: #143761;
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(20, 55, 97, 0.18);
+}
+
+.mindmap-template-dialog__actions .primary:disabled {
+  border-color: rgba(95, 143, 195, 0.28);
+  background: rgba(220, 235, 242, 0.72);
+  color: rgba(20, 55, 97, 0.45);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.mindmap-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 20px;
+}
+
+.mindmap-template-input {
+  padding: 0 20px 18px;
+}
+
+.mindmap-template-input label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.mindmap-template-input textarea {
+  width: 100%;
+  min-height: 86px;
+  padding: 12px 14px;
+  border: 1px solid rgba(95, 143, 195, 0.42);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 700;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.mindmap-template-input textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(95, 143, 195, 0.16);
+}
+
+.mindmap-template-card {
+  min-height: 168px;
+  padding: 14px;
+  border: 1px solid rgba(201, 220, 233, 0.86);
+  border-radius: 14px;
+  background: #f8fbfe;
+  color: var(--primary);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.mindmap-template-card:hover,
+.mindmap-template-card.active {
+  transform: translateY(-2px);
+  border-color: rgba(22, 63, 143, 0.44);
+  box-shadow: 0 14px 30px rgba(22, 63, 143, 0.12);
+}
+
+.mindmap-template-card.active {
+  background: rgba(220, 235, 242, 0.74);
+}
+
+.mindmap-template-card strong,
+.mindmap-template-card small {
+  display: block;
+}
+
+.mindmap-template-card strong {
+  margin-top: 12px;
+  font-size: 16px;
+}
+
+.mindmap-template-card small {
+  margin-top: 5px;
+  color: rgba(22, 63, 143, 0.62);
+  line-height: 1.5;
+}
+
+.mindmap-template-real-preview {
+  height: 112px;
+  min-height: 112px;
+  pointer-events: none;
+}
+
+.mindmap-template-card__preview {
+  position: relative;
+  display: block;
+  height: 92px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid rgba(201, 220, 233, 0.72);
+  overflow: hidden;
+}
+
+.mind-node,
+.mind-link {
+  position: absolute;
+  display: block;
+}
+
+.mind-node {
+  min-width: 46px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #6da3d2;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 20px;
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: 0 6px 12px rgba(22, 63, 143, 0.12);
+}
+
+.mind-node--root {
+  min-width: 58px;
+  height: 24px;
+  left: 50%;
+  top: 34px;
+  transform: translateX(-50%);
+  background: #143761;
+  line-height: 24px;
+}
+
+.mind-node--a {
+  left: 20px;
+  top: 14px;
+  background: #6da3d2;
+}
+
+.mind-node--b {
+  right: 20px;
+  top: 14px;
+  background: #21a7a8;
+}
+
+.mind-node--c {
+  left: 26px;
+  bottom: 14px;
+  background: #f0a73a;
+  color: #143761;
+}
+
+.mind-node--d {
+  right: 26px;
+  bottom: 14px;
+  background: #5d7d97;
+}
+
+.mind-node--e,
+.mind-node--f {
+  display: none;
+}
+
+.mind-link {
+  height: 1px;
+  background: rgba(20, 55, 97, 0.28);
+  transform-origin: center;
+}
+
+.mind-link--a {
+  width: 62px;
+  left: calc(50% - 82px);
+  top: 34px;
+  transform: rotate(-18deg);
+}
+
+.mind-link--b {
+  width: 62px;
+  right: calc(50% - 82px);
+  top: 34px;
+  transform: rotate(18deg);
+}
+
+.mind-link--c {
+  width: 64px;
+  left: calc(50% - 82px);
+  top: 61px;
+  transform: rotate(19deg);
+}
+
+.mindmap-template-card__preview::after {
+  content: "";
+  position: absolute;
+  width: 64px;
+  right: calc(50% - 82px);
+  top: 61px;
+  height: 1px;
+  background: rgba(20, 55, 97, 0.28);
+  transform: rotate(-19deg);
+}
+
+.mindmap-template-card__preview--radial .mind-node--root {
+  min-width: 44px;
+  height: 44px;
+  top: 24px;
+  border-radius: 50%;
+  line-height: 44px;
+}
+
+.mindmap-template-card__preview--radial .mind-node--a {
+  left: 50%;
+  top: 6px;
+  transform: translateX(-50%);
+}
+
+.mindmap-template-card__preview--radial .mind-node--b {
+  right: 18px;
+  top: 36px;
+}
+
+.mindmap-template-card__preview--radial .mind-node--c {
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+}
+
+.mindmap-template-card__preview--radial .mind-node--d {
+  left: 18px;
+  top: 36px;
+}
+
+.mindmap-template-card__preview--radial .mind-link--a {
+  width: 38px;
+  left: 50%;
+  top: 28px;
+  transform: translateX(-50%) rotate(90deg);
+}
+
+.mindmap-template-card__preview--radial .mind-link--b {
+  width: 52px;
+  right: calc(50% - 74px);
+  top: 47px;
+  transform: rotate(0deg);
+}
+
+.mindmap-template-card__preview--radial .mind-link--c {
+  width: 38px;
+  left: 50%;
+  top: 64px;
+  transform: translateX(-50%) rotate(90deg);
+}
+
+.mindmap-template-card__preview--radial::after {
+  width: 52px;
+  left: calc(50% - 74px);
+  top: 47px;
+  transform: rotate(0deg);
+}
+
+.mindmap-template-card__preview--outline .mind-node--root {
+  left: 18px;
+  top: 34px;
+  transform: none;
+}
+
+.mindmap-template-card__preview--outline .mind-node--a,
+.mindmap-template-card__preview--outline .mind-node--b,
+.mindmap-template-card__preview--outline .mind-node--c,
+.mindmap-template-card__preview--outline .mind-node--d {
+  left: 104px;
+  right: auto;
+  min-width: 68px;
+}
+
+.mindmap-template-card__preview--outline .mind-node--a { top: 8px; }
+.mindmap-template-card__preview--outline .mind-node--b { top: 30px; }
+.mindmap-template-card__preview--outline .mind-node--c { top: 52px; bottom: auto; }
+.mindmap-template-card__preview--outline .mind-node--d { top: 70px; bottom: auto; min-width: 56px; }
+
+.mindmap-template-card__preview--outline .mind-link--a,
+.mindmap-template-card__preview--outline .mind-link--b,
+.mindmap-template-card__preview--outline .mind-link--c,
+.mindmap-template-card__preview--outline::after {
+  left: 76px;
+  right: auto;
+  width: 28px;
+  transform: rotate(0deg);
+}
+
+.mindmap-template-card__preview--outline .mind-link--a { top: 20px; }
+.mindmap-template-card__preview--outline .mind-link--b { top: 42px; }
+.mindmap-template-card__preview--outline .mind-link--c { top: 64px; }
+.mindmap-template-card__preview--outline::after { top: 80px; }
+
+.mindmap-template-card__preview--compact .mind-node {
+  min-width: 40px;
+  height: 17px;
+  padding: 0 6px;
+  font-size: 9px;
+  line-height: 17px;
+}
+
+.mindmap-template-card__preview--compact .mind-node--root {
+  min-width: 54px;
+  height: 22px;
+  top: 35px;
+  line-height: 22px;
+}
+
+.mindmap-template-card__preview--compact .mind-node--a { left: 12px; top: 8px; }
+.mindmap-template-card__preview--compact .mind-node--b { right: 12px; top: 8px; }
+.mindmap-template-card__preview--compact .mind-node--c { left: 12px; top: 38px; bottom: auto; }
+.mindmap-template-card__preview--compact .mind-node--d { right: 12px; top: 38px; bottom: auto; }
+
+.mindmap-template-card__preview--compact .mind-node--e,
+.mindmap-template-card__preview--compact .mind-node--f {
+  display: block;
+}
+
+.mindmap-template-card__preview--compact .mind-node--e {
+  left: 42px;
+  bottom: 8px;
+  background: #21a7a8;
+}
+
+.mindmap-template-card__preview--compact .mind-node--f {
+  right: 42px;
+  bottom: 8px;
+  background: #f0a73a;
+  color: #143761;
+}
+
+.mindmap-template-card__preview--compact .mind-link--a {
+  width: 48px;
+  left: calc(50% - 68px);
+  top: 32px;
+  transform: rotate(-27deg);
+}
+
+.mindmap-template-card__preview--compact .mind-link--b {
+  width: 48px;
+  right: calc(50% - 68px);
+  top: 32px;
+  transform: rotate(27deg);
+}
+
+.mindmap-template-card__preview--compact .mind-link--c {
+  width: 42px;
+  left: calc(50% - 70px);
+  top: 49px;
+  transform: rotate(0deg);
+}
+
+.mindmap-template-card__preview--compact::after {
+  width: 42px;
+  right: calc(50% - 70px);
+  top: 49px;
+  transform: rotate(0deg);
 }
 
 .ppt-dialog {

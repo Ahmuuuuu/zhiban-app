@@ -1428,3 +1428,65 @@ html[data-theme="dark"] .study-panel .simple-chart path {
 html[data-theme="dark"] .study-panel .simple-chart circle {
   fill: #1a2535 !important;
 }
+
+html[data-theme="dark"] .mindmap-template-dialog {
+  background: rgba(6, 13, 24, 0.58) !important;
+}
+
+html[data-theme="dark"] .mindmap-template-dialog__panel,
+html[data-theme="dark"] .mindmap-template-card,
+html[data-theme="dark"] .mindmap-template-card__preview,
+html[data-theme="dark"] .mindmap-template-dialog__header button,
+html[data-theme="dark"] .mindmap-template-dialog__actions button {
+  background: #182536 !important;
+  color: #d7e5f7 !important;
+  border-color: rgba(103, 132, 169, 0.46) !important;
+}
+
+html[data-theme="dark"] .mindmap-template-card.active,
+html[data-theme="dark"] .mindmap-template-card:hover {
+  background: #203148 !important;
+  border-color: rgba(109, 163, 210, 0.58) !important;
+}
+
+html[data-theme="dark"] .mindmap-template-dialog__header,
+html[data-theme="dark"] .mindmap-template-dialog__actions {
+  border-color: rgba(103, 132, 169, 0.42) !important;
+}
+
+html[data-theme="dark"] .mindmap-template-dialog__header span,
+html[data-theme="dark"] .mindmap-template-card small {
+  color: #8fb4df !important;
+}
+
+html[data-theme="dark"] .mindmap-template-dialog__actions .primary {
+  background: #214d86 !important;
+  border-color: #326aa9 !important;
+  color: #f4f8ff !important;
+}
+
+html[data-theme="dark"] .mindmap-template-dialog__actions .primary:disabled {
+  background: #263445 !important;
+  border-color: rgba(103, 132, 169, 0.34) !important;
+  color: #7d8ea3 !important;
+}
+
+html[data-theme="dark"] .mindmap-template-input label {
+  color: #d7e5f7 !important;
+}
+
+html[data-theme="dark"] .mindmap-template-input textarea {
+  background: #111b29 !important;
+  color: #d7e5f7 !important;
+  border-color: rgba(103, 132, 169, 0.46) !important;
+}
+
+html[data-theme="dark"] .mindmap-template-input textarea::placeholder {
+  color: #7d8ea3 !important;
+}
+
+html[data-theme="dark"] .mindmap-template-real-preview,
+html[data-theme="dark"] .mindmap-template-real-preview .mindmap-canvas,
+html[data-theme="dark"] .mindmap-template-real-preview .map-container {
+  background: #182536 !important;
+}

@@ -1,7 +1,11 @@
 <template>
-  <div class="mindmap-preview" :class="`mindmap-preview--${layoutProfile.name}`" @click="openFullscreen">
+  <div
+    class="mindmap-preview"
+    :class="[`mindmap-preview--${layoutProfile.name}`, { 'mindmap-preview--compact': compact }]"
+    @click="openFullscreen"
+  >
     <div ref="mapEl" class="mindmap-canvas"></div>
-    <div v-if="!fullscreenOpen" class="mindmap-hint">点击放大预览</div>
+    <div v-if="interactive && !fullscreenOpen" class="mindmap-hint">点击放大预览</div>
     <div v-if="errorText && !fullscreenOpen" class="mindmap-fallback">
       <strong>{{ fallbackTitle }}</strong>
       <pre>{{ fallbackText }}</pre>
@@ -52,6 +56,18 @@ const props = defineProps({
   openSignal: {
     type: Number,
     default: 0
+  },
+  templateId: {
+    type: String,
+    default: ''
+  },
+  interactive: {
+    type: Boolean,
+    default: true
+  },
+  compact: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -78,6 +94,44 @@ const branchPalette = [
   '#EF746F',
   '#55C9A7'
 ]
+
+const mindmapTemplateProfiles = {
+  balanced: {
+    name: 'balanced',
+    title: '平衡结构',
+    root: '#2F5D9F',
+    palette: ['#58AEEA', '#21A7A8', '#6D8EEB', '#F2B705', '#55C9A7', '#B889D8'],
+    direction: MindElixir.SIDE
+  },
+  radial: {
+    name: 'radial',
+    title: '中心放射',
+    root: '#30313D',
+    palette: ['#F2B705', '#58AEEA', '#21A7A8', '#EF746F', '#6D8EEB', '#B889D8'],
+    direction: MindElixir.SIDE
+  },
+  outline: {
+    name: 'outline',
+    title: '阅读提纲',
+    root: '#143761',
+    palette: ['#6DA3D2', '#5D7D97', '#9AB7CB', '#F0A73A', '#7EA6C0'],
+    direction: MindElixir.RIGHT
+  },
+  compact: {
+    name: 'compact',
+    title: '紧凑复习',
+    root: '#235E6F',
+    palette: ['#21A7A8', '#58AEEA', '#7BB940', '#D88A19', '#6D8EEB', '#55C9A7'],
+    direction: MindElixir.SIDE
+  }
+}
+
+const activeTemplateProfile = computed(() => {
+  const key = String(props.templateId || '').trim()
+  return mindmapTemplateProfiles[key] || null
+})
+
+const activePalette = computed(() => activeTemplateProfile.value?.palette || branchPalette)
 
 const fallbackTitle = computed(() => props.title || '思维导图')
 const fallbackText = computed(() => {
@@ -171,6 +225,13 @@ const detectKnowledgeType = node => {
 }
 
 const chooseLayoutProfile = root => {
+  if (activeTemplateProfile.value) {
+    return {
+      ...activeTemplateProfile.value,
+      stats: collectStats(root)
+    }
+  }
+
   const stats = collectStats(root)
   const rootChildren = root?.children?.length || 0
   const avgTopicLength = stats.totalNodes ? stats.topicLength / stats.totalNodes : 0
@@ -209,13 +270,14 @@ const assignBalancedBranchDirections = root => {
 }
 
 const styleNodeByLayout = (node, profile, depth = 0, branchIndex = 0) => {
-  const color = branchPalette[branchIndex % branchPalette.length]
+  const palette = profile.palette || activePalette.value
+  const color = palette[branchIndex % palette.length]
   const children = Array.isArray(node.children) ? node.children : []
 
   if (depth === 0) {
     node.style = {
       color: '#ffffff',
-      background: profile.name === 'radial' ? '#30313D' : '#2F5D9F',
+      background: profile.root || (profile.name === 'radial' ? '#30313D' : '#2F5D9F'),
       fontWeight: '800',
       fontSize: profile.name === 'outline' ? '18px' : '20px',
       border: '0'
@@ -275,10 +337,11 @@ const themeForProfile = profile => {
   const isOutline = profile.name === 'outline'
   const isRadial = profile.name === 'radial'
   const isCompact = profile.name === 'compact'
+  const palette = profile.palette || activePalette.value
   return {
     name: `Zhiban-${profile.name}`,
     type: 'light',
-    palette: branchPalette,
+    palette,
     cssVar: {
       '--node-gap-x': isOutline ? '54px' : isCompact ? '44px' : isRadial ? '40px' : '48px',
       '--node-gap-y': isOutline ? '12px' : isCompact ? '7px' : isRadial ? '8px' : '11px',
@@ -287,7 +350,7 @@ const themeForProfile = profile => {
       '--root-radius': isRadial ? '999px' : '10px',
       '--main-radius': isRadial ? '999px' : '8px',
       '--root-color': '#ffffff',
-      '--root-bgcolor': '#2F5D9F',
+      '--root-bgcolor': profile.root || '#2F5D9F',
       '--root-border-color': 'rgba(0, 0, 0, 0)',
       '--main-color': '#2B3440',
       '--main-bgcolor': '#ffffff',
@@ -296,7 +359,7 @@ const themeForProfile = profile => {
       '--color': '#5B6574',
       '--bgcolor': '#FAFCFF',
       '--selected': '#45A3FF',
-      '--accent-color': '#21A7A8',
+      '--accent-color': palette[1] || '#21A7A8',
       '--panel-color': '#2B3440',
       '--panel-bgcolor': '#ffffff',
       '--panel-border-color': '#E7EEF8',
@@ -378,6 +441,7 @@ const renderOverlayMap = async () => {
 }
 
 const openFullscreen = () => {
+  if (!props.interactive) return
   if (fullscreenOpen.value) return
   fullscreenOpen.value = true
   nextTick(() => {
@@ -438,7 +502,7 @@ const zoomFit = () => {
   currentScale.value = 1
 }
 
-watch(() => [props.content, props.title], renderMap, { deep: true })
+watch(() => [props.content, props.title, props.templateId], renderMap, { deep: true })
 watch(() => props.openSignal, value => {
   if (value) openFullscreen()
 })
@@ -478,6 +542,21 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 620px;
   min-height: 520px;
+}
+
+.mindmap-preview--compact {
+  min-height: 112px;
+  border-radius: 12px;
+  cursor: default;
+}
+
+.mindmap-preview--compact .mindmap-canvas {
+  height: 112px;
+  min-height: 112px;
+}
+
+.mindmap-preview--compact :deep(.map-container) {
+  min-height: 112px !important;
 }
 
 .mindmap-hint {
