@@ -71,6 +71,14 @@ async def save_generation_to_history(
     if not chat_group_id or chat_group_id <= 0:
         logger.warning("跳过历史保存：chat_group_id=%s user_id=%s", chat_group_id, user_id)
         return
+    if any(
+        (resource or {}).get("source") == "learning_path"
+        or (resource or {}).get("path_id")
+        or (resource or {}).get("node_id")
+        for resource in (resources or [])
+    ):
+        logger.warning("Skip learning-path resources in chat history user_id=%s chat_group_id=%s", user_id, chat_group_id)
+        return
     try:
         await ChatHistory.create(
             user_id=user_id,

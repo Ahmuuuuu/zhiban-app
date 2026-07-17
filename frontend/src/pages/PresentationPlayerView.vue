@@ -1328,12 +1328,13 @@ onBeforeUnmount(() => {
 
 .presentation-player :deep(.karaoke-word.is-current) {
   opacity: 1;
-  color: #111827 !important;
-  background: var(--video-warm, #ffd166) !important;
+  color: #e63946 !important;
+  background: transparent !important;
   font-weight: 900;
-  box-shadow:
-    0 0 0 2px rgba(255, 255, 255, 0.72),
-    0 0 18px rgba(255, 209, 102, 0.72);
+  text-shadow:
+    0 0 1px rgba(255, 255, 255, 0.72),
+    0 0 14px rgba(230, 57, 70, 0.42);
+  box-shadow: none;
 }
 
 @keyframes mouth-patch-talk {

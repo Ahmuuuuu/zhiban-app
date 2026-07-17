@@ -400,7 +400,7 @@ const normalizeRestoredAgentFlow = (
         timestamp: now,
       }]
   restored.activeAgentId = 'complete'
-  restored.visible = false
+  restored.visible = true
   restored.updatedAt = now
   return restored
 }
@@ -1116,10 +1116,12 @@ const applyTaskStreamEvent = (task: GenerationTask, eventData: any) => {
     const [file] = normalizeTaskFiles({ resources: [eventData] })
     if (file) {
       const fileId = file.resource_id || file.file_id || file.download_url
-      const exists = task.files.some((item: any) => (
+      const existing = task.files.find((item: any) => (
         String(item?.resource_id || item?.file_id || item?.download_url || '') === String(fileId || '')
       ))
-      if (!exists) {
+      if (existing) {
+        Object.assign(existing, file)
+      } else {
         task.files.push(file)
       }
       if (task.tool.generateMode === 'video') {
@@ -1541,7 +1543,7 @@ const maybeGeneratePresentation = async (task: GenerationTask) => {
         ;(task as any).pendingQuestions = questions
         task.status = 'done'
         task.progress = '请选择视频方向以继续...'
-        setAgentFlowVisibility(task, false)
+        setAgentFlowVisibility(task, true)
       } else {
         // 无问题则直接生成
         await _doGeneratePresentation(task)
@@ -1864,7 +1866,7 @@ export function useGenerationTaskQueue() {
             ;(task as any).pendingQuestions = questions
             task.status = 'done'
             task.progress = '请选择视频方向以继续...'
-            setAgentFlowVisibility(task, false)
+            setAgentFlowVisibility(task, true)
           } else {
             task.status = 'running'
             task.progress = '正在生成学习视频...'

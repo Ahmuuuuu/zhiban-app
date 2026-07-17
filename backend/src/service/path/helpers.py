@@ -45,6 +45,55 @@ async def check_existing_resources(
     return existing_records, missing_types
 
 
+def _load_resource_ids(value: str | None) -> list[int]:
+    if not value:
+        return []
+    try:
+        raw = json.loads(value)
+    except Exception:
+        return []
+    if not isinstance(raw, list):
+        return []
+    ids: list[int] = []
+    for item in raw:
+        try:
+            rid = int(item)
+        except (TypeError, ValueError):
+            continue
+        if rid > 0 and rid not in ids:
+            ids.append(rid)
+    return ids
+
+
+async def get_bound_node_resources(
+    progress,
+    user_id: int,
+    resource_types: list[str] | None = None,
+):
+    """Return resources already bound to this path node, not global same-topic resources."""
+    if resource_types is None:
+        resource_types = ["document", "ppt", "mindmap"]
+
+    bound_ids = _load_resource_ids(getattr(progress, "resource_ids", None))
+    if not bound_ids:
+        return [], list(resource_types)
+
+    records = await GeneratedResource.filter(id__in=bound_ids, user_id=user_id).all()
+    by_id = {record.id: record for record in records}
+    ordered = [by_id[rid] for rid in bound_ids if rid in by_id]
+
+    existing_records = []
+    seen_types: set[str] = set()
+    for resource_type in resource_types:
+        record = next((r for r in ordered if r.resource_type == resource_type), None)
+        if record:
+            existing_records.append(record)
+            seen_types.add(resource_type)
+
+    missing_types = [resource_type for resource_type in resource_types if resource_type not in seen_types]
+    return existing_records, missing_types
+
+
 async def update_progress_resource_ids(progress, all_ids: list[int]):
     """Persist generated resource ids and move an unlocked node into progress."""
     update_fields = {"resource_ids": json.dumps(all_ids, ensure_ascii=False)}
