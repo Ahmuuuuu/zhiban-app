@@ -294,6 +294,17 @@ const handleSubmit = async () => {
       })
 
       checkResponse(result)
+      sessionStorage.setItem('zhiban_show_profile_prompt_after_register', '1')
+      const registeredUser = result?.data || result?.user || result
+      const registerToken = registeredUser?.token || result?.token
+      if (registerToken) {
+        saveLoginUser(result)
+        window.dispatchEvent(new CustomEvent('zhiban-login-success', { detail: result }))
+        emit('register', result)
+        emit('login', result)
+        emit('close')
+        return
+      }
       emit('register', result)
       successMessage.value = '注册成功，请登录'
       isRegister.value = false
