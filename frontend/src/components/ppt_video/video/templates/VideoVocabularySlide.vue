@@ -8,6 +8,8 @@
       :kicker="slide.chapterTitle"
       :title="slide.title"
       :summary="slide.summary"
+      :rendered-title="karaokeTitle"
+      :rendered-summary="karaokeSummary"
     />
 
     <div v-if="vocabCards.length" class="vocab-deck">
@@ -23,7 +25,7 @@
 
     <div v-if="exampleText" class="scene-board">
       <ChalkTag>Scene Practice</ChalkTag>
-      <p v-html="renderMath(exampleText)"></p>
+      <p v-html="karaokeExample"></p>
       <div class="scene-bars">
         <i
           v-for="dot in 5"
@@ -37,7 +39,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath } from '../../../../utils/renderMath'
+import { renderKaraokeHTML, renderMath } from '../../../../utils/renderMath'
 import ChalkTag from '../primitives/atoms/ChalkTag.vue'
 import BoardHeaderBlock from '../primitives/blocks/BoardHeaderBlock.vue'
 
@@ -103,6 +105,35 @@ const textLength = computed(() => [props.slide.title, props.slide.summary, ...(p
 const isDense = computed(() => vocabCards.value.length > 6 || textLength.value > 180)
 const isSparse = computed(() => vocabCards.value.length <= 1 && textLength.value < 100)
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
+
+const karaokeTitle = computed(() => {
+  const words = props.timedWords || []
+  const title = props.slide.title || ''
+  if (!title) return ''
+  if (!words.length) return renderMath(title)
+  return renderKaraokeHTML(title, words, 0).html
+})
+const karaokeSummary = computed(() => {
+  const words = props.timedWords || []
+  const summary = props.slide.summary || ''
+  if (!summary) return ''
+  if (!words.length) return renderMath(summary)
+  const offset = renderKaraokeHTML(props.slide.title || '', words, 0).consumed
+  return renderKaraokeHTML(summary, words, offset).html
+})
+const karaokeExample = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return renderMath(exampleText.value)
+  let offset = 0
+  offset += renderKaraokeHTML(props.slide.title || '', words, offset).consumed
+  offset += renderKaraokeHTML(props.slide.summary || '', words, offset).consumed
+  const items = Array.isArray(props.slide.items) ? props.slide.items : []
+  const exampleIdx = items.indexOf(exampleText.value)
+  for (let i = 0; i < (exampleIdx >= 0 ? exampleIdx : 0); i += 1) {
+    offset += renderKaraokeHTML(String(items[i] || ''), words, offset).consumed
+  }
+  return renderKaraokeHTML(exampleText.value, words, offset).html
+})
 </script>
 
 <style scoped>

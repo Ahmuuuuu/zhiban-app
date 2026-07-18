@@ -8,6 +8,8 @@
       :kicker="slide.chapterTitle"
       :title="slide.title || '课程讲解'"
       :summary="slide.summary"
+      :rendered-title="karaokeTitle"
+      :rendered-summary="karaokeSummary"
     />
 
     <BoardBulletListBlock
@@ -88,6 +90,21 @@ const textLength = computed(() => [
 const isDense = computed(() => displayItems.value.length > 4 || textLength.value > 180)
 const isSparse = computed(() => displayItems.value.length <= 1 && terms.value.length <= 3 && textLength.value < 90)
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
+
+const karaokeTitle = computed(() => {
+  const words = props.timedWords || []
+  const title = props.slide.title || '课程讲解'
+  if (!words.length) return renderMath(title)
+  return renderKaraokeHTML(title, words, 0).html
+})
+const karaokeSummary = computed(() => {
+  const words = props.timedWords || []
+  const summary = props.slide.summary || ''
+  if (!summary) return ''
+  if (!words.length) return renderMath(summary)
+  const offset = renderKaraokeHTML(props.slide.title || '课程讲解', words, 0).consumed
+  return renderKaraokeHTML(summary, words, offset).html
+})
 
 const karaokeItems = computed(() => {
   const words = props.timedWords || []

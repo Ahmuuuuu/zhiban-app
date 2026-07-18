@@ -5,8 +5,8 @@
   >
     <div class="intro-profile">
       <ChalkTag>学习画像</ChalkTag>
-      <h2>{{ learnerTitle }}</h2>
-      <p>{{ introText }}</p>
+      <h2 v-html="karaokeTitle"></h2>
+      <p v-html="karaokeIntro"></p>
       <div class="profile-metrics">
         <article
           v-for="(metric, index) in metrics"
@@ -42,6 +42,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { renderKaraokeHTML, renderMath } from '../../../../utils/renderMath'
 import { getSlideTerms } from '../logic/videoSlideClassifier'
 import ChalkTag from '../primitives/atoms/ChalkTag.vue'
 
@@ -53,6 +54,10 @@ const props = defineProps({
   layoutSeed: {
     type: Number,
     default: 0
+  },
+  timedWords: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -72,6 +77,17 @@ const isDuplicateText = (value, references) => {
 
 const learnerTitle = computed(() => props.slide.title || '课程导入')
 const introText = computed(() => props.slide.summary || '根据你的学习画像，把课程内容拆成更容易进入的学习路径。')
+const karaokeTitle = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return renderMath(learnerTitle.value)
+  return renderKaraokeHTML(learnerTitle.value, words, 0).html
+})
+const karaokeIntro = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return renderMath(introText.value)
+  const offset = renderKaraokeHTML(learnerTitle.value, words, 0).consumed
+  return renderKaraokeHTML(introText.value, words, offset).html
+})
 const terms = computed(() => {
   const references = [props.slide.title, props.slide.summary]
   const seen = new Set()

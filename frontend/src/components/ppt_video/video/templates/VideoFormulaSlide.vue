@@ -5,7 +5,7 @@
   >
     <div class="formula-main">
       <ChalkTag>{{ slide.chapterTitle }}</ChalkTag>
-      <h2>{{ slide.title }}</h2>
+      <h2 v-html="karaokeTitle"></h2>
       <BoardFormulaDisplay
         v-for="formula in formulas"
         :key="formula"
@@ -20,7 +20,7 @@
         :style="{ '--delay': index }"
       >
         <ChalkNumber :value="index + 1" />
-        <span v-html="renderMath(item)"></span>
+        <span v-html="karaokeNotes[index]"></span>
       </article>
     </div>
   </section>
@@ -28,7 +28,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { renderMath } from '../../../../utils/renderMath'
+import { renderKaraokeHTML, renderMath } from '../../../../utils/renderMath'
 import ChalkTag from '../primitives/atoms/ChalkTag.vue'
 import ChalkNumber from '../primitives/atoms/ChalkNumber.vue'
 import BoardFormulaDisplay from '../primitives/blocks/BoardFormulaDisplay.vue'
@@ -81,6 +81,29 @@ const textLength = computed(() => [props.slide.title, props.slide.summary, ...fo
 const isDense = computed(() => notes.value.length > 4 || formulas.value.length > 3 || textLength.value > 180)
 const isSparse = computed(() => notes.value.length === 0 && formulas.value.length <= 2 && textLength.value < 120)
 const flip = computed(() => Number(props.slide?.index || 0) % 2 === 1)
+
+const karaokeTitle = computed(() => {
+  const words = props.timedWords || []
+  const title = props.slide.title || ''
+  if (!title) return ''
+  if (!words.length) return renderMath(title)
+  return renderKaraokeHTML(title, words, 0).html
+})
+const karaokeNotes = computed(() => {
+  const words = props.timedWords || []
+  if (!words.length) return notes.value.map(item => renderMath(item))
+  let offset = 0
+  offset += renderKaraokeHTML(props.slide.title || '', words, offset).consumed
+  offset += renderKaraokeHTML(props.slide.summary || '', words, offset).consumed
+  for (const formula of formulas.value) {
+    offset += renderKaraokeHTML(String(formula || ''), words, offset).consumed
+  }
+  return notes.value.map(item => {
+    const { html, consumed } = renderKaraokeHTML(item, words, offset)
+    offset += consumed
+    return html
+  })
+})
 </script>
 
 <style scoped>

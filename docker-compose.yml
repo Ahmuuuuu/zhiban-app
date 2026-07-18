@@ -18,6 +18,21 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: zhiban-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     container_name: zhiban-backend
@@ -36,8 +51,11 @@ services:
       SMTP_PORT: ${SMTP_PORT:-465}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASS: ${SMTP_PASS}
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - backend_static:/app/static
@@ -53,4 +71,5 @@ services:
 
 volumes:
   mysql_data:
+  redis_data:
   backend_static:

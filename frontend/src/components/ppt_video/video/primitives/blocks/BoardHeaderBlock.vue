@@ -1,9 +1,11 @@
 <template>
   <header class="board-header-block">
     <ChalkTag v-if="kicker">{{ kicker }}</ChalkTag>
-    <h2>{{ title }}</h2>
+    <h2 v-if="renderedTitle" v-html="renderedTitle"></h2>
+    <h2 v-else>{{ title }}</h2>
     <ChalkLine />
-    <p v-if="summary">{{ summary }}</p>
+    <p v-if="renderedSummary" v-html="renderedSummary"></p>
+    <p v-else-if="summary">{{ summary }}</p>
   </header>
 </template>
 
@@ -21,6 +23,14 @@ defineProps({
     required: true
   },
   summary: {
+    type: String,
+    default: ''
+  },
+  renderedTitle: {
+    type: String,
+    default: ''
+  },
+  renderedSummary: {
     type: String,
     default: ''
   }
