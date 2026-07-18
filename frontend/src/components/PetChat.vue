@@ -605,6 +605,11 @@ const portraitQAAnswers = ref<string[]>([]);
 const portraitQAQuestions = ref<string[]>([]);
 const portraitQASaving = ref(false);
 let portraitQASaveInFlight = false;
+let portraitQuestionTypingRun = 0;
+const PORTRAIT_QUESTION_TYPE_INTERVAL = 22;
+
+const waitPortraitTypeFrame = () =>
+  new Promise(resolve => window.setTimeout(resolve, PORTRAIT_QUESTION_TYPE_INTERVAL));
 
 const buildPortraitDialogue = () =>
   portraitQAQuestions.value
@@ -640,6 +645,7 @@ const persistPortraitQAOnExit = () => {
 };
 
 const resetPortraitQAState = () => {
+  portraitQuestionTypingRun++;
   portraitQAMode.value = false;
   portraitQAStep.value = 0;
   portraitQAAnswers.value = [];
@@ -676,6 +682,7 @@ const fetchPortraitQuestion = async () => {
 };
 
 const startPortraitQA = () => {
+  portraitQuestionTypingRun++;
   portraitQAMode.value = true;
   portraitQAStep.value = 0;
   portraitQAAnswers.value = [];
@@ -697,6 +704,19 @@ const startPortraitQA = () => {
   window.setTimeout(() => void sendNextPortraitQuestion(), 900);
 };
 
+const typePortraitQuestion = async (message: PetChatMessage, question: string, runId: number) => {
+  const chars = [...question];
+  for (let index = 0; index < chars.length; index++) {
+    if (!portraitQAMode.value || runId !== portraitQuestionTypingRun) return false;
+    message.content += chars[index];
+    if (index % 6 === 0 || index === chars.length - 1) {
+      void scrollPetMessagesToBottom();
+    }
+    await waitPortraitTypeFrame();
+  }
+  return true;
+};
+
 const sendNextPortraitQuestion = async () => {
   if (!portraitQAMode.value) return;
   if (portraitQAStep.value >= PORTRAIT_MAX_STEPS) {
@@ -705,23 +725,34 @@ const sendNextPortraitQuestion = async () => {
   }
 
   let question = "";
-  setPortraitQuestionLoading(portraitQAStep.value > 0);
-  try {
-    question = await fetchPortraitQuestion();
-  } finally {
+  const runId = ++portraitQuestionTypingRun;
+  setPortraitQuestionLoading(true);
+  question = await fetchPortraitQuestion();
+  if (!portraitQAMode.value || runId !== portraitQuestionTypingRun) {
     setPortraitQuestionLoading(false);
+    return;
   }
-  if (!portraitQAMode.value) return;
   if (!question) {
+    setPortraitQuestionLoading(false);
     void finishPortraitQA();
     return;
   }
   portraitQAQuestions.value[portraitQAStep.value] = question;
+  const messageId = `portrait-q-${portraitQAStep.value}-${Date.now()}`;
   petMessages.value.push({
-    id: `portrait-q-${portraitQAStep.value}-${Date.now()}`,
+    id: messageId,
     role: "assistant",
-    content: question,
+    content: "",
   });
+  const message = petMessages.value.find(item => item.id === messageId) as PetChatMessage | undefined;
+  if (!message) {
+    setPortraitQuestionLoading(false);
+    return;
+  }
+
+  const completed = await typePortraitQuestion(message, question, runId);
+  setPortraitQuestionLoading(false);
+  if (!completed) return;
   void scrollPetMessagesToBottom();
 };
 
