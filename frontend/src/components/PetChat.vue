@@ -172,42 +172,6 @@ const petMessages = ref<PetChatMessage[]>([
 // 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€
 const sendStreamChatMessage = streamChatMessage as unknown as StreamChatMessageFn;
 
-const waitPetStreamFrame = () => new Promise(resolve => window.setTimeout(resolve, 18));
-
-const createPetStreamWriter = (message: PetChatMessage) => {
-  let queue = "";
-  let running = false;
-
-  const pump = async () => {
-    if (running) return;
-    running = true;
-
-    while (queue) {
-      const takeCount = Math.max(1, Math.min(6, Math.ceil(queue.length / 28)));
-      message.content += queue.slice(0, takeCount);
-      queue = queue.slice(takeCount);
-      await nextTick();
-      void scrollPetMessagesToBottom();
-      await waitPetStreamFrame();
-    }
-
-    running = false;
-  };
-
-  return {
-    push(chunk: string) {
-      if (!chunk) return;
-      queue += chunk;
-      void pump();
-    },
-    async flush() {
-      while (queue || running) {
-        await waitPetStreamFrame();
-      }
-    },
-  };
-};
-
 const readPetHistoryIds = () => {
   try {
     const ids = JSON.parse(localStorage.getItem(PET_HISTORY_KEY) || "[]");
@@ -881,14 +845,15 @@ const sendPetMessage = async () => {
   const contextPrefix = buildContextPrefix()
   const aiMessage = contextPrefix ? `${contextPrefix}\n\n用户问题：${text}` : text
 
-  const assistantMessage: PetChatMessage = {
-    id: `assistant-${Date.now()}`,
-    role: "assistant",
-    content: "",
-  };
+  const assistantMessageId = `assistant-${Date.now()}`;
 
   petMessages.value.push({ id: `user-${Date.now()}`, role: "user", content: text });
-  petMessages.value.push(assistantMessage);
+  petMessages.value.push({
+    id: assistantMessageId,
+    role: "assistant",
+    content: "",
+  });
+  const assistantMessage = petMessages.value.find(message => message.id === assistantMessageId) as PetChatMessage;
   chatExpanded.value = true;
   emit("update:expanded", true);
   chatInput.value = "";
@@ -971,8 +936,7 @@ const sendPetMessage = async () => {
     }
 
     let receivedChunk = false;
-    let hasStreamText = false;
-    const streamWriter = createPetStreamWriter(assistantMessage);
+    let receivedTextContent = false;
     const startPetTextStream = () => {
       if (receivedChunk) return;
       assistantMessage.content = "";
@@ -983,8 +947,11 @@ const sendPetMessage = async () => {
       {
         onChunk: async (chunk: string) => {
           startPetTextStream();
-          hasStreamText = hasStreamText || Boolean(chunk);
-          streamWriter.push(chunk);
+          if (chunk) {
+            receivedTextContent = true;
+            assistantMessage.content += chunk;
+          }
+          await scrollPetMessagesToBottom();
         },
         onStreamTextStart: async () => {
           startPetTextStream();
@@ -993,19 +960,22 @@ const sendPetMessage = async () => {
         onStreamTextDelta: async (eventData: any) => {
           startPetTextStream();
           const chunk = String(eventData?.delta || eventData?.content || "");
-          hasStreamText = hasStreamText || Boolean(chunk);
-          streamWriter.push(chunk);
+          if (chunk) {
+            receivedTextContent = true;
+            assistantMessage.content += chunk;
+          }
+          await scrollPetMessagesToBottom();
         },
         onStreamTextDone: async (eventData: any) => {
           startPetTextStream();
           const finalText = String(eventData?.content || "");
-          if (finalText && !hasStreamText) {
-            hasStreamText = true;
-            streamWriter.push(finalText);
+          if (finalText && !receivedTextContent) {
+            receivedTextContent = true;
+            assistantMessage.content += finalText;
+            await scrollPetMessagesToBottom();
           }
         },
         onFile: async (fileData: any) => {
-          await streamWriter.flush();
           if (isPetExerciseFile(fileData)) {
             await applyPetQuizFile(assistantMessage, fileData);
             receivedChunk = true;
@@ -1039,7 +1009,6 @@ const sendPetMessage = async () => {
           receivedChunk = true;
         },
         onDone: async (data: { chat_group_id?: number | string } = {}) => {
-          await streamWriter.flush();
           if (data?.chat_group_id) {
             petChatGroupId.value = data.chat_group_id;
             rememberPetHistoryId(data.chat_group_id);
@@ -1052,8 +1021,6 @@ const sendPetMessage = async () => {
         },
       },
     );
-
-    await streamWriter.flush();
 
     if (receivedChunk) {
       replacePetTextWithQuiz(assistantMessage);
