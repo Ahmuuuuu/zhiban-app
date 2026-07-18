@@ -96,8 +96,10 @@ const updateProfileCompletion = profile => {
 
   if (complete || !isLoggedIn.value) return
   const promptKey = getProfilePromptKey(profile)
-  if (localStorage.getItem(promptKey)) return
+  const shouldPromptAfterRegister = sessionStorage.getItem('zhiban_show_profile_prompt_after_register') === '1'
+  if (localStorage.getItem(promptKey) && !shouldPromptAfterRegister) return
   localStorage.setItem(promptKey, '1')
+  sessionStorage.removeItem('zhiban_show_profile_prompt_after_register')
   window.setTimeout(() => {
     window.dispatchEvent(new CustomEvent('zhiban-pet-modal', {
       detail: {
