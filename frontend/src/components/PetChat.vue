@@ -1362,7 +1362,7 @@ onUnmounted(() => {
   max-height: none;
   padding: clamp(18px, 2.4vw, 30px);
   border-radius: 28px;
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(248, 252, 255, 0.9);
   box-shadow:
     0 30px 90px rgba(22, 63, 143, 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.46);
@@ -1378,7 +1378,7 @@ onUnmounted(() => {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.18);
   backdrop-filter: blur(10px) saturate(118%);
   -webkit-backdrop-filter: blur(10px) saturate(118%);
   pointer-events: none;
