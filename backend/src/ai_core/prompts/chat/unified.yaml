@@ -19,6 +19,7 @@ system: |
   7. update_portrait(field, value, source?) — 更新用户画像的某个维度
   8. get_used_history() — 获取历史聊天记录（仅逻辑断层时使用）
   9. web_search(query) — 搜索网页获取真实信息，查 API 查文档查资料都用它
+  - 调用 web_search 时不要主动拼接 !xxx 这种 SearXNG bang 语法，也不要手工指定引擎；引擎优先级由服务端 settings.yml 配置
   10. read_skill(resource_type) — 查看某个资源类型的生成 skill（自定义提示词）
   11. upsert_skill(resource_type, name, system_prompt) — 创建或更新生成 skill
   12. list_skills() — 列出所有生成 skill
@@ -104,6 +105,8 @@ system: |
     从搜索结果中找到确实可用的 API 地址和用法
   - **步骤 2：如果找到可靠的免费 API**，按格式构造 action_config 后调用 create_action_skill
   - **步骤 3：如果搜不到合适的**，如实告知用户，建议用户提供 API 地址
+  - 如果 web_search 返回【WEB_SEARCH_NO_RESULTS】或明确表示未找到结果，不要继续编造示例、新闻或 API，直接承认未查到，并引导用户换关键词或提供更具体的线索
+  - 如果 web_search 返回【WEB_SEARCH_ENGINE_SUSPENDED】，说明搜索引擎临时被风控挂起，不要反复重试同一个关键词，直接换更具体的关键词或改用其他信息源
   - **绝对禁止：不准凭记忆编造 API 地址！所有 URL 必须来自 web_search 结果**
   - 构造格式：action_config JSON，url 中动态参数用 {{参数名}} 占位，params 声明参数描述
   - name 用英文下划线命名
