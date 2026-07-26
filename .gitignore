@@ -81,3 +81,4 @@ docker.override.yml
 
 # === 其他 ===
 .codebuddy/
+backend/mcp_servers.json

@@ -15,6 +15,7 @@ from backend.src.ai_core.tools.skill import (
 )
 from backend.src.ai_core.tools.resource import generate_learning_resource
 from backend.src.ai_core.tools.search import web_search
+from backend.src.ai_core.tools.mcp_external import load_external_mcp_tools
 from backend.src.ai_core.tools.image import generate_image
 from backend.src.ai_core.tools.exam import generate_exam_questions
 from backend.src.ai_core.tools.path import (
@@ -90,6 +91,45 @@ def _inject_chat_group_id(tool, chat_group_id: int):
 
 _MAX_HISTORY_TURNS = 20
 
+# ── 消息分类：按需加载工具行为指南 ──
+
+_CREATE_TRIGGERS = [
+    "生成学习", "生成资料", "生成文档", "做个PPT", "做PPT", "生成PPT",
+    "整理成文档", "整理成PPT", "做成文档", "做成PPT",
+    "生成思维导图", "生成脑图", "做思维导图", "做脑图",
+    "帮我整理", "帮我总结", "帮我生成",
+    "出题", "出几道", "出一些题", "练习题", "测验", "考试模拟",
+    "做几道题", "来几道题", "做题", "习题", "试卷",
+    "画一张", "画个", "生成图片", "生成一张图", "配图", "插图",
+    "帮我画", "帮我生成图",
+    "生成动画", "播放PPT", "演示PPT", "旁白", "念给我听",
+    "搜视频", "找视频", "视频教程",
+]
+
+_MANAGE_TRIGGERS = [
+    "学习路径", "课程路径", "学习计划", "选课", "有哪些路径",
+    "加入路径", "路径管理", "修改节点", "添加节点", "删除节点",
+    "重新规划路径", "路径不合适", "路径查看",
+    "skill", "Skill", "自定义提示词", "修改提示词", "设置提示词",
+    "恢复默认", "升级生成", "删除skill", "创建skill",
+    "动作skill", "action skill", "添加能力", "添加工具",
+]
+
+
+def _classify_message(message: str) -> set[str]:
+    """根据用户消息判断需要加载哪些工具行为指南"""
+    cats = set()
+    for t in _CREATE_TRIGGERS:
+        if t in message:
+            cats.add("create")
+            break
+    for t in _MANAGE_TRIGGERS:
+        if t in message:
+            cats.add("manage")
+            break
+    return cats
+
+
 class Brain:
     _instances: weakref.WeakSet = weakref.WeakSet()
 
@@ -155,7 +195,7 @@ class Brain:
             if inst.user_id == user_id:
                 inst._action_tools_loaded = False
 
-    def _build_agent(self, action_tools: list):
+    def _build_agent(self, action_tools: list, mcp_tools: list):
         system_prompt = load_prompt("chat/unified")
 
         prompt = ChatPromptTemplate.from_messages([
@@ -196,12 +236,23 @@ class Brain:
             _inject_user_id(delete_path_node, uid),
         ]
         tools.extend(_inject_user_id(t, uid) for t in action_tools)
+        tools.extend(mcp_tools)
 
         agent = create_tool_calling_agent(llm=llm, prompt=prompt, tools=tools)
         self._raw_executor = AgentExecutor(
             agent=agent, tools=tools,
             verbose=True, handle_parsing_errors=True, max_iterations=5,
         )
+
+    def _load_tool_guides(self, message: str) -> str:
+        """根据消息内容按需加载工具行为指南；未命中则返回空字符串"""
+        cats = _classify_message(message)
+        parts: list[str] = []
+        if "create" in cats:
+            parts.append(load_prompt("chat/guide_create"))
+        if "manage" in cats:
+            parts.append(load_prompt("chat/guide_manage"))
+        return "\n".join(parts)
 
     async def _ensure_action_tools(self):
         """首次调用或 rebuild_for_user 后，异步加载 action tools 并重建 agent"""
@@ -212,11 +263,17 @@ class Brain:
         except Exception:
             logging.getLogger(__name__).exception("加载 action tools 失败")
             action_tools = []
-        self._build_agent(action_tools)
+        try:
+            mcp_tools = await load_external_mcp_tools()
+        except Exception:
+            logging.getLogger(__name__).exception('Failed to load MCP tools')
+            mcp_tools = []
+        self._build_agent(action_tools, mcp_tools)
         self._action_tools_loaded = True
 
     async def chat(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = "") -> str:
         await self._ensure_action_tools()
+        tool_guides = self._load_tool_guides(message)
         response = await self._raw_executor.ainvoke({
             "input": message,
             "history": list(self._history),
@@ -224,6 +281,7 @@ class Brain:
             "resource_context": resource_context,
             "path_context": path_context,
             "portrait_context": portrait_context,
+            "tool_guides": tool_guides,
         })
         self._history.append(HumanMessage(content=message))
         self._history.append(AIMessage(content=response["output"]))
@@ -237,6 +295,7 @@ class Brain:
 
         full_response = ""
         tool_running = False
+        tool_guides = self._load_tool_guides(message)
 
         async def _stream_events(version: str):
             nonlocal tool_running
@@ -248,6 +307,7 @@ class Brain:
                     "resource_context": resource_context,
                     "path_context": path_context,
                     "portrait_context": portrait_context,
+                    "tool_guides": tool_guides,
                 },
                 version=version,
             )
