@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import weakref
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 from backend.src.ai_core.llm_config import llm
@@ -170,7 +172,11 @@ class Brain:
         if params_schema:
             fields = {}
             for pname, pdesc in params_schema.items():
-                fields[pname] = (str, PydanticField(description=pdesc))
+                if isinstance(pdesc, dict):
+                    desc = str(pdesc.get("description") or pdesc.get("desc") or "")
+                else:
+                    desc = str(pdesc or "")
+                fields[pname] = (str, PydanticField(description=desc))
             args_schema = create_model(f"{safe_name}_input", **fields)
 
         return StructuredTool.from_function(
@@ -184,7 +190,15 @@ class Brain:
         """在正确的 async 上下文中从 DB 加载 action skill"""
         from backend.src.service.skill import service as skill_service
         skills = await skill_service.list_actions(user_id=self.user_id)
-        return [self._make_http_tool(s) for s in skills if s["action_type"] == "http"]
+        tools = []
+        for s in skills:
+            if s.get("action_type") != "http":
+                continue
+            try:
+                tools.append(self._make_http_tool(s))
+            except Exception:
+                logging.getLogger(__name__).exception("action skill 构造失败，已跳过: %s", s.get("name"))
+        return tools
 
     # ── 热刷新 ──
 
@@ -197,9 +211,18 @@ class Brain:
 
     def _build_agent(self, action_tools: list, mcp_tools: list):
         system_prompt = load_prompt("chat/unified")
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        current_time_context = (
+            "\n\n### 当前时间锚点\n"
+            f"- 当前日期：{now.strftime('%Y-%m-%d')}\n"
+            f"- 当前时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            "- 时区：Asia/Shanghai\n"
+            "- 进行搜索、新闻、时间、日程、时效性判断时，必须以这里的当前日期为准，不要沿用旧年份。\n"
+            "- 如果用户提到“今天/当前/今年/最新/最近/2026年”等，先按这个时间锚点理解，再决定是否搜索，不要默认写成 2025 年。\n"
+        )
 
         prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
+            ("system", system_prompt + current_time_context),
             MessagesPlaceholder(variable_name="history"),
             ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
