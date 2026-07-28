@@ -6,6 +6,7 @@ import os
 import json
 import hashlib
 import asyncio
+import logging
 from pathlib import Path
 
 HF_ENDPOINT = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
@@ -15,6 +16,8 @@ if HF_ENDPOINT:
 from tortoise.expressions import Q
 
 from backend.src.models.knowledgemodel import KnowledgeVector
+
+logger = logging.getLogger(__name__)
 
 # BGE 模型本地缓存路径 — 第一次使用时才加载，避免 import 时拖慢启动
 MODEL_DIR = str(Path(__file__).parent.parent / "ai_core" / "knowledge_base" / "bge_model")
@@ -80,7 +83,7 @@ async def _encode_async(text: str):
             if cached is not None and isinstance(cached, list):
                 return np.array(cached, dtype=np.float32)
         except Exception:
-            pass
+            logger.debug("Suppressed exception at backend/src/utils/knowledge_base.py:85", exc_info=True)
 
     model = await _get_embed_model_async()
     vector = await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
@@ -91,7 +94,7 @@ async def _encode_async(text: str):
             from backend.src.utils.redis_client import cache_set
             await cache_set(cache_key, vector.tolist(), cache_ttl)
         except Exception:
-            pass
+            logger.debug("Suppressed exception at backend/src/utils/knowledge_base.py:96", exc_info=True)
 
     return vector
 
@@ -336,9 +339,12 @@ async def list_grouped(user_id: int = None, visibility: str = None) -> list[dict
     return sorted(result, key=lambda x: x["created_at"], reverse=True)
 
 
-async def get_by_id(doc_id: str) -> dict | None:
+async def get_by_id(doc_id: str, user_id: int | None = None, is_admin: bool = False) -> dict | None:
     """根据 doc_id 获取单条知识库记录"""
-    record = await KnowledgeVector.filter(doc_id=doc_id).values(
+    query = KnowledgeVector.filter(doc_id=doc_id)
+    if not is_admin:
+        query = query.filter(Q(visibility="public") | Q(user_id=user_id))
+    record = await query.values(
         "doc_id", "title", "content", "category", "user_id", "visibility", "cover_url", "created_at"
     ).first()
     return record

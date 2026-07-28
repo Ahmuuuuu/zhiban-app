@@ -116,7 +116,7 @@ def _schedule_portrait_intro_prewarm(topic: str, user, user_id: int, voice: str 
         try:
             done.result()
         except asyncio.CancelledError:
-            pass
+            logger.debug("Suppressed exception at backend/src/service/video/service.py:118", exc_info=True)
         except Exception:
             logger.debug("[视频] 画像引入预热失败 topic=%s", topic, exc_info=True)
 
@@ -134,7 +134,7 @@ async def _get_prewarmed_portrait_intro(topic: str, user_id: int, voice: str, wa
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=wait_ms / 1000)
         except asyncio.TimeoutError:
-            pass
+            logger.debug("Suppressed exception at backend/src/service/video/service.py:136", exc_info=True)
         except Exception:
             logger.debug("[视频] 等待画像引入预热失败 topic=%s", topic, exc_info=True)
     return _get_cached_portrait_intro(cache_key)
@@ -1377,7 +1377,7 @@ async def _add_audio_to_presentation(record_id: int, topic: str, user_id: int, v
                 logger.info("[视频] TTS 缓存命中 resource=%d slide=%d text_len=%d", resource_id, slide_idx, len(text))
                 return {"audio_url": audio_url, "duration_ms": dur, "word_timestamps": word_timestamps}
             except (json.JSONDecodeError, IOError):
-                pass
+                logger.warning("Suppressed exception at backend/src/service/video/service.py:1379", exc_info=True)
 
         t0 = _time.perf_counter()
         word_timestamps = await _generate_tts(text, voice, output_path, user_id=user_id)
@@ -1607,7 +1607,7 @@ def asyncio_create_task(coro):
         task = asyncio.ensure_future(coro, loop=loop)
         return task
     except RuntimeError:
-        pass
+        logger.warning("Suppressed exception at backend/src/service/video/service.py:1609", exc_info=True)
 
 
 # ═══════════════════════════════════════════════

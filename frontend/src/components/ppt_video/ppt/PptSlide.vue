@@ -142,6 +142,7 @@ import PptSlideProcess from './PptSlideProcess.vue'
 import { selectCustomPptAssets } from './pptAssets'
 import { renderMath } from '../../../utils/renderMath'
 import { getThemeById } from '../../../data/pptThemes'
+import { stripSpeakerNotes } from '../../../utils/pptSpeakerNotes'
 
 const props = defineProps({
   slide: {
@@ -283,7 +284,7 @@ const stripRenderedMathHtml = value => {
   return text
 }
 
-const cleanDisplayText = value => stripRenderedMathHtml(value)
+const cleanDisplayText = value => stripRenderedMathHtml(stripSpeakerNotes(value))
   .replace(/<!--[\s\S]*?-->/g, ' ')
   .replace(/<\/?[^>\n]+>/g, ' ')
   .replace(/<[^>\n]*$/g, ' ')
@@ -391,7 +392,7 @@ const formulaBlocks = computed(() => slideBlocks.value.filter(block => block.tex
 
 const slideTextLength = computed(() => {
   const slide = props.slide || {}
-  return String(`${slide.title || ''}\n${slide.text || ''}\n${slide.notes || ''}`).length
+  return String(`${slide.title || ''}\n${stripSpeakerNotes(slide.text || '')}`).length
 })
 
 const getAnnotationColor = annotation => annotation?.position?.color || '#ffe159'

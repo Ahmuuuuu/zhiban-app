@@ -109,7 +109,7 @@ async def _build_portrait_context(user_id: int) -> str:
                 if radar and radar.get("dimensions"):
                     lines.append(PortraitRadarService.format_for_prompt(radar))
             except Exception:
-                pass
+                logger.warning("Suppressed exception at backend/src/service/chat/service.py:111", exc_info=True)
             # 学习指导
             try:
                 from backend.src.service.portrait.service import build_learning_guidance
@@ -117,7 +117,7 @@ async def _build_portrait_context(user_id: int) -> str:
                 if guidance:
                     lines.append(guidance)
             except Exception:
-                pass
+                logger.warning("Suppressed exception at backend/src/service/chat/service.py:119", exc_info=True)
 
         if not lines:
             ctx = ""
@@ -150,6 +150,20 @@ def _get_or_create_chat(user_id: int, chat_group_id: int) -> Brain:
     else:
         _chat_instances.move_to_end(instance_key)
     return _chat_instances[instance_key]
+
+
+async def _chat_group_belongs_to_user(user_id: int, chat_group_id: int) -> bool:
+    try:
+        group_id = int(chat_group_id)
+    except (TypeError, ValueError):
+        return False
+    if group_id <= 0:
+        return False
+    return await ChatHistory.filter(user_id=user_id, chat_group_id=group_id).exists()
+
+
+async def chat_group_belongs_to_user(user_id: int, chat_group_id: int) -> bool:
+    return await _chat_group_belongs_to_user(user_id, chat_group_id)
 
 
 

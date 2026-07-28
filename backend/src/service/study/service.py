@@ -117,7 +117,7 @@ class StudyService:
                             "source": "radar",
                         })
         except Exception:
-            pass
+            logger.warning("Suppressed exception at backend/src/service/study/service.py:119", exc_info=True)
 
         # ── 学习路径 ──
         paths = []
@@ -205,7 +205,7 @@ class StudyService:
         try:
             guidance = await build_learning_guidance(user_id)
         except Exception:
-            pass
+            logger.warning("Suppressed exception at backend/src/service/study/service.py:207", exc_info=True)
 
         return {
             "study_time": {
@@ -292,7 +292,7 @@ class StudyService:
                     try:
                         ids.update(json.loads(r.resource_ids))
                     except Exception:
-                        pass
+                        logger.warning("Suppressed exception at backend/src/service/study/service.py:294", exc_info=True)
             path_resource_ids[p.id] = ids
             all_resource_ids.update(ids)
 
@@ -349,7 +349,7 @@ class StudyService:
                         if isinstance(tags, list):
                             path_tags.update(tags)
                     except Exception:
-                        pass
+                        logger.warning("Suppressed exception at backend/src/service/study/service.py:351", exc_info=True)
 
             weak_points = []
             for tag in path_tags:

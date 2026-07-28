@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from html import unescape
 from typing import Any
@@ -77,6 +78,20 @@ THEME_PALETTES = {
 THEMES = set(THEME_PALETTES.keys())
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+PPT_SPEAKER_NOTES_MIN_CHARS = max(1, _int_env("PPT_SPEAKER_NOTES_MIN_CHARS", 120))
+PPT_SPEAKER_NOTES_MAX_CHARS = max(
+    PPT_SPEAKER_NOTES_MIN_CHARS,
+    _int_env("PPT_SPEAKER_NOTES_MAX_CHARS", 220),
+)
+
+
 def _clean_text(value: Any) -> str:
     text = unescape(str(value or ""))
     text = re.sub(r"<!--[\s\S]*?-->", " ", text)
@@ -86,6 +101,66 @@ def _clean_text(value: Any) -> str:
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+_NOTE_SENTENCE_BREAKS = set(".!?;,\u3002\uff01\uff1f\uff1b\uff0c\u3001")
+_NOTE_TRAILING_PUNCTUATION = " \t\r\n,.;:!?\u3002\uff0c\uff1b\uff1a\u3001\uff01\uff1f"
+
+
+def limit_speaker_notes(value: Any, max_chars: int | None = None) -> str:
+    text = _clean_text(value)
+    text = re.sub(r"\s+", " ", text).strip()
+    limit = max(1, max_chars or PPT_SPEAKER_NOTES_MAX_CHARS)
+    if len(text) <= limit:
+        return text
+
+    lower_bound = max(0, limit - 36)
+    cut_at = limit
+    for index in range(limit, lower_bound, -1):
+        if text[index - 1] in _NOTE_SENTENCE_BREAKS:
+            cut_at = index
+            break
+
+    trimmed = text[:cut_at].rstrip(_NOTE_TRAILING_PUNCTUATION)
+    return trimmed or text[:limit].strip()
+
+
+_NOTE_LABEL_RE = re.compile(
+    "^\\s*(?:[-*+\u2022]\\s*)?(?:>\\s*)?"
+    "(?:\u8bb2\u7a3f|\u5907\u6ce8|\u6f14\u8bb2\u7a3f|speaker\\s*notes?|speaker_notes?|notes?)"
+    "\\s*[:\uff1a]\\s*(.*)$",
+    re.IGNORECASE,
+)
+
+
+def _split_speaker_notes(value: Any) -> tuple[str, str]:
+    body: list[str] = []
+    notes: list[str] = []
+    reading_quoted_note = False
+
+    for raw_line in str(value or "").splitlines():
+        match = _NOTE_LABEL_RE.match(raw_line)
+        if match:
+            note_text = match.group(1).strip()
+            if note_text:
+                notes.append(note_text)
+            reading_quoted_note = bool(re.match(r"^\s*>", raw_line))
+            continue
+
+        if reading_quoted_note and re.match(r"^\s*>", raw_line):
+            note_text = re.sub(r"^\s*>\s?", "", raw_line).strip()
+            if note_text:
+                notes.append(note_text)
+            continue
+
+        reading_quoted_note = False
+        body.append(raw_line)
+
+    return "\n".join(body).strip(), "\n".join(notes).strip()
+
+
+def _merge_notes(*values: Any) -> str:
+    return "\n".join(str(value or "").strip() for value in values if str(value or "").strip())
 
 
 def _line_value(line: str, key: str) -> str:
@@ -148,12 +223,18 @@ def _blocks_from_bullets(bullets: list[str], text: str) -> list[dict]:
 
 def normalize_slide(slide: dict, index: int = 0, total: int = 0) -> dict:
     title = _clean_text(slide.get("title") or slide.get("heading"))
-    bullets = [
-        _clean_text(item.get("text") if isinstance(item, dict) else item)
-        for item in (slide.get("bullets") or [])
-        if _clean_text(item.get("text") if isinstance(item, dict) else item)
-    ]
-    text = _clean_text(slide.get("text") or slide.get("content"))
+    bullets: list[str] = []
+    bullet_notes: list[str] = []
+    for item in (slide.get("bullets") or []):
+        bullet_body, bullet_note = _split_speaker_notes(item.get("text") if isinstance(item, dict) else item)
+        if bullet_note:
+            bullet_notes.append(bullet_note)
+        bullet_text = _clean_text(bullet_body)
+        if bullet_text:
+            bullets.append(bullet_text)
+
+    raw_text, text_notes = _split_speaker_notes(slide.get("text") or slide.get("content"))
+    text = _clean_text(raw_text)
     if not text and bullets:
         text = "\n".join(bullets)
     if not bullets and text:
@@ -186,9 +267,25 @@ def normalize_slide(slide: dict, index: int = 0, total: int = 0) -> dict:
         "alt": visual_query or title,
     }
 
-    blocks = slide.get("blocks") if isinstance(slide.get("blocks"), list) else []
+    raw_blocks = slide.get("blocks") if isinstance(slide.get("blocks"), list) else []
+    blocks = []
+    block_notes: list[str] = []
+    for block in raw_blocks:
+        raw_block_text = (block.get("text") or block.get("content")) if isinstance(block, dict) else block
+        block_body, block_note = _split_speaker_notes(raw_block_text)
+        if block_note:
+            block_notes.append(block_note)
+        block_text = _clean_text(block_body)
+        if not block_text:
+            continue
+        if isinstance(block, dict):
+            blocks.append({**block, "text": block_text, "content": block_text})
+        else:
+            blocks.append({"type": "key_point", "text": block_text})
     if not blocks:
         blocks = _blocks_from_bullets(bullets, text)
+
+    notes = limit_speaker_notes(_merge_notes(slide.get("notes"), slide.get("speaker_notes"), text_notes, *bullet_notes, *block_notes))
 
     return {
         **slide,
@@ -197,8 +294,8 @@ def normalize_slide(slide: dict, index: int = 0, total: int = 0) -> dict:
         "text": text,
         "content": text,
         "bullets": bullets,
-        "notes": _clean_text(slide.get("notes") or slide.get("speaker_notes")),
-        "speaker_notes": _clean_text(slide.get("speaker_notes") or slide.get("notes")),
+        "notes": notes,
+        "speaker_notes": notes,
         "layout": layout,
         "theme": theme,
         "palette": THEME_PALETTES.get(theme, THEME_PALETTES["academic_blue"]),

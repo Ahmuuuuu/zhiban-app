@@ -62,7 +62,12 @@ async def narrate_content(content: str, resource_type: str, voice: str, resource
     return {"sections": results}
 
 
-async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural", force_regenerate: bool = False):
+async def narrate_resource(
+    resource_id: int,
+    voice: str = "zh-CN-XiaoxiaoNeural",
+    force_regenerate: bool = False,
+    user_id: int | None = None,
+):
     """对某个文字类资源逐段生成旁白，已有则直接返回，无则生成写入 DB
 
     Args:
@@ -79,6 +84,10 @@ async def narrate_resource(resource_id: int, voice: str = "zh-CN-XiaoxiaoNeural"
     resource = await GeneratedResource.filter(id=resource_id).first()
     if not resource:
         raise ServiceError("资源不存在")
+    if user_id is not None and resource.user_id != user_id and resource.visibility != "public":
+        raise ServiceError("资源不存在或无权访问")
+    if user_id is not None and resource.user_id != user_id and force_regenerate:
+        raise ServiceError("公开资源只能播放旁白，不能强制重新生成")
     if resource.resource_type not in NARRATABLE_TYPES:
         raise ServiceError(f"资源类型 {resource.resource_type} 不支持旁白，仅支持：{', '.join(sorted(NARRATABLE_TYPES))}")
 
@@ -149,7 +158,7 @@ async def _generate_tts(text: str, voice: str, output_path: str, user_id: int | 
                 try:
                     os.remove(f)
                 except OSError:
-                    pass
+                    logger.debug("Suppressed exception at backend/src/service/narration/service.py:151", exc_info=True)
             return None
         return (i, part_path, timestamps)
 
@@ -164,7 +173,7 @@ async def _generate_tts(text: str, voice: str, output_path: str, user_id: int | 
                     try:
                         os.remove(f)
                     except OSError:
-                        pass
+                        logger.debug("Suppressed exception at backend/src/service/narration/service.py:166", exc_info=True)
             return None
         part_results.append(r)
     part_results.sort(key=lambda x: x[0])
@@ -183,7 +192,7 @@ async def _generate_tts(text: str, voice: str, output_path: str, user_id: int | 
                 try:
                     os.remove(f)
                 except OSError:
-                    pass
+                    logger.debug("Suppressed exception at backend/src/service/narration/service.py:185", exc_info=True)
 
     return all_timestamps
 
@@ -221,7 +230,7 @@ async def _generate_tts_one(text: str, voice: str, output_path: str, json_path: 
     try:
         await asyncio.to_thread(_dump_json, json_path, word_timestamps)
     except IOError:
-        pass
+        logger.warning("Suppressed exception at backend/src/service/narration/service.py:223", exc_info=True)
 
     async with _tts_lock:
         global _tts_done_count
@@ -243,12 +252,17 @@ def _concat_mp3_and_timestamps(output_path: str, json_path: str, part_results: l
         for _, part_path, timestamps in part_results:
             with open(part_path, "rb") as inp:
                 out.write(inp.read())
+            if timestamps:
+                chunk_end_ms = max(
+                    ts.get("offset_ms", 0) + ts.get("duration_ms", 0)
+                    for ts in timestamps
+                )
+            else:
+                chunk_end_ms = 0
             for ts in timestamps:
                 ts["offset_ms"] = ts.get("offset_ms", 0) + offset_ms
             all_timestamps.extend(timestamps)
-            if timestamps:
-                last = timestamps[-1]
-                offset_ms += last.get("offset_ms", 0) + last.get("duration_ms", 0)
+            offset_ms += chunk_end_ms
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(all_timestamps, f, ensure_ascii=False)
@@ -319,7 +333,7 @@ async def _generate_sections_audio(sections: list[dict], voice: str, base_dir: P
                     "word_timestamps": word_timestamps,
                 }
             except (json.JSONDecodeError, IOError):
-                pass
+                logger.warning("Suppressed exception at backend/src/service/narration/service.py:321", exc_info=True)
 
         word_timestamps = await _generate_tts(text, voice, output_path, user_id=user_id)
         if word_timestamps is None:
@@ -393,8 +407,12 @@ async def get_narration(narration_id: int, user_id: int) -> dict | None:
     """获取单个旁白详情"""
     from backend.src.models.narration_model import Narration
 
-    record = await Narration.filter(id=narration_id, resource__user_id=user_id).prefetch_related("resource").first()
+    record = await Narration.filter(id=narration_id).prefetch_related("resource").first()
     if not record:
+        return None
+    if not record.resource:
+        return None
+    if record.resource.user_id != user_id and record.resource.visibility != "public":
         return None
     return {
         "narration_id": record.id,

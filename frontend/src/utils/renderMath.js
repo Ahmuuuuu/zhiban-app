@@ -90,7 +90,9 @@ export function renderKaraokeHTML(text, timedWords, wordOffset = 0) {
         continue
       }
       const tw = wi < words.length ? words[wi] : null
-      const isDone = tw ? tw.isDone : true
+      // timedWords 不足时，宁可保持未高亮，也不要把后面的字误判成已完成
+      // 这样可以避免“段尾文字在一开始就直接亮起来”的错位现象。
+      const isDone = tw ? tw.isDone : false
       const isCurrent = tw ? tw.isCurrent : false
       const cls = `karaoke-word${isDone ? ' is-done' : ''}${isCurrent ? ' is-current' : ''}`
       result += `<span class="${cls}">${ch}</span>`

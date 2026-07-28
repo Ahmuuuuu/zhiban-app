@@ -32,6 +32,7 @@ from backend.src.utils.formula_builder import build_formula_sheet
 from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.utils.json_parser import parse_llm_json
+from backend.src.utils.slide_schema import PPT_SPEAKER_NOTES_MAX_CHARS, limit_speaker_notes
 
 logger = logging.getLogger(__name__)
 
@@ -350,8 +351,11 @@ async def generate_ppt_parallel(
                 return False, "ellipsis_placeholder"
             if re.search(r'(同上|以此类推|依此类推|类似可得|不再赘述|此处不再展开|（略）|证明略|过程略|推导略|步骤略)', text_no_math):
                 return False, "omitted_content"
-            if not re.search(r'(?m)^>\s*(?:讲稿|speaker notes?|notes?)\s*[:：]', slide, re.IGNORECASE):
+            notes_match = re.search(r'(?m)^>\s*(?:讲稿|speaker notes?|notes?)\s*[:：]\s*(.*)$', slide, re.IGNORECASE)
+            if not notes_match:
                 return False, "missing_speaker_notes"
+            if len(re.sub(r"\s+", " ", notes_match.group(1)).strip()) > PPT_SPEAKER_NOTES_MAX_CHARS:
+                return False, "speaker_notes_too_long"
             visible_lines = []
             for line in text_no_math.splitlines():
                 stripped = line.strip()
@@ -406,6 +410,13 @@ async def generate_ppt_parallel(
                 f"> 讲稿：本页围绕「{section_title}」展开讲解。请先说明本页学习目标，"
                 "再用一个小例子或检查动作帮助学习者确认自己是否真正理解。"
             )
+            notes_body = re.sub(
+                r'^\s*>\s*(?:讲稿|speaker notes?|notes?)\s*[:：]\s*',
+                "",
+                notes_line,
+                flags=re.IGNORECASE,
+            )
+            notes_line = f"> 讲稿：{limit_speaker_notes(notes_body)}"
             if notes_match:
                 repaired = (repaired[:notes_match.start()] + repaired[notes_match.end():]).strip()
             visible_text = "\n".join(
@@ -578,7 +589,7 @@ async def generate_ppt_parallel(
     _results: list[dict] = [{} for _ in range(total)]
     gen_sem = asyncio.Semaphore(max(1, total))
     review_sem = asyncio.Semaphore(2)
-    soft_quick_reasons = {"missing_speaker_notes", "hollow_bullet_or_step", "too_sparse_visible_content"}
+    soft_quick_reasons = {"missing_speaker_notes", "speaker_notes_too_long", "hollow_bullet_or_step", "too_sparse_visible_content"}
     first_pass_done = [False] * total
     first_pass_event = asyncio.Event()
 
@@ -709,7 +720,7 @@ async def generate_ppt_parallel(
                     "current": idx + 1, "total": total,
                 })
             except Exception:
-                pass
+                logger.warning("Suppressed exception at backend/src/ai_core/resource_graph.py:711", exc_info=True)
 
         is_portrait_section = has_portrait and idx == 0
 
@@ -802,7 +813,7 @@ async def generate_ppt_parallel(
                         "section_title": _title,
                     })
                 except Exception:
-                    pass
+                    logger.warning("Suppressed exception at backend/src/ai_core/resource_graph.py:804", exc_info=True)
             _push_section(_idx, _content, _title)
 
         round_idx = 0
@@ -828,7 +839,7 @@ async def generate_ppt_parallel(
                         "current": idx + 1, "total": total,
                     })
                 except Exception:
-                    pass
+                    logger.warning("Suppressed exception at backend/src/ai_core/resource_graph.py:830", exc_info=True)
 
             # 拼接审核反馈到 prompt
             if not is_first_round and review_feedback:
@@ -1171,7 +1182,7 @@ async def generate_document_parallel(
                     "total": total,
                 })
             except Exception:
-                pass
+                logger.warning("Suppressed exception at backend/src/ai_core/resource_graph.py:1173", exc_info=True)
 
         prev_section = sections[idx - 1] if idx > 0 else "（无）"
         next_section = sections[idx + 1] if idx < len(sections) - 1 else "（无）"
@@ -1280,7 +1291,7 @@ async def generate_document_parallel(
         try:
             stream_writer({"type": "stream_progress", "file_type": "document", "message": "文档生成完成", "current": total, "total": total})
         except Exception:
-            pass
+            logger.warning("Suppressed exception at backend/src/ai_core/resource_graph.py:1282", exc_info=True)
 
     return combined
 

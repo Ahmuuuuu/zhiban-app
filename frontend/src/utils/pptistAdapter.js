@@ -1,3 +1,5 @@
+import { mergeSpeakerNotes, splitSpeakerNotes, stripSpeakerNotes } from './pptSpeakerNotes'
+
 export const PPTIST_PAYLOAD_KEY = 'zhiban:pptist:payload'
 
 const WIDTH = 1000
@@ -125,11 +127,14 @@ const paletteForTheme = themeId => {
 
 const normalizeSlide = slide => {
   const title = cleanText(slide?.title || slide?.heading || 'Untitled')
-  const bodySource = slide?.text || slide?.content || slide?.body || ''
+  const bodyParts = splitSpeakerNotes(slide?.text || slide?.content || slide?.body || '')
+  const blockNotes = (Array.isArray(slide?.blocks) ? slide.blocks : [])
+    .map(block => splitSpeakerNotes(block?.text || block?.content || block).notes)
+    .filter(Boolean)
   const blocks = Array.isArray(slide?.blocks) && slide.blocks.length
-    ? slide.blocks.map(block => cleanText(block?.text || block?.content || block)).filter(Boolean)
-    : splitBlocks(bodySource)
-  const notes = cleanText(slide?.notes || slide?.speaker_notes || '')
+    ? slide.blocks.map(block => cleanText(stripSpeakerNotes(block?.text || block?.content || block))).filter(Boolean)
+    : splitBlocks(bodyParts.body)
+  const notes = cleanText(mergeSpeakerNotes(slide?.notes, slide?.speaker_notes, bodyParts.notes, ...blockNotes))
   return { title, blocks, notes }
 }
 

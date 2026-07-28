@@ -91,6 +91,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import PptSlide from './ppt_video/ppt/PptSlide.vue'
 import PresentationToolbar from './ppt_video/ppt/PresentationToolbar.vue'
+import { mergeSpeakerNotes, splitSpeakerNotes, stripSpeakerNotes } from '../utils/pptSpeakerNotes'
 import 'katex/dist/katex.min.css'
 
 const props = defineProps({
@@ -223,6 +224,8 @@ const cleanDisplayText = value => String(value || '')
   .replace(/\n{3,}/g, '\n\n')
   .trim()
 
+const cleanBodyText = value => cleanDisplayText(stripSpeakerNotes(value))
+
 const compactDisplayText = (value, limit = 260) => {
   const text = cleanDisplayText(value).replace(/\s+/g, ' ').trim()
   if (text.length <= limit) return text
@@ -320,15 +323,19 @@ const normalizeBlocks = slide => {
     return blocks
       .map(block => ({
         type: block?.type || 'key_point',
-        text: cleanDisplayText(block?.text || block?.content)
+        text: cleanBodyText(block?.text || block?.content)
       }))
       .filter(block => block.text)
   }
-  return splitTextBlocks(slide?.text || slide?.content).slice(0, 8).map(text => ({ type: 'key_point', text }))
+  return splitTextBlocks(stripSpeakerNotes(slide?.text || slide?.content)).slice(0, 8).map(text => ({ type: 'key_point', text }))
 }
 
 const normalizeSlide = (slide, index) => {
-  const text = cleanDisplayText(slide?.text || slide?.content || '')
+  const rawText = splitSpeakerNotes(slide?.text || slide?.content || '')
+  const rawBlockNotes = (Array.isArray(slide?.blocks) ? slide.blocks : [])
+    .map(block => splitSpeakerNotes(block?.text || block?.content || block).notes)
+    .filter(Boolean)
+  const text = cleanDisplayText(rawText.body)
   const layout = slide?.layout || chooseLayout(slide, index)
   const visual = typeof slide?.visual === 'object' && slide.visual
     ? slide.visual
@@ -340,8 +347,8 @@ const normalizeSlide = (slide, index) => {
     title: compactDisplayText(slide?.title || '', 90),
     text,
     content: text,
-    notes: cleanDisplayText(slide?.notes || slide?.speaker_notes || ''),
-    speaker_notes: cleanDisplayText(slide?.speaker_notes || slide?.notes || ''),
+    notes: cleanDisplayText(mergeSpeakerNotes(slide?.notes, slide?.speaker_notes, rawText.notes, ...rawBlockNotes)),
+    speaker_notes: cleanDisplayText(mergeSpeakerNotes(slide?.speaker_notes, slide?.notes, rawText.notes, ...rawBlockNotes)),
     layout,
     theme: slide?.theme || chooseTheme(slide, index),
     visual: {

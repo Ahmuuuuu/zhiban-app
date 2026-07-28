@@ -92,6 +92,8 @@ async def upload_document(
             dest = VIDEO_DIR / safe_name
 
             content_bytes = await file.read()
+            if len(content_bytes) > MAX_UPLOAD_SIZE:
+                return {"code": 413, "msg": "uploaded file is too large"}
             dest.write_bytes(content_bytes)
 
             doc_title = title.strip() if title else Path(file.filename).stem
@@ -123,6 +125,8 @@ async def upload_document(
         # ── 保存临时文件 ──
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             content_bytes = await file.read()
+            if len(content_bytes) > MAX_UPLOAD_SIZE:
+                return {"code": 413, "msg": "uploaded file is too large"}
             tmp.write(content_bytes)
             tmp_path = tmp.name
 
@@ -196,10 +200,14 @@ async def list_entries(
 
 
 @router.get("/{doc_id}")
-async def get_entry(doc_id: str):
+async def get_entry(
+    doc_id: str,
+    user_id: int = Depends(get_user_id_from_token),
+):
     """获取单条知识库记录"""
     try:
-        record = await get_by_id(doc_id)
+        admin = await is_admin(user_id)
+        record = await get_by_id(doc_id, user_id=user_id, is_admin=admin)
         if not record:
             return {"code": 404, "msg": "记录不存在"}
         return {"code": 200, "msg": "success", "data": record}

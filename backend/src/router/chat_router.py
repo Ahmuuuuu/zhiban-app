@@ -36,6 +36,8 @@ async def new_message(
     data: CreateMsgIntoHistory = Body(...)
 ):
     try:
+        if not await chat_service.chat_group_belongs_to_user(user_id, data.chat_group_id):
+            return {"code": 404, "msg": "chat group not found or access denied"}
         message, msg = await chat_service.create_message_into_history(
             user_id, data.chat_group_id, data.user_req
         )
@@ -118,6 +120,12 @@ async def stream_new_message(
     user_id: int = Depends(get_user_id_from_token),
     data: StreamMsgIntoHistory = Body(...)
 ):
+    if not await chat_service.chat_group_belongs_to_user(user_id, data.chat_group_id):
+        async def _not_found():
+            yield 'data: {"error":"chat group not found or access denied"}\n\n'
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(_not_found(), media_type="text/event-stream")
     return StreamingResponse(
         chat_service.stream_create_message_into_history(
             user_id, data.chat_group_id, data.user_req

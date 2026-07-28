@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 
 from tortoise.expressions import F, Q
+from tortoise.exceptions import IntegrityError
 
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
@@ -34,18 +35,25 @@ class ResourceLibraryService:
         user = await User.filter(id=user_id).first()
         if not user:
             raise ValueError("用户不存在")
-        resource = await GeneratedResource.filter(id=resource_id).first()
+        resource = await GeneratedResource.filter(
+            Q(id=resource_id),
+            Q(user_id=user_id) | Q(visibility="public"),
+        ).first()
         if not resource:
             raise ValueError("资源不存在")
 
-        existing = await ResourceLike.filter(user_id=user_id, resource_id=resource_id).first()
-        if existing:
-            await existing.delete()
+        deleted = await ResourceLike.filter(user_id=user_id, resource_id=resource_id).delete()
+        if deleted:
             await GeneratedResource.filter(id=resource_id).update(like_count=F("like_count") - 1)
             await resource.refresh_from_db()
             return {"liked": False, "like_count": resource.like_count}
 
-        await ResourceLike.create(user=user, resource=resource)
+        try:
+            await ResourceLike.create(user=user, resource=resource)
+        except IntegrityError:
+            logger.debug("Resource like already exists user_id=%s resource_id=%s", user_id, resource_id)
+            await resource.refresh_from_db()
+            return {"liked": True, "like_count": resource.like_count}
         await GeneratedResource.filter(id=resource_id).update(like_count=F("like_count") + 1)
         await resource.refresh_from_db()
         return {"liked": True, "like_count": resource.like_count}
@@ -57,18 +65,25 @@ class ResourceLibraryService:
         user = await User.filter(id=user_id).first()
         if not user:
             raise ValueError("用户不存在")
-        resource = await GeneratedResource.filter(id=resource_id).first()
+        resource = await GeneratedResource.filter(
+            Q(id=resource_id),
+            Q(user_id=user_id) | Q(visibility="public"),
+        ).first()
         if not resource:
             raise ValueError("资源不存在")
 
-        existing = await ResourceCollection.filter(user_id=user_id, resource_id=resource_id).first()
-        if existing:
-            await existing.delete()
+        deleted = await ResourceCollection.filter(user_id=user_id, resource_id=resource_id).delete()
+        if deleted:
             await GeneratedResource.filter(id=resource_id).update(favorite_count=F("favorite_count") - 1)
             await resource.refresh_from_db()
             return {"favorited": False, "favorite_count": resource.favorite_count}
 
-        await ResourceCollection.create(user=user, resource=resource)
+        try:
+            await ResourceCollection.create(user=user, resource=resource)
+        except IntegrityError:
+            logger.debug("Resource favorite already exists user_id=%s resource_id=%s", user_id, resource_id)
+            await resource.refresh_from_db()
+            return {"favorited": True, "favorite_count": resource.favorite_count}
         await GeneratedResource.filter(id=resource_id).update(favorite_count=F("favorite_count") + 1)
         await resource.refresh_from_db()
         return {"favorited": True, "favorite_count": resource.favorite_count}

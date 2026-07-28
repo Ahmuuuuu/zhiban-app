@@ -17,6 +17,9 @@ from backend.src.service.video.service import (
     _subscribe_sse,
     _unsubscribe_sse,
 )
+from backend.src.service.narration.service import get_narration, narrate_resource
+from backend.src.utils.exceptions import ServiceError
+from backend.src.utils.tts_utils import VOICES
 from backend.src.utils.redis_client import replay_sse as _replay_pres_sse, check_rate_limit
 from backend.src.utils.jwt import get_user_id_from_token
 
@@ -43,6 +46,12 @@ class QuestionsRequest(BaseModel):
     voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="预热用 TTS 语音名称")
 
 
+class NarrateRequest(BaseModel):
+    resource_id: int = Field(description="资源 ID")
+    voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="EdgeTTS 语音名称")
+    force_regenerate: bool = Field(default=False, description="是否强制重新生成旁白")
+
+
 @router.post("/generate")
 async def generate_presentation(data: GenerateRequest, user_id: int = Depends(get_user_id_from_token)):
     """生成动态 HTML 视频"""
@@ -64,6 +73,47 @@ async def list_presentation(user_id: int = Depends(get_user_id_from_token)):
     """列出当前用户的所有视频"""
     items = await list_presentations(user_id)
     return {"code": 200, "msg": "success", "data": items}
+
+
+@router.get("/voices")
+async def list_narration_voices(user_id: int = Depends(get_user_id_from_token)):
+    """列出可用于资源旁白的 TTS 音色。"""
+    data = [
+        {
+            "name": voice,
+            "label": voice,
+            "locale": "-".join(voice.split("-")[:2]) if "-" in voice else "",
+            "default": voice == "zh-CN-XiaoxiaoNeural",
+        }
+        for voice in VOICES
+    ]
+    return {"code": 200, "msg": "success", "data": data}
+
+
+@router.post("/narrate")
+async def narrate_resource_endpoint(data: NarrateRequest, user_id: int = Depends(get_user_id_from_token)):
+    """为文字类资源生成旁白音频。"""
+    if not await check_rate_limit("narrate_resource", user_id, 8, 60):
+        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
+    try:
+        result = await narrate_resource(
+            data.resource_id,
+            voice=data.voice,
+            force_regenerate=data.force_regenerate,
+            user_id=user_id,
+        )
+        return {"code": 200, "msg": "success", "data": result}
+    except ServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/narrations/{narration_id}")
+async def get_narration_detail(narration_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """查询资源旁白详情。"""
+    result = await get_narration(narration_id, user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="旁白不存在")
+    return {"code": 200, "msg": "success", "data": result}
 
 
 @router.get("/{presentation_id}")

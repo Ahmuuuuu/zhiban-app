@@ -12,7 +12,12 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
-from backend.src.utils.slide_schema import THEME_PALETTES as SLIDE_THEME_PALETTES, parse_markdown_slides
+from backend.src.utils.slide_schema import (
+    PPT_SPEAKER_NOTES_MAX_CHARS,
+    THEME_PALETTES as SLIDE_THEME_PALETTES,
+    limit_speaker_notes,
+    parse_markdown_slides,
+)
 
 
 # 颜色方案
@@ -106,8 +111,8 @@ def _prepare_slide_data(slide_data: dict) -> dict:
         "text": _clean_ppt_text(slide_data.get("text") or slide_data.get("content"), 900),
         "content": _clean_ppt_text(slide_data.get("content") or slide_data.get("text"), 900),
         "bullets": bullets[:8],
-        "notes": _clean_ppt_text(slide_data.get("notes") or slide_data.get("speaker_notes"), 1000),
-        "speaker_notes": _clean_ppt_text(slide_data.get("speaker_notes") or slide_data.get("notes"), 1000),
+        "notes": limit_speaker_notes(slide_data.get("notes") or slide_data.get("speaker_notes")),
+        "speaker_notes": limit_speaker_notes(slide_data.get("speaker_notes") or slide_data.get("notes")),
         "blocks": blocks[:8],
         "visual": {
             **visual,
@@ -662,7 +667,10 @@ def _add_notes(slide, slide_data: dict):
     if slide_data["notes"]:
         try:
             notes_slide = slide.notes_slide
-            notes_slide.notes_text_frame.text = _clean_ppt_text(slide_data["notes"], 1000)
+            notes_slide.notes_text_frame.text = _clean_ppt_text(
+                limit_speaker_notes(slide_data["notes"]),
+                PPT_SPEAKER_NOTES_MAX_CHARS,
+            )
         except Exception:
             logging.getLogger("pptx").warning("添加备注失败 slide_title=%s", slide_data.get("title", ""))
 

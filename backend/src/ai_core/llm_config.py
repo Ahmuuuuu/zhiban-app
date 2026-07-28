@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json as _json
+import logging
 import threading
 from pathlib import Path
 from langchain_openai import ChatOpenAI
@@ -10,6 +11,8 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+logger = logging.getLogger(__name__)
 
 api_key = os.getenv("api_key")
 
@@ -111,7 +114,7 @@ class _PriorityLLM:
                         response_metadata=_cached.get("response_metadata", {}),
                     )
             except Exception:
-                pass
+                logger.debug("Suppressed exception at backend/src/ai_core/llm_config.py:116", exc_info=True)
 
         user_sem = None
         if user_id:
@@ -139,7 +142,7 @@ class _PriorityLLM:
                         "response_metadata": {k: str(v) for k, v in _meta.items() if isinstance(v, (str, int, float))},
                     }, self._cache_ttl)
                 except Exception:
-                    pass
+                    logger.debug("Suppressed exception at backend/src/ai_core/llm_config.py:144", exc_info=True)
             return resp
 
         global _async_high_active
