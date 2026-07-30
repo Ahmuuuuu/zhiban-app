@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import asyncio
 import json
 import logging
@@ -250,56 +251,58 @@ class Brain:
                 inst._agent_config_loaded = False
 
     async def _load_agent_config(self):
-        “””加载用户自建智能体配置（persona + tool_names + memory）。
-        仅在 agent_id 不为 None 且未加载时执行一次。”””
+        """Load user-defined agent config: persona, tool whitelist, memory.
+        Only runs once when agent_id is set and not yet loaded."""
         if self.agent_id is None or self._agent_config_loaded:
             return
         try:
             from backend.src.service.agent.service import get as get_agent, get_memory_text
             agent_config = await get_agent(self.user_id, self.agent_id)
             if agent_config:
-                self._agent_persona = agent_config.get(“persona”, “”) or None
-                tool_names = agent_config.get(“tools”, [])
+                self._agent_persona = agent_config.get("persona", "") or None
+                tool_names = agent_config.get("tools", [])
                 self._agent_tool_names = set(tool_names) if tool_names else None
                 self._agent_memory_text = await get_memory_text(self.user_id, self.agent_id)
         except Exception:
-            logging.getLogger(__name__).exception(“加载智能体配置失败 agent_id=%s”, self.agent_id)
+            logging.getLogger(__name__).exception("加载智能体配置失败 agent_id=%s", self.agent_id)
             self._agent_persona = None
             self._agent_tool_names = None
-            self._agent_memory_text = “”
+            self._agent_memory_text = ""
         self._agent_config_loaded = True
 
     def _build_agent(self, action_tools: list, mcp_tools: list):
-        now = datetime.now(ZoneInfo(“Asia/Shanghai”))
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        tz_name = "Asia/Shanghai"
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%Y-%m-%d %H:%M:%S")
         current_time_context = (
-            “\n\n### 当前时间锚点\n”
-            f”- 当前日期：{now.strftime('%Y-%m-%d')}\n”
-            f”- 当前时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n”
-            “- 时区：Asia/Shanghai\n”
-            “- 进行搜索、新闻、时间、日程、时效性判断时，必须以这里的当前日期为准，不要沿用旧年份。\n”
-            “- 如果用户提到”今天/当前/今年/最新/最近/2026年”等，先按这个时间锚点理解，再决定是否搜索，不要默认写成 2025 年。\n”
+            f"\n\n### Current Time Anchor\n"
+            f"- Date: {date_str}\n"
+            f"- Time: {time_str}\n"
+            f"- Timezone: {tz_name}\n"
+            f"- Always use this date as reference for time-sensitive queries.\n"
         )
 
-        # 自建智能体：使用用户自定义 persona 作为 system prompt
         if self._agent_persona:
-            persona_with_time = self._agent_persona + current_time_context
-            if self._agent_memory_text:
-                persona_with_time += “\n” + self._agent_memory_text
-            system_prompt = persona_with_time
+            system_prompt = (
+                self._agent_persona
+                + current_time_context
+                + (("\n" + self._agent_memory_text) if self._agent_memory_text else "")
+                + "\n\n{path_context}\n\n{portrait_context}"
+            )
         else:
-            system_prompt = load_prompt(“chat/unified”) + current_time_context
+            system_prompt = load_prompt("chat/unified") + current_time_context
 
         prompt = ChatPromptTemplate.from_messages([
-            (“system”, system_prompt),
-            MessagesPlaceholder(variable_name=”history”),
-            (“human”, “{input}”),
-            MessagesPlaceholder(variable_name=”agent_scratchpad”),
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="history"),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
 
         uid = str(self.user_id)
         gid = self.chat_group_id or 0
 
-        # 自建智能体：仅加载用户选择的工具子集；默认：全部工具
         if self._agent_tool_names is not None:
             tool_names_to_load = self._agent_tool_names
         else:

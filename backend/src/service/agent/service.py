@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """用户自建智能体 CRUD + 记忆管理"""
 
 import json

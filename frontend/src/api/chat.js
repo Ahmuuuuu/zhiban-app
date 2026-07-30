@@ -2,10 +2,13 @@ import request from './request'
 import { API_BASE_URL, apiFetchHeaders, parseStreamEvent, requestFirstAvailable } from './config'
 
 export function sendChatMessage(data) {
+  const agentField = data.agent_id ? { agent_id: data.agent_id } : {}
+
   if (data.chat_group_id) {
     return request.post('/ai_chat/create_msg_into_history', {
       chat_group_id: Number(data.chat_group_id),
-      user_req: data.user_req
+      user_req: data.user_req,
+      ...agentField
     })
   }
 
@@ -13,7 +16,8 @@ export function sendChatMessage(data) {
     url: '/ai_chat/create_new_history',
     method: 'post',
     data: {
-      user_req: data.user_req
+      user_req: data.user_req,
+      ...agentField
     }
   })
 }
@@ -73,10 +77,12 @@ export async function streamChatMessage(data, { onChunk, onDone, onError, onFile
     body: isExistingConversation
       ? JSON.stringify({
         chat_group_id: Number(data.chat_group_id),
-        user_req: data.user_req
+        user_req: data.user_req,
+        ...(data.agent_id ? { agent_id: data.agent_id } : {})
       })
       : JSON.stringify({
-        user_req: data.user_req
+        user_req: data.user_req,
+        ...(data.agent_id ? { agent_id: data.agent_id } : {})
       })
   })
 

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """APScheduler 定时任务调度器（AsyncIO 模式）"""
 
 import asyncio

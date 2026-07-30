@@ -10,6 +10,32 @@
         <button class="menu-btn" type="button" aria-label="打开最近对话" @click="showHistoryPanel = !showHistoryPanel">
           <Menu :size="34" stroke-width="1.25" />
         </button>
+        <div class="agent-pick" @click="showAgentDropdown = !showAgentDropdown">
+          <span>{{ activeAgentName }}</span>
+          <ChevronDown :size="12" stroke-width="1.5" />
+        </div>
+      </div>
+      <div v-if="showAgentDropdown" class="agent-pick-drop" @click.stop>
+        <div
+          v-for="agent in agentDropdownList"
+          :key="agent.id"
+          class="agent-pick-drop__item"
+          :class="{ active: activeAgentId === String(agent.id) }"
+          @click="switchAgent(agent._rawId !== undefined ? agent._rawId : null)"
+        >
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ agent.name }}</span>
+          <button
+            v-if="agent._rawId !== undefined"
+            type="button"
+            class="agent-pick-drop__del"
+            title="删除智能体"
+            @click.stop="deleteMyAgent(agent._rawId)"
+          >×</button>
+        </div>
+        <div class="agent-pick-drop__div"></div>
+        <div class="agent-pick-drop__item agent-pick-drop__new" @click="openAgentCreator">
+          + 新建智能体
+        </div>
       </div>
     </header>
 
@@ -374,6 +400,45 @@
 </footer>
     </main>
 
+    <!-- 智能体创建面板 -->
+    <div v-if="agentCreatorVisible" class="agent-creator-backdrop" @click.self="closeAgentCreator">
+      <div class="agent-creator">
+        <header class="agent-creator__header">
+          <h3>新建智能体</h3>
+          <button type="button" @click="closeAgentCreator">×</button>
+        </header>
+        <div class="agent-creator__body">
+          <label class="agent-creator__field">
+            <span>名称</span>
+            <input v-model="agentForm.name" type="text" placeholder="如：出题教练" maxlength="64" />
+          </label>
+          <label class="agent-creator__field">
+            <span>角色设定</span>
+            <textarea v-model="agentForm.persona" rows="4" placeholder="你是一个严格的刷题教练，根据学生的薄弱知识点出针对性练习题…" maxlength="2000"></textarea>
+          </label>
+          <div class="agent-creator__field">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span>工具选择（{{ agentForm.tools.length }}/{{ agentAvailableTools.length }}）</span>
+              <button type="button" style="font-size:11px;border:0;background:none;color:var(--accent,#5f8fc3);cursor:pointer;font-weight:700" @click="agentForm.tools = agentForm.tools.length === agentAvailableTools.length ? [] : agentAvailableTools.map(t=>t.name)">{{ agentForm.tools.length === agentAvailableTools.length ? '清空' : '全选' }}</button>
+            </div>
+            <div class="agent-creator__tools">
+              <label v-for="tool in agentAvailableTools" :key="tool.name" class="agent-creator__tool">
+                <input type="checkbox" :value="tool.name" v-model="agentForm.tools" />
+                <span class="agent-creator__tool-label">{{ tool.label }}</span>
+                <span class="agent-creator__tool-desc">{{ tool.desc }}</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <footer class="agent-creator__footer">
+          <button type="button" class="agent-creator__cancel" @click="closeAgentCreator">取消</button>
+          <button type="button" class="agent-creator__save" :disabled="!agentForm.name.trim() || agentSaving" @click="saveAgent">
+            {{ agentSaving ? '创建中…' : '创建' }}
+          </button>
+        </footer>
+      </div>
+    </div>
+
     <Teleport to="body">
       <section v-if="pptPreview.visible" class="ppt-dialog" @click.self="closePptPreview">
         <article class="ppt-dialog__panel">
@@ -626,7 +691,11 @@ import {
   getPresentations,
   isBackendUnavailableError,
   resolveApiUrl,
-  updateResourceAnnotation
+  updateResourceAnnotation,
+  getMyAgents,
+  createAgent as apiCreateAgent,
+  getAvailableTools,
+  deleteAgent as apiDeleteAgent
 } from '../api/apis'
 import { detectGenerationIntent } from '../composables/useResourceGeneration'
 import { useGenerationTaskQueue } from '../composables/useGenerationTaskQueue'
@@ -638,6 +707,7 @@ import PptPreview from '../components/PptPreview.vue'
 import PptGenerateModal from '../components/ppt_video/ppt/PptGenerateModal.vue'
 import {
   Bot,
+  ChevronDown,
   FileText,
   GitBranch,
   Image,
@@ -661,6 +731,100 @@ import 'katex/dist/katex.min.css'
 
 const showHistoryPanel = ref(false)
 const showAddMenu = ref(false)
+
+// ── 自定义智能体 ──
+const activeAgentId = ref(null)  // null = 默认小知
+const activeAgentName = ref('默认小知')
+const showAgentDropdown = ref(false)
+const agentList = ref([])
+const agentCreatorVisible = ref(false)
+const agentSaving = ref(false)
+const agentAvailableTools = ref([])
+const agentForm = ref({ name: '', persona: '', tools: [] })
+
+const agentDropdownList = computed(() => [
+  { id: 'default', name: '默认小知' },
+  ...agentList.value.map(a => ({ id: String(a.id), name: a.name, _rawId: a.id }))
+])
+
+const loadAgents = async () => {
+  try {
+    const res = await getMyAgents()
+    agentList.value = (res?.data || [])
+  } catch { /* 静默 */ }
+}
+
+const switchAgent = async (agentId) => {
+  showAgentDropdown.value = false
+  if (agentId === null || agentId === undefined || agentId === 'default') {
+    activeAgentId.value = null
+    activeAgentName.value = '默认小知'
+    await createNewChat()
+    return
+  }
+  const realId = Number(agentId)
+  activeAgentId.value = realId
+  const agent = agentList.value.find(a => a.id === realId)
+  activeAgentName.value = agent?.name || '未命名智能体'
+  await createNewChat()
+}
+
+const deleteMyAgent = async (agentId) => {
+  if (!window.confirm('确定删除这个智能体吗？')) return
+  try {
+    await apiDeleteAgent(agentId)
+    // 如果当前正在使用被删除的智能体，切回默认
+    if (activeAgentId.value === agentId) {
+      activeAgentId.value = null
+      activeAgentName.value = '默认小知'
+      await createNewChat()
+    }
+    await loadAgents()
+  } catch { /* 静默 */ }
+}
+
+const openAgentCreator = async () => {
+  showAgentDropdown.value = false
+  agentForm.value = { name: '', persona: '', tools: [] }
+  if (!agentAvailableTools.value.length) {
+    try {
+      const res = await getAvailableTools()
+      agentAvailableTools.value = (res?.data || [])
+    } catch {
+      agentAvailableTools.value = []
+      console.warn('工具列表加载失败，请检查后端是否已重启')
+    }
+  }
+  agentCreatorVisible.value = true
+}
+
+const closeAgentCreator = () => {
+  agentCreatorVisible.value = false
+}
+
+const saveAgent = async () => {
+  if (!agentForm.value.name.trim() || agentSaving.value) return
+  agentSaving.value = true
+  try {
+    const res = await apiCreateAgent({
+      name: agentForm.value.name.trim(),
+      persona: agentForm.value.persona.trim(),
+      tools: agentForm.value.tools
+    })
+    const newAgent = res?.data?.data || res?.data || {}
+    await loadAgents()
+    closeAgentCreator()
+    // 自动切换到新智能体
+    if (newAgent.id) {
+      switchAgent(newAgent.id)
+    }
+  } catch {
+    /* 静默 */
+  } finally {
+    agentSaving.value = false
+  }
+}
+
 const selectedResourceTool = ref(null)
 const pptGenModalVisible = ref(false)
 const pptGenThemeId = ref('minimal-white')
@@ -3957,7 +4121,8 @@ const sendMessage = async () => {
 
     await streamChatMessage({
       user_req: chatRequestText,
-      chat_group_id: activeConversationId.value
+      chat_group_id: activeConversationId.value,
+      agent_id: activeAgentId.value
     }, {
       onChunk: async chunk => {
         if (!target) return
@@ -4324,7 +4489,8 @@ onMounted(async () => {
     hydrateGenerationTasks().catch(error => {
       console.warn('[ChatView] restore generation tasks failed:', error)
     }),
-    loadConversationList()
+    loadConversationList(),
+    loadAgents()
   ])
   if (await openConversationFromRoute()) return
 
@@ -4507,6 +4673,196 @@ watch(
 .sketch-topbar :deep(.account-entry-wrap) {
   pointer-events: auto;
 }
+
+/* ── 智能体切换 ── */
+.agent-pick {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 12px;
+  height: 34px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  max-width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-pick-drop {
+  position: absolute;
+  top: 80px;
+  left: clamp(18px, 2.4vw, 32px);
+  min-width: 150px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+  z-index: 35;
+  pointer-events: auto;
+}
+
+.agent-pick-drop__item {
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.agent-pick-drop__item:hover,
+.agent-pick-drop__item.active {
+  background: rgba(22, 63, 143, 0.08);
+}
+
+.agent-pick-drop__div {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--panel-border);
+}
+
+.agent-pick-drop__new {
+  color: var(--accent, #5f8fc3);
+}
+
+.agent-pick-drop__del {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #c0392b;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: none;
+}
+
+.agent-pick-drop__item:hover .agent-pick-drop__del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-pick-drop__del:hover {
+  background: #c0392b;
+  color: #fff;
+}
+
+/* ── 创建面板 ── */
+.agent-creator-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.32);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  backdrop-filter: blur(6px);
+}
+
+.agent-creator {
+  width: min(480px, 100%);
+  max-height: calc(100vh - 32px);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.16);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.agent-creator__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.agent-creator__header h3 { margin: 0; font-size: 15px; }
+.agent-creator__header button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.06); font-size: 16px; cursor: pointer; }
+
+.agent-creator__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 18px;
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+}
+
+.agent-creator__field { display: grid; gap: 6px; }
+.agent-creator__field > span { font-weight: 800; font-size: 12px; }
+.agent-creator__field input,
+.agent-creator__field textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--panel-border);
+  border-radius: 8px; font: inherit; font-size: 13px;
+  outline: none; box-sizing: border-box;
+}
+.agent-creator__field textarea { resize: vertical; min-height: 60px; }
+.agent-creator__field input:focus,
+.agent-creator__field textarea:focus {
+  border-color: var(--accent, #5f8fc3);
+  box-shadow: 0 0 0 2px rgba(95, 143, 195, 0.1);
+}
+
+.agent-creator__tools {
+  display: grid;
+  gap: 3px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.agent-creator__tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+.agent-creator__tool input {
+  flex-shrink: 0;
+  width: auto;
+  margin: 0;
+  pointer-events: auto;
+}
+.agent-creator__tool-label { font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+.agent-creator__tool-desc { font-size: 11px; color: var(--muted, #6b7d8e); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.agent-creator__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.agent-creator__cancel,
+.agent-creator__save {
+  min-height: 34px; padding: 0 16px; border: 0;
+  border-radius: 8px; font: inherit; font-weight: 800; font-size: 13px; cursor: pointer;
+}
+.agent-creator__cancel { background: rgba(0, 0, 0, 0.06); color: var(--primary); }
+.agent-creator__save { background: var(--primary); color: #fff; }
+.agent-creator__save:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .sketch-topbar :deep(.account-entry) {
   width: auto;

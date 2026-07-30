@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """用户自建智能体 API"""
 
 import logging
@@ -42,7 +43,7 @@ class AppendMemoryBody(BaseModel):
 
 
 # ═══════════════════════════════════════
-#  Endpoints
+#  Endpoints — 静态路径必须在 /{agent_id} 之前
 # ═══════════════════════════════════════
 
 @router.post("")
@@ -57,52 +58,9 @@ async def create_agent(
     return {"code": 200, "msg": "智能体创建成功", "data": agent}
 
 
-@router.put("/{agent_id}")
-async def update_agent(
-    agent_id: int,
-    data: UpdateAgentBody = Body(...),
-    user_id: int = Depends(get_user_id_from_token),
-):
-    kwargs = {k: v for k, v in data.model_dump().items() if v is not None}
-    if not kwargs:
-        raise HTTPException(400, "无更新字段")
-    agent = await update(user_id, agent_id, **kwargs)
-    if not agent:
-        raise HTTPException(404, "智能体不存在")
-    return {"code": 200, "msg": "智能体已更新", "data": agent}
-
-
-@router.delete("/{agent_id}")
-async def delete_agent(
-    agent_id: int,
-    user_id: int = Depends(get_user_id_from_token),
-):
-    ok = await delete(user_id, agent_id)
-    if not ok:
-        raise HTTPException(404, "智能体不存在")
-    return {"code": 200, "msg": "智能体已删除"}
-
-
-@router.get("/{agent_id}")
-async def get_agent(
-    agent_id: int,
-    user_id: int = Depends(get_user_id_from_token),
-):
-    agent = await get(user_id, agent_id)
-    if not agent:
-        raise HTTPException(404, "智能体不存在")
-    return {"code": 200, "data": agent}
-
-
 @router.get("")
 async def list_my_agents(user_id: int = Depends(get_user_id_from_token)):
     agents = await list_by_user(user_id)
-    return {"code": 200, "data": agents}
-
-
-@router.get("/market/public")
-async def list_public_agents(user_id: int = Depends(get_user_id_from_token)):
-    agents = await list_public(user_id)
     return {"code": 200, "data": agents}
 
 
@@ -139,6 +97,69 @@ async def list_available_tools():
         {"name": "delete_path_node", "label": "删除节点", "desc": "从学习路径中移除节点"},
     ]
     return {"code": 200, "data": tools}
+
+
+@router.get("/market/public")
+async def list_public_agents(user_id: int = Depends(get_user_id_from_token)):
+    agents = await list_public(user_id)
+    return {"code": 200, "data": agents}
+
+
+@router.get("/chat/{chat_group_id}")
+async def get_chat_agent(
+    chat_group_id: int,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    """查询某个聊天组绑定的智能体（返回 null 表示默认小知）"""
+    from backend.src.models.chat_history_model import ChatHistory
+    record = await ChatHistory.filter(
+        user_id=user_id, chat_group_id=chat_group_id
+    ).order_by("-created_at").first()
+    if not record or not record.agent_id:
+        return {"code": 200, "data": None}
+    agent = await get(user_id, record.agent_id)
+    return {"code": 200, "data": agent}
+
+
+# ═══════════════════════════════════════
+#  /{agent_id} 必须在所有静态路径之后
+# ═══════════════════════════════════════
+
+@router.get("/{agent_id}")
+async def get_agent(
+    agent_id: int,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    agent = await get(user_id, agent_id)
+    if not agent:
+        raise HTTPException(404, "智能体不存在")
+    return {"code": 200, "data": agent}
+
+
+@router.put("/{agent_id}")
+async def update_agent(
+    agent_id: int,
+    data: UpdateAgentBody = Body(...),
+    user_id: int = Depends(get_user_id_from_token),
+):
+    kwargs = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not kwargs:
+        raise HTTPException(400, "无更新字段")
+    agent = await update(user_id, agent_id, **kwargs)
+    if not agent:
+        raise HTTPException(404, "智能体不存在")
+    return {"code": 200, "msg": "智能体已更新", "data": agent}
+
+
+@router.delete("/{agent_id}")
+async def delete_agent(
+    agent_id: int,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    ok = await delete(user_id, agent_id)
+    if not ok:
+        raise HTTPException(404, "智能体不存在")
+    return {"code": 200, "msg": "智能体已删除"}
 
 
 @router.post("/{agent_id}/copy")
