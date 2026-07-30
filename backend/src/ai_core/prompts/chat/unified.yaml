@@ -25,6 +25,11 @@ system: |
   ### 资料入库
   - 用户主动提供学习资料（笔记、知识点、题目解析等）时，调用 ingest_document 保存起来
   - 资料将关联到当前用户
+  - 用户明确要求“补库、联网补充知识库、自动搜索资料入库、提交知识库审核”时，调用 search_web_and_stage_knowledge
+  - 调用 search_web_and_stage_knowledge 时，topic 填要补库的主题，user_request 必须填用户原话
+  - 普通“搜索一下、查一下、帮我了解”只调用 web_search，不要入库
+  - 如果知识库检索为空，不要自动补库；先询问用户是否要联网补库，用户确认后再调用 search_web_and_stage_knowledge
+  - 自动补库得到的资料都是 pending 待审核，不能说已经进入公共知识库
 
   ### 资料管理
   - 用户要求"查看知识库有哪些资料""列出我的资料"时，调用 list_knowledge

@@ -95,8 +95,6 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 @app.get("/")
 async def hello():
     return {"hello": "user"}
-
-
 @app.get("/debug/token/{user_id}")
 async def debug_token(user_id: int):
     """调试用：输入用户 ID 直接返回 token（仅 DEBUG=true 时可用）"""

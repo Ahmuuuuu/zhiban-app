@@ -9,6 +9,7 @@ import httpx
 from backend.src.ai_core.llm_config import llm
 from backend.src.ai_core.tools.knowledge import (
     search_knowledge_base, ingest_document,
+    search_web_and_stage_knowledge,
     list_knowledge, update_knowledge, delete_knowledge,
 )
 from backend.src.ai_core.tools.portrait import read_portrait, update_portrait
@@ -233,6 +234,7 @@ class Brain:
         tools = [
             _inject_user_id(search_knowledge_base, uid),
             _inject_user_id(ingest_document, uid),
+            _inject_user_id(search_web_and_stage_knowledge, uid),
             _inject_user_id(list_knowledge, uid),
             _inject_user_id(update_knowledge, uid),
             _inject_user_id(delete_knowledge, uid),

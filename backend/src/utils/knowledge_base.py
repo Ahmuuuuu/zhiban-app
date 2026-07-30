@@ -43,8 +43,18 @@ _RAG_SEARCH_SEM = asyncio.Semaphore(max(1, _int_env("RAG_GLOBAL_SEARCH_CONCURREN
 
 
 def _make_doc_id(title: str, content: str, scope: str = "") -> str:
-    raw = f"{scope}|{title}|{content[:100]}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    """
+    生成资料唯一 ID。
+
+    早期版本只取正文前 100 个字符，容易让前缀相似的资料互相撞车，
+    导致“明明是新资料，却被当成重复跳过”。
+    这里改为“标题 + 全文内容哈希 + 作用域”的组合。
+    """
+    normalized_title = (title or "").strip()
+    normalized_content = " ".join((content or "").split())
+    content_hash = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
+    raw = f"{scope}|{normalized_title}|{content_hash}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 async def _get_embed_model_async():
@@ -118,7 +128,7 @@ async def _search_inner(query: str, top_k: int = 5, user_id: int = None, categor
         max_chars = _int_env("RAG_RESULT_MAX_CHARS", 1200)
 
         if user_id:
-            qs = KnowledgeVector.filter(Q(visibility="public") | Q(user_id=user_id))
+            qs = KnowledgeVector.filter(Q(visibility="public") | Q(user_id=user_id, visibility="private"))
         else:
             qs = KnowledgeVector.filter(visibility="public")
 
@@ -197,6 +207,39 @@ async def ingest(
 
         if existing:
             updated = False
+            was_rejected = existing.visibility == "rejected"
+
+            if visibility == "pending" and existing.visibility in {"pending", "rejected"}:
+                if existing.visibility != "pending":
+                    existing.visibility = "pending"
+                    updated = True
+                if title and title != existing.title:
+                    existing.title = title
+                    updated = True
+                if user_id is not None and existing.user_id != user_id:
+                    existing.user_id = user_id
+                    updated = True
+                if category != existing.category:
+                    existing.category = category
+                    updated = True
+                if cover_url and cover_url != existing.cover_url:
+                    existing.cover_url = cover_url
+                    updated = True
+
+                old_content = existing.content or ""
+                new_content = content or ""
+                if new_content != old_content and len(new_content.strip()) >= len(old_content.strip()):
+                    existing.content = new_content
+                    existing.embedding = json.dumps(vector.tolist())
+                    updated = True
+
+                if updated:
+                    await existing.save()
+                    if was_rejected:
+                        return f"「{title}」已重新提交审核（{len(content)}字，待审核，{category}）"
+                    return f"「{title}」已更新待审核内容（{len(content)}字，{category}）"
+                return f"「{title}」已存在，仍在待审核"
+
             if existing.visibility == "private" and visibility in {"public", "pending"}:
                 existing.visibility = visibility
                 updated = True
