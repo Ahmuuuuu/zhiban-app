@@ -133,15 +133,53 @@ def _classify_message(message: str) -> set[str]:
     return cats
 
 
+# ── 工具注册表：工具名 → 工厂函数(uid, gid) → 已注入的 LangChain Tool ──
+TOOL_REGISTRY: dict[str, callable] = {
+    "search_knowledge_base":      lambda uid, gid: _inject_user_id(search_knowledge_base, uid),
+    "ingest_document":             lambda uid, gid: _inject_user_id(ingest_document, uid),
+    "search_web_and_stage_knowledge": lambda uid, gid: _inject_user_id(search_web_and_stage_knowledge, uid),
+    "list_knowledge":              lambda uid, gid: _inject_user_id(list_knowledge, uid),
+    "update_knowledge":            lambda uid, gid: _inject_user_id(update_knowledge, uid),
+    "delete_knowledge":            lambda uid, gid: _inject_user_id(delete_knowledge, uid),
+    "read_portrait":               lambda uid, gid: _inject_user_id(read_portrait, uid),
+    "update_portrait":             lambda uid, gid: _inject_user_id(update_portrait, uid),
+    "get_used_history":            lambda uid, gid: _inject_chat_group_id(_inject_user_id(get_used_history, uid), gid),
+    "web_search":                  lambda uid, gid: web_search,
+    "read_skill":                  lambda uid, gid: _inject_user_id(read_skill, uid),
+    "upsert_skill":                lambda uid, gid: _inject_user_id(upsert_skill, uid),
+    "list_skills":                 lambda uid, gid: _inject_user_id(list_skills, uid),
+    "delete_skill":                lambda uid, gid: _inject_user_id(delete_skill, uid),
+    "create_action_skill":         lambda uid, gid: _inject_user_id(create_action_skill, uid),
+    "generate_learning_resource":  lambda uid, gid: _inject_chat_group_id(_inject_user_id(generate_learning_resource, uid), gid),
+    "generate_image":              lambda uid, gid: _inject_chat_group_id(_inject_user_id(generate_image, uid), gid),
+    "generate_exam_questions":     lambda uid, gid: _inject_chat_group_id(_inject_user_id(generate_exam_questions, uid), gid),
+    "generate_slide_animation":    lambda uid, gid: _inject_chat_group_id(_inject_user_id(generate_slide_animation, uid), gid),
+    "search_online_video":         lambda uid, gid: _inject_chat_group_id(_inject_user_id(search_online_video, uid), gid),
+    "list_learning_paths":         lambda uid, gid: _inject_user_id(list_learning_paths, uid),
+    "get_learning_path_detail":    lambda uid, gid: _inject_user_id(get_learning_path_detail, uid),
+    "enroll_learning_path":        lambda uid, gid: _inject_user_id(enroll_learning_path, uid),
+    "regenerate_learning_path":    lambda uid, gid: _inject_user_id(regenerate_learning_path, uid),
+    "update_path_node":            lambda uid, gid: _inject_user_id(update_path_node, uid),
+    "add_path_node":               lambda uid, gid: _inject_user_id(add_path_node, uid),
+    "delete_path_node":            lambda uid, gid: _inject_user_id(delete_path_node, uid),
+}
+
+
 class Brain:
     _instances: weakref.WeakSet = weakref.WeakSet()
 
-    def __init__(self, user_id: int, chat_group_id: int | None = None, session_id: str | None = None):
+    def __init__(self, user_id: int, chat_group_id: int | None = None,
+                 session_id: str | None = None, agent_id: int | None = None):
         self.user_id = user_id
         self.chat_group_id = chat_group_id
         self.session_id = session_id or f"brain_{user_id}"
+        self.agent_id = agent_id
+        self._agent_persona: str | None = None
+        self._agent_tool_names: set[str] | None = None
+        self._agent_memory_text: str = ""
         self._raw_executor = None
         self._action_tools_loaded = False
+        self._agent_config_loaded = False
         self._history: list = []
         Brain._instances.add(self)
 
@@ -209,64 +247,78 @@ class Brain:
         for inst in cls._instances:
             if inst.user_id == user_id:
                 inst._action_tools_loaded = False
+                inst._agent_config_loaded = False
+
+    async def _load_agent_config(self):
+        “””加载用户自建智能体配置（persona + tool_names + memory）。
+        仅在 agent_id 不为 None 且未加载时执行一次。”””
+        if self.agent_id is None or self._agent_config_loaded:
+            return
+        try:
+            from backend.src.service.agent.service import get as get_agent, get_memory_text
+            agent_config = await get_agent(self.user_id, self.agent_id)
+            if agent_config:
+                self._agent_persona = agent_config.get(“persona”, “”) or None
+                tool_names = agent_config.get(“tools”, [])
+                self._agent_tool_names = set(tool_names) if tool_names else None
+                self._agent_memory_text = await get_memory_text(self.user_id, self.agent_id)
+        except Exception:
+            logging.getLogger(__name__).exception(“加载智能体配置失败 agent_id=%s”, self.agent_id)
+            self._agent_persona = None
+            self._agent_tool_names = None
+            self._agent_memory_text = “”
+        self._agent_config_loaded = True
 
     def _build_agent(self, action_tools: list, mcp_tools: list):
-        system_prompt = load_prompt("chat/unified")
-        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        now = datetime.now(ZoneInfo(“Asia/Shanghai”))
         current_time_context = (
-            "\n\n### 当前时间锚点\n"
-            f"- 当前日期：{now.strftime('%Y-%m-%d')}\n"
-            f"- 当前时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            "- 时区：Asia/Shanghai\n"
-            "- 进行搜索、新闻、时间、日程、时效性判断时，必须以这里的当前日期为准，不要沿用旧年份。\n"
-            "- 如果用户提到“今天/当前/今年/最新/最近/2026年”等，先按这个时间锚点理解，再决定是否搜索，不要默认写成 2025 年。\n"
+            “\n\n### 当前时间锚点\n”
+            f”- 当前日期：{now.strftime('%Y-%m-%d')}\n”
+            f”- 当前时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n”
+            “- 时区：Asia/Shanghai\n”
+            “- 进行搜索、新闻、时间、日程、时效性判断时，必须以这里的当前日期为准，不要沿用旧年份。\n”
+            “- 如果用户提到”今天/当前/今年/最新/最近/2026年”等，先按这个时间锚点理解，再决定是否搜索，不要默认写成 2025 年。\n”
         )
 
+        # 自建智能体：使用用户自定义 persona 作为 system prompt
+        if self._agent_persona:
+            persona_with_time = self._agent_persona + current_time_context
+            if self._agent_memory_text:
+                persona_with_time += “\n” + self._agent_memory_text
+            system_prompt = persona_with_time
+        else:
+            system_prompt = load_prompt(“chat/unified”) + current_time_context
+
         prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt + current_time_context),
-            MessagesPlaceholder(variable_name="history"),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
+            (“system”, system_prompt),
+            MessagesPlaceholder(variable_name=”history”),
+            (“human”, “{input}”),
+            MessagesPlaceholder(variable_name=”agent_scratchpad”),
         ])
 
         uid = str(self.user_id)
         gid = self.chat_group_id or 0
-        tools = [
-            _inject_user_id(search_knowledge_base, uid),
-            _inject_user_id(ingest_document, uid),
-            _inject_user_id(search_web_and_stage_knowledge, uid),
-            _inject_user_id(list_knowledge, uid),
-            _inject_user_id(update_knowledge, uid),
-            _inject_user_id(delete_knowledge, uid),
-            _inject_user_id(read_portrait, uid),
-            _inject_user_id(update_portrait, uid),
-            _inject_chat_group_id(_inject_user_id(get_used_history, uid), gid),
-            web_search,
-            _inject_user_id(read_skill, uid),
-            _inject_user_id(upsert_skill, uid),
-            _inject_user_id(list_skills, uid),
-            _inject_user_id(delete_skill, uid),
-            _inject_user_id(create_action_skill, uid),
-            _inject_chat_group_id(_inject_user_id(generate_learning_resource, uid), gid),
-            _inject_chat_group_id(_inject_user_id(generate_image, uid), gid),
-            _inject_chat_group_id(_inject_user_id(generate_exam_questions, uid), gid),
-            _inject_chat_group_id(_inject_user_id(generate_slide_animation, uid), gid),
-            _inject_chat_group_id(_inject_user_id(search_online_video, uid), gid),
-            _inject_user_id(list_learning_paths, uid),
-            _inject_user_id(get_learning_path_detail, uid),
-            _inject_user_id(enroll_learning_path, uid),
-            _inject_user_id(regenerate_learning_path, uid),
-            _inject_user_id(update_path_node, uid),
-            _inject_user_id(add_path_node, uid),
-            _inject_user_id(delete_path_node, uid),
-        ]
+
+        # 自建智能体：仅加载用户选择的工具子集；默认：全部工具
+        if self._agent_tool_names is not None:
+            tool_names_to_load = self._agent_tool_names
+        else:
+            tool_names_to_load = set(TOOL_REGISTRY.keys())
+
+        tools = []
+        for name in tool_names_to_load:
+            factory = TOOL_REGISTRY.get(name)
+            if factory:
+                tools.append(factory(uid, gid))
+
         tools.extend(_inject_user_id(t, uid) for t in action_tools)
         tools.extend(mcp_tools)
 
         agent = create_tool_calling_agent(llm=llm, prompt=prompt, tools=tools)
+        max_iters = max(8, len(tools) * 2)
         self._raw_executor = AgentExecutor(
             agent=agent, tools=tools,
-            verbose=True, handle_parsing_errors=True, max_iterations=5,
+            verbose=True, handle_parsing_errors=True, max_iterations=max_iters,
         )
 
     def _load_tool_guides(self, message: str) -> str:
@@ -280,9 +332,10 @@ class Brain:
         return "\n".join(parts)
 
     async def _ensure_action_tools(self):
-        """首次调用或 rebuild_for_user 后，异步加载 action tools 并重建 agent"""
+        """首次调用或 rebuild_for_user 后，异步加载 agent 配置、action tools 并重建 agent"""
         if self._action_tools_loaded:
             return
+        await self._load_agent_config()
         try:
             action_tools = await self._load_action_tools_async()
         except Exception:

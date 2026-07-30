@@ -141,12 +141,12 @@ async def _extract_portrait_and_refresh(user_id: int, chat_group_id: int):
     invalidate_portrait_cache(user_id)
 
 
-def _get_or_create_chat(user_id: int, chat_group_id: int) -> Brain:
-    instance_key = f"brain_{user_id}_{chat_group_id}"
+def _get_or_create_chat(user_id: int, chat_group_id: int, agent_id: int | None = None) -> Brain:
+    instance_key = f"brain_{user_id}_{chat_group_id}_{agent_id or 0}"
     if instance_key not in _chat_instances:
         if len(_chat_instances) >= _MAX_CHAT_INSTANCES:
             _chat_instances.popitem(last=False)
-        _chat_instances[instance_key] = Brain(user_id=user_id, chat_group_id=chat_group_id)
+        _chat_instances[instance_key] = Brain(user_id=user_id, chat_group_id=chat_group_id, agent_id=agent_id)
     else:
         _chat_instances.move_to_end(instance_key)
     return _chat_instances[instance_key]
@@ -167,15 +167,15 @@ async def chat_group_belongs_to_user(user_id: int, chat_group_id: int) -> bool:
 
 
 
-async def create_new_history(user_id: int, user_req: str):
+async def create_new_history(user_id: int, user_req: str, agent_id: int | None = None):
     user = await User.filter(id=user_id).first()
     if not user:
         return None, "未查找到用户"
     chat_group_id = await allocate_chat_group_id(user_id)
     message = await ChatHistory.create(
-        user_id=user_id, chat_group_id=chat_group_id, req=user_req, res="",
+        user_id=user_id, chat_group_id=chat_group_id, agent_id=agent_id, req=user_req, res="",
     )
-    bot = _get_or_create_chat(user_id, chat_group_id)
+    bot = _get_or_create_chat(user_id, chat_group_id, agent_id)
     path_context = await _build_path_context(user_id)
     portrait_context = await _build_portrait_context(user_id)
     res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context)
@@ -184,14 +184,18 @@ async def create_new_history(user_id: int, user_req: str):
     asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
     return message, "新对话保存成功"
 
-async def create_message_into_history(user_id: int, chat_group_id: int, user_req: str):
+async def create_message_into_history(user_id: int, chat_group_id: int, user_req: str, agent_id: int | None = None):
     user = await User.filter(id=user_id).first()
     if not user:
         return None, "未查找到用户"
+    # 若未传 agent_id，从已有聊天记录中恢复
+    if agent_id is None:
+        existing = await ChatHistory.filter(user_id=user_id, chat_group_id=chat_group_id).first()
+        agent_id = existing.agent_id if existing else None
     message = await ChatHistory.create(
-        user_id=user_id, chat_group_id=chat_group_id, req=user_req, res="",
+        user_id=user_id, chat_group_id=chat_group_id, agent_id=agent_id, req=user_req, res="",
     )
-    bot = _get_or_create_chat(user_id, chat_group_id)
+    bot = _get_or_create_chat(user_id, chat_group_id, agent_id)
     path_context = await _build_path_context(user_id)
     portrait_context = await _build_portrait_context(user_id)
     res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context)
@@ -202,15 +206,18 @@ async def create_message_into_history(user_id: int, chat_group_id: int, user_req
 
 # ── 流式 ──
 
-async def _stream_chat(user_id: int, chat_group_id: int, user_req: str):
+async def _stream_chat(user_id: int, chat_group_id: int, user_req: str, agent_id: int | None = None):
     """流式对话核心逻辑"""
-    bot = _get_or_create_chat(user_id, chat_group_id)
+    if agent_id is None:
+        existing = await ChatHistory.filter(user_id=user_id, chat_group_id=chat_group_id).first()
+        agent_id = existing.agent_id if existing else None
+    bot = _get_or_create_chat(user_id, chat_group_id, agent_id)
     path_context = await _build_path_context(user_id)
     portrait_context = await _build_portrait_context(user_id)
 
     # 先写用户消息到历史，确保工具调用时能查到当前消息
     record = await ChatHistory.create(
-        user_id=user_id, chat_group_id=chat_group_id, req=user_req, res="",
+        user_id=user_id, chat_group_id=chat_group_id, agent_id=agent_id, req=user_req, res="",
     )
 
     full_response = ""
@@ -229,23 +236,23 @@ async def _stream_chat(user_id: int, chat_group_id: int, user_req: str):
     yield f"data: {json.dumps({'role': 'system', 'type': 'done', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
     yield "data: [DONE]\n\n"
 
-async def stream_create_new_history(user_id: int, user_req: str):
+async def stream_create_new_history(user_id: int, user_req: str, agent_id: int | None = None):
     user = await User.filter(id=user_id).first()
     if not user:
         yield f"data: {json.dumps({'error': '未查找到用户'})}\n\n"
         yield "data: [DONE]\n\n"
         return
     chat_group_id = await allocate_chat_group_id(user_id)
-    async for event in _stream_chat(user_id, chat_group_id, user_req):
+    async for event in _stream_chat(user_id, chat_group_id, user_req, agent_id):
         yield event
 
-async def stream_create_message_into_history(user_id: int, chat_group_id: int, user_req: str):
+async def stream_create_message_into_history(user_id: int, chat_group_id: int, user_req: str, agent_id: int | None = None):
     user = await User.filter(id=user_id).first()
     if not user:
         yield f"data: {json.dumps({'error': '未查找到用户'})}\n\n"
         yield "data: [DONE]\n\n"
         return
-    async for event in _stream_chat(user_id, chat_group_id, user_req):
+    async for event in _stream_chat(user_id, chat_group_id, user_req, agent_id):
         yield event
 
 # ── 读取、删除 ──
