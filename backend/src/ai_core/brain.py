@@ -29,6 +29,7 @@ from backend.src.ai_core.tools.path import (
 from backend.src.ai_core.tools.animation import generate_slide_animation
 from backend.src.ai_core.tools.video_search import search_online_video
 from backend.src.ai_core.tools.history import get_used_history
+from backend.src.ai_core.tools.memory import search_memory
 from backend.src.utils.prompt_loader import load_prompt
 from pydantic import create_model, Field as PydanticField
 try:
@@ -145,6 +146,7 @@ TOOL_REGISTRY: dict[str, callable] = {
     "read_portrait":               lambda uid, gid: _inject_user_id(read_portrait, uid),
     "update_portrait":             lambda uid, gid: _inject_user_id(update_portrait, uid),
     "get_used_history":            lambda uid, gid: _inject_chat_group_id(_inject_user_id(get_used_history, uid), gid),
+    "search_memory":               lambda uid, gid: _inject_user_id(search_memory, uid),
     "web_search":                  lambda uid, gid: web_search,
     "read_skill":                  lambda uid, gid: _inject_user_id(read_skill, uid),
     "upsert_skill":                lambda uid, gid: _inject_user_id(upsert_skill, uid),
@@ -182,7 +184,35 @@ class Brain:
         self._action_tools_loaded = False
         self._agent_config_loaded = False
         self._history: list = []
+        self._history_hydrated = False   # 是否已从 DB 水合最近 N 轮（幂等）
         Brain._instances.add(self)
+
+    # ── 记忆水合 ──
+
+    async def hydrate_history(self, before_id: int | None = None):
+        """冷启动时从 DB 水合最近 N 轮历史（幂等）。
+
+        配合多级记忆系统：跨会话恢复短期记忆。before_id 用于截止（如当前
+        消息 id），避免把正在处理的这一轮当成历史重放。
+        """
+        if self._history_hydrated:
+            return
+        self._history_hydrated = True
+        try:
+            from backend.src.models.chat_history_model import ChatHistory
+            qs = ChatHistory.filter(
+                user_id=self.user_id, chat_group_id=self.chat_group_id or 0
+            )
+            if before_id:
+                qs = qs.filter(id__lt=before_id)
+            records = await qs.order_by("-id").limit(_MAX_HISTORY_TURNS).all()
+            for r in reversed(records):
+                if r.req:
+                    self._history.append(HumanMessage(content=r.req))
+                if r.res:
+                    self._history.append(AIMessage(content=r.res))
+        except Exception:
+            logging.getLogger(__name__).exception("水合历史失败 user_id=%s", self.user_id)
 
     # ── 动态工具工厂 ──
 
@@ -288,7 +318,11 @@ class Brain:
                 self._agent_persona
                 + current_time_context
                 + (("\n" + self._agent_memory_text) if self._agent_memory_text else "")
-                + "\n\n{path_context}\n\n{portrait_context}"
+                + "\n\n{path_context}\n\n{portrait_context}\n\n{memory_context}"
+                + "\n\n## Output Rules\n"
+                + "- Use Markdown for formatting, NOT raw HTML tags.\n"
+                + "- Wrap inline math in $...$ and display math in $$...$$.\n"
+                + "- Never output <br>, <div>, <span> or other HTML tags.\n"
             )
         else:
             system_prompt = load_prompt("chat/unified") + current_time_context
@@ -352,7 +386,7 @@ class Brain:
         self._build_agent(action_tools, mcp_tools)
         self._action_tools_loaded = True
 
-    async def chat(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = "") -> str:
+    async def chat(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = "", memory_context: str = "") -> str:
         await self._ensure_action_tools()
         tool_guides = self._load_tool_guides(message)
         response = await self._raw_executor.ainvoke({
@@ -362,6 +396,7 @@ class Brain:
             "resource_context": resource_context,
             "path_context": path_context,
             "portrait_context": portrait_context,
+            "memory_context": memory_context,
             "tool_guides": tool_guides,
         })
         self._history.append(HumanMessage(content=message))
@@ -370,7 +405,7 @@ class Brain:
             self._history = self._history[-_MAX_HISTORY_TURNS * 2:]
         return response["output"]
 
-    async def stream(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = ""):
+    async def stream(self, message: str, resource_context: str = "", path_context: str = "", portrait_context: str = "", memory_context: str = ""):
         """逐 token 流式输出 — 包含工具调用事件，工具执行期间自动心跳保活"""
         await self._ensure_action_tools()
 
@@ -388,6 +423,7 @@ class Brain:
                     "resource_context": resource_context,
                     "path_context": path_context,
                     "portrait_context": portrait_context,
+                    "memory_context": memory_context,
                     "tool_guides": tool_guides,
                 },
                 version=version,

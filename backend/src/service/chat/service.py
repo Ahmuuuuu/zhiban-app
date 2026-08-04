@@ -141,6 +141,25 @@ async def _extract_portrait_and_refresh(user_id: int, chat_group_id: int):
     invalidate_portrait_cache(user_id)
 
 
+async def _persist_memory_and_refresh(user_id: int, chat_group_id: int, agent_id: int | None = None):
+    """后台写入多级长期记忆（冷却 + 每用户锁 + 水位线在 memory.service 内）"""
+    from backend.src.service.memory.service import persist_memory_after_chat
+    try:
+        await persist_memory_after_chat(user_id, chat_group_id, agent_id)
+    except Exception:
+        logger.exception("记忆写入失败 user=%s group=%s", user_id, chat_group_id)
+
+
+async def _build_memory_context(user_id: int, chat_group_id: int, user_query: str = "") -> str:
+    """构建长期记忆上下文文本（读路径无 LLM，短缓存）"""
+    try:
+        from backend.src.service.memory.retrieval import build_memory_context
+        return await build_memory_context(user_id, chat_group_id, user_query)
+    except Exception:
+        logger.exception("构建记忆上下文失败 user=%s", user_id)
+        return ""
+
+
 def _get_or_create_chat(user_id: int, chat_group_id: int, agent_id: int | None = None) -> Brain:
     instance_key = f"brain_{user_id}_{chat_group_id}_{agent_id or 0}"
     if instance_key not in _chat_instances:
@@ -176,12 +195,15 @@ async def create_new_history(user_id: int, user_req: str, agent_id: int | None =
         user_id=user_id, chat_group_id=chat_group_id, agent_id=agent_id, req=user_req, res="",
     )
     bot = _get_or_create_chat(user_id, chat_group_id, agent_id)
+    await bot.hydrate_history(before_id=message.id)
     path_context = await _build_path_context(user_id)
     portrait_context = await _build_portrait_context(user_id)
-    res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context)
+    memory_context = await _build_memory_context(user_id, chat_group_id, user_req)
+    res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context, memory_context=memory_context)
     message.res = res
     await message.save()
     asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
+    asyncio.create_task(_persist_memory_and_refresh(user_id, chat_group_id, agent_id))
     return message, "新对话保存成功"
 
 async def create_message_into_history(user_id: int, chat_group_id: int, user_req: str, agent_id: int | None = None):
@@ -196,12 +218,15 @@ async def create_message_into_history(user_id: int, chat_group_id: int, user_req
         user_id=user_id, chat_group_id=chat_group_id, agent_id=agent_id, req=user_req, res="",
     )
     bot = _get_or_create_chat(user_id, chat_group_id, agent_id)
+    await bot.hydrate_history(before_id=message.id)
     path_context = await _build_path_context(user_id)
     portrait_context = await _build_portrait_context(user_id)
-    res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context)
+    memory_context = await _build_memory_context(user_id, chat_group_id, user_req)
+    res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context, memory_context=memory_context)
     message.res = res
     await message.save()
     asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
+    asyncio.create_task(_persist_memory_and_refresh(user_id, chat_group_id, agent_id))
     return message, "问答保存成功"
 
 # ── 流式 ──
@@ -219,9 +244,12 @@ async def _stream_chat(user_id: int, chat_group_id: int, user_req: str, agent_id
     record = await ChatHistory.create(
         user_id=user_id, chat_group_id=chat_group_id, agent_id=agent_id, req=user_req, res="",
     )
+    # 水合历史截止到当前消息，避免把这一轮重放；再构建长期记忆上下文
+    await bot.hydrate_history(before_id=record.id)
+    memory_context = await _build_memory_context(user_id, chat_group_id, user_req)
 
     full_response = ""
-    async for chunk in bot.stream(user_req, path_context=path_context, portrait_context=portrait_context):
+    async for chunk in bot.stream(user_req, path_context=path_context, portrait_context=portrait_context, memory_context=memory_context):
         if isinstance(chunk, dict):
             if chunk.get("type") in ("chunk", "content"):
                 full_response += chunk.get("content", "")
@@ -233,6 +261,7 @@ async def _stream_chat(user_id: int, chat_group_id: int, user_req: str, agent_id
     record.res = full_response
     await record.save()
     asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
+    asyncio.create_task(_persist_memory_and_refresh(user_id, chat_group_id, agent_id))
     yield f"data: {json.dumps({'role': 'system', 'type': 'done', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
     yield "data: [DONE]\n\n"
 

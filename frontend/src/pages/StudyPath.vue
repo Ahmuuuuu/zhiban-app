@@ -597,6 +597,7 @@ import { renderMath } from '../utils/renderMath'
 import 'katex/dist/katex.min.css'
 
 const PATH_CACHE_KEY = 'zhiban_path_state'
+const LAST_SWITCHED_KEY = 'zhiban_last_switched_path_id'
 const route = useRoute()
 const router = useRouter()
 
@@ -607,6 +608,12 @@ const loadPathFromCache = () => {
   try { const raw = localStorage.getItem(PATH_CACHE_KEY); return raw ? JSON.parse(raw) : null } catch { return null }
 }
 const clearPathCache = () => { localStorage.removeItem(PATH_CACHE_KEY) }
+const saveLastSwitched = pathId => {
+  try { localStorage.setItem(LAST_SWITCHED_KEY, String(pathId)) } catch { /* ignore */ }
+}
+const getLastSwitched = () => {
+  try { return localStorage.getItem(LAST_SWITCHED_KEY) } catch { return null }
+}
 
 const selectedNode = ref(null)
 const cardFlipped = ref(false)
@@ -1290,6 +1297,7 @@ const loadCurrentPathAfterSelect = async pathId => {
 }
 
 const selectLearningPath = async item => {
+  saveLastSwitched(item.pathId)
   await enrollLearningPath(item.pathId).catch(err => {
     const status = err?.response?.status
     if (![400, 404, 409].includes(status)) throw err
@@ -1331,8 +1339,20 @@ const fetchCurrentPath = async (options = {}) => {
   error.value = ''
   try {
     const result = await getCurrentLearningPath()
-    console.log('[StudyPath] current path:', result)
-    setPathState(normalizePath(result))
+    const current = normalizePath(result)
+    const lastSwitched = getLastSwitched()
+    // 后端返回的路径和上次主动切换的不一致时，用缓存覆盖
+    if (lastSwitched && String(current?.pathId || '') !== lastSwitched) {
+      const cached = loadPathFromCache()
+      if (cached && String(cached.pathId) === lastSwitched) {
+        pathState.value = cached
+        startPathHeartbeat(cached.pathId)
+        loadSelectedPathStats(cached.pathId)
+        if (!silent) loading.value = false
+        return
+      }
+    }
+    setPathState(current)
   } catch (err) {
     if (err?.response?.status === 404) {
       const cached = loadPathFromCache()
@@ -3103,6 +3123,7 @@ const mountStudyPath = async () => {
   window.addEventListener('resize', updatePathMapScrollState)
   const queryPathId = route.query.pathId || route.query.path_id
   if (queryPathId) {
+    saveLastSwitched(queryPathId)
     loading.value = true
     error.value = ''
     try {

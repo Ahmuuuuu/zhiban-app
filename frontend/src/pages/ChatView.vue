@@ -414,7 +414,10 @@
           </label>
           <label class="agent-creator__field">
             <span>角色设定</span>
-            <textarea v-model="agentForm.persona" rows="4" placeholder="你是一个严格的刷题教练，根据学生的薄弱知识点出针对性练习题…" maxlength="2000"></textarea>
+            <div class="agent-creator__presets">
+              <button v-for="p in PERSONA_PRESETS" :key="p.label" type="button" :class="{ active: selectedPreset === p.label }" @click="fillPersona(p)">{{ p.label }}</button>
+            </div>
+            <textarea v-model="agentForm.persona" rows="6" placeholder="用上方的模板填写…" maxlength="2000"></textarea>
           </label>
           <div class="agent-creator__field">
             <div style="display:flex;justify-content:space-between;align-items:center">
@@ -741,6 +744,7 @@ const agentCreatorVisible = ref(false)
 const agentSaving = ref(false)
 const agentAvailableTools = ref([])
 const agentForm = ref({ name: '', persona: '', tools: [] })
+const selectedPreset = ref('')
 
 const agentDropdownList = computed(() => [
   { id: 'default', name: '默认小知' },
@@ -783,9 +787,40 @@ const deleteMyAgent = async (agentId) => {
   } catch { /* 静默 */ }
 }
 
+const PERSONA_TEMPLATE = `你是小知的一个分身，你的角色是【】。
+
+## 你的职责
+- 【描述你要帮用户做什么】
+- 【你的专长领域】
+
+## 你的风格
+- 回答风格：【简洁/详细/幽默/严谨】
+- 输出格式：使用 Markdown，数学公式用 $...$ 和 $$...$$
+- 不要输出 HTML 标签
+
+## 限制
+- 只使用你被赋予的工具
+- 不知道就说不知道，不要编造`
+
+const PERSONA_PRESETS = [
+  { label: '答疑讲师', role: '答疑讲师', duty: '解答学科问题，用通俗的方式讲解概念和原理', field: '计算机科学、数学、物理', style: '详细' },
+  { label: '刷题教练', role: '刷题教练', duty: '根据学生薄弱点出针对性练习题，批改并讲解思路', field: '算法、数据结构、数学', style: '严谨' },
+  { label: '学习规划师', role: '学习规划师', duty: '分析学生的学习情况，制定个性化的学习路径和阶段计划', field: '课程规划、时间管理、备考策略', style: '简洁' },
+]
+
+const fillPersona = preset => {
+  selectedPreset.value = preset.label
+  agentForm.value.persona = PERSONA_TEMPLATE
+    .replace('【】', preset.role)
+    .replace('【描述你要帮用户做什么】', preset.duty)
+    .replace('【你的专长领域】', preset.field)
+    .replace('【简洁/详细/幽默/严谨】', preset.style)
+}
+
 const openAgentCreator = async () => {
   showAgentDropdown.value = false
-  agentForm.value = { name: '', persona: '', tools: [] }
+  agentForm.value = { name: '', persona: PERSONA_TEMPLATE, tools: [] }
+  selectedPreset.value = ''
   if (!agentAvailableTools.value.length) {
     try {
       const res = await getAvailableTools()
@@ -4814,6 +4849,10 @@ watch(
   outline: none; box-sizing: border-box;
 }
 .agent-creator__field textarea { resize: vertical; min-height: 60px; }
+.agent-creator__presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.agent-creator__presets button { padding: 4px 10px; border: 1px solid var(--panel-border); border-radius: 6px; background: rgba(255, 255, 255, 0.7); font-size: 11px; font-weight: 700; color: var(--primary); cursor: pointer; }
+.agent-creator__presets button:hover { background: var(--primary); color: #fff; }
+.agent-creator__presets button.active { background: var(--primary); color: #fff; }
 .agent-creator__field input:focus,
 .agent-creator__field textarea:focus {
   border-color: var(--accent, #5f8fc3);
