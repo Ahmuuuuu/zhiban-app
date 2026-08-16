@@ -122,7 +122,16 @@ export {
   getAgentSkill,
   getAgentSkills,
   upsertAgentActionSkill,
-  upsertAgentSkill
+  upsertAgentSkill,
+  getMyAgents,
+  getAgent,
+  createAgent,
+  updateAgent,
+  deleteAgent,
+  getPublicAgents,
+  copyAgent,
+  getAvailableTools,
+  getChatAgent
 } from './agent'
 
 export {
