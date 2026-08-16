@@ -61,6 +61,15 @@ export {
 } from './study'
 
 export {
+  deleteStudyRoomTimelapse,
+  finishStudyRoomSession,
+  getStudyRoomSession,
+  getStudyRoomTimelapse,
+  startStudyRoomSession,
+  uploadStudyRoomFrame
+} from './studyRoom'
+
+export {
   createResourceAnnotation,
   createResourceGenerationTask,
   deleteGeneratedResource,

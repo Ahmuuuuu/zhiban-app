@@ -79,7 +79,7 @@
               </span>
               <span>
                 <strong>录制学习 Vlog</strong>
-                <small>结束后自动生成延时摄影，本地预览后再决定是否下载或删除。</small>
+                <small>结束后由后端生成 MP4 延时摄影，可预览、下载或删除。</small>
               </span>
             </label>
 
@@ -196,21 +196,27 @@
           <div v-else-if="timelapseStatus === 'ready'" class="timelapse-ready">
             <video :src="timelapseUrl" controls playsinline></video>
             <div class="timelapse-actions">
-              <button class="primary-mini" type="button" @click="downloadTimelapse">
+              <button class="primary-mini" type="button" :disabled="timelapseActionBusy" @click="downloadTimelapse">
                 <Download :size="16" />
                 <span>下载</span>
               </button>
-              <button class="secondary-mini" type="button" @click="deleteTimelapse">
+              <button class="secondary-mini" type="button" :disabled="timelapseActionBusy" @click="deleteTimelapse">
                 <Trash2 :size="16" />
                 <span>删除</span>
               </button>
             </div>
           </div>
 
+          <div v-else-if="timelapseStatus === 'deleted'" class="timelapse-empty">
+            <VideoOff :size="34" />
+            <strong>延时摄影已删除</strong>
+            <span>本次自习总结仍然保留，原始抽帧和成片已从后端清理。</span>
+          </div>
+
           <div v-else class="timelapse-empty">
             <CircleAlert :size="34" />
             <strong>暂时无法生成视频</strong>
-            <span>当前浏览器不支持画布录制，但本次自习总结已经保留。</span>
+            <span>可能是本次抽帧不足，或后端 FFmpeg 暂未配置，本次自习总结已经保留。</span>
           </div>
         </article>
       </section>
@@ -253,9 +259,9 @@
               <RefreshCw :size="18" />
               <span>切换摄像头</span>
             </button>
-            <button class="end-button" type="button" @click="endStudy">
+            <button class="end-button" type="button" :disabled="isFinishing" @click="endStudy">
               <Square :size="17" fill="currentColor" />
-              <span>结束自习</span>
+              <span>{{ isFinishing ? '正在结束' : '结束自习' }}</span>
             </button>
           </div>
         </article>
@@ -335,10 +341,20 @@ import {
   Square,
   Target,
   Trash2,
+  Users,
   UserX,
   Video,
   VideoOff
 } from 'lucide-vue-next'
+import {
+  deleteStudyRoomTimelapse,
+  downloadWithToken,
+  finishStudyRoomSession,
+  getStudyRoomTimelapse,
+  resolveApiUrl,
+  startStudyRoomSession,
+  uploadStudyRoomFrame
+} from '../api/apis'
 
 const durationOptions = [
   { label: '25 分钟', value: 25 },
@@ -363,20 +379,38 @@ const detectionStatuses = [
     icon: UserX
   },
   {
-    code: 'phone',
+    code: 'phone_detected',
     label: '疑似玩手机',
     message: '检测到分心动作，先把手机放到一边。',
     tone: 'danger',
     icon: CircleAlert
   },
   {
-    code: 'posture',
-    label: '低头过久',
-    message: '注意坐姿和眼睛距离，休息一下肩颈。',
+    code: 'multiple_people',
+    label: '多人入镜',
+    message: '检测到多人入镜，请确认自习环境。',
+    tone: 'warn',
+    icon: Users
+  },
+  {
+    code: 'unknown',
+    label: '分析中',
+    message: '正在分析当前学习状态。',
     tone: 'warn',
     icon: ScanEye
   }
 ]
+
+const detectionStatusMap = Object.fromEntries(detectionStatuses.map(status => [status.code, status]))
+
+const normalizeBackendState = state => {
+  if (state === 'phone') return 'phone_detected'
+  return state || 'unknown'
+}
+
+const resolveDetectionStatus = state => {
+  return detectionStatusMap[normalizeBackendState(state)] || detectionStatusMap.unknown
+}
 
 const studyGoal = ref('')
 const selectedDuration = ref(45)
@@ -389,23 +423,27 @@ const timelapseLength = ref('auto')
 
 const sessionMode = ref('setup')
 const isPreparing = ref(false)
+const isFinishing = ref(false)
 const streamReady = ref(false)
 const cameraError = ref('')
 const videoRef = ref(null)
 const snapshotCanvasRef = ref(null)
 const activeStream = ref(null)
+const activeSessionId = ref('')
+const frameUploadIntervalSeconds = ref(2)
 
 const elapsedSeconds = ref(0)
 const focusSeconds = ref(0)
 const awayCount = ref(0)
 const alertCount = ref(0)
 const reminderLog = ref([])
-const currentStatus = ref(detectionStatuses[0])
+const currentStatus = ref(resolveDetectionStatus('focused'))
 const savedToRecord = ref(false)
 
-const timelapseFrames = ref([])
+const timelapseFrameCount = ref(0)
 const timelapseStatus = ref('idle')
 const timelapseUrl = ref('')
+const timelapseActionBusy = ref(false)
 const summary = ref({
   goal: '',
   elapsedSeconds: 0,
@@ -419,8 +457,11 @@ const summary = ref({
 
 let clockTimer = null
 let detectionTimer = null
-let captureTimer = null
+let timelapsePollTimer = null
 let reminderSeed = 0
+let uploadInFlight = false
+let uploadErrorNotified = false
+let lastVlogCaptureSecond = Number.NEGATIVE_INFINITY
 
 const normalizedGoal = computed(() => studyGoal.value || '完成一次专注自习')
 
@@ -460,8 +501,6 @@ const stateIcon = computed(() => {
   return Clock3
 })
 
-const timelapseFrameCount = computed(() => timelapseFrames.value.length)
-
 const formatDuration = seconds => {
   const safeSeconds = Math.max(0, Math.floor(Number(seconds) || 0))
   const hours = Math.floor(safeSeconds / 3600)
@@ -484,6 +523,24 @@ const readableFinishedAt = () => {
   }).format(new Date())
 }
 
+const unwrapApiData = result => result?.data?.data ?? result?.data ?? result ?? {}
+
+const errorMessage = (error, fallback) => {
+  return error?.response?.data?.detail || error?.response?.data?.msg || error?.message || fallback
+}
+
+const timelapseTargetSeconds = () => {
+  if (timelapseLength.value === 'auto') return null
+  const value = Number(timelapseLength.value)
+  return Number.isFinite(value) ? value : null
+}
+
+const toneFromReminder = reminder => {
+  if (reminder?.level === 'danger') return 'danger'
+  if (reminder?.level === 'warning') return 'warn'
+  return resolveDetectionStatus(reminder?.type).tone || 'warn'
+}
+
 const refreshCameraDevices = async () => {
   if (!navigator.mediaDevices?.enumerateDevices) return
   try {
@@ -499,6 +556,7 @@ const startStudy = async () => {
   cameraError.value = ''
   isPreparing.value = true
   clearTimelapseUrl()
+  stopRuntimeLoops()
 
   resetSessionStats()
   sessionMode.value = 'running'
@@ -506,17 +564,31 @@ const startStudy = async () => {
 
   try {
     await openCamera()
-    startClock()
-    startDetectionLoop()
+    const sessionData = unwrapApiData(await startStudyRoomSession({
+      goal: normalizedGoal.value,
+      planned_minutes: plannedMinutes.value,
+      vlog_enabled: vlogEnabled.value,
+      timelapse_interval_seconds: timelapseInterval.value,
+      timelapse_target_seconds: timelapseTargetSeconds()
+    }))
 
-    if (vlogEnabled.value) {
-      startFrameCapture()
+    activeSessionId.value = sessionData.session_id || ''
+    if (!activeSessionId.value) {
+      throw new Error('后端没有返回自习室会话 ID')
     }
+
+    frameUploadIntervalSeconds.value = Math.max(1, Number(sessionData.frame_upload_interval_seconds || 2))
+    timelapseStatus.value = vlogEnabled.value ? 'capturing' : 'disabled'
+    startClock()
+    startFrameUploadLoop()
+    await uploadCurrentFrame({ force: true, saveForVlog: vlogEnabled.value })
   } catch (error) {
-    console.warn('[StudyRoom] camera failed:', error)
-    cameraError.value = '摄像头打开失败，请确认浏览器权限或设备是否被其他应用占用。'
+    console.warn('[StudyRoom] start failed:', error)
+    cameraError.value = errorMessage(error, '自习室启动失败，请确认摄像头权限、登录状态和后端服务。')
     sessionMode.value = 'setup'
+    stopRuntimeLoops()
     stopCamera()
+    activeSessionId.value = ''
   } finally {
     isPreparing.value = false
   }
@@ -568,15 +640,20 @@ const stopCamera = () => {
 }
 
 const resetSessionStats = () => {
+  activeSessionId.value = ''
+  frameUploadIntervalSeconds.value = 2
   elapsedSeconds.value = 0
   focusSeconds.value = 0
   awayCount.value = 0
   alertCount.value = 0
   reminderLog.value = []
-  currentStatus.value = detectionStatuses[0]
+  currentStatus.value = resolveDetectionStatus('focused')
   savedToRecord.value = false
-  timelapseFrames.value = []
+  timelapseFrameCount.value = 0
   timelapseStatus.value = 'idle'
+  timelapseActionBusy.value = false
+  uploadErrorNotified = false
+  lastVlogCaptureSecond = Number.NEGATIVE_INFINITY
 }
 
 const startClock = () => {
@@ -595,31 +672,111 @@ const startClock = () => {
   }, 1000)
 }
 
-const startDetectionLoop = () => {
+const startFrameUploadLoop = () => {
   window.clearInterval(detectionTimer)
-  currentStatus.value = detectionStatuses[0]
+  currentStatus.value = resolveDetectionStatus('focused')
   detectionTimer = window.setInterval(() => {
-    if (sessionMode.value !== 'running') return
-    updateMockDetection()
-  }, 7500)
+    uploadCurrentFrame()
+  }, frameUploadIntervalSeconds.value * 1000)
 }
 
-const updateMockDetection = () => {
-  const roll = Math.random()
-  const nextStatus = roll < 0.68
-    ? detectionStatuses[0]
-    : roll < 0.8
-      ? detectionStatuses[3]
-      : roll < 0.9
-        ? detectionStatuses[1]
-        : detectionStatuses[2]
+const uploadCurrentFrame = async ({ force = false, saveForVlog = null } = {}) => {
+  if (!activeSessionId.value || uploadInFlight) return false
+  if (!force && sessionMode.value !== 'running') return false
 
-  currentStatus.value = nextStatus
+  uploadInFlight = true
+  try {
+    const frameBlob = await captureStudyFrameBlob()
+    if (!frameBlob) return false
 
-  if (nextStatus.code !== 'focused') {
-    alertCount.value += 1
-    if (nextStatus.code === 'away') awayCount.value += 1
-    addReminder(nextStatus.message, nextStatus.tone)
+    const shouldSaveForVlog = Boolean(vlogEnabled.value && (saveForVlog ?? shouldSaveVlogFrame()))
+    const currentElapsed = Math.max(0, Math.floor(elapsedSeconds.value))
+    const formData = new FormData()
+    formData.append('frame', frameBlob, `study-room-${Date.now()}.jpg`)
+    formData.append('client_elapsed_seconds', String(currentElapsed))
+    formData.append('save_for_vlog', shouldSaveForVlog ? 'true' : 'false')
+
+    const payload = unwrapApiData(await uploadStudyRoomFrame(activeSessionId.value, formData))
+    applyFramePayload(payload)
+    uploadErrorNotified = false
+
+    if (shouldSaveForVlog) {
+      lastVlogCaptureSecond = currentElapsed
+      timelapseFrameCount.value += 1
+    }
+
+    return true
+  } catch (error) {
+    console.warn('[StudyRoom] frame upload failed:', error)
+    if (!uploadErrorNotified) {
+      addReminder(errorMessage(error, '画面上传失败，正在保留本地计时。'), 'danger')
+      uploadErrorNotified = true
+    }
+    return false
+  } finally {
+    uploadInFlight = false
+  }
+}
+
+const shouldSaveVlogFrame = () => {
+  if (!vlogEnabled.value) return false
+  if (!Number.isFinite(lastVlogCaptureSecond)) return true
+  return elapsedSeconds.value - lastVlogCaptureSecond >= timelapseInterval.value
+}
+
+const captureStudyFrameBlob = async () => {
+  if (!videoRef.value || !snapshotCanvasRef.value) return null
+  if (!videoRef.value.videoWidth || !videoRef.value.videoHeight) return null
+
+  const sourceWidth = videoRef.value.videoWidth
+  const sourceHeight = videoRef.value.videoHeight
+  const canvasWidth = 960
+  const canvasHeight = Math.round((sourceHeight / sourceWidth) * canvasWidth)
+  const canvas = snapshotCanvasRef.value
+  const context = canvas.getContext('2d')
+  if (!context) return null
+
+  canvas.width = canvasWidth
+  canvas.height = canvasHeight
+  context.drawImage(videoRef.value, 0, 0, canvasWidth, canvasHeight)
+  context.fillStyle = 'rgba(42, 33, 20, 0.58)'
+  context.fillRect(0, canvasHeight - 54, canvasWidth, 54)
+  context.fillStyle = '#fff6df'
+  context.font = '600 24px "Microsoft YaHei", sans-serif'
+  context.fillText(`${normalizedGoal.value} · ${formatDuration(elapsedSeconds.value)}`, 24, canvasHeight - 20)
+
+  return canvasToBlob(canvas)
+}
+
+const canvasToBlob = canvas => new Promise(resolve => {
+  canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.78)
+})
+
+const applyFramePayload = payload => {
+  const nextStatus = resolveDetectionStatus(payload?.state)
+  currentStatus.value = payload?.message
+    ? { ...nextStatus, message: payload.message }
+    : nextStatus
+
+  applyMetrics(payload?.metrics)
+
+  if (payload?.reminder?.message) {
+    addReminder(payload.reminder.message, toneFromReminder(payload.reminder))
+  }
+}
+
+const applyMetrics = (metrics = {}, { authoritative = false } = {}) => {
+  const nextElapsed = Number(metrics.elapsed_seconds ?? elapsedSeconds.value)
+  const nextFocus = Number(metrics.focus_seconds ?? focusSeconds.value)
+
+  elapsedSeconds.value = authoritative ? Math.max(0, nextElapsed) : Math.max(elapsedSeconds.value, nextElapsed)
+  focusSeconds.value = authoritative ? Math.max(0, nextFocus) : Math.max(focusSeconds.value, nextFocus)
+
+  if (metrics.away_count !== undefined) {
+    awayCount.value = Math.max(0, Number(metrics.away_count) || 0)
+  }
+  if (metrics.alert_count !== undefined) {
+    alertCount.value = Math.max(0, Number(metrics.alert_count) || 0)
   }
 }
 
@@ -669,192 +826,145 @@ const switchCamera = async () => {
   }
 }
 
-const endStudy = () => {
-  if (sessionMode.value !== 'running' && sessionMode.value !== 'paused') return
+const endStudy = async () => {
+  if (isFinishing.value || (sessionMode.value !== 'running' && sessionMode.value !== 'paused')) return
+  if (!activeSessionId.value) return
 
-  if (vlogEnabled.value) {
-    captureTimelapseFrame()
+  isFinishing.value = true
+  try {
+    if (vlogEnabled.value) {
+      await uploadCurrentFrame({ force: true, saveForVlog: true })
+    }
+
+    const payload = unwrapApiData(await finishStudyRoomSession(activeSessionId.value, {
+      client_elapsed_seconds: Math.max(0, Math.floor(elapsedSeconds.value))
+    }))
+
+    stopRuntimeLoops()
+    applyFinishPayload(payload)
+    applyTimelapsePayload(payload.timelapse)
+    sessionMode.value = 'summary'
+    stopCamera()
+
+    if (timelapseStatus.value === 'generating') {
+      startTimelapsePolling()
+    }
+  } catch (error) {
+    console.warn('[StudyRoom] finish failed:', error)
+    addReminder(errorMessage(error, '结束自习失败，请稍后再试。'), 'danger')
+  } finally {
+    isFinishing.value = false
   }
+}
 
-  stopRuntimeLoops()
+const applyFinishPayload = payload => {
+  const report = payload?.summary || {}
+  const metrics = {
+    elapsed_seconds: report.elapsed_seconds ?? elapsedSeconds.value,
+    focus_seconds: report.focus_seconds ?? focusSeconds.value,
+    away_count: report.away_count ?? awayCount.value,
+    alert_count: report.alert_count ?? alertCount.value
+  }
+  applyMetrics(metrics, { authoritative: true })
 
   summary.value = {
-    goal: normalizedGoal.value,
+    goal: report.goal || normalizedGoal.value,
     elapsedSeconds: elapsedSeconds.value,
     focusSeconds: focusSeconds.value,
-    focusRate: focusRate.value,
+    focusRate: Number(report.focus_rate ?? focusRate.value) || 0,
     awayCount: awayCount.value,
     alertCount: alertCount.value,
-    vlogEnabled: vlogEnabled.value,
+    vlogEnabled: Boolean(payload?.timelapse?.enabled ?? vlogEnabled.value),
     finishedAt: readableFinishedAt()
   }
+}
 
-  sessionMode.value = 'summary'
-  stopCamera()
+const applyTimelapsePayload = (payload = {}) => {
+  const status = payload.status || (summary.value.vlogEnabled ? 'failed' : 'disabled')
+  const nextUrl = payload.url ? resolveApiUrl(payload.url) : ''
 
-  if (vlogEnabled.value && timelapseFrames.value.length) {
-    generateTimelapse()
-  } else if (vlogEnabled.value) {
-    timelapseStatus.value = 'unsupported'
+  timelapseStatus.value = status
+  timelapseFrameCount.value = Math.max(0, Number(payload.frame_count ?? timelapseFrameCount.value) || 0)
+
+  if (nextUrl !== timelapseUrl.value) {
+    clearTimelapseUrl()
+    timelapseUrl.value = nextUrl
   }
+}
+
+const startTimelapsePolling = () => {
+  stopTimelapsePolling()
+  timelapsePollTimer = window.setInterval(refreshTimelapseStatus, 3000)
+  refreshTimelapseStatus()
+}
+
+const refreshTimelapseStatus = async () => {
+  if (!activeSessionId.value) return
+
+  try {
+    const payload = unwrapApiData(await getStudyRoomTimelapse(activeSessionId.value))
+    applyTimelapsePayload(payload)
+    if (isTimelapseTerminal(timelapseStatus.value)) {
+      stopTimelapsePolling()
+    }
+  } catch (error) {
+    console.warn('[StudyRoom] timelapse poll failed:', error)
+  }
+}
+
+const stopTimelapsePolling = () => {
+  window.clearInterval(timelapsePollTimer)
+  timelapsePollTimer = null
 }
 
 const stopRuntimeLoops = () => {
   window.clearInterval(clockTimer)
   window.clearInterval(detectionTimer)
-  window.clearInterval(captureTimer)
+  stopTimelapsePolling()
   clockTimer = null
   detectionTimer = null
-  captureTimer = null
 }
 
-const startFrameCapture = () => {
-  window.clearInterval(captureTimer)
-  timelapseStatus.value = 'capturing'
-  captureTimelapseFrame()
-  captureTimer = window.setInterval(captureTimelapseFrame, timelapseInterval.value * 1000)
+const isTimelapseTerminal = status => {
+  return ['disabled', 'ready', 'failed', 'deleted'].includes(status)
 }
-
-const captureTimelapseFrame = () => {
-  if (!vlogEnabled.value || !videoRef.value || !snapshotCanvasRef.value) return
-  if (!videoRef.value.videoWidth || !videoRef.value.videoHeight) return
-
-  const sourceWidth = videoRef.value.videoWidth
-  const sourceHeight = videoRef.value.videoHeight
-  const canvasWidth = 960
-  const canvasHeight = Math.round((sourceHeight / sourceWidth) * canvasWidth)
-  const canvas = snapshotCanvasRef.value
-  const context = canvas.getContext('2d')
-
-  canvas.width = canvasWidth
-  canvas.height = canvasHeight
-  context.drawImage(videoRef.value, 0, 0, canvasWidth, canvasHeight)
-  context.fillStyle = 'rgba(42, 33, 20, 0.58)'
-  context.fillRect(0, canvasHeight - 54, canvasWidth, 54)
-  context.fillStyle = '#fff6df'
-  context.font = '600 24px "Microsoft YaHei", sans-serif'
-  context.fillText(`${normalizedGoal.value} · ${formatDuration(elapsedSeconds.value)}`, 24, canvasHeight - 20)
-
-  timelapseFrames.value.push(canvas.toDataURL('image/jpeg', 0.72))
-
-  if (timelapseFrames.value.length > 900) {
-    timelapseFrames.value.splice(1, 1)
-  }
-}
-
-const generateTimelapse = async () => {
-  timelapseStatus.value = 'generating'
-
-  try {
-    const blob = await createTimelapseBlob(timelapseFrames.value)
-
-    if (!blob || !blob.size) {
-      timelapseStatus.value = 'unsupported'
-      return
-    }
-
-    clearTimelapseUrl()
-    timelapseUrl.value = URL.createObjectURL(blob)
-    timelapseStatus.value = 'ready'
-  } catch (error) {
-    console.warn('[StudyRoom] timelapse failed:', error)
-    timelapseStatus.value = 'unsupported'
-  }
-}
-
-const createTimelapseBlob = async frames => {
-  if (!frames.length || !window.MediaRecorder) return null
-
-  const canvas = document.createElement('canvas')
-  if (!canvas.captureStream) return null
-
-  const fps = 12
-  const targetSecondsForClip = resolveTimelapseSeconds()
-  const maxFrames = Math.max(1, targetSecondsForClip * fps)
-  const selectedFrames = pickEvenly(frames, maxFrames)
-  const firstImage = await loadImage(selectedFrames[0])
-  const context = canvas.getContext('2d')
-
-  canvas.width = firstImage.naturalWidth
-  canvas.height = firstImage.naturalHeight
-
-  const stream = canvas.captureStream(fps)
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-    ? 'video/webm;codecs=vp9'
-    : 'video/webm'
-  const chunks = []
-  const recorder = new MediaRecorder(stream, { mimeType })
-
-  const finished = new Promise(resolve => {
-    recorder.ondataavailable = event => {
-      if (event.data?.size) chunks.push(event.data)
-    }
-    recorder.onstop = resolve
-  })
-
-  recorder.start()
-
-  for (const frame of selectedFrames) {
-    const image = await loadImage(frame)
-    context.drawImage(image, 0, 0, canvas.width, canvas.height)
-    await sleep(1000 / fps)
-  }
-
-  await sleep(180)
-  recorder.stop()
-  await finished
-  stream.getTracks().forEach(track => track.stop())
-
-  return new Blob(chunks, { type: mimeType })
-}
-
-const resolveTimelapseSeconds = () => {
-  if (timelapseLength.value !== 'auto') {
-    return Number(timelapseLength.value)
-  }
-
-  const minutes = Math.max(1, Math.ceil(summary.value.elapsedSeconds / 60))
-  return Math.max(10, Math.min(45, minutes * 3))
-}
-
-const pickEvenly = (frames, maxFrames) => {
-  if (frames.length <= maxFrames) return frames
-
-  return Array.from({ length: maxFrames }, (_, index) => {
-    const sourceIndex = Math.round(index * ((frames.length - 1) / (maxFrames - 1)))
-    return frames[sourceIndex]
-  })
-}
-
-const loadImage = src => new Promise((resolve, reject) => {
-  const image = new Image()
-  image.onload = () => resolve(image)
-  image.onerror = reject
-  image.src = src
-})
-
-const sleep = ms => new Promise(resolve => window.setTimeout(resolve, ms))
 
 const clearTimelapseUrl = () => {
-  if (timelapseUrl.value) {
+  if (timelapseUrl.value?.startsWith('blob:')) {
     URL.revokeObjectURL(timelapseUrl.value)
-    timelapseUrl.value = ''
+  }
+  timelapseUrl.value = ''
+}
+
+const downloadTimelapse = async () => {
+  if (!timelapseUrl.value || timelapseActionBusy.value) return
+
+  timelapseActionBusy.value = true
+  try {
+    await downloadWithToken(timelapseUrl.value, `自习延时摄影-${Date.now()}.mp4`)
+  } catch (error) {
+    console.warn('[StudyRoom] download timelapse failed:', error)
+  } finally {
+    timelapseActionBusy.value = false
   }
 }
 
-const downloadTimelapse = () => {
-  if (!timelapseUrl.value) return
+const deleteTimelapse = async () => {
+  if (timelapseActionBusy.value) return
 
-  const link = document.createElement('a')
-  link.href = timelapseUrl.value
-  link.download = `自习延时摄影-${Date.now()}.webm`
-  link.click()
-}
-
-const deleteTimelapse = () => {
-  clearTimelapseUrl()
-  timelapseFrames.value = []
-  timelapseStatus.value = 'idle'
+  timelapseActionBusy.value = true
+  try {
+    if (activeSessionId.value) {
+      await deleteStudyRoomTimelapse(activeSessionId.value)
+    }
+    clearTimelapseUrl()
+    timelapseFrameCount.value = 0
+    timelapseStatus.value = 'deleted'
+  } catch (error) {
+    console.warn('[StudyRoom] delete timelapse failed:', error)
+  } finally {
+    timelapseActionBusy.value = false
+  }
 }
 
 const saveStudyRecord = () => {
@@ -1296,15 +1406,20 @@ onBeforeUnmount(() => {
 }
 
 .start-button:hover:not(:disabled),
-.end-button:hover,
-.control-button:hover,
-.secondary-button:hover,
-.primary-mini:hover,
-.secondary-mini:hover {
+.end-button:hover:not(:disabled),
+.control-button:hover:not(:disabled),
+.secondary-button:hover:not(:disabled),
+.primary-mini:hover:not(:disabled),
+.secondary-mini:hover:not(:disabled) {
   transform: translateY(-2px);
 }
 
-.start-button:disabled {
+.start-button:disabled,
+.end-button:disabled,
+.control-button:disabled,
+.secondary-button:disabled,
+.primary-mini:disabled,
+.secondary-mini:disabled {
   opacity: 0.72;
   cursor: wait;
 }

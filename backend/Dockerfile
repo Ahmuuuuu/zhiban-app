@@ -5,7 +5,7 @@ WORKDIR /app/backend
 
 # 安装系统依赖（MySQL 客户端库是 aiomysql 需要的）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc default-libmysqlclient-dev \
+    gcc default-libmysqlclient-dev ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # 先装依赖（不改代码时利用 Docker 缓存，不用每次重新 pip install）

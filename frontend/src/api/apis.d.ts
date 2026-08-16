@@ -76,6 +76,26 @@ export function initPortraitFromDialogue(data: { dialogue: Array<{ question: str
 
 export function uploadStudyMaterial(data: unknown): Promise<unknown>;
 
+export function startStudyRoomSession(data: {
+  goal: string;
+  planned_minutes: number;
+  vlog_enabled?: boolean;
+  timelapse_interval_seconds?: number;
+  timelapse_target_seconds?: number | null;
+}): Promise<unknown>;
+
+export function uploadStudyRoomFrame(sessionId: string, data: FormData): Promise<unknown>;
+
+export function getStudyRoomSession(sessionId: string): Promise<unknown>;
+
+export function finishStudyRoomSession(sessionId: string, data?: {
+  client_elapsed_seconds?: number;
+}): Promise<unknown>;
+
+export function getStudyRoomTimelapse(sessionId: string): Promise<unknown>;
+
+export function deleteStudyRoomTimelapse(sessionId: string): Promise<unknown>;
+
 export function getStudyResource(resourceId: number | string): Promise<unknown>;
 
 export function getStudyResources(params?: Record<string, unknown>): Promise<unknown>;
