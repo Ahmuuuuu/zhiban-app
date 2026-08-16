@@ -14,6 +14,7 @@
         <router-link to="/resources" class="nav-pill" :class="{ active: isResourceSection }">资源中心</router-link>
         <router-link to="/learning-path" class="nav-pill">学习路径</router-link>
         <router-link to="/learning-situation" class="nav-pill">学习情况</router-link>
+        <router-link to="/study-room" class="nav-pill">自习室</router-link>
         <router-link v-if="isAdmin" to="/admin" class="nav-pill">管理后台</router-link>
       </nav>
 

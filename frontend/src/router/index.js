@@ -6,6 +6,7 @@ import ResourceCenterView from '../pages/ResourceCenterView.vue'
 import ChatView from '../pages/ChatView.vue'
 import StudyPath from '../pages/StudyPath.vue'
 import StudySituation from '../pages/StudySituation.vue'
+import StudyRoomView from '../pages/StudyRoomView.vue'
 import StudyImportView from '../pages/StudyImportView.vue'
 import MyStudyView from '../pages/MyStudyView.vue'
 import MyProfile from '../pages/MyAccount/MyProfile.vue'
@@ -79,6 +80,11 @@ const router = createRouter({
       path: '/learning-situation',
       name: 'learningSituation',
       component: StudySituation
+    },
+    {
+      path: '/study-room',
+      name: 'studyRoom',
+      component: StudyRoomView
     },
     {
       path: '/mine',
