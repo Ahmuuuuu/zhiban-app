@@ -16,7 +16,7 @@
         <div>
           <p class="eyebrow">Focus Classroom</p>
           <h1>自习室</h1>
-          <p>打开摄像头进入专注自习，结束后可以带走一段属于自己的学习延时摄影。</p>
+          <p>进入自动监督自习室，开启一段专注的学习</p>
         </div>
         <div class="room-state-pill" :class="sessionMode">
           <component :is="stateIcon" :size="17" stroke-width="2.2" />

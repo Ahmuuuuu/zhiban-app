@@ -393,7 +393,7 @@ MVP 规则：
 
 ```text
 最近约 6 秒连续没有检测到 person -> away
-最近 4 帧中 2 帧以上检测到 cell phone -> phone_detected
+最近 5 帧中 3 帧以上检测到有效 cell phone -> phone_detected
 person_count > 1 连续持续约 6 秒 -> multiple_people
 有人 + 无手机 + 无多人告警 -> focused
 ```
@@ -449,7 +449,12 @@ STUDY_ROOM_YOLO_DEVICE=
 STUDY_ROOM_YOLO_IMG_SIZE=640
 STUDY_ROOM_YOLO_CONF=0.35
 STUDY_ROOM_PERSON_CONF=0.45
-STUDY_ROOM_PHONE_CONF=0.35
+STUDY_ROOM_PHONE_CONF=0.60
+STUDY_ROOM_PHONE_MIN_AREA_RATIO=0.0004
+STUDY_ROOM_PHONE_MAX_AREA_RATIO=0.16
+STUDY_ROOM_PHONE_MAX_SIDE_RATIO=0.55
+STUDY_ROOM_PHONE_MIN_ASPECT_RATIO=0.30
+STUDY_ROOM_PHONE_MAX_ASPECT_RATIO=3.60
 ```
 
 当前只解析两个 COCO 标签：
@@ -477,6 +482,17 @@ YOLO 输出会被标准化为：
 ```
 
 如果后端依赖未安装、模型文件不存在、首次下载失败，接口不会直接崩溃，会退回 mock 检测，方便先跑通后续流程。
+
+手机检测会额外过滤候选框，减少把书、本子、卷子封面误判成手机：
+
+```text
+置信度低于 STUDY_ROOM_PHONE_CONF -> 忽略
+候选框面积过大或过小 -> 忽略
+候选框单边占画面比例过大 -> 忽略
+候选框长宽比明显不像手机 -> 忽略
+```
+
+被过滤的手机候选会在 `raw.detections` 中保留 `filter_reason`，方便后续调试阈值。
 
 ## 延时摄影生成
 
