@@ -70,6 +70,15 @@ export {
 } from './studyRoom'
 
 export {
+  deleteMockClassroomMedia,
+  finishMockClassroomSession,
+  getMockClassroomReport,
+  startMockClassroomSession,
+  uploadMockClassroomAudio,
+  uploadMockClassroomFrame
+} from './mockClassroom'
+
+export {
   createResourceAnnotation,
   createResourceGenerationTask,
   deleteGeneratedResource,

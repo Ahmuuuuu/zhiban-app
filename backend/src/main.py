@@ -42,6 +42,7 @@ from backend.src.router.learning_path_router import router as learning_path_rout
 from backend.src.router.video_router import router as video_router
 from backend.src.router.study_router import router as study_router
 from backend.src.router.study_room_router import router as study_room_router
+from backend.src.router.mock_classroom_router import router as mock_classroom_router
 from backend.src.router.notification_router import router as notification_router
 from backend.src.router.annotation_router import router as annotation_router
 from backend.src.router.agent_router import router as agent_router
@@ -92,6 +93,7 @@ static_dir.mkdir(parents=True, exist_ok=True)
 (static_dir / "videos").mkdir(parents=True, exist_ok=True)
 (static_dir / "covers").mkdir(parents=True, exist_ok=True)
 (static_dir / "study-room").mkdir(parents=True, exist_ok=True)
+(static_dir / "mock-classroom").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
@@ -156,6 +158,7 @@ app.include_router(learning_path_router)
 app.include_router(video_router)
 app.include_router(study_router)
 app.include_router(study_room_router)
+app.include_router(mock_classroom_router)
 app.include_router(notification_router)
 app.include_router(annotation_router)
 app.include_router(agent_router)
