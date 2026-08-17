@@ -87,5 +87,5 @@ class MockClassroomASR:
             return {
                 "status": "failed",
                 "text": "",
-                "message": f"ASR 调用失败：{str(exc)[:160]}",
+                "message": "音频转写暂不可用，本次会优先使用实时讲稿或降级生成报告。",
             }

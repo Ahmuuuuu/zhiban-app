@@ -143,8 +143,8 @@ ASR 状态：{asr_result.get("status")}
             strengths.append("已经完成一次模拟讲课记录，后续可以在此基础上复盘。")
 
         suggestions = []
-        if asr_result.get("status") != "ready":
-            suggestions.append(asr_result.get("message") or "建议先配置 ASR，以便系统根据讲课文字稿做更准确评分。")
+        if asr_result.get("status") not in {"ready", "client_transcript"} and not transcript:
+            suggestions.append("本次没有拿到有效讲课文字稿，知识理解评分会偏保守。")
         suggestions.append("下一次讲解时可以按“定义-推导-例子-易错点-总结”的顺序组织内容。")
         if presentation_score < 75:
             suggestions.append(vision_summary.get("summary") or "讲解时尽量保持人像在镜头中稳定可见。")

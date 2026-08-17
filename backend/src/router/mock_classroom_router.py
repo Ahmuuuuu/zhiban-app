@@ -43,6 +43,7 @@ class StartMockClassroomRequest(BaseModel):
 
 class FinishMockClassroomRequest(BaseModel):
     client_elapsed_seconds: int = Field(default=0, ge=0)
+    client_transcript: str | None = Field(default=None, max_length=20000)
 
 
 @router.post("/sessions/start")
@@ -112,6 +113,7 @@ async def finish_mock_classroom_session(
             user_id=user_id,
             session_key=session_id,
             client_elapsed_seconds=data.client_elapsed_seconds if data else 0,
+            client_transcript=data.client_transcript if data else None,
         )
         if result.get("report_status") == "generating":
             background_tasks.add_task(MockClassroomService.generate_report_for_session, user_id, session_id)

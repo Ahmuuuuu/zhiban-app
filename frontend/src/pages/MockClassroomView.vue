@@ -201,102 +201,49 @@
           </div>
         </article>
 
-        <aside class="teaching-status-panel">
+        <aside class="teaching-status-panel live-transcript-panel">
           <div class="panel-title">
-            <ClipboardCheck :size="19" />
-            <h2>课堂状态</h2>
+            <MessageSquareText :size="19" />
+            <h2>实时讲稿</h2>
           </div>
 
-          <div class="lesson-timer" :style="{ '--lesson-progress': `${lessonProgress}%` }">
-            <strong>{{ remainingText }}</strong>
-            <span>剩余时间</span>
+          <div class="transcript-status-row">
+            <span class="speech-chip" :class="liveSpeechStatus">
+              <CircleDot :size="13" fill="currentColor" />
+              {{ liveSpeechStateText }}
+            </span>
+            <strong>{{ elapsedText }}</strong>
           </div>
 
-          <div class="teaching-metrics">
-            <div>
-              <strong>{{ elapsedText }}</strong>
-              <span>已讲时间</span>
-            </div>
-            <div>
-              <strong>{{ uploadedFrameCount }}/{{ capturedFrameCount }}</strong>
-              <span>课堂帧</span>
-            </div>
-            <div>
-              <strong>{{ pendingFrameCount }}</strong>
-              <span>待上传</span>
-            </div>
-            <div>
-              <strong>{{ recordedAudioSizeText }}</strong>
-              <span>录音</span>
+          <div class="live-transcript-box" :class="{ empty: !liveTranscriptText }">
+            <p v-if="liveFinalTranscript">{{ liveFinalTranscript }}</p>
+            <p v-if="liveInterimTranscript" class="interim-transcript">{{ liveInterimTranscript }}</p>
+            <div v-if="!liveTranscriptText" class="transcript-placeholder">
+              <AudioLines :size="24" />
+              <strong>{{ liveSpeechPlaceholder }}</strong>
             </div>
           </div>
 
-          <div class="backend-status" :class="{ warn: uploadError || finishError }">
+          <div class="live-classroom-stats">
+            <div class="lesson-timer mini-timer" :style="{ '--lesson-progress': `${lessonProgress}%` }">
+              <strong>{{ remainingText }}</strong>
+              <span>剩余时间</span>
+            </div>
+            <div class="compact-status-list">
+              <div>
+                <span>课堂帧</span>
+                <strong>{{ uploadedFrameCount }}/{{ capturedFrameCount }}</strong>
+              </div>
+              <div>
+                <span>录音</span>
+                <strong>{{ recordedAudioSizeText }}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="backend-status" :class="{ warn: uploadError || finishError || liveSpeechError }">
             <CheckCircle2 :size="16" />
-            <span>{{ backendStatusText }}</span>
-          </div>
-
-          <div class="mic-meter live-meter">
-            <div>
-              <AudioLines :size="18" />
-              <span>{{ micReady ? '麦克风收音中' : '麦克风未连接' }}</span>
-            </div>
-            <div class="meter-track">
-              <span :style="{ width: `${micLevel}%` }"></span>
-            </div>
-          </div>
-
-          <div class="report-preview">
-            <LineChart :size="18" />
-            <span>{{ lessonMode === 'finished' ? reportSuggestionText : '讲课结束后，录音会用于语音转文字和知识理解评分。' }}</span>
-          </div>
-
-          <div v-if="lessonMode === 'finished'" class="report-result">
-            <div>
-              <span>报告状态</span>
-              <strong>{{ reportStatusText }}</strong>
-            </div>
-            <div>
-              <span>综合分</span>
-              <strong>{{ finalScoreText }}</strong>
-            </div>
-            <div v-for="item in scoreBreakdown" :key="item.label">
-              <span>{{ item.label }}</span>
-              <strong>{{ item.value }}</strong>
-            </div>
-            <button class="secondary-button" type="button" :disabled="reportStatus === 'loading'" @click="refreshReport">
-              <RefreshCw :size="16" />
-              <span>{{ reportStatus === 'loading' ? '刷新中' : '刷新报告' }}</span>
-            </button>
-          </div>
-
-          <div v-if="lessonMode === 'finished'" class="report-details">
-            <section class="report-section">
-              <div class="report-section-title">
-                <BookOpenCheck :size="16" />
-                <strong>讲课文字稿</strong>
-                <span>{{ asrStatusText }}</span>
-              </div>
-              <p class="transcript-text">{{ transcriptPreview }}</p>
-            </section>
-
-            <section v-for="section in reportSections" :key="section.title" class="report-section">
-              <div class="report-section-title">
-                <component :is="section.icon" :size="16" />
-                <strong>{{ section.title }}</strong>
-              </div>
-              <ul>
-                <li v-for="item in section.items" :key="item">{{ item }}</li>
-              </ul>
-            </section>
-
-            <section class="report-section">
-              <div class="report-section-title">
-                <Camera :size="16" />
-                <strong>镜头状态</strong>
-              </div>
-              <p>{{ cameraSummaryText }}</p>
-            </section>
+            <span>{{ liveSpeechError || backendStatusText }}</span>
           </div>
         </aside>
 
@@ -312,6 +259,73 @@
         </article>
       </section>
     </section>
+
+    <div v-if="showReportModal" class="report-modal-layer" role="dialog" aria-modal="true" aria-labelledby="mock-classroom-report-title">
+      <article class="report-modal">
+        <header class="report-modal-header">
+          <div>
+            <span>{{ reportStatusText }}</span>
+            <h2 id="mock-classroom-report-title">讲课报告</h2>
+          </div>
+          <button class="icon-button" type="button" aria-label="关闭报告" @click="cancelReport">
+            <X :size="18" />
+          </button>
+        </header>
+
+        <section class="modal-score-grid">
+          <div class="modal-score-main">
+            <span>综合分</span>
+            <strong>{{ finalScoreText }}</strong>
+          </div>
+          <div v-for="item in scoreBreakdown" :key="item.label">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
+
+        <section class="report-section">
+          <div class="report-section-title">
+            <BookOpenCheck :size="16" />
+            <strong>讲课文字稿</strong>
+            <span>{{ asrStatusText }}</span>
+          </div>
+          <p class="transcript-text">{{ reportTranscriptText }}</p>
+        </section>
+
+        <section v-for="section in reportSections" :key="section.title" class="report-section">
+          <div class="report-section-title">
+            <component :is="section.icon" :size="16" />
+            <strong>{{ section.title }}</strong>
+          </div>
+          <ul>
+            <li v-for="item in section.items" :key="item">{{ item }}</li>
+          </ul>
+        </section>
+
+        <section class="report-section">
+          <div class="report-section-title">
+            <Camera :size="16" />
+            <strong>镜头状态</strong>
+          </div>
+          <p>{{ cameraSummaryText }}</p>
+        </section>
+
+        <footer class="report-modal-actions">
+          <button class="secondary-button" type="button" @click="saveReport">
+            <CheckCircle2 :size="16" />
+            <span>保存</span>
+          </button>
+          <button class="secondary-button" type="button" @click="cancelReport">
+            <X :size="16" />
+            <span>取消</span>
+          </button>
+          <button class="start-button" type="button" @click="retryLesson">
+            <RotateCcw :size="16" />
+            <span>重试</span>
+          </button>
+        </footer>
+      </article>
+    </div>
   </main>
 </template>
 
@@ -335,7 +349,8 @@ import {
   Square,
   Timer,
   UserRoundCheck,
-  VideoOff
+  VideoOff,
+  X
 } from 'lucide-vue-next'
 import {
   finishMockClassroomSession,
@@ -381,6 +396,11 @@ const finishError = ref('')
 const audioUploadStatus = ref('idle')
 const reportStatus = ref('idle')
 const reportData = ref(null)
+const liveFinalTranscript = ref('')
+const liveInterimTranscript = ref('')
+const liveSpeechStatus = ref('idle')
+const liveSpeechError = ref('')
+const showReportModal = ref(false)
 
 let audioContext = null
 let micAnalyser = null
@@ -394,6 +414,8 @@ let recorderMimeType = ''
 let recorderStopPromise = null
 let resolveRecorderStop = null
 let audioChunks = []
+let liveRecognition = null
+let liveRecognitionStopped = true
 
 const normalizedTopic = computed(() => topic.value || '选择一个知识点，站上讲台讲清楚它')
 const boardHint = computed(() => {
@@ -445,6 +467,22 @@ const recordedAudioSizeText = computed(() => {
   if (kb < 1024) return `${Math.max(1, Math.round(kb))} KB`
   return `${(kb / 1024).toFixed(1)} MB`
 })
+const liveTranscriptText = computed(() => {
+  return [liveFinalTranscript.value, liveInterimTranscript.value].map(item => item.trim()).filter(Boolean).join('')
+})
+const liveSpeechStateText = computed(() => {
+  if (liveSpeechStatus.value === 'listening') return '实时识别中'
+  if (liveSpeechStatus.value === 'unsupported') return '浏览器不支持'
+  if (liveSpeechStatus.value === 'error') return '识别受限'
+  if (liveSpeechStatus.value === 'stopped') return '识别已停止'
+  return '等待开始'
+})
+const liveSpeechPlaceholder = computed(() => {
+  if (liveSpeechStatus.value === 'unsupported') return '当前浏览器不支持实时语音识别，可继续录音生成最终报告。'
+  if (liveSpeechStatus.value === 'error') return liveSpeechError.value || '实时识别暂不可用，可继续讲课。'
+  if (lessonMode.value === 'finished') return '本次讲课没有捕获到实时字幕。'
+  return '开始讲课后，这里会实时显示你讲出的内容。'
+})
 
 const backendStatusText = computed(() => {
   if (finishError.value) return finishError.value
@@ -487,15 +525,19 @@ const scoreBreakdown = computed(() => [
 const transcriptPreview = computed(() => {
   const transcript = String(reportData.value?.transcript || '').trim()
   if (transcript) return transcript
+  const liveTranscript = liveTranscriptText.value.trim()
+  if (liveTranscript) return liveTranscript
   const status = reportData.value?.rubric?.asr?.status
   if (status === 'unconfigured') return '当前未配置 ASR，系统已经先根据讲课时长、知识库资料和镜头状态生成降级报告。'
-  if (status === 'failed') return reportData.value?.rubric?.asr?.message || '音频转写失败，暂时没有可展示的文字稿。'
+  if (status === 'failed') return '音频转写暂不可用，系统会优先使用实时讲稿或降级生成报告。'
   if (reportStatus.value === 'ready') return '这次报告没有拿到有效文字稿，可以检查麦克风、音频上传和 ASR 配置。'
   return '报告生成中，文字稿完成后会显示在这里。'
 })
+const reportTranscriptText = computed(() => transcriptPreview.value)
 const asrStatusText = computed(() => {
   const status = reportData.value?.rubric?.asr?.status
   if (status === 'ready') return '已转写'
+  if (status === 'client_transcript') return '实时讲稿'
   if (status === 'unconfigured') return '未配置 ASR'
   if (status === 'failed') return '转写失败'
   if (status === 'missing_audio') return '缺少音频'
@@ -585,6 +627,115 @@ const getPreferredRecorderMimeType = () => {
     'audio/ogg;codecs=opus'
   ]
   return candidates.find(type => MediaRecorder.isTypeSupported(type)) || ''
+}
+
+const getSpeechRecognitionClass = () => {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null
+}
+
+const startLiveSpeechRecognition = () => {
+  stopLiveSpeechRecognition()
+  liveSpeechError.value = ''
+  liveInterimTranscript.value = ''
+
+  const SpeechRecognition = getSpeechRecognitionClass()
+  if (!SpeechRecognition) {
+    liveSpeechStatus.value = 'unsupported'
+    liveSpeechError.value = '当前浏览器不支持实时语音识别，建议使用 Chrome 或 Edge。'
+    return
+  }
+
+  liveRecognitionStopped = false
+  liveRecognition = new SpeechRecognition()
+  liveRecognition.lang = 'zh-CN'
+  liveRecognition.continuous = true
+  liveRecognition.interimResults = true
+  liveRecognition.maxAlternatives = 1
+
+  liveRecognition.onstart = () => {
+    liveSpeechStatus.value = 'listening'
+    liveSpeechError.value = ''
+  }
+
+  liveRecognition.onresult = event => {
+    let finalText = ''
+    let interimText = ''
+
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index]
+      const text = String(result?.[0]?.transcript || '').trim()
+      if (!text) continue
+
+      if (result.isFinal) {
+        finalText += `${text}。`
+      } else {
+        interimText += text
+      }
+    }
+
+    if (finalText) {
+      liveFinalTranscript.value = `${liveFinalTranscript.value}${finalText}`
+    }
+    liveInterimTranscript.value = interimText
+  }
+
+  liveRecognition.onerror = event => {
+    const errorName = event?.error || 'unknown'
+    liveSpeechStatus.value = 'error'
+    liveSpeechError.value = `实时识别暂不可用：${errorName}`
+  }
+
+  liveRecognition.onend = () => {
+    if (liveRecognitionStopped || lessonMode.value !== 'teaching') {
+      liveSpeechStatus.value = liveSpeechStatus.value === 'unsupported' ? 'unsupported' : 'stopped'
+      return
+    }
+
+    try {
+      liveRecognition.start()
+    } catch (error) {
+      console.warn('[MockClassroom] restart live speech failed:', error)
+      liveSpeechStatus.value = 'error'
+      liveSpeechError.value = '实时识别自动重连失败，可继续录音生成最终报告。'
+    }
+  }
+
+  try {
+    liveRecognition.start()
+  } catch (error) {
+    console.warn('[MockClassroom] start live speech failed:', error)
+    liveSpeechStatus.value = 'error'
+    liveSpeechError.value = '实时识别启动失败，可继续录音生成最终报告。'
+  }
+}
+
+const stopLiveSpeechRecognition = () => {
+  liveRecognitionStopped = true
+  liveInterimTranscript.value = ''
+
+  if (!liveRecognition) {
+    if (liveSpeechStatus.value === 'listening') {
+      liveSpeechStatus.value = 'stopped'
+    }
+    return
+  }
+
+  const recognition = liveRecognition
+  liveRecognition = null
+  recognition.onend = null
+  recognition.onerror = null
+  recognition.onresult = null
+  recognition.onstart = null
+
+  try {
+    recognition.stop()
+  } catch {
+    // Recognition may already be inactive after browser permission changes.
+  }
+
+  if (liveSpeechStatus.value === 'listening') {
+    liveSpeechStatus.value = 'stopped'
+  }
 }
 
 const refreshMediaDevices = async () => {
@@ -707,6 +858,7 @@ const startTeaching = async () => {
     await attachStreamToVideos()
     startLessonClock()
     startAudioRecording()
+    startLiveSpeechRecognition()
     startFrameCaptureLoop()
     await captureLessonFrame()
   } catch (error) {
@@ -738,6 +890,11 @@ const resetLessonRuntime = () => {
   audioUploadStatus.value = 'idle'
   reportStatus.value = 'idle'
   reportData.value = null
+  liveFinalTranscript.value = ''
+  liveInterimTranscript.value = ''
+  liveSpeechStatus.value = 'idle'
+  liveSpeechError.value = ''
+  showReportModal.value = false
   audioChunks = []
   recordingState.value = 'idle'
   isFinishingLesson.value = false
@@ -972,12 +1129,14 @@ const finishTeaching = async () => {
   try {
     await captureLessonFrame()
     stopLessonTimers()
+    stopLiveSpeechRecognition()
     const audioBlob = await stopAudioRecording()
     await waitForFrameQueueIdle()
     await flushFrameQueue({ force: true })
     await uploadLessonAudio(audioBlob)
     const payload = unwrapApiData(await finishMockClassroomSession(activeSessionId.value, {
-      client_elapsed_seconds: Math.max(0, Math.floor(elapsedSeconds.value))
+      client_elapsed_seconds: Math.max(0, Math.floor(elapsedSeconds.value)),
+      client_transcript: liveTranscriptText.value.trim() || null
     }))
     applyFinishPayload(payload)
     await refreshReport()
@@ -985,6 +1144,7 @@ const finishTeaching = async () => {
       startReportPolling()
     }
     lessonMode.value = 'finished'
+    showReportModal.value = true
     stopDevicePreview()
   } catch (error) {
     console.warn('[MockClassroom] finish teaching failed:', error)
@@ -1018,6 +1178,7 @@ const stopAudioRecording = async () => {
 
 const stopLessonRuntime = () => {
   stopLessonTimers()
+  stopLiveSpeechRecognition()
   stopAudioRecording().catch(error => {
     console.warn('[MockClassroom] stop audio failed:', error)
   })
@@ -1027,6 +1188,43 @@ const resetLesson = async () => {
   resetLessonRuntime()
   lessonMode.value = 'setup'
   await attachStreamToVideos()
+}
+
+const saveReport = () => {
+  const savedReport = {
+    session_id: activeSessionId.value,
+    topic: normalizedTopic.value,
+    saved_at: new Date().toISOString(),
+    overall_score: reportData.value?.overall_score || 0,
+    knowledge_score: reportData.value?.knowledge_score || 0,
+    fluency_score: reportData.value?.fluency_score || 0,
+    presentation_score: reportData.value?.presentation_score || 0,
+    transcript: reportTranscriptText.value,
+    strengths: reportData.value?.strengths || [],
+    gaps: reportData.value?.gaps || [],
+    suggestions: reportData.value?.suggestions || []
+  }
+
+  try {
+    const storageKey = 'zhiban_mock_classroom_saved_reports'
+    const existing = JSON.parse(localStorage.getItem(storageKey) || '[]')
+    const reports = Array.isArray(existing) ? existing : []
+    localStorage.setItem(storageKey, JSON.stringify([savedReport, ...reports].slice(0, 30)))
+  } catch (error) {
+    console.warn('[MockClassroom] save report locally failed:', error)
+    finishError.value = '报告本地保存失败，但后端记录仍已生成。'
+  }
+
+  showReportModal.value = false
+}
+
+const cancelReport = () => {
+  showReportModal.value = false
+}
+
+const retryLesson = async () => {
+  showReportModal.value = false
+  await resetLesson()
 }
 
 const startMicMeter = stream => {
@@ -1990,6 +2188,131 @@ onBeforeUnmount(() => {
   min-height: 102px;
 }
 
+.live-transcript-panel {
+  min-height: 0;
+}
+
+.transcript-status-row {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #9a4f21;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.speech-chip {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(95, 60, 32, 0.1);
+  color: #76502e;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.speech-chip.listening {
+  background: rgba(49, 95, 73, 0.12);
+  color: #315f49;
+}
+
+.speech-chip.error,
+.speech-chip.unsupported {
+  background: rgba(159, 42, 34, 0.1);
+  color: #9f2a22;
+}
+
+.live-transcript-box {
+  min-height: 260px;
+  max-height: min(44vh, 430px);
+  padding: 16px;
+  border: 1px solid rgba(92, 57, 28, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 242, 0.92), rgba(255, 244, 210, 0.74)),
+    rgba(255, 253, 242, 0.86);
+  color: #3b2a16;
+  overflow: auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+
+.live-transcript-box p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.8;
+  font-weight: 760;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.interim-transcript {
+  color: #9a4f21;
+  opacity: 0.78;
+}
+
+.transcript-placeholder {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  text-align: center;
+  color: #76502e;
+}
+
+.transcript-placeholder strong {
+  max-width: 260px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.live-classroom-stats {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.55fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.mini-timer {
+  width: 100%;
+  min-width: 0;
+}
+
+.mini-timer strong {
+  font-size: 24px;
+}
+
+.compact-status-list {
+  display: grid;
+  gap: 10px;
+}
+
+.compact-status-list div {
+  min-height: 54px;
+  padding: 9px 10px;
+  border: 1px solid rgba(92, 57, 28, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 253, 242, 0.58);
+  display: grid;
+  align-content: center;
+  gap: 3px;
+}
+
+.compact-status-list span {
+  color: #76502e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.compact-status-list strong {
+  color: #2d1d10;
+  font-size: 15px;
+}
+
 .report-result {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2095,6 +2418,110 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.report-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  padding: 24px;
+  background: rgba(42, 28, 14, 0.46);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: grid;
+  place-items: center;
+}
+
+.report-modal {
+  width: min(820px, 100%);
+  max-height: min(86vh, 780px);
+  overflow: auto;
+  border: 1px solid rgba(92, 57, 28, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 249, 226, 0.98), rgba(255, 238, 185, 0.94)),
+    #fff2c9;
+  color: #2e2418;
+  box-shadow: 0 28px 80px rgba(42, 28, 14, 0.34);
+  padding: 22px;
+  display: grid;
+  gap: 16px;
+}
+
+.report-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.report-modal-header span {
+  color: #9a4f21;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.report-modal-header h2 {
+  margin: 3px 0 0;
+  color: #2d1d10;
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.icon-button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(92, 57, 28, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 253, 242, 0.74);
+  color: #5f3c20;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.modal-score-grid {
+  display: grid;
+  grid-template-columns: 1.15fr repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.modal-score-grid > div {
+  min-height: 78px;
+  padding: 12px;
+  border: 1px solid rgba(92, 57, 28, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 253, 242, 0.62);
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.modal-score-grid span {
+  color: #76502e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.modal-score-grid strong {
+  color: #315f49;
+  font-size: 23px;
+}
+
+.modal-score-main strong {
+  color: #9a4f21;
+  font-size: 40px;
+  line-height: 1;
+}
+
+.report-modal .transcript-text {
+  max-height: 170px;
+}
+
+.report-modal-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 @media (max-width: 1180px) {
   .classroom-grid {
     grid-template-columns: minmax(340px, 0.5fr) minmax(520px, 1fr);
@@ -2155,6 +2582,9 @@ onBeforeUnmount(() => {
   .device-preview,
   .teaching-controls,
   .teaching-metrics,
+  .live-classroom-stats,
+  .modal-score-grid,
+  .report-modal-actions,
   .lectern {
     grid-template-columns: 1fr;
   }

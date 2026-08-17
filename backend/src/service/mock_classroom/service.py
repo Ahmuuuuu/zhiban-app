@@ -152,17 +152,21 @@ class MockClassroomService:
         user_id: int,
         session_key: str,
         client_elapsed_seconds: int | None = None,
+        client_transcript: str | None = None,
     ) -> dict:
         session = await MockClassroomService._get_session(user_id, session_key)
         if session.state == "finished":
             return MockClassroomService._finish_payload(session)
 
         client_elapsed = max(0, int(client_elapsed_seconds or 0))
+        normalized_transcript = (client_transcript or "").strip()[:20000] or None
         session.state = "finished"
         session.ended_at = datetime.now()
         session.elapsed_seconds = max(session.elapsed_seconds, client_elapsed)
+        if normalized_transcript:
+            session.transcript = normalized_transcript
         session.report_status = "generating"
-        await session.save(update_fields=["state", "ended_at", "elapsed_seconds", "report_status", "updated_at"])
+        await session.save(update_fields=["state", "ended_at", "elapsed_seconds", "transcript", "report_status", "updated_at"])
 
         return MockClassroomService._finish_payload(session)
 
@@ -203,9 +207,17 @@ class MockClassroomService:
             session.report_status = "generating"
             await session.save(update_fields=["report_status", "updated_at"])
 
-            audio_path = MockClassroomService._audio_path(session)
-            asr_result = await MockClassroomASR.transcribe(audio_path)
-            transcript = (asr_result.get("text") or session.transcript or "").strip()
+            transcript = (session.transcript or "").strip()
+            if transcript:
+                asr_result = {
+                    "status": "client_transcript",
+                    "text": transcript,
+                    "message": "已使用课堂实时讲稿生成报告。",
+                }
+            else:
+                audio_path = MockClassroomService._audio_path(session)
+                asr_result = await MockClassroomASR.transcribe(audio_path)
+                transcript = (asr_result.get("text") or "").strip()
             vision_summary = await MockClassroomVisionAnalyzer.summarize_session(session.id)
             reference_text = await MockClassroomService._resolve_reference_text(session, user_id)
             if reference_text != (session.reference_text or None):
