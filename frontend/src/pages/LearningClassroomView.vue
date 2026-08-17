@@ -363,7 +363,7 @@ const personalCue = computed(() => {
     tags.push('基础补缝')
   }
 
-  if (!tags.length) tags.push('节点驱动', '资料验证')
+  if (!tags.length) tags.push('节点驱动', '资料佐证')
   return { summary, detail, tags: tags.slice(0, 4) }
 })
 
@@ -414,10 +414,10 @@ const normalizeSegment = (segment, index) => {
     return {
       id,
       type: 'resource',
-      title: '资料验证',
+      title: '证据查找',
       subtitle: '用资料查证刚才的概念',
-      intent: '查证关键点',
-      script: `现在用资料反过来验证刚才的板书。先在资料中找到「${title}」对应的定义、步骤和例题，再对照板书判断自己是不是真的理解。`,
+      intent: '用资料核对',
+      script: `现在暂停推进新知识，只做一次查证：请在右侧资料中找到能解释「${title}」的定义、步骤或例题，再回头判断刚才的板书是否站得住。`,
       boardTitle: '查证路径',
       boardItems: ['找定义', '找步骤', '找例题', '回看结构'],
       points: [
@@ -425,7 +425,7 @@ const normalizeSegment = (segment, index) => {
         '找一段可复现的步骤或公式',
         '用例题检查板书是否能解释'
       ],
-      visualHint: '资料只负责查证，不在主画面重复列文件。',
+      visualHint: '资料是证据来源，主画面只保留查证任务。',
       example: `例如先找资料中能解释「${title}」定义或步骤的一段，再对照板书复述。`,
       resourceRefs,
       durationSeconds: Number(segment?.duration_seconds || 22),
@@ -506,11 +506,11 @@ const buildLessonSegments = () => {
     {
       id: 'resource-link',
       type: 'resource',
-      title: '资料验证',
+      title: '证据查找',
       subtitle: hasResources ? '用资料查证刚才的概念' : '先按节点推进',
-      intent: hasResources ? '查证关键点' : '按节点继续讲',
+      intent: hasResources ? '用资料核对' : '按节点继续讲',
       script: hasResources
-        ? `现在用资料反过来验证刚才的板书。先在资料中找到「${title}」对应的定义、步骤和例题，再对照板书判断自己是不是真的理解。`
+        ? `现在暂停推进新知识，只做一次查证：从右侧素材里挑一份最能解释「${title}」的资料，找定义、步骤或例题，再回头核对板书。`
         : `当前节点还没有资料，先用路径节点信息讲清「${title}」的主线，后续资料生成后再用来查证定义、步骤和例题。`,
       boardTitle: '查证路径',
       boardItems: hasResources
@@ -519,7 +519,7 @@ const buildLessonSegments = () => {
       points: hasResources
         ? [`在资料中定位「${title}」的定义`, '找一段可复现的步骤或公式', '用例题检查板书是否能解释']
         : [`先用节点描述建立「${title}」的主线`, '资料生成后再查证细节'],
-      visualHint: '资料只负责查证，不在主画面重复列文件。',
+      visualHint: '资料是证据来源，主画面只保留查证任务。',
       example: `例如先找资料中能解释「${title}」定义或步骤的一段，再对照板书复述。`,
       resourceRefs: resourceList.value.slice(0, 3).map(item => ({
         title: item.title,
