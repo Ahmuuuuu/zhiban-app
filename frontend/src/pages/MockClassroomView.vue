@@ -566,8 +566,23 @@ const formatDuration = seconds => {
 
 const unwrapApiData = result => result?.data?.data ?? result?.data ?? result ?? {}
 
+const LOGIN_REQUIRED_MESSAGE = '请先登录后再开始模拟课堂。'
+
 const errorMessage = (error, fallback) => {
   return error?.response?.data?.detail || error?.response?.data?.msg || error?.message || fallback
+}
+
+const isAuthRequiredError = error => Number(error?.response?.status || error?.status || 0) === 401
+
+const requestMockClassroomLogin = () => {
+  window.dispatchEvent(new CustomEvent('zhiban-auth-expired', {
+    detail: { message: LOGIN_REQUIRED_MESSAGE }
+  }))
+}
+
+const mockClassroomStartErrorMessage = error => {
+  if (isAuthRequiredError(error)) return LOGIN_REQUIRED_MESSAGE
+  return errorMessage(error, '开始讲课失败，请检查设备权限、登录状态和后端服务。')
 }
 
 const getPreferredRecorderMimeType = () => {
@@ -707,7 +722,10 @@ const startTeaching = async () => {
     await captureLessonFrame()
   } catch (error) {
     console.warn('[MockClassroom] start teaching failed:', error)
-    deviceError.value = error?.message || '开始讲课失败，请检查设备权限。'
+    if (isAuthRequiredError(error)) {
+      requestMockClassroomLogin()
+    }
+    deviceError.value = mockClassroomStartErrorMessage(error)
     lessonMode.value = 'setup'
     stopLessonRuntime()
   } finally {
