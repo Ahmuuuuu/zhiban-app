@@ -32,9 +32,8 @@
       <section class="teaching-stage">
         <div class="lecture-player classroom-player" :class="[{ speaking: isSpeaking }, `scene-${activeSegment.type}`]">
           <div class="player-meta">
-            <span>小知讲堂</span>
+            <span>AI 课堂镜头</span>
             <strong>{{ activeSegmentIndex + 1 }} / {{ lessonSegments.length }}</strong>
-            <em>{{ activeStageLabel }}</em>
             <small>{{ classroomTimelineLabel }}</small>
             <button class="voice-btn" type="button" :disabled="audioLoading" @click="toggleLectureAudio">
               <Pause v-if="isSpeaking" :size="18" />
@@ -128,6 +127,23 @@
           </p>
         </div>
 
+        <section class="dialog-panel classroom-dialog-card">
+          <div class="section-head">
+            <span>课堂对话</span>
+            <small>随时提问 · {{ messages.length }} 条</small>
+          </div>
+          <div class="dialog-messages">
+            <article v-for="message in messages" :key="message.id" :class="message.role">
+              <strong>{{ message.role === 'teacher' ? '小知' : '我' }}</strong>
+              <p>{{ message.content }}</p>
+            </article>
+          </div>
+          <form class="dialog-input" @submit.prevent="sendLearnerMessage">
+            <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
+            <button type="submit" :disabled="!learnerInput">发送</button>
+          </form>
+        </section>
+
         <div class="stage-actions">
           <button class="soft-btn" type="button" :disabled="activeSegmentIndex === 0" @click="prevSegment">
             上一步
@@ -139,17 +155,6 @@
       </section>
 
       <aside class="resource-shelf">
-        <section class="personal-panel">
-          <div class="section-head">
-            <span>本节策略</span>
-            <small>{{ classroomSourceLabel }}</small>
-          </div>
-          <p>{{ personalCue.detail }}</p>
-          <div class="strategy-tags">
-            <span v-for="tag in personalCue.tags" :key="tag">{{ tag }}</span>
-          </div>
-        </section>
-
         <section>
           <div class="section-head">
             <span>当前素材</span>
@@ -184,23 +189,6 @@
             让小知追问
           </button>
           <p v-if="feynmanFeedback" class="feynman-feedback">{{ feynmanFeedback }}</p>
-        </section>
-
-        <section class="dialog-panel">
-          <div class="section-head">
-            <span>课堂对话</span>
-            <small>{{ messages.length }} 条</small>
-          </div>
-          <div class="dialog-messages">
-            <article v-for="message in messages" :key="message.id" :class="message.role">
-              <strong>{{ message.role === 'teacher' ? '小知' : '我' }}</strong>
-              <p>{{ message.content }}</p>
-            </article>
-          </div>
-          <form class="dialog-input" @submit.prevent="sendLearnerMessage">
-            <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
-            <button type="submit" :disabled="!learnerInput">发送</button>
-          </form>
         </section>
       </aside>
     </section>
@@ -367,26 +355,200 @@ const personalCue = computed(() => {
   return { summary, detail, tags: tags.slice(0, 4) }
 })
 
-const classroomSourceLabel = computed(() => {
-  if (classroomLoading.value) return '生成中'
-  if (classroomLesson.value?.segments?.length) return '智能体生成'
-  if (classroomError.value) return '本地降级'
-  return '本地课堂'
-})
-
 const splitKeywords = value => String(value || '')
   .split(/[，,、/|；;()\s]+/)
   .map(item => item.trim())
   .filter(Boolean)
   .slice(0, 5)
 
+const LOW_VALUE_PATTERNS = [
+  /按当前节点动态讲解/,
+  /课堂会/,
+  /资料会/,
+  /资源会/,
+  /节点驱动/,
+  /资料联动/,
+  /本幕讲解/,
+  /右侧资料/,
+  /文件列表/,
+  /把资料用起来/,
+  /单独预览文件/,
+  /先建立问题意识/,
+  /用一句话解释.+关系/,
+  /亲啊/,
+  /页数/,
+  /页块/,
+  /支撑本幕/
+]
+
+const compactText = value => String(value || '').replace(/\s+/g, ' ').trim()
+
+const isLowValueText = value => {
+  const text = compactText(value)
+  if (!text) return true
+  if (text.length < 4) return true
+  return LOW_VALUE_PATTERNS.some(pattern => pattern.test(text))
+}
+
+const uniqueCleanItems = (items, limit = 5) => {
+  const seen = new Set()
+  return (Array.isArray(items) ? items : [])
+    .map(item => compactText(item))
+    .filter(item => item && !isLowValueText(item))
+    .filter(item => {
+      const key = item.replace(/[：:，,。；;\s]/g, '')
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, limit)
+}
+
+const makeTeachingPack = config => ({
+  coreItems: config.coreItems,
+  lines: config.lines,
+  entryItems: config.entryItems || config.coreItems.slice(0, 3),
+  lead: config.lead,
+  example: config.example,
+  resourceLines: config.resourceLines || [
+    '先找资料中的定义边界，不急着整篇通读。',
+    '再找步骤、公式或例题，核对它能否解释板书。',
+    '最后用自己的话复述证据支持了哪一个结论。'
+  ],
+  resourceItems: config.resourceItems || ['找定义边界', '找步骤公式', '找例题验证'],
+  resourceExample: config.resourceExample || config.example,
+  question: config.question,
+  feynmanPrompt: config.feynmanPrompt,
+  conceptScript: config.conceptScript,
+  leadInScript: config.leadInScript,
+  resourceScript: config.resourceScript,
+  checkpointScript: config.checkpointScript,
+  feynmanScript: config.feynmanScript
+})
+
+const inferTeachingPack = (titleValue, summaryValue = '') => {
+  const title = compactText(titleValue) || '当前知识点'
+  const context = `${title} ${compactText(summaryValue)}`
+
+  if (/BCD|ASCII|编码/.test(context)) {
+    return makeTeachingPack({
+      lead: '这节先分清“数字怎么存”和“字符怎么表示”。',
+      coreItems: ['BCD表示十进制数字', '8421BCD按权值相加', '压缩BCD一字节两位', 'ASCII表示字符编码', '编码值不等于数值'],
+      entryItems: ['数字表示', '字符表示', '易混对比'],
+      lines: [
+        'BCD解决十进制数字在机器里的表示问题，不等同于普通二进制数。',
+        '8421BCD的每一位权值固定为8、4、2、1，合法数字只能是0000到1001。',
+        'ASCII面向字符，字符“5”的编码是35H，和数值5不是一回事。'
+      ],
+      example: "十进制59的压缩BCD是0101 1001B；字符'5'的ASCII码是35H。",
+      resourceExample: '在资料中分别找到BCD定义和ASCII码表，再对比“59”和字符“5”的表示。',
+      question: '为什么字符“5”的ASCII码不是二进制数5？',
+      feynmanPrompt: '请用“数字表示”和“字符表示”的区别，讲清BCD和ASCII。',
+      conceptScript: '这一段抓住一个核心区别：BCD服务十进制数字，ASCII服务字符。BCD像是把每一位十进制数装进固定格子里，8421BCD靠8、4、2、1的权值表示0到9；ASCII则是给字符分配编号，字符“5”只是一个字符，它的编码是35H，不等于数值5。把这个区别抓住，后面看接口、键盘输入和显示输出就不会混。'
+    })
+  }
+
+  if (/补码|反码|原码|符号/.test(context)) {
+    return makeTeachingPack({
+      lead: '这节只解决一个问题：负数怎样让机器也能直接做加法。',
+      coreItems: ['原码最高位表符号', '反码负数数值位取反', '补码等于反码加一', '补码统一加减运算', '溢出看符号变化'],
+      lines: [
+        '原码最直观，但正负零和减法处理不方便。',
+        '补码把减法转成加法，CPU可以用同一套加法器完成运算。',
+        '判断补码结果要结合位数，不能只看表面二进制串。'
+      ],
+      example: '8位中，-5原码是10000101，反码是11111010，补码是11111011。',
+      question: '为什么补码能把减法统一成加法？',
+      feynmanPrompt: '请用“为了让CPU少做一套减法电路”解释补码。'
+    })
+  }
+
+  if (/数制|进制|转换|位权|基数/.test(context)) {
+    return makeTeachingPack({
+      lead: '这节只抓两个词：基数决定能用哪些数字，位权决定每一位值多少钱。',
+      coreItems: ['基数决定数字范围', '位权决定每位价值', '按权展开转十进制', '除基取余转目标进制', '二八十六可分组互转'],
+      lines: [
+        '任何进制都可以先按位权展开成十进制，这是最稳的中间桥。',
+        '十进制转其他进制常用除基取余，余数从下往上读。',
+        '二进制、八进制、十六进制之间可以按3位或4位分组快速互转。'
+      ],
+      example: '1011B = 1x8 + 0x4 + 1x2 + 1x1 = 11D。',
+      question: '为什么二进制转十六进制可以每4位一组？',
+      feynmanPrompt: '请用“基数”和“位权”解释一次进制转换。'
+    })
+  }
+
+  if (/寻址|物理地址|段地址|偏移|CS|IP/.test(context)) {
+    return makeTeachingPack({
+      lead: '这节把地址看成“段起点加段内偏移”。',
+      coreItems: ['段地址左移4位', '偏移地址定位段内位置', '物理地址20位', 'CS和IP配合取指', '段内越界会取错位置'],
+      lines: [
+        '8086用段地址和偏移地址组合出20位物理地址。',
+        '段地址左移4位相当于乘16，再加偏移地址得到最终访问位置。',
+        'CS:IP负责取下一条指令，DS通常配合数据访问。'
+      ],
+      example: 'CS=1234H，IP=5678H，则物理地址=12340H+5678H=179B8H。',
+      question: '段地址为什么要左移4位再加偏移地址？',
+      feynmanPrompt: '请用“楼栋号+房间号”的类比讲清段地址和偏移地址。'
+    })
+  }
+
+  if (/8086|CPU|微处理器|内部结构|EU|BIU/.test(context)) {
+    return makeTeachingPack({
+      lead: '这节把8086看成两个协作部分：一个负责执行，一个负责取指和总线。',
+      coreItems: ['EU负责译码执行', 'BIU负责取指访问总线', '指令队列减少等待', '寄存器保存中间结果', '标志位记录运算状态'],
+      lines: [
+        'EU负责真正执行指令，包含运算器、寄存器和标志寄存器。',
+        'BIU负责和存储器或I/O接口打交道，并把指令提前取到队列里。',
+        '指令队列让取指和执行能重叠，是理解8086流水思想的入口。'
+      ],
+      example: 'BIU先取指进队列，EU执行当前指令；遇到转移指令时队列会被刷新。',
+      question: '为什么8086要把EU和BIU分开？',
+      feynmanPrompt: '请用“前台执行、后台取货”的类比解释EU和BIU。'
+    })
+  }
+
+  const keywords = uniqueCleanItems(splitKeywords(`${title} ${summaryValue}`), 5)
+  const coreItems = keywords.length >= 3 ? keywords : [title, '核心定义', '关键步骤', '典型例题', '易错点']
+  return makeTeachingPack({
+    lead: `这节先讲清「${title}」解决的问题，再把细节留给资料和练习。`,
+    coreItems,
+    lines: [
+      `先确认「${title}」的定义边界，避免把相近概念混在一起。`,
+      '再找它的步骤、结构或作用链，形成可复述的主线。',
+      '最后用一个例题或场景检查自己能不能迁移。'
+    ],
+    example: `先说清「${title}」是什么，再补一个“它用来解决什么问题”的例子。`,
+    question: `「${title}」最容易和哪个概念混淆？`,
+    feynmanPrompt: `请用三句话讲清「${title}」：是什么、为什么重要、怎么用。`
+  })
+}
+
+const segmentSignature = segment => [
+  segment?.id,
+  segment?.type,
+  segment?.title,
+  segment?.subtitle,
+  segment?.intent,
+  segment?.board_title,
+  segment?.boardTitle
+].map(item => String(item || '')).join(' ')
+
+const isResourceScene = segment => /resource|material|资料|素材|查证|验证|联动|证据/i.test(segmentSignature(segment))
+const isQuizScene = segment => /quiz|checkpoint|追问|测验|检测/i.test(segmentSignature(segment))
+const isFeynmanScene = segment => /feynman|费曼|复述|讲述/i.test(segmentSignature(segment))
+
 const normalizeSegment = (segment, index) => {
   const fallbackIds = ['lead-in', 'concept', 'resource-link', 'checkpoint', 'feynman']
   const question = segment?.question && typeof segment.question === 'object' ? segment.question : null
-  const script = String(segment?.teacher_speech || segment?.script || '')
-  const points = Array.isArray(segment?.points) ? segment.points.map(item => String(item || '').trim()).filter(Boolean) : []
+  const pack = inferTeachingPack(
+    node.value.title || segment?.title,
+    node.value.summary || node.value.description || segment?.subtitle || segment?.script || ''
+  )
+  const rawScript = String(segment?.teacher_speech || segment?.script || '')
+  const points = uniqueCleanItems(Array.isArray(segment?.points) ? segment.points : [], 5)
   const boardItems = Array.isArray(segment?.board_items)
-    ? segment.board_items.map(item => String(item || '').trim()).filter(Boolean)
+    ? uniqueCleanItems(segment.board_items, 5)
     : points
   const resourceRefs = Array.isArray(segment?.resource_refs)
     ? segment.resource_refs
@@ -394,7 +556,7 @@ const normalizeSegment = (segment, index) => {
         .map(item => ({
           title: String(item.title || '').trim(),
           type: String(item.type || '资料').trim(),
-          how_to_use: String(item.how_to_use || '支撑本幕讲解').trim()
+          how_to_use: isLowValueText(item.how_to_use) ? '核对定义、步骤或例题' : String(item.how_to_use || '').trim()
         }))
         .filter(item => item.title)
     : []
@@ -409,28 +571,24 @@ const normalizeSegment = (segment, index) => {
       }
     : null
 
-  if (id === 'resource-link' || type === 'resource') {
+  if (id === 'resource-link' || type === 'resource' || isResourceScene({ ...segment, id, type })) {
     const title = node.value.title || '当前知识点'
     return {
       id,
       type: 'resource',
-      title: '证据查找',
+      title: '资料佐证',
       subtitle: '用资料查证刚才的概念',
       intent: '用资料核对',
-      script: `现在暂停推进新知识，只做一次查证：请在右侧资料中找到能解释「${title}」的定义、步骤或例题，再回头判断刚才的板书是否站得住。`,
+      script: isLowValueText(rawScript) ? pack.resourceScript || `现在用资料做一次核对：先找「${title}」的定义边界，再找步骤或例题，最后判断它是否支持刚才的板书。不通读整份资料，只抓能解释结论的证据。` : rawScript,
       boardTitle: '查证路径',
-      boardItems: ['找定义', '找步骤', '找例题', '回看结构'],
-      points: [
-        `在资料中定位「${title}」的定义`,
-        '找一段可复现的步骤或公式',
-        '用例题检查板书是否能解释'
-      ],
-      visualHint: '资料是证据来源，主画面只保留查证任务。',
-      example: `例如先找资料中能解释「${title}」定义或步骤的一段，再对照板书复述。`,
+      boardItems: pack.resourceItems,
+      points: pack.resourceLines,
+      visualHint: '资料只承担证据任务，细节留到预览里看。',
+      example: pack.resourceExample,
       resourceRefs,
       durationSeconds: Number(segment?.duration_seconds || 22),
       question: normalizedQuestion || {
-        prompt: '看资料时最应该先验证什么？',
+        prompt: pack.question || '看资料时最应该先验证什么？',
         options: ['定义和步骤', '文件有多长', '只看封面'],
         answer: '定义和步骤',
         feedback: '对，资料要回到本节概念和步骤。'
@@ -444,12 +602,12 @@ const normalizeSegment = (segment, index) => {
     title: String(segment?.title || `课堂环节 ${index + 1}`),
     subtitle: String(segment?.subtitle || ''),
     intent: String(segment?.intent || '继续学习'),
-    script,
+    script: isLowValueText(rawScript) ? pack.conceptScript || pack.lead : rawScript,
     boardTitle: String(segment?.board_title || '课堂板书'),
-    boardItems,
-    points,
-    visualHint: String(segment?.visual_hint || ''),
-    example: String(segment?.example || ''),
+    boardItems: boardItems.length >= 2 ? boardItems : pack.coreItems,
+    points: points.length >= 2 ? points : pack.lines,
+    visualHint: isLowValueText(segment?.visual_hint) ? pack.lead : String(segment?.visual_hint || ''),
+    example: isLowValueText(segment?.example) ? pack.example : String(segment?.example || ''),
     resourceRefs,
     durationSeconds: Number(segment?.duration_seconds || 0),
     question: normalizedQuestion
@@ -465,26 +623,29 @@ const remoteSegments = computed(() => {
 const buildLessonSegments = () => {
   const title = node.value.title || '当前节点'
   const summary = node.value.summary || node.value.description || `理解 ${title} 的核心概念和典型应用。`
-  const keywords = splitKeywords(summary)
-  const points = keywords.length ? keywords : [title, '关键概念', '典型应用']
+  const pack = inferTeachingPack(title, summary)
   const hasQuiz = !!quiz.value
   const hasResources = resourceList.value.length > 0
   const cue = personalCue.value
-  const cueText = cue.tags.length ? `这节课会按「${cue.tags.join('、')}」的方式推进。` : ''
+  const resourceRefs = resourceList.value.slice(0, 3).map(item => ({
+    title: item.title,
+    type: item.typeLabel || item.fileType || '资料',
+    how_to_use: '核对定义、步骤或例题'
+  }))
 
   return [
     {
       id: 'lead-in',
       type: 'hook',
       title: '情境导入',
-      subtitle: '先把知识点放进真实学习任务',
+      subtitle: '先知道为什么学',
       intent: '先知道为什么学',
-      script: `我们先把「${title}」放进真实学习任务里看：它不是孤立概念，而是后面做题、看资料和解释原理的入口。${cueText}先问清它解决什么问题，再进入细节。`,
+      script: pack.leadInScript || `先把「${title}」放到一个具体问题里：${pack.lead}本节只保留主线，不把资料细节搬满屏幕。`,
       boardTitle: '问题入口',
-      boardItems: [summary, cue.summary, '先建立问题意识'],
-      points: [summary, cue.summary, '先建立问题意识'],
+      boardItems: pack.entryItems,
+      points: [pack.lead, cue.summary, '先抓概念解决的问题'],
       visualHint: '从问题出发，比直接背定义更稳。',
-      example: `遇到「${title}」相关题，先判断它想考什么。`,
+      example: pack.example,
       resourceRefs: [],
       durationSeconds: 18
     },
@@ -494,38 +655,34 @@ const buildLessonSegments = () => {
       title: '核心概念',
       subtitle: '拆开主干关系',
       intent: '拆开关键点',
-      script: `这一段先抓主干：${points.slice(0, 3).join('、')}。你不用先背定义，先理解它们之间的关系。遇到教材里看起来很散的句子，就把它们压回“是什么、为什么、怎么用”三件事。`,
+      script: pack.conceptScript || `这一段只讲主干：${pack.lines.join('')}遇到教材里散开的表述，就把它压回定义边界、步骤关系和典型例子。`,
       boardTitle: '概念主线',
-      boardItems: points,
-      points,
-      visualHint: '把散句压回“是什么、为什么、怎么用”。',
-      example: `用一句话解释「${title}」和前后知识的关系。`,
+      boardItems: pack.coreItems,
+      points: pack.lines,
+      visualHint: pack.lead,
+      example: pack.example,
       resourceRefs: [],
       durationSeconds: 24
     },
     {
       id: 'resource-link',
       type: 'resource',
-      title: '证据查找',
+      title: '资料佐证',
       subtitle: hasResources ? '用资料查证刚才的概念' : '先按节点推进',
       intent: hasResources ? '用资料核对' : '按节点继续讲',
       script: hasResources
-        ? `现在暂停推进新知识，只做一次查证：从右侧素材里挑一份最能解释「${title}」的资料，找定义、步骤或例题，再回头核对板书。`
-        : `当前节点还没有资料，先用路径节点信息讲清「${title}」的主线，后续资料生成后再用来查证定义、步骤和例题。`,
+        ? pack.resourceScript || `现在用资料核对刚才的主线：先找定义边界，再找步骤或例题，最后判断它能不能支撑板书。`
+        : `当前节点还没有资料，先用路径节点信息讲清「${title}」的主线，后续资料生成后再查证细节。`,
       boardTitle: '查证路径',
       boardItems: hasResources
-        ? ['找定义', '找步骤', '找例题', '回看结构']
+        ? pack.resourceItems
         : ['抓主线', '补资料', '再验证'],
       points: hasResources
-        ? [`在资料中定位「${title}」的定义`, '找一段可复现的步骤或公式', '用例题检查板书是否能解释']
+        ? pack.resourceLines
         : [`先用节点描述建立「${title}」的主线`, '资料生成后再查证细节'],
-      visualHint: '资料是证据来源，主画面只保留查证任务。',
-      example: `例如先找资料中能解释「${title}」定义或步骤的一段，再对照板书复述。`,
-      resourceRefs: resourceList.value.slice(0, 3).map(item => ({
-        title: item.title,
-        type: item.typeLabel || item.fileType || '资料',
-        how_to_use: '验证当前板书'
-      })),
+      visualHint: '资料只承担证据任务，细节留到预览里看。',
+      example: pack.resourceExample,
+      resourceRefs,
       durationSeconds: 22
     },
     {
@@ -535,13 +692,13 @@ const buildLessonSegments = () => {
       subtitle: '先用短问确认理解',
       intent: hasQuiz ? '用题目校验理解' : '用短问校验理解',
       script: hasQuiz
-        ? `这里不直接把整套题甩给你，而是先抛一个小问题确认方向。正式检测仍保留在学习路径里，课堂只负责提前暴露「${title}」的薄弱点。`
-        : `没有题库时，课堂会先用概念追问判断你是否真的理解「${title}」。`,
+        ? `这里先用一个短问题卡住关键点：${pack.question}如果答不上来，不急着做整套题，先回到上一幕板书找缺口。`
+        : `没有题库时，先用概念追问判断你是否真的理解「${title}」：${pack.question}`,
       boardTitle: '即时检查',
-      boardItems: ['先小问，再练习', '错了不惩罚', '只定位薄弱点'],
-      points: ['先小问，再练习', '错了不惩罚，只定位薄弱点'],
+      boardItems: ['说定义边界', '举一个例子', '指出易混点'],
+      points: [pack.question, '答不上来就回到上一幕板书', '只定位薄弱点，不急着刷题'],
       visualHint: '问题在课堂中间自然弹出，不打断主线。',
-      example: `如果你说不清「${title}」的用途，就回到第一条板书。`,
+      example: pack.question,
       resourceRefs: [],
       durationSeconds: 18
     },
@@ -551,12 +708,12 @@ const buildLessonSegments = () => {
       title: '反向讲解',
       subtitle: '换你当老师',
       intent: '费曼学习法',
-      script: `最后换你当老师：用自己的话把「${title}」讲给小知听。你可以只讲三句话：它是什么，它为什么重要，它在题目或场景里怎么用。讲不清楚的地方，就是下一轮学习要补的地方。`,
+      script: pack.feynmanScript || `最后换你讲。${pack.feynmanPrompt}讲不顺的地方不是失败，而是下一轮学习要补的地方。`,
       boardTitle: '三句话反讲',
       boardItems: ['它是什么', '为什么重要', '怎么用'],
-      points: ['你讲一遍', '小知追问', '沉淀薄弱点'],
+      points: ['用自己的话讲', '小知追问漏洞', '沉淀薄弱点'],
       visualHint: '讲不清楚不是失败，是系统找到下一步补强点。',
-      example: `你可以这样开头：${title} 主要解决……`,
+      example: pack.feynmanPrompt,
       resourceRefs: [],
       durationSeconds: 20
     }
@@ -565,6 +722,12 @@ const buildLessonSegments = () => {
 
 const lessonSegments = computed(() => remoteSegments.value.length ? remoteSegments.value : buildLessonSegments())
 const activeSegment = computed(() => lessonSegments.value[activeSegmentIndex.value] || lessonSegments.value[0])
+const activeTeachingPack = computed(() =>
+  inferTeachingPack(
+    node.value.title || activeSegment.value?.title,
+    node.value.summary || node.value.description || activeSegment.value?.script || ''
+  )
+)
 const splitTeachingLines = value => String(value || '')
   .replace(/\s+/g, ' ')
   .split(/[。！？!?；;]+|\.\s+/)
@@ -574,65 +737,61 @@ const splitTeachingLines = value => String(value || '')
 const activeConceptItems = computed(() => {
   const concept = lessonSegments.value.find(item => item.id === 'concept' || item.type === 'concept')
   const items = concept?.boardItems?.length ? concept.boardItems : concept?.points || []
-  return items.map(item => String(item || '').trim()).filter(Boolean).slice(0, 5)
+  const cleaned = uniqueCleanItems(items, 5)
+  return cleaned.length >= 2 ? cleaned : activeTeachingPack.value.coreItems
 })
 
 const activeTeachingLines = computed(() => {
   const segment = activeSegment.value || {}
-  if (segment.type === 'resource' || segment.id === 'resource-link') {
-    return [
-      '从右侧素材里找一条定义、步骤或公式。',
-      '把这条证据对回刚才的板书，再尝试自己复述。'
-    ]
+  if (isResourceScene(segment)) {
+    return activeTeachingPack.value.resourceLines.slice(0, 2)
   }
-  const fromPoints = (segment.points?.length ? segment.points : segment.boardItems || [])
-    .map(item => String(item || '').trim())
-    .filter(item => item.length >= 4)
+  const board = uniqueCleanItems(segment.boardItems, 5)
+  const fromPoints = uniqueCleanItems(segment.points, 4)
+    .filter(line => !board.some(item => line.includes(item) || item.includes(line)))
   if (fromPoints.length >= 2) return fromPoints.slice(0, 3)
-  const fromVisual = splitTeachingLines(segment.visualHint)
-  if (fromVisual.length) return fromVisual.slice(0, 2)
-  return splitTeachingLines(segment.script).slice(0, 2)
+  const fromScript = splitTeachingLines(segment.script).filter(line => !isLowValueText(line))
+  if (fromScript.length >= 2) return fromScript.slice(0, 2)
+  return activeTeachingPack.value.lines.slice(0, 3)
 })
 
 const activeStageLabel = computed(() => {
   const segment = activeSegment.value || {}
-  if (segment.type === 'resource' || segment.id === 'resource-link') return '资料查证'
-  if (/quiz|checkpoint/.test(segment.type || segment.id || '')) return '课堂追问'
-  if (/feynman/.test(segment.type || segment.id || '')) return '费曼回讲'
+  if (isResourceScene(segment)) return '资料佐证'
+  if (isQuizScene(segment)) return '课堂追问'
+  if (isFeynmanScene(segment)) return '费曼回讲'
   return segment.intent || segment.title || '课堂讲解'
 })
 
 const activeSegmentKicker = computed(() => {
   const segment = activeSegment.value || {}
-  if (segment.type === 'resource' || segment.id === 'resource-link') return '资料证据'
-  if (/quiz|checkpoint/.test(segment.type || segment.id || '')) return '即时检查'
-  if (/feynman/.test(segment.type || segment.id || '')) return '换你当老师'
+  if (isResourceScene(segment)) return '资料证据'
+  if (isQuizScene(segment)) return '即时检查'
+  if (isFeynmanScene(segment)) return '换你当老师'
   return segment.boardTitle || '课堂板书'
 })
 
 const activeScreenTitle = computed(() => {
   const segment = activeSegment.value || {}
-  if (segment.type === 'resource' || segment.id === 'resource-link') return '验证当前板书'
-  if (/quiz|checkpoint/.test(segment.type || segment.id || '')) return '用问题校准理解'
-  if (/feynman/.test(segment.type || segment.id || '')) return '三句话讲给小知'
+  if (isResourceScene(segment)) return '给刚才的结论找证据'
+  if (isQuizScene(segment)) return '用问题校准理解'
+  if (isFeynmanScene(segment)) return '三句话讲给小知'
   return segment.title || activeStageLabel.value
 })
 
 const activeTeachingLead = computed(() => {
   const segment = activeSegment.value || {}
-  if (segment.type === 'resource' || segment.id === 'resource-link') {
-    return '这一幕只做一件事：用资料证明刚才讲过的关键点。'
+  if (isResourceScene(segment)) {
+    return '不通读整份资料，只抓能支撑本节结论的关键证据。'
   }
-  return segment.subtitle
-    || activeTeachingLines.value[0]
-    || segment.visualHint
-    || '跟着这一幕先抓主线，再进入细节。'
+  const lead = segment.subtitle || segment.visualHint || activeTeachingLines.value[0]
+  return isLowValueText(lead) ? activeTeachingPack.value.lead : lead
 })
 
 const activeTakeaway = computed(() => {
   const segment = activeSegment.value || {}
-  if (segment.type === 'resource' || segment.id === 'resource-link') {
-    return '看资料不是堆文件，是找证据。'
+  if (isResourceScene(segment)) {
+    return '资料只负责佐证当前结论，不替代课堂主线。'
   }
   const candidates = [
     segment.visualHint,
@@ -640,28 +799,30 @@ const activeTakeaway = computed(() => {
     segment.points?.[0],
     segment.boardItems?.[0]
   ]
-  return candidates.map(item => String(item || '').trim()).find(Boolean) || '把散句压回“是什么、为什么、怎么用”。'
+  return candidates.map(item => String(item || '').trim()).find(item => !isLowValueText(item)) || activeTeachingPack.value.question || activeTeachingPack.value.lead
 })
 const activeSceneExample = computed(() => {
-  if (activeSegment.value?.type === 'resource' || activeSegment.value?.id === 'resource-link') {
-    const title = node.value.title || activeSegment.value?.title || '当前知识点'
-    return `在右侧素材中找一句能解释「${title}」的内容，再用自己的话讲出来。`
+  if (isResourceScene(activeSegment.value)) {
+    return activeTeachingPack.value.resourceExample
   }
   if (activeSegment.value?.resourceRefs?.length) {
     const ref = activeSegment.value.resourceRefs[0]
-    return `${ref.title}：${ref.how_to_use || '用来验证本幕讲解'}`
+    const use = isLowValueText(ref.how_to_use) ? '核对定义、步骤或例题' : ref.how_to_use
+    return `${ref.title}：${use}`
   }
-  return activeSegment.value?.example || activeSegment.value?.question?.prompt || '先用一个例子确认自己是否真正理解。'
+  const example = activeSegment.value?.example || activeSegment.value?.question?.prompt
+  return isLowValueText(example) ? activeTeachingPack.value.example : example
 })
 const segmentAudioKey = (segment = activeSegment.value, index = activeSegmentIndex.value) =>
   `${route.params.pathId || launchPayload.value?.pathId || 'path'}:${route.params.nodeId || node.value.id || 'node'}:${index}:${segment?.id || 'segment'}`
 const currentAudioKey = computed(() => segmentAudioKey(activeSegment.value, activeSegmentIndex.value))
 const visibleBoardItems = computed(() => {
-  if (activeSegment.value?.type === 'resource' || activeSegment.value?.id === 'resource-link') {
-    return ['定位证据', '对照板书', '补齐步骤', '找反例', '复述结论']
+  if (isResourceScene(activeSegment.value)) {
+    return activeTeachingPack.value.resourceItems
   }
   const items = activeSegment.value?.boardItems?.length ? activeSegment.value.boardItems : activeSegment.value?.points || []
-  return items.slice(0, 5)
+  const cleaned = uniqueCleanItems(items, 5)
+  return cleaned.length >= 2 ? cleaned : activeTeachingPack.value.coreItems
 })
 const feynmanUnlocked = computed(() => activeSegmentIndex.value >= lessonSegments.value.length - 1)
 
@@ -791,13 +952,12 @@ const resourceBrief = resource => {
     resource.description,
     resource.abstract,
     resource.content,
-    resource.text,
-    resource.how_to_use
+    resource.text
   ]
   const content = candidates
     .map(item => String(item || '').replace(/\s+/g, ' ').trim())
-    .find(Boolean)
-  return content ? content.slice(0, 120) : '暂无可展示摘录，课堂会优先使用节点知识继续讲解。'
+    .find(item => item && !/验证当前板书|支撑本幕讲解|找定义、步骤或例题|课堂会在对应阶段/i.test(item))
+  return content ? content.slice(0, 120) : '暂无可展示摘录，可打开素材查看原文。'
 }
 
 const loadClassroomLesson = async () => {
@@ -991,7 +1151,7 @@ const backToPath = () => {
 onMounted(() => {
   profileSnapshot.value = readStoredProfileSnapshot()
   launchPayload.value = readJson(sessionStorage, CLASSROOM_LAUNCH_KEY) || normalizeNodeFromCache() || normalizeNodeFromRoute()
-  pushTeacher(`欢迎来到「${node.value.title || '互动课堂'}」。这节课会按“讲解、资料验证、课堂追问、费曼讲述”的顺序推进。`)
+  pushTeacher(`欢迎来到「${node.value.title || '互动课堂'}」。这节课会按“讲解、资料佐证、课堂追问、费曼讲述”的顺序推进。`)
   void loadClassroomLesson()
 })
 
@@ -1205,11 +1365,11 @@ onBeforeUnmount(stopLectureAudio)
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-height: 42px;
-  padding: 4px 6px;
+  min-height: 36px;
+  padding: 2px 4px;
   border-radius: 16px;
   color: #164b96;
   background: transparent;
@@ -1779,8 +1939,7 @@ button:disabled {
 
 .resource-card p,
 .empty-copy,
-.feynman-panel p,
-.personal-panel p {
+.feynman-panel p {
   margin: 0;
   color: #6388ad;
   line-height: 1.62;
@@ -1793,27 +1952,11 @@ button:disabled {
   -webkit-box-orient: vertical;
 }
 
-.personal-panel p,
 .feynman-panel p {
   display: -webkit-box;
   overflow: hidden;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-}
-
-.strategy-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 10px;
-}
-
-.strategy-tags span {
-  padding: 6px 9px;
-  border-radius: 999px;
-  color: #0d4b93;
-  background: #e8f3ff;
-  font-weight: 900;
 }
 
 .feynman-panel {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +106,16 @@ _GENERIC_CLASSROOM_PHRASES = [
     "资料只服务",
     "文件列表",
     "右侧资料",
+    "先建立问题意识",
+    "用一句话解释",
+    "前后知识的关系",
+    "页数",
+    "页块",
+    "支撑本幕",
+    "讲给小知",
+    "资料不是摆设",
+    "课堂主画面",
+    "亲啊",
 ]
 
 
@@ -136,11 +147,156 @@ def _is_generic_teaching(script: Any, board_items: Any, example: Any) -> bool:
     return False
 
 
+def _dedupe_text_items(items: list[Any], limit: int = 5, size: int = 56) -> list[str]:
+    cleaned: list[str] = []
+    seen = set()
+    for item in items if isinstance(items, list) else []:
+        text = _clip(item, size).strip(" ，,。；;")
+        if not text:
+            continue
+        if any(phrase in text for phrase in _GENERIC_CLASSROOM_PHRASES):
+            continue
+        key = re.sub(r"[\s，,。；;：:、]+", "", text).lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _resource_refs(resources: list[dict[str, str]], limit: int = 3) -> list[dict[str, str]]:
+    refs = []
+    for item in resources[:limit]:
+        refs.append({
+            "title": _clip(item.get("title") or "学习资料", 48),
+            "type": _clip(item.get("type") or "资料", 24),
+            "how_to_use": _clip(item.get("summary") or "核对定义、步骤或例题", 90),
+        })
+    return refs
+
+
+def _teaching_pack(topic: str, summary: str) -> dict[str, Any]:
+    title = _clip(topic, 60) or "当前知识点"
+    context = f"{title} {_clip(summary, 500)}"
+
+    if re.search(r"BCD|ASCII|编码", context, re.I):
+        return {
+            "lead": "先分清两件事：数字怎样保存，字符怎样编号。",
+            "entry_items": ["数字表示", "字符编码", "易混对比"],
+            "core_items": ["BCD表示十进制数字", "8421BCD按权相加", "压缩BCD一字节两位", "ASCII表示字符编号", "编码值不等于数值"],
+            "lines": [
+                "BCD服务十进制数字，每一位只允许表示0到9。",
+                "8421BCD靠8、4、2、1四个位权组合出一位十进制数。",
+                "ASCII服务字符，字符“5”的编码是35H，不等于数值5。",
+            ],
+            "example": "十进制59的压缩BCD是0101 1001B；字符“5”的ASCII码是35H。",
+            "resource_items": ["查BCD定义", "查8421权值", "查ASCII码表"],
+            "resource_lines": ["先在资料中找BCD定义。", "再找8421BCD权值说明。", "最后对比ASCII码表里的字符编号。"],
+            "resource_example": "资料里若同时出现BCD和ASCII，重点看它们分别服务“数字”和“字符”。",
+            "question": "为什么字符“5”的ASCII码不是二进制数5？",
+            "feynman_prompt": "请用“数字表示”和“字符编号”的区别讲清BCD与ASCII。",
+        }
+
+    if re.search(r"补码|反码|原码|符号", context):
+        return {
+            "lead": "负数编码的核心目标，是让机器用加法完成减法。",
+            "entry_items": ["为什么要补码", "负数怎么表示", "溢出怎么判断"],
+            "core_items": ["原码最高位表符号", "反码负数按位取反", "补码等于反码加一", "补码统一加减运算", "溢出看符号变化"],
+            "lines": [
+                "原码直观，但会出现正零和负零，运算处理不方便。",
+                "补码把减法转换为加法，让CPU可以复用同一套加法器。",
+                "判断补码结果必须结合机器位数，不能只看二进制表面。",
+            ],
+            "example": "8位机器中，-5原码为10000101，反码为11111010，补码为11111011。",
+            "resource_items": ["找表示规则", "找转换步骤", "找溢出例题"],
+            "resource_lines": ["先查原码、反码、补码的定义。", "再核对负数转换步骤。", "最后看溢出判断例题。"],
+            "resource_example": "遇到补码例题，先确认位数，再做取反加一。",
+            "question": "为什么补码能让减法用加法器完成？",
+            "feynman_prompt": "请用“省掉单独减法电路”的角度解释补码。",
+        }
+
+    if re.search(r"数制|进制|转换|位权|基数", context):
+        return {
+            "lead": "进制转换只抓两个词：基数决定可用数字，位权决定每位价值。",
+            "entry_items": ["基数是什么", "位权怎么算", "怎么互转"],
+            "core_items": ["基数决定数字范围", "位权决定每位价值", "按权展开转十进制", "除基取余转目标进制", "二八十六分组互转"],
+            "lines": [
+                "任意进制都能按位权展开成十进制，这是最稳的中间桥。",
+                "十进制转其他进制常用除基取余，余数从下往上读。",
+                "二进制到八进制每3位一组，到十六进制每4位一组。",
+            ],
+            "example": "1011B = 1x8 + 0x4 + 1x2 + 1x1 = 11D。",
+            "resource_items": ["找位权公式", "找转换步骤", "找分组例题"],
+            "resource_lines": ["先查基数和位权定义。", "再找按权展开例子。", "最后核对分组互转规则。"],
+            "resource_example": "看到1011B时，先写位权8、4、2、1，再相加。",
+            "question": "为什么二进制转十六进制可以每4位一组？",
+            "feynman_prompt": "请用“基数”和“位权”解释一次进制转换。",
+        }
+
+    if re.search(r"寻址|物理地址|段地址|偏移|CS|IP", context, re.I):
+        return {
+            "lead": "8086寻址可以先看成：段起点加段内偏移。",
+            "entry_items": ["段地址是什么", "偏移地址是什么", "物理地址怎么算"],
+            "core_items": ["段地址左移4位", "偏移地址定位段内位置", "物理地址20位", "CS和IP配合取指", "DS常用于数据访问"],
+            "lines": [
+                "8086用段地址和偏移地址组合出20位物理地址。",
+                "段地址左移4位相当于乘16，再加偏移地址。",
+                "CS:IP用于取下一条指令，DS通常配合数据访问。",
+            ],
+            "example": "CS=1234H，IP=5678H，则物理地址=12340H+5678H=179B8H。",
+            "resource_items": ["找地址公式", "找寄存器作用", "找计算例题"],
+            "resource_lines": ["先查物理地址公式。", "再确认CS、IP、DS的作用。", "最后做一题段地址加偏移地址。"],
+            "resource_example": "资料中若有CS:IP例题，直接拿来验证左移4位再相加。",
+            "question": "段地址为什么要左移4位再加偏移地址？",
+            "feynman_prompt": "请用“楼栋号加房间号”的类比解释段地址和偏移地址。",
+        }
+
+    if re.search(r"8086|CPU|微处理器|内部结构|EU|BIU", context, re.I):
+        return {
+            "lead": "8086内部结构先看两个协作单元：EU负责执行，BIU负责取指和总线。",
+            "entry_items": ["谁负责执行", "谁负责取指", "为什么能并行"],
+            "core_items": ["EU负责译码执行", "BIU负责取指访存", "指令队列减少等待", "寄存器保存中间结果", "标志位记录运算状态"],
+            "lines": [
+                "EU包含运算器、寄存器和标志寄存器，负责真正执行指令。",
+                "BIU负责访问存储器和I/O，并把指令提前取入队列。",
+                "指令队列让取指和执行部分重叠，是8086流水思想的入口。",
+            ],
+            "example": "BIU先取指进队列，EU执行当前指令；遇到转移指令时队列会刷新。",
+            "resource_items": ["找EU组成", "找BIU作用", "找指令队列"],
+            "resource_lines": ["先查EU和BIU各自组成。", "再看指令队列为什么能减少等待。", "最后联系转移指令刷新队列。"],
+            "resource_example": "看到8086结构图时，先把部件分到EU或BIU两边。",
+            "question": "8086为什么要把EU和BIU分开？",
+            "feynman_prompt": "请用“前台执行、后台取货”的类比解释EU和BIU。",
+        }
+
+    keywords = _dedupe_text_items(
+        [item for item in re.split(r"[，,、。；;\s]+", f"{title} {summary}") if item],
+        limit=5,
+        size=24,
+    )
+    core_items = keywords if len(keywords) >= 3 else [title, "核心定义", "关键步骤", "典型例题", "易错点"]
+    return {
+        "lead": f"这节先讲清「{title}」解决的问题，再把细节留给资料和练习。",
+        "entry_items": core_items[:3],
+        "core_items": core_items,
+        "lines": [
+            f"先确认「{title}」的定义边界，避免和相近概念混淆。",
+            "再找它的步骤、结构或作用链，形成可复述的主线。",
+            "最后用一个例题或场景检查自己能不能迁移。",
+        ],
+        "example": f"先说清「{title}」是什么，再补一个它解决什么问题的例子。",
+        "resource_items": ["找定义边界", "找步骤公式", "找例题验证"],
+        "resource_lines": ["先找资料中的定义边界。", "再找步骤、公式或例题。", "最后复述证据支持的结论。"],
+        "resource_example": f"在资料中找一段能解释「{title}」定义或步骤的内容。",
+        "question": f"「{title}」最容易和哪个概念混淆？",
+        "feynman_prompt": f"请用三句话讲清「{title}」：是什么、为什么重要、怎么用。",
+    }
+
+
 def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], portrait_text: str) -> dict[str, Any]:
-    keywords = [item for item in summary.replace("，", "、").replace(",", "、").split("、") if item.strip()][:5]
-    if not keywords:
-        keywords = [topic, "关键概念", "典型题型"]
-    resource_titles = [item["title"] for item in resources[:3]] or ["当前路径节点"]
+    pack = _teaching_pack(topic, summary)
     personal = "会结合你的画像调整讲法" if portrait_text and "暂无" not in portrait_text else "先按通用课堂节奏推进"
     return {
         "title": topic,
@@ -150,22 +306,22 @@ def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], 
                 "id": "lead-in",
                 "type": "hook",
                 "title": "情境导入",
-                "subtitle": "先把知识点放进真实任务",
+                "subtitle": "先判断它解决什么问题",
                 "intent": "先知道为什么学",
-                "teacher_speech": f"这节课先把「{topic}」放进真实解题场景里。你不需要一开始背完整定义，先抓它解决什么问题，再看它和后续知识的关系。",
-                "script": f"这节课先把「{topic}」放进真实解题场景里。你不需要一开始背完整定义，先抓它解决什么问题，再看它和后续知识的关系。",
-                "board_title": "本节要解决的问题",
-                "board_items": [summary or f"{topic} 是本节点的核心任务", "先建立问题意识", "再进入概念拆解"],
-                "points": [summary or f"{topic} 是本节点的核心任务", "先建立问题意识，再进入概念拆解"],
-                "visual_hint": "从问题入口进入，不把资料当成普通文件列表。",
-                "example": f"如果题目问到「{topic}」，先判断它考的是概念、步骤还是应用。",
+                "teacher_speech": f"这节先从问题进入：{pack['lead']}你不用一开始背完整资料，先抓住它解决什么问题、常在题目里以什么形式出现，再进入细节。",
+                "script": f"这节先从问题进入：{pack['lead']}你不用一开始背完整资料，先抓住它解决什么问题、常在题目里以什么形式出现，再进入细节。",
+                "board_title": "问题入口",
+                "board_items": pack["entry_items"],
+                "points": pack["lines"][:3],
+                "visual_hint": pack["lead"],
+                "example": pack["example"],
                 "resource_refs": [],
                 "duration_seconds": 18,
                 "question": {
-                    "prompt": f"学「{topic}」时，最先要问自己的问题是什么？",
-                    "options": ["它解决什么问题", "先背所有定义", "直接跳到下一章"],
-                    "answer": "它解决什么问题",
-                    "feedback": "对，先抓问题，再补定义和公式，后面做题会稳很多。",
+                    "prompt": pack["question"],
+                    "options": ["先说定义", "先看例题", "先找易混点"],
+                    "answer": "先说定义",
+                    "feedback": "先把定义边界说清楚，再看例题和易混点。",
                 },
             },
             {
@@ -174,43 +330,36 @@ def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], 
                 "title": "核心讲解",
                 "subtitle": "把主干拆成可理解的关系",
                 "intent": "拆开关键概念",
-                "teacher_speech": f"现在进入主干。围绕「{topic}」，我们先抓住 { '、'.join(keywords[:3]) }。每个概念都不要孤立看，要问它从哪里来、参与什么过程、容易和谁混淆。",
-                "script": f"现在进入主干。围绕「{topic}」，我们先抓住 { '、'.join(keywords[:3]) }。每个概念都不要孤立看，要问它从哪里来、参与什么过程、容易和谁混淆。",
+                "teacher_speech": f"现在讲主干。{''.join(pack['lines'])}这一幕只保留最核心的关系，更多推导细节留到右侧资料里慢慢看。",
+                "script": f"现在讲主干。{''.join(pack['lines'])}这一幕只保留最核心的关系，更多推导细节留到右侧资料里慢慢看。",
                 "board_title": "概念主线",
-                "board_items": keywords,
-                "points": keywords,
-                "visual_hint": "按“来源 -> 作用 -> 易混点”三步看概念。",
-                "example": f"把「{topic}」拆成一个输入、一个处理过程、一个输出结果。",
+                "board_items": pack["core_items"],
+                "points": pack["lines"],
+                "visual_hint": pack["lead"],
+                "example": pack["example"],
                 "resource_refs": [],
                 "duration_seconds": 24,
                 "question": {
-                    "prompt": "如果只能保留一句话，你会怎样概括这一段？",
-                    "options": ["概念关系和使用场景", "教材原文", "随便记几个词"],
-                    "answer": "概念关系和使用场景",
-                    "feedback": "很好，课堂的目标是能解释和迁移，不是只记词。",
+                    "prompt": pack["question"],
+                    "options": ["定义边界", "步骤关系", "易错对比"],
+                    "answer": "定义边界",
+                    "feedback": "先抓定义边界，再补步骤关系和易错对比。",
                 },
             },
             {
                 "id": "resource-link",
                 "type": "resource",
-                "title": "资料验证",
+                "title": "资料佐证",
                 "subtitle": "用资料查证课堂主线",
                 "intent": "查证关键点",
-                "teacher_speech": f"现在用资料反过来验证「{topic}」的板书。先找到定义、步骤或例题，再判断它能否解释刚才的概念关系。",
-                "script": f"现在用资料反过来验证「{topic}」的板书。先找到定义、步骤或例题，再判断它能否解释刚才的概念关系。",
+                "teacher_speech": f"现在用资料做校验。{''.join(pack['resource_lines'])}资料不需要整篇搬进课堂，只要找出能支撑刚才板书的证据。",
+                "script": f"现在用资料做校验。{''.join(pack['resource_lines'])}资料不需要整篇搬进课堂，只要找出能支撑刚才板书的证据。",
                 "board_title": "查证路径",
-                "board_items": ["找定义", "找步骤", "找例题", "回看结构"],
-                "points": [f"定位「{topic}」的定义", "找可复现的步骤或公式", "用例题检查板书是否能解释"],
-                "visual_hint": "资料只负责查证，不在课堂主画面重复列文件。",
-                "example": f"先找资料中能解释「{topic}」定义或步骤的一段，再对照板书复述。",
-                "resource_refs": [
-                    {
-                        "title": item["title"],
-                        "type": item["type"],
-                        "how_to_use": _clip(item.get("summary") or "用来验证本幕板书", 90),
-                    }
-                    for item in resources[:3]
-                ],
+                "board_items": pack["resource_items"],
+                "points": pack["resource_lines"],
+                "visual_hint": "资料负责查证，课堂负责讲清主线。",
+                "example": pack["resource_example"],
+                "resource_refs": _resource_refs(resources),
                 "duration_seconds": 22,
                 "question": {
                     "prompt": "看资料时最应该优先验证什么？",
@@ -225,17 +374,17 @@ def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], 
                 "title": "即时检查",
                 "subtitle": "用一个短问暴露薄弱点",
                 "intent": "用短问题卡住薄弱点",
-                "teacher_speech": f"这里做一个短检查：如果你能用自己的话讲清「{topic}」的关键步骤，就说明主线已经过关；如果讲不清，就回到板书第一条。",
-                "script": f"这里做一个短检查：如果你能用自己的话讲清「{topic}」的关键步骤，就说明主线已经过关；如果讲不清，就回到板书第一条。",
+                "teacher_speech": f"现在做一次短检查：{pack['question']}如果答不上来，不急着继续刷题，先回到上一幕板书，把定义、步骤和例子重新对齐。",
+                "script": f"现在做一次短检查：{pack['question']}如果答不上来，不急着继续刷题，先回到上一幕板书，把定义、步骤和例子重新对齐。",
                 "board_title": "检查路径",
                 "board_items": ["用一句话概括", "举一个例子", "指出一个易错点"],
-                "points": ["用一句话概括", "举一个例子", "指出一个易错点"],
+                "points": [pack["question"], "答不上来就回看板书", "用例题定位薄弱点"],
                 "visual_hint": "先小问，再决定是否进入正式测验。",
-                "example": f"试着说出「{topic}」最容易出错的一处。",
+                "example": pack["question"],
                 "resource_refs": [],
                 "duration_seconds": 18,
                 "question": {
-                    "prompt": f"你现在最可能卡在「{topic}」的哪一块？",
+                    "prompt": pack["question"],
                     "options": ["概念关系", "计算步骤", "例题迁移"],
                     "answer": "概念关系",
                     "feedback": "无论选哪项都可以，后面小知会按你的回答追问。",
@@ -247,13 +396,13 @@ def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], 
                 "title": "费曼反讲",
                 "subtitle": "换你当老师讲一遍",
                 "intent": "换你当老师",
-                "teacher_speech": f"最后换你讲。请用给同学解释的方式，把「{topic}」讲成三句话：它是什么、为什么重要、题目里怎么用。",
-                "script": f"最后换你讲。请用给同学解释的方式，把「{topic}」讲成三句话：它是什么、为什么重要、题目里怎么用。",
+                "teacher_speech": f"最后换你讲。{pack['feynman_prompt']}讲不顺的地方不用藏起来，那正是下一轮学习最该补的位置。",
+                "script": f"最后换你讲。{pack['feynman_prompt']}讲不顺的地方不用藏起来，那正是下一轮学习最该补的位置。",
                 "board_title": "三句话反讲",
                 "board_items": ["是什么", "为什么重要", "怎么用"],
                 "points": ["是什么", "为什么重要", "怎么用"],
                 "visual_hint": "讲不顺的地方就是下一轮补强点。",
-                "example": f"你可以这样开头：{topic} 主要帮助我理解……",
+                "example": pack["feynman_prompt"],
                 "resource_refs": [],
                 "duration_seconds": 20,
                 "question": {
