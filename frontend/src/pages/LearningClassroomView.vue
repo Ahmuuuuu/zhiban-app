@@ -109,6 +109,23 @@
           />
         </div>
 
+        <section class="dialog-panel classroom-dialog-panel">
+          <div class="section-head">
+            <span>课堂对话</span>
+            <small>{{ messages.length }} 条</small>
+          </div>
+          <div class="dialog-messages">
+            <article v-for="message in messages" :key="message.id" :class="message.role">
+              <strong>{{ message.role === 'teacher' ? '小知' : '我' }}</strong>
+              <p>{{ message.content }}</p>
+            </article>
+          </div>
+          <form class="dialog-input" @submit.prevent="sendLearnerMessage">
+            <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
+            <button type="submit" :disabled="!learnerInput">发送</button>
+          </form>
+        </section>
+
         <div v-if="showCheckpoint" class="checkpoint-card">
           <span><MessageCircle :size="16" /> 课堂追问</span>
           <h3>{{ activeQuestion.prompt }}</h3>
@@ -138,6 +155,23 @@
         </div>
       </section>
 
+      <section class="dialog-panel classroom-dialog-panel">
+        <div class="section-head">
+          <span>课堂对话</span>
+          <small>{{ messages.length }} 条</small>
+        </div>
+        <div class="dialog-messages">
+          <article v-for="message in messages" :key="message.id" :class="message.role">
+            <strong>{{ message.role === 'teacher' ? '小知' : '我' }}</strong>
+            <p>{{ message.content }}</p>
+          </article>
+        </div>
+        <form class="dialog-input" @submit.prevent="sendLearnerMessage">
+          <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
+          <button type="submit" :disabled="!learnerInput">发送</button>
+        </form>
+      </section>
+
       <aside class="resource-shelf">
         <section class="personal-panel">
           <div class="section-head">
@@ -157,7 +191,37 @@
           </div>
           <div v-if="activeResourceCards.length" class="resource-list">
             <article v-for="resource in activeResourceCards" :key="resource.id || resource.title" class="resource-card">
-              <span>{{ resource.typeLabel || resource.fileType || '资料' }}</span>
+              <div class="resource-card__top">
+                <span>{{ resource.typeLabel || resource.fileType || '资料' }}</span>
+                <div class="resource-card__actions">
+                  <button
+                    type="button"
+                    title="预览"
+                    :disabled="!canPreviewClassroomResource(resource)"
+                    @click="previewClassroomResource(resource)"
+                  >
+                    <Eye :size="13" />
+                    <span>预览</span>
+                  </button>
+                  <button
+                    type="button"
+                    :title="isClassroomResourceSaved(resource) ? '已保存' : '保存'"
+                    @click="saveClassroomResource(resource)"
+                  >
+                    <Save :size="13" />
+                    <span>{{ isClassroomResourceSaved(resource) ? '已存' : '保存' }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    title="下载"
+                    :disabled="!canDownloadClassroomResource(resource)"
+                    @click="downloadClassroomResource(resource)"
+                  >
+                    <Download :size="13" />
+                    <span>下载</span>
+                  </button>
+                </div>
+              </div>
               <strong>{{ resource.title }}</strong>
               <p>{{ resourceBrief(resource) }}</p>
             </article>
@@ -210,11 +274,12 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, MessageCircle, Pause, Play, Volume2 } from 'lucide-vue-next'
+import { ArrowLeft, Download, Eye, MessageCircle, Pause, Play, Save, Volume2 } from 'lucide-vue-next'
 import { generateNodeClassroom, narrateClassroomText } from '../api/learningPath'
-import { resolveApiUrl } from '../api/config'
+import { downloadWithToken, resolveApiUrl } from '../api/config'
 import VideoGlowProgress from '../components/ppt_video/video/VideoGlowProgress.vue'
 import petImage from '../assets/pic/study-pet-reference-cutout.png'
+import { saveGeneratedResourceRef } from '../utils/savedResources'
 
 const CLASSROOM_LAUNCH_KEY = 'zhiban_classroom_launch'
 const PATH_CACHE_KEY = 'zhiban_path_state'
@@ -240,6 +305,7 @@ const audioLoading = ref(false)
 const audioError = ref('')
 const audioUrls = ref({})
 const audioDurations = ref({})
+const savedClassroomResourceIds = ref(new Set())
 let lectureAudio = null
 
 const readJson = (storage, key) => {
@@ -800,6 +866,89 @@ const resourceBrief = resource => {
   return content ? content.slice(0, 120) : '暂无可展示摘录，课堂会优先使用节点知识继续讲解。'
 }
 
+const classroomResourceId = resource => String(
+  resource?.resourceId ||
+  resource?.resource_id ||
+  resource?.sourceId ||
+  resource?.fileId ||
+  resource?.file_id ||
+  resource?.id ||
+  resource?.title ||
+  ''
+).trim()
+
+const classroomResourcePreviewUrl = resource => resolveApiUrl(
+  resource?.previewUrl ||
+  resource?.preview_url ||
+  resource?.fileUrl ||
+  resource?.file_url ||
+  resource?.url ||
+  resource?.downloadUrl ||
+  resource?.download_url ||
+  ''
+)
+
+const classroomResourceDownloadUrl = resource => resolveApiUrl(
+  resource?.downloadUrl ||
+  resource?.download_url ||
+  resource?.fileUrl ||
+  resource?.file_url ||
+  resource?.url ||
+  resource?.previewUrl ||
+  resource?.preview_url ||
+  ''
+)
+
+const classroomResourceType = resource => resource?.fileType || resource?.file_type || resource?.type || resource?.typeLabel || 'file'
+
+const canPreviewClassroomResource = resource => Boolean(classroomResourcePreviewUrl(resource) || resource?.content || resource?.summary)
+
+const canDownloadClassroomResource = resource => Boolean(classroomResourceDownloadUrl(resource))
+
+const isClassroomResourceSaved = resource => savedClassroomResourceIds.value.has(classroomResourceId(resource))
+
+const previewClassroomResource = resource => {
+  const url = classroomResourcePreviewUrl(resource)
+  if (url) {
+    window.open(url, '_blank', 'noopener,noreferrer')
+    return
+  }
+  if (resource?.content || resource?.summary) {
+    window.alert(resource.content || resource.summary)
+  }
+}
+
+const saveClassroomResource = resource => {
+  const sourceId = classroomResourceId(resource)
+  if (!sourceId) return
+  saveGeneratedResourceRef({
+    sourceId,
+    kind: resource?.resourceKind || resource?.kind || 'resource',
+    fileType: classroomResourceType(resource),
+    category: 'reference',
+    title: resource?.title || '课堂学习资源',
+    filename: resource?.filename || resource?.file_name || resource?.title || '课堂学习资源',
+    content: resource?.content || resource?.summary || resource?.description || '',
+    coverUrl: resource?.coverUrl || resource?.cover_url || '',
+    previewUrl: classroomResourcePreviewUrl(resource),
+    downloadUrl: classroomResourceDownloadUrl(resource),
+    annotations: Array.isArray(resource?.annotations) ? resource.annotations : [],
+    visibility: 'private'
+  })
+  savedClassroomResourceIds.value = new Set([...savedClassroomResourceIds.value, sourceId])
+}
+
+const downloadClassroomResource = async resource => {
+  const url = classroomResourceDownloadUrl(resource)
+  if (!url) return
+  try {
+    await downloadWithToken(url, resource?.filename || resource?.file_name || resource?.title || '课堂学习资源')
+  } catch (err) {
+    console.error('[LearningClassroom] download resource failed:', err)
+    window.alert(err?.message || '下载失败，请稍后再试。')
+  }
+}
+
 const loadClassroomLesson = async () => {
   const pathId = String(launchPayload.value?.pathId || route.params.pathId || '')
   const nodeId = String(node.value.id || node.value.node_id || node.value.nodeId || route.params.nodeId || '')
@@ -1058,12 +1207,12 @@ onBeforeUnmount(stopLectureAudio)
 .classroom-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(300px, 20vw, 340px);
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px 16px;
-  height: min(790px, calc(100vh - 132px));
-  min-height: 0;
-  max-height: 790px;
-  align-items: stretch;
+  grid-template-rows: auto minmax(650px, auto) auto;
+  gap: 10px 16px;
+  height: auto;
+  min-height: min(790px, calc(100vh - 118px));
+  max-height: none;
+  align-items: start;
 }
 
 .lesson-rail,
@@ -1081,20 +1230,20 @@ onBeforeUnmount(stopLectureAudio)
   grid-row: 1;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  min-height: 74px;
-  padding: 8px;
+  gap: 6px;
+  min-height: 54px;
+  padding: 6px;
   overflow: visible;
-  border-radius: 20px;
+  border-radius: 18px;
 }
 
 .lesson-step {
   display: flex;
-  gap: 8px;
+  gap: 7px;
   align-items: center;
   min-width: 0;
-  padding: 9px 10px;
-  border-radius: 15px;
+  padding: 6px 8px;
+  border-radius: 13px;
   cursor: pointer;
   transition: background 160ms ease, transform 160ms ease;
 }
@@ -1111,8 +1260,8 @@ onBeforeUnmount(stopLectureAudio)
 .lesson-step span {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: #e8f2fc;
   color: #4d83bd;
@@ -1133,6 +1282,7 @@ onBeforeUnmount(stopLectureAudio)
   display: -webkit-box;
   overflow: hidden;
   color: #113f7c;
+  font-size: 14px;
   line-height: 1.22;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
@@ -1142,6 +1292,7 @@ onBeforeUnmount(stopLectureAudio)
   display: -webkit-box;
   overflow: hidden;
   color: #6f93b8;
+  font-size: 12px;
   line-height: 1.3;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
@@ -1153,7 +1304,7 @@ onBeforeUnmount(stopLectureAudio)
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 0;
+  min-height: min(700px, calc(100vh - 190px));
   padding: 12px;
   overflow: hidden;
   background:
@@ -1709,28 +1860,82 @@ button:disabled {
 
 .resource-shelf {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   max-height: 100%;
-  padding-right: 3px;
-  overflow-y: auto;
+  padding-right: 0;
+  font-size: 12px;
+  overflow-y: hidden;
   overflow-x: hidden;
-  scrollbar-gutter: stable;
 }
 
 .resource-shelf section {
   flex: 0 0 auto;
-  padding: 14px;
-  border-radius: 22px;
+  padding: 9px 10px;
+  border-radius: 16px;
   box-shadow: none;
 }
 
+.resource-shelf .personal-panel {
+  display: none;
+}
+
 .resource-shelf .dialog-panel {
-  flex: 1 1 auto;
-  min-height: 220px;
+  display: flex;
+  order: 3;
+  flex: 1 1 270px;
+  min-height: 260px;
+}
+
+.resource-shelf .dialog-panel .dialog-messages {
+  max-height: none;
+}
+
+.resource-shelf .dialog-panel .dialog-input {
+  margin-top: 8px;
+}
+
+.resource-shelf .dialog-panel .dialog-input input {
+  padding: 9px 11px;
+  font-size: 12px;
+}
+
+.resource-shelf .dialog-panel .dialog-input button {
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.resource-shelf .dialog-panel .dialog-messages article {
+  padding: 8px 10px;
+}
+
+.resource-shelf .dialog-panel .dialog-messages p {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.resource-shelf .dialog-panel .section-head {
+  margin-bottom: 8px;
+}
+
+.resource-shelf .dialog-panel .section-head span {
+  font-size: 18px;
+}
+
+.resource-shelf .dialog-panel .section-head small {
+  font-size: 12px;
+}
+
+.resource-shelf .feynman-panel {
+  order: 2;
+  min-height: 0;
+}
+
+.resource-shelf > section:not(.personal-panel):not(.feynman-panel):not(.dialog-panel) {
+  order: 1;
 }
 
 .section-head {
@@ -1738,40 +1943,84 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  margin-bottom: 9px;
+  margin-bottom: 6px;
   font-weight: 900;
   color: #123f7a;
+}
+
+.resource-shelf .section-head span {
+  font-size: 17px;
+  line-height: 1.2;
 }
 
 .section-head small {
   overflow: hidden;
   max-width: 96px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .resource-list {
   display: grid;
-  gap: 7px;
+  gap: 6px;
 }
 
 .resource-card {
-  padding: 12px;
-  border-radius: 16px;
+  padding: 7px 8px;
+  border-radius: 13px;
   background: rgba(244, 249, 255, 0.72);
   border: 1px solid rgba(216, 232, 246, 0.9);
 }
 
+.resource-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .resource-card span {
   color: #5d8fc2;
+  font-size: 12px;
   font-weight: 800;
+}
+
+.resource-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.resource-card__actions button {
+  min-width: 0;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid rgba(111, 164, 216, 0.32);
+  border-radius: 999px;
+  color: #164b96;
+  background: rgba(255, 255, 255, 0.84);
+  font-size: 10px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.resource-card__actions button:not(:disabled):hover {
+  color: #ffffff;
+  background: #164b96;
 }
 
 .resource-card strong {
   display: -webkit-box;
   overflow: hidden;
-  margin: 4px 0;
+  margin: 2px 0;
   color: #123f7a;
+  font-size: 13px;
   line-height: 1.32;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1783,13 +2032,14 @@ button:disabled {
 .personal-panel p {
   margin: 0;
   color: #6388ad;
-  line-height: 1.62;
+  line-height: 1.46;
 }
 
 .resource-card p {
   display: -webkit-box;
   overflow: hidden;
-  -webkit-line-clamp: 2;
+  font-size: 12px;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
 }
 
@@ -1797,22 +2047,24 @@ button:disabled {
 .feynman-panel p {
   display: -webkit-box;
   overflow: hidden;
-  -webkit-line-clamp: 3;
+  font-size: 13px;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
 .strategy-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 10px;
+  gap: 5px;
+  margin-top: 7px;
 }
 
 .strategy-tags span {
-  padding: 6px 9px;
+  padding: 4px 8px;
   border-radius: 999px;
   color: #0d4b93;
   background: #e8f3ff;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -1826,21 +2078,23 @@ button:disabled {
 
 .feynman-panel textarea {
   width: 100%;
-  min-height: 76px;
-  margin-top: 10px;
-  padding: 10px;
+  min-height: 48px;
+  margin-top: 7px;
+  padding: 8px 10px;
   resize: vertical;
   border: 1px solid #d1e3f2;
   border-radius: 16px;
   color: #123f7a;
+  font-size: 12px;
   background: white;
 }
 
 .feynman-panel button {
   width: 100%;
-  margin-top: 8px;
-  padding: 10px;
+  margin-top: 6px;
+  padding: 8px;
   color: white;
+  font-size: 13px;
   background: #164b96;
 }
 
@@ -1854,6 +2108,51 @@ button:disabled {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.classroom-dialog-panel {
+  grid-column: 1;
+  grid-row: 3;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-radius: 18px;
+}
+
+.teaching-stage > .classroom-dialog-panel {
+  display: none;
+}
+
+.classroom-shell > .classroom-dialog-panel {
+  display: none;
+}
+
+.classroom-dialog-panel .section-head {
+  margin-bottom: 6px;
+}
+
+.classroom-dialog-panel .dialog-messages {
+  max-height: 96px;
+}
+
+.classroom-dialog-panel .dialog-messages article {
+  max-width: 86%;
+  padding: 7px 10px;
+}
+
+.classroom-dialog-panel .dialog-messages p {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.42;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.classroom-dialog-panel .dialog-input {
+  margin-top: 7px;
+}
+
+.classroom-dialog-panel .dialog-input input {
+  padding: 8px 12px;
 }
 
 .dialog-messages {

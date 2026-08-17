@@ -4073,7 +4073,7 @@ onBeforeUnmount(() => {
   z-index: 4200;
   display: grid;
   place-items: center;
-  padding: 22px;
+  padding: clamp(18px, 4vh, 42px);
   background: rgba(12, 28, 58, 0.28);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -4082,8 +4082,9 @@ onBeforeUnmount(() => {
 
 .flip-card {
   position: relative;
-  width: min(430px, 100%);
-  min-height: 430px;
+  width: min(560px, calc(100vw - 36px));
+  height: min(760px, calc(100vh - 36px));
+  min-height: min(600px, calc(100vh - 36px));
   transform-style: preserve-3d;
   transform: rotateY(180deg) scale(0.96);
   transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -4101,6 +4102,7 @@ onBeforeUnmount(() => {
   border-radius: 30px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 28px 80px rgba(22, 63, 143, 0.22);
+  overflow: hidden;
 }
 
 .flip-back {
@@ -4113,10 +4115,13 @@ onBeforeUnmount(() => {
 }
 
 .flip-front {
-  padding: 28px;
+  max-height: 100%;
+  padding: 30px 32px 28px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .close-card {
@@ -4136,13 +4141,16 @@ onBeforeUnmount(() => {
 .flip-front h2 {
   margin: 12px 0 0;
   color: #163f8f;
-  font-size: 30px;
+  font-size: clamp(26px, 4.5vw, 34px);
+  line-height: 1.22;
+  overflow-wrap: anywhere;
 }
 
 .flip-front p {
   margin: 0;
   color: rgba(22, 63, 143, 0.72);
   line-height: 1.8;
+  overflow-wrap: anywhere;
 }
 
 .flip-front dl {
@@ -4152,10 +4160,11 @@ onBeforeUnmount(() => {
 }
 
 .flip-front dl div {
-  min-height: 48px;
-  padding: 10px 12px;
+  min-height: 64px;
+  padding: 13px 16px;
   border-radius: 16px;
   background: rgba(237, 249, 252, 0.78);
+  overflow-wrap: anywhere;
 }
 
 .flip-front dt {
@@ -4173,10 +4182,11 @@ onBeforeUnmount(() => {
 .classroom-entry-note {
   display: grid;
   gap: 6px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   border: 1px solid rgba(201, 220, 233, 0.86);
   border-radius: 18px;
   background: rgba(244, 250, 255, 0.86);
+  overflow-wrap: anywhere;
 }
 
 .classroom-entry-note strong {
@@ -4191,6 +4201,12 @@ onBeforeUnmount(() => {
 
 .card-actions {
   margin-top: auto;
+  position: sticky;
+  bottom: -28px;
+  z-index: 2;
+  padding-top: 10px;
+  padding-bottom: 2px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.98) 28%);
   display: flex;
   gap: 10px;
 }
@@ -5523,7 +5539,17 @@ onBeforeUnmount(() => {
   }
 
   .flip-card {
-    min-height: 460px;
+    width: min(100%, calc(100vw - 24px));
+    height: min(760px, calc(100vh - 24px));
+    min-height: min(560px, calc(100vh - 24px));
+  }
+
+  .flip-front {
+    padding: 26px 22px 22px;
+  }
+
+  .card-actions {
+    bottom: -22px;
   }
 
   .branch-resource-card {
