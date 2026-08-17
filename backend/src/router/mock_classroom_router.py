@@ -38,7 +38,6 @@ async def get_mock_classroom_user_id(
 
 class StartMockClassroomRequest(BaseModel):
     topic: str = Field(default="完成一次模拟讲课", max_length=128)
-    reference_text: str | None = Field(default=None, max_length=8000)
     planned_minutes: int = Field(default=5, ge=3, le=30)
 
 
@@ -54,7 +53,6 @@ async def start_mock_classroom_session(
     result = await MockClassroomService.start_session(
         user_id=user_id,
         topic=data.topic,
-        reference_text=data.reference_text,
         planned_minutes=data.planned_minutes,
     )
     return {"code": 200, "msg": "success", "data": result}

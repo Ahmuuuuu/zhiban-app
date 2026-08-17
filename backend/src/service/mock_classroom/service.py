@@ -35,11 +35,9 @@ class MockClassroomService:
     async def start_session(
         user_id: int,
         topic: str,
-        reference_text: str | None,
         planned_minutes: int,
     ) -> dict:
         normalized_topic = (topic or "").strip()[:128] or "完成一次模拟讲课"
-        normalized_reference = (reference_text or "").strip()[:8000] or None
         normalized_minutes = max(3, min(30, int(planned_minutes or 5)))
         session_key = await MockClassroomService._new_session_key()
         now = datetime.now()
@@ -48,7 +46,7 @@ class MockClassroomService:
             user_id=user_id,
             session_key=session_key,
             topic=normalized_topic,
-            reference_text=normalized_reference,
+            reference_text=None,
             planned_minutes=normalized_minutes,
             state="running",
             report_status="pending",
@@ -209,6 +207,10 @@ class MockClassroomService:
             asr_result = await MockClassroomASR.transcribe(audio_path)
             transcript = (asr_result.get("text") or session.transcript or "").strip()
             vision_summary = await MockClassroomVisionAnalyzer.summarize_session(session.id)
+            reference_text = await MockClassroomService._resolve_reference_text(session, user_id)
+            if reference_text != (session.reference_text or None):
+                session.reference_text = reference_text
+                await session.save(update_fields=["reference_text", "updated_at"])
             score_result = await MockClassroomScoring.score(
                 session=session,
                 transcript=transcript,
@@ -238,6 +240,30 @@ class MockClassroomService:
             logger.warning("[MockClassroom] report generation failed session=%s", session_key, exc_info=True)
             session.report_status = "failed"
             await session.save(update_fields=["report_status", "updated_at"])
+
+    @staticmethod
+    async def _resolve_reference_text(session: MockClassroomSession, user_id: int) -> str | None:
+        query = (session.topic or "").strip()
+        if not query:
+            return None
+
+        try:
+            from backend.src.utils.knowledge_base import search as kb_search
+
+            result = (await kb_search(query, top_k=5, user_id=user_id)) or ""
+        except Exception:
+            logger.warning("[MockClassroom] knowledge reference search failed topic=%s", query, exc_info=True)
+            return None
+
+        normalized = result.strip()
+        if not normalized:
+            return None
+
+        empty_markers = ("知识库中暂无相关内容", "知识库检索失败")
+        if any(marker in normalized for marker in empty_markers):
+            return None
+
+        return normalized[:8000]
 
     @staticmethod
     async def delete_media(user_id: int, session_key: str) -> None:

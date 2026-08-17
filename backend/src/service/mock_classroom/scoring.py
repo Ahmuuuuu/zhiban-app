@@ -48,7 +48,7 @@ class MockClassroomScoring:
         asr_result: dict[str, Any],
         user_id: int,
     ) -> dict[str, Any]:
-        prompt = f"""你是一个客观、克制的学习讲解评分助手。请根据学生的模拟讲课文字稿、参考要点和课堂画面统计，评价他对知识点的理解和表达熟练度。
+        prompt = f"""你是一个客观、克制的学习讲解评分助手。请根据学生的模拟讲课文字稿、后台知识库检索到的参考资料和课堂画面统计，评价他对知识点的理解和表达熟练度。
 
 评分权重：
 - knowledge_score 知识理解：60 分权重，关注概念覆盖、准确性、逻辑结构、例子、遗漏。
@@ -60,8 +60,8 @@ class MockClassroomScoring:
 课堂主题：{session.topic}
 计划时长：{session.planned_minutes} 分钟
 实际时长：{session.elapsed_seconds} 秒
-参考要点：
-{session.reference_text or "未提供"}
+知识库参考资料：
+{session.reference_text or "未检索到相关知识库资料，请主要根据课堂主题、讲课文字稿和客观画面统计做保守评分。"}
 
 ASR 状态：{asr_result.get("status")}
 讲课文字稿：
@@ -115,7 +115,7 @@ ASR 状态：{asr_result.get("status")}
 
         if transcript:
             knowledge_score = 52 + min(28, words // 18) + round(coverage_rate * 20)
-            gaps = [] if coverage_rate >= 0.5 else ["讲解中和参考要点的重合还不够，建议补充关键概念和例子。"]
+            gaps = [] if coverage_rate >= 0.5 else ["讲解中和知识库参考资料的重合还不够，建议补充关键概念和例子。"]
         else:
             knowledge_score = 35
             gaps = ["当前没有可用文字稿，知识理解分只能作为占位估计。"]

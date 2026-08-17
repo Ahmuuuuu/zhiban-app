@@ -51,15 +51,6 @@
             </div>
           </div>
 
-          <label class="form-field">
-            <span>参考要点</span>
-            <textarea
-              v-model.trim="referenceText"
-              maxlength="600"
-              placeholder="写下本节课必须讲清楚的概念、公式、例子或易错点"
-            ></textarea>
-          </label>
-
           <div class="device-grid">
             <label class="form-field">
               <span>摄像头</span>
@@ -360,7 +351,6 @@ const MAX_PENDING_FRAMES = 180
 
 const topic = ref('')
 const plannedMinutes = ref(5)
-const referenceText = ref('')
 const lessonMode = ref('setup')
 const isStartingLesson = ref(false)
 const isFinishingLesson = ref(false)
@@ -407,7 +397,7 @@ let audioChunks = []
 
 const normalizedTopic = computed(() => topic.value || '选择一个知识点，站上讲台讲清楚它')
 const boardHint = computed(() => {
-  return referenceText.value || '核心概念、推导步骤、例子和易错点都会成为讲解评分的参考。'
+  return '系统会从知识库检索相关资料，用来核对讲解内容是否准确完整。'
 })
 const devicesReady = computed(() => cameraReady.value && micReady.value)
 const targetSeconds = computed(() => plannedMinutes.value * 60)
@@ -498,7 +488,7 @@ const transcriptPreview = computed(() => {
   const transcript = String(reportData.value?.transcript || '').trim()
   if (transcript) return transcript
   const status = reportData.value?.rubric?.asr?.status
-  if (status === 'unconfigured') return '当前未配置 ASR，系统已经先根据讲课时长、参考要点和镜头状态生成降级报告。'
+  if (status === 'unconfigured') return '当前未配置 ASR，系统已经先根据讲课时长、知识库资料和镜头状态生成降级报告。'
   if (status === 'failed') return reportData.value?.rubric?.asr?.message || '音频转写失败，暂时没有可展示的文字稿。'
   if (reportStatus.value === 'ready') return '这次报告没有拿到有效文字稿，可以检查麦克风、音频上传和 ASR 配置。'
   return '报告生成中，文字稿完成后会显示在这里。'
@@ -704,7 +694,6 @@ const startTeaching = async () => {
     resetLessonRuntime()
     const sessionData = unwrapApiData(await startMockClassroomSession({
       topic: normalizedTopic.value,
-      reference_text: referenceText.value || null,
       planned_minutes: plannedMinutes.value
     }))
     activeSessionId.value = sessionData.session_id || ''

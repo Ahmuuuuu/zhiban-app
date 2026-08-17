@@ -98,7 +98,6 @@ export function deleteStudyRoomTimelapse(sessionId: string): Promise<unknown>;
 
 export function startMockClassroomSession(data: {
   topic: string;
-  reference_text?: string | null;
   planned_minutes: number;
 }): Promise<unknown>;
 

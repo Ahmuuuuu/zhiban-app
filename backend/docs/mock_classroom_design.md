@@ -45,7 +45,6 @@ frontend/src/pages/MockClassroomView.vue
 
 - 讲解主题：例如“二次函数的顶点式”
 - 讲解时长：建议 3、5、8、10 分钟
-- 参考资料：可手动输入，也可后续从学习资源里选择
 - 摄像头
 - 麦克风
 
@@ -94,7 +93,7 @@ frontend/src/pages/MockClassroomView.vue
 
 ### 知识理解 60%
 
-主要依据讲解文字稿和参考答案/资料。
+主要依据讲解文字稿和后台知识库检索到的参考资料。
 
 子项：
 
@@ -206,7 +205,6 @@ POST /mock-classroom/sessions/start
 ```json
 {
   "topic": "二次函数的顶点式",
-  "reference_text": "二次函数 y=a(x-h)^2+k 的顶点是 (h,k)...",
   "planned_minutes": 5
 }
 ```
@@ -366,7 +364,7 @@ mock_classroom_sessions
 id                    Int PK
 session_key           CharField unique
 topic                 CharField
-reference_text        Text null
+reference_text        Text null，后台知识库检索到的评分参考资料
 planned_minutes       Int
 state                 CharField
 report_status         CharField
@@ -439,7 +437,7 @@ created_at            Datetime auto_now_add
 1. 保存最后一次会话状态
 2. 读取音频文件
 3. 调用 ASR 生成 transcript
-4. 用 transcript + topic + reference_text 做知识理解评分
+4. 用 topic 从知识库检索参考资料，再结合 transcript 做知识理解评分
 5. 用 transcript + 时长信息做熟练度评分
 6. 汇总摄像头帧日志做表达状态评分
 7. 计算综合分
@@ -522,7 +520,7 @@ person_count == 1 -> stable
 - 讲课结束后后台生成报告。
 - 音频转写走 OpenAI 兼容 ASR 接口；未配置 ASR 时不阻塞报告，会降级为无文字稿评分。
 - 摄像头帧复用自习室 YOLO 能力，统计人像是否稳定、是否离开画面、是否多人入镜。
-- 知识理解和讲解熟练度优先用 LLM 结合文字稿与参考要点评分。
+- 知识理解和讲解熟练度优先用 LLM 结合文字稿与后台知识库参考资料评分。
 - LLM 或 ASR 不可用时，使用启发式评分，并在建议里说明限制。
 - 前端结束讲课后自动轮询报告状态，展示综合分、知识理解、讲解熟练度、表达状态。
 

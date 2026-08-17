@@ -9,7 +9,7 @@ class MockClassroomSession(Model):
     id = fields.IntField(pk=True)
     session_key = fields.CharField(max_length=64, unique=True, description="Public session id")
     topic = fields.CharField(max_length=128, description="Teaching topic")
-    reference_text = fields.TextField(null=True, description="Reference notes or answer text")
+    reference_text = fields.TextField(null=True, description="Knowledge-base reference text used for scoring")
     planned_minutes = fields.IntField(default=5, description="Planned teaching duration")
     state = fields.CharField(max_length=16, default="running", description="running/finished/cancelled")
     report_status = fields.CharField(max_length=16, default="pending", description="pending/generating/ready/failed")
