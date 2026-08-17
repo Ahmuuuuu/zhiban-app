@@ -186,7 +186,7 @@
 
         <section>
           <div class="section-head">
-            <span>当前素材</span>
+            <span>学习资料</span>
             <small>{{ activeResourceCards.length }} 份</small>
           </div>
           <div v-if="activeResourceCards.length" class="resource-list">
@@ -972,9 +972,6 @@ const loadClassroomLesson = async () => {
           summary: item.summary || ''
         }))
       : []
-    if (classroomLesson.value?.personal_summary) {
-      pushTeacher(classroomLesson.value.personal_summary)
-    }
   } catch (err) {
     classroomError.value = err?.response?.data?.detail || err?.message || '课堂内容生成失败'
   } finally {
@@ -1140,7 +1137,7 @@ const backToPath = () => {
 onMounted(() => {
   profileSnapshot.value = readStoredProfileSnapshot()
   launchPayload.value = readJson(sessionStorage, CLASSROOM_LAUNCH_KEY) || normalizeNodeFromCache() || normalizeNodeFromRoute()
-  pushTeacher(`欢迎来到「${node.value.title || '互动课堂'}」。这节课会按“讲解、资料验证、课堂追问、费曼讲述”的顺序推进。`)
+  pushTeacher(`欢迎来到「${node.value.title || '互动课堂'}」。上课时有不会的可以随时问我，最后我们一起来总结一下学到的内容。`)
   void loadClassroomLesson()
 })
 
@@ -1207,12 +1204,12 @@ onBeforeUnmount(stopLectureAudio)
 .classroom-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(300px, 20vw, 340px);
-  grid-template-rows: auto minmax(650px, auto) auto;
+  grid-template-rows: auto minmax(650px, auto);
   gap: 10px 16px;
   height: auto;
   min-height: min(790px, calc(100vh - 118px));
   max-height: none;
-  align-items: start;
+  align-items: stretch;
 }
 
 .lesson-rail,
@@ -1470,8 +1467,8 @@ onBeforeUnmount(stopLectureAudio)
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 10px;
   height: 100%;
   min-height: 0;
   padding: 10px;
@@ -1481,13 +1478,13 @@ onBeforeUnmount(stopLectureAudio)
 .lesson-canvas {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, auto) auto auto;
-  align-content: start;
-  gap: 8px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
+  gap: 10px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: clamp(14px, 1.4vw, 20px);
+  padding: 18px 20px;
   border-radius: 22px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(244, 251, 255, 0.38)),
@@ -1518,10 +1515,10 @@ onBeforeUnmount(stopLectureAudio)
 .scene-copy h2 {
   display: -webkit-box;
   overflow: hidden;
-  margin: 4px 0 6px;
+  margin: 6px 0 8px;
   color: #0b3f83;
-  font-size: clamp(28px, 2.35vw, 42px);
-  line-height: 1.08;
+  font-size: 30px;
+  line-height: 1.18;
   letter-spacing: 0;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1530,21 +1527,21 @@ onBeforeUnmount(stopLectureAudio)
 .scene-lead {
   display: -webkit-box;
   overflow: hidden;
-  max-width: 960px;
+  max-width: 100%;
   margin: 0;
   color: #315f92;
-  font-size: clamp(15px, 1.15vw, 18px);
-  font-weight: 900;
-  line-height: 1.48;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.6;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
 .scene-lines {
   display: grid;
-  gap: 5px;
-  max-width: 1040px;
-  margin: 0;
+  gap: 6px;
+  max-width: 100%;
+  margin: 2px 0 0;
   padding: 0;
   list-style: none;
 }
@@ -1555,8 +1552,9 @@ onBeforeUnmount(stopLectureAudio)
   overflow: hidden;
   padding-left: 14px;
   color: #416d9b;
-  font-weight: 800;
-  line-height: 1.38;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
 }
@@ -1576,39 +1574,43 @@ onBeforeUnmount(stopLectureAudio)
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 6px;
-  max-height: 86px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-self: center;
+  gap: 8px;
+  max-height: none;
   overflow: hidden;
 }
 
 .concept-pill {
   min-width: 0;
-  min-height: 42px;
-  padding: 7px 9px;
-  border-radius: 10px;
+  min-height: 54px;
+  padding: 9px 10px;
+  border-radius: 12px;
   color: #0e4387;
   background: rgba(255, 255, 255, 0.48);
   border: 1px solid rgba(181, 215, 240, 0.66);
-  font-weight: 900;
-  line-height: 1.28;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.42;
   box-shadow: none;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .concept-pill small {
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
   color: #5d8fc2;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .scene-example {
   position: relative;
   z-index: 1;
   min-width: 0;
-  max-height: 58px;
+  max-height: 68px;
   overflow: hidden;
-  padding: 8px 0 0;
+  padding: 10px 0 0;
   border-top: 1px solid rgba(111, 164, 216, 0.32);
   border-left: 0;
   border-radius: 0;
@@ -1627,7 +1629,9 @@ onBeforeUnmount(stopLectureAudio)
   display: -webkit-box;
   overflow: hidden;
   color: #123f7a;
-  line-height: 1.45;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.52;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
@@ -1661,7 +1665,7 @@ onBeforeUnmount(stopLectureAudio)
   color: #315f92;
   text-align: center;
   font-weight: 900;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1.36;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1726,11 +1730,12 @@ onBeforeUnmount(stopLectureAudio)
   z-index: 1;
   display: flex;
   gap: 8px;
-  min-height: 40px;
-  max-height: 46px;
+  min-height: 36px;
+  max-height: 42px;
   margin: 0;
-  padding: 7px 10px;
+  padding: 6px 9px;
   overflow: hidden;
+  font-size: 13px;
   color: #244e82;
   background: rgba(12, 48, 96, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -1741,13 +1746,14 @@ onBeforeUnmount(stopLectureAudio)
 .caption-bar strong {
   flex: 0 0 auto;
   color: #9dd5ff;
+  font-size: 13px;
 }
 
 .caption-bar span {
   display: -webkit-box;
   overflow: hidden;
   color: white;
-  line-height: 1.35;
+  line-height: 1.32;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
 }
@@ -1755,12 +1761,12 @@ onBeforeUnmount(stopLectureAudio)
 .segment-kicker {
   width: fit-content;
   margin-bottom: 7px;
-  padding: 5px 9px;
+  padding: 4px 8px;
   border-radius: 999px;
   color: #0e4387;
   background: #e6f2ff;
   font-weight: 900;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .classroom-progress {
@@ -1830,11 +1836,26 @@ onBeforeUnmount(stopLectureAudio)
 .stage-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   flex: 0 0 auto;
   margin-top: 2px;
   padding: 0;
   background: transparent;
+}
+
+.stage-actions .soft-btn,
+.stage-actions .primary-btn {
+  min-height: 34px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.stage-actions .soft-btn {
+  padding: 8px 12px;
+}
+
+.stage-actions .primary-btn {
+  padding: 8px 18px;
 }
 
 .soft-btn {
@@ -1860,12 +1881,13 @@ button:disabled {
 
 .resource-shelf {
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 1 / span 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  max-height: 100%;
+  height: 100%;
+  max-height: none;
   padding-right: 0;
   font-size: 12px;
   overflow-y: hidden;
@@ -1885,12 +1907,19 @@ button:disabled {
 
 .resource-shelf .dialog-panel {
   display: flex;
-  order: 3;
-  flex: 1 1 270px;
-  min-height: 260px;
+  order: 2;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .resource-shelf .dialog-panel .dialog-messages {
+  align-content: start;
+  align-items: start;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(240, 248, 255, 0.82), rgba(247, 251, 255, 0.62));
   max-height: none;
 }
 
@@ -1909,12 +1938,66 @@ button:disabled {
 }
 
 .resource-shelf .dialog-panel .dialog-messages article {
-  padding: 8px 10px;
+  position: relative;
+  align-self: start;
+  width: fit-content;
+  height: auto;
+  min-height: 0;
+  max-width: min(88%, 270px);
+  padding: 8px 10px 9px;
+  border: 1px solid rgba(197, 222, 242, 0.9);
+  border-radius: 14px 14px 14px 5px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(38, 93, 150, 0.08);
+}
+
+.resource-shelf .dialog-panel .dialog-messages article::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 18px;
+  width: 9px;
+  height: 9px;
+  border-left: 1px solid rgba(197, 222, 242, 0.9);
+  border-bottom: 1px solid rgba(197, 222, 242, 0.9);
+  background: inherit;
+  transform: rotate(45deg);
+}
+
+.resource-shelf .dialog-panel .dialog-messages article.learner {
+  justify-self: end;
+  border-color: rgba(23, 74, 153, 0.24);
+  border-radius: 14px 14px 5px 14px;
+  background: #174a99;
+  color: #ffffff;
+}
+
+.resource-shelf .dialog-panel .dialog-messages article.learner::before {
+  left: auto;
+  right: -5px;
+  border: 0;
+  border-top: 1px solid rgba(23, 74, 153, 0.24);
+  border-right: 1px solid rgba(23, 74, 153, 0.24);
+}
+
+.resource-shelf .dialog-panel .dialog-messages strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #5d8fc2;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.resource-shelf .dialog-panel .dialog-messages article.learner strong {
+  color: rgba(255, 255, 255, 0.76);
 }
 
 .resource-shelf .dialog-panel .dialog-messages p {
+  display: block;
   font-size: 13px;
+  height: auto;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .resource-shelf .dialog-panel .section-head {
@@ -1930,8 +2013,7 @@ button:disabled {
 }
 
 .resource-shelf .feynman-panel {
-  order: 2;
-  min-height: 0;
+  display: none;
 }
 
 .resource-shelf > section:not(.personal-panel):not(.feynman-panel):not(.dialog-panel) {
@@ -2216,11 +2298,11 @@ button:disabled {
   }
 
   .cinema-scene {
-    grid-template-columns: minmax(0, 1fr) 152px;
+    grid-template-columns: minmax(0, 1fr) 126px;
   }
 
   .scene-copy h2 {
-    font-size: clamp(30px, 3vw, 46px);
+    font-size: 28px;
   }
 }
 
