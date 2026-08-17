@@ -3613,7 +3613,7 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 34px minmax(260px, 430px) minmax(220px, 360px);
+  grid-template-columns: 34px minmax(300px, 420px) minmax(300px, 1fr);
   gap: 14px;
   align-items: start;
   margin-bottom: 14px;
