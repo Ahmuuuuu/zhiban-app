@@ -122,7 +122,7 @@
           </div>
           <form class="dialog-input" @submit.prevent="sendLearnerMessage">
             <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
-            <button type="submit" :disabled="!learnerInput">发送</button>
+            <button type="submit" :disabled="!learnerInput || streamingTeacher">发送</button>
           </form>
         </section>
 
@@ -135,13 +135,13 @@
               :key="option"
               type="button"
               :class="{ selected: selectedAnswer === option }"
-              @click="selectedAnswer = option"
+              @click="chooseCheckpointOption(option)"
             >
               {{ option }}
             </button>
           </div>
-          <p v-if="selectedAnswer" class="checkpoint-feedback">
-            {{ checkpointFeedback }}
+          <p v-if="checkpointFeedbackText" class="checkpoint-feedback">
+            {{ checkpointFeedbackText }}
           </p>
         </div>
 
@@ -168,7 +168,7 @@
         </div>
         <form class="dialog-input" @submit.prevent="sendLearnerMessage">
           <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
-          <button type="submit" :disabled="!learnerInput">发送</button>
+          <button type="submit" :disabled="!learnerInput || streamingTeacher">发送</button>
         </form>
       </section>
 
@@ -244,7 +244,7 @@
             :disabled="!feynmanUnlocked"
             placeholder="比如：我认为补码的作用是..."
           ></textarea>
-          <button type="button" :disabled="!feynmanUnlocked || !feynmanAnswer" @click="reviewFeynmanAnswer">
+          <button type="button" :disabled="!feynmanUnlocked || !feynmanAnswer || streamingTeacher" @click="reviewFeynmanAnswer">
             让小知追问
           </button>
           <p v-if="feynmanFeedback" class="feynman-feedback">{{ feynmanFeedback }}</p>
@@ -263,7 +263,7 @@
           </div>
           <form class="dialog-input" @submit.prevent="sendLearnerMessage">
             <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
-            <button type="submit" :disabled="!learnerInput">发送</button>
+            <button type="submit" :disabled="!learnerInput || streamingTeacher">发送</button>
           </form>
         </section>
       </aside>
@@ -275,7 +275,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Download, Eye, MessageCircle, Pause, Play, Save, Volume2 } from 'lucide-vue-next'
-import { generateNodeClassroom, narrateClassroomText } from '../api/learningPath'
+import { generateNodeClassroom, narrateClassroomText, streamClassroomChatMessage } from '../api/learningPath'
 import { downloadWithToken, resolveApiUrl } from '../api/config'
 import VideoGlowProgress from '../components/ppt_video/video/VideoGlowProgress.vue'
 import petImage from '../assets/pic/study-pet-reference-cutout.png'
@@ -299,6 +299,8 @@ const learnerInput = ref('')
 const feynmanAnswer = ref('')
 const feynmanFeedback = ref('')
 const messages = ref([])
+const streamingTeacher = ref(false)
+const checkpointFeedbackText = ref('')
 const isSpeaking = ref(false)
 const speechProgress = ref(0)
 const audioLoading = ref(false)
@@ -817,18 +819,23 @@ const showCheckpoint = computed(() => {
   return Boolean(activeQuestion.value && /quiz|checkpoint|feynman/.test(type))
 })
 
-const checkpointFeedback = computed(() => {
-  if (!selectedAnswer.value) return ''
-  if (activeQuestion.value?.answer && selectedAnswer.value === activeQuestion.value.answer) {
-    return activeQuestion.value.feedback || '对，这个回答抓住了本段的关键。'
-  }
-  if (activeQuestion.value?.answer && selectedAnswer.value !== activeQuestion.value.answer) {
-    return `这个选项也能暴露思路，但本段更希望你先抓「${activeQuestion.value.answer}」。`
-  }
-  if (selectedAnswer.value === '概念之间的关系') return '对，这类节点先抓关系，再用题目验证细节。'
-  if (selectedAnswer.value === '把定义逐字背下来') return '定义有用，但如果只背定义，遇到变式题会很吃力。'
-  return '刷题可以暴露问题，但完全跳过概念会让错题变成随机猜。'
-})
+const chooseCheckpointOption = option => {
+  if (streamingTeacher.value) return
+  selectedAnswer.value = option
+  checkpointFeedbackText.value = ''
+  pushLearner(`我选择：「${option}」`)
+  const isCorrect = activeQuestion.value?.answer && option === activeQuestion.value.answer
+  const fallback = isCorrect
+    ? (activeQuestion.value?.feedback || '对，这个回答抓住了本段的关键。')
+    : `这个选项也能暴露思路，但本段更希望你先抓「${activeQuestion.value?.answer}」。`
+  void streamTeacherReply({
+    text: option,
+    scenario: 'checkpoint',
+    segment: activeSegment.value,
+    fallback,
+    inlineRef: checkpointFeedbackText
+  })
+}
 
 const activeResourceCards = computed(() => {
   const refs = activeSegment.value?.resourceRefs || []
@@ -995,6 +1002,50 @@ const pushLearner = content => {
   })
 }
 
+const streamTeacherReply = async ({ text, scenario, segment = activeSegment.value, fallback = '', inlineRef = null }) => {
+  if (streamingTeacher.value) return
+  streamingTeacher.value = true
+  const pathId = Number(route.params.pathId || launchPayload.value?.pathId || 0)
+  const nodeId = Number(node.value.id || node.value.node_id || node.value.nodeId || route.params.nodeId || 0)
+  const msgId = `teacher-${Date.now()}-${messages.value.length}`
+  messages.value.push({ id: msgId, role: 'teacher', content: '正在思考中...' })
+  let hasChunk = false
+  const finalize = finalText => {
+    const target = messages.value.find(m => m.id === msgId)
+    if (!target) return
+    target.content = finalText
+    if (inlineRef) inlineRef.value = finalText
+  }
+  try {
+    await streamClassroomChatMessage(
+      { path_id: pathId, node_id: nodeId, segment, scenario, text },
+      {
+        onChunk: chunk => {
+          const target = messages.value.find(m => m.id === msgId)
+          if (!target) return
+          if (!hasChunk) { target.content = ''; hasChunk = true }
+          target.content += chunk
+          if (inlineRef) inlineRef.value = target.content
+        },
+        onDone: () => { if (!hasChunk) finalize(fallback) },
+        onError: async () => { finalize(fallback) }
+      }
+    )
+  } catch (err) {
+    finalize(fallback)
+  } finally {
+    streamingTeacher.value = false
+  }
+}
+
+const waitStreamingIdle = () => new Promise(resolve => {
+  const check = () => {
+    if (streamingTeacher.value) setTimeout(check, 100)
+    else resolve()
+  }
+  check()
+})
+
 const stopLectureAudio = () => {
   isSpeaking.value = false
   if (lectureAudio) {
@@ -1076,26 +1127,32 @@ const toggleLectureAudio = async () => {
   }
 }
 
-const seekClassroom = time => {
+const seekClassroom = async time => {
+  if (streamingTeacher.value) await waitStreamingIdle()
   const targetTime = Math.max(0, Number(time) || 0)
   const segments = classroomProgressSegments.value
   const index = segments.findIndex(segment => targetTime >= segment.start && targetTime < segment.end)
   const nextIndex = index >= 0 ? index : Math.max(0, segments.length - 1)
   stopLectureAudio()
   selectedAnswer.value = ''
+  checkpointFeedbackText.value = ''
   activeSegmentIndex.value = nextIndex
   speechProgress.value = 0
 }
 
-const prevSegment = () => {
+const prevSegment = async () => {
+  if (streamingTeacher.value) await waitStreamingIdle()
   selectedAnswer.value = ''
+  checkpointFeedbackText.value = ''
   stopLectureAudio()
   activeSegmentIndex.value = Math.max(0, activeSegmentIndex.value - 1)
   pushTeacher(`我们回到「${activeSegment.value.title}」，重新看这一段。`)
 }
 
-const nextSegment = () => {
+const nextSegment = async () => {
+  if (streamingTeacher.value) await waitStreamingIdle()
   selectedAnswer.value = ''
+  checkpointFeedbackText.value = ''
   stopLectureAudio()
   if (activeSegmentIndex.value < lessonSegments.value.length - 1) {
     activeSegmentIndex.value += 1
@@ -1106,28 +1163,31 @@ const nextSegment = () => {
 }
 
 const reviewFeynmanAnswer = () => {
-  const text = feynmanAnswer.value
-  const title = node.value.title || '当前知识点'
-  if (text.length < 24) {
-    feynmanFeedback.value = `讲得还太短。试着补一句：${title} 解决了什么问题，以及它和前后知识点有什么关系。`
-  } else {
-    feynmanFeedback.value = '表达已经能看出你的理解了。下一步可以补一个例子，说明这个知识点在题目里怎么用。'
-  }
-  pushLearner(text)
-  pushTeacher(feynmanFeedback.value)
+  const text = feynmanAnswer.value.trim()
+  if (!text) return
   feynmanAnswer.value = ''
+  pushLearner(text)
+  const fallback = text.length < 24
+    ? `讲得还太短。试着补一句：${node.value.title || '当前知识点'} 解决了什么问题，以及它和前后知识点有什么关系。`
+    : '表达已经能看出你的理解了。下一步可以补一个例子，说明这个知识点在题目里怎么用。'
+  void streamTeacherReply({
+    text,
+    scenario: 'feynman',
+    segment: activeSegment.value,
+    fallback,
+    inlineRef: feynmanFeedback
+  })
 }
 
 const sendLearnerMessage = () => {
-  const text = learnerInput.value
-  if (!text) return
+  const text = learnerInput.value.trim()
+  if (!text || streamingTeacher.value) return
   pushLearner(text)
   learnerInput.value = ''
-  if (/不会|不懂|没懂|为什么|怎么/.test(text)) {
-    pushTeacher(`我们先不急着往后走。围绕「${activeSegment.value.title}」，你可以先抓住板书里的第一条，再看它和第二条的关系。`)
-  } else {
-    pushTeacher('这个表达可以继续往下压实。你再试着加一个“例子”或“反例”，理解会更稳。')
-  }
+  const fallback = /不会|不懂|没懂|为什么|怎么/.test(text)
+    ? `我们先不急着往后走。围绕「${activeSegment.value.title}」，你可以先抓住板书里的第一条，再看它和第二条的关系。`
+    : '这个表达可以继续往下压实。你再试着加一个“例子”或“反例”，理解会更稳。'
+  void streamTeacherReply({ text, scenario: 'free', fallback })
 }
 
 const backToPath = () => {
@@ -1145,6 +1205,7 @@ watch(activeSegmentIndex, () => {
   stopLectureAudio()
   speechProgress.value = 0
   selectedAnswer.value = ''
+  checkpointFeedbackText.value = ''
 })
 
 watch(lessonSegments, segments => {

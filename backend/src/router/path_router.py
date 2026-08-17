@@ -5,6 +5,7 @@ from starlette.responses import StreamingResponse
 
 from backend.src.service.path.service import PathService
 from backend.src.service.path.classroom import generate_classroom_audio, generate_classroom_lesson
+from backend.src.service.path.classroom_chat import stream_classroom_chat
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.schemas.path import (
     GeneratePathRequest,
@@ -14,6 +15,7 @@ from backend.src.schemas.path import (
     GenerateFromProfileRequest,
     GenerateClassroomRequest,
     ClassroomNarrationRequest,
+    ClassroomChatRequest,
 )
 
 router = APIRouter(prefix="/path", tags=["学习路径"])
@@ -123,6 +125,22 @@ async def narrate_classroom(data: ClassroomNarrationRequest, user_id: int = Depe
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/classroom/chat")
+async def classroom_chat(data: ClassroomChatRequest, user_id: int = Depends(get_user_id_from_token)):
+    """互动课堂对话（流式）：复用 Brain 现成聊天逻辑，不落 ChatHistory"""
+    return StreamingResponse(
+        stream_classroom_chat(
+            user_id=user_id,
+            path_id=data.path_id,
+            node_id=data.node_id,
+            segment=data.segment,
+            scenario=data.scenario,
+            text=data.text,
+        ),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/{path_id}/node/{node_id}/generate-resources/stream")
