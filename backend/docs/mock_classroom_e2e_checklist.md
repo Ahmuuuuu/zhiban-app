@@ -53,13 +53,16 @@ STUDY_ROOM_YOLO_ENABLED=true
 STUDY_ROOM_YOLO_MODEL=yolo26n.pt
 
 MOCK_CLASSROOM_ASR_ENABLED=true
-MOCK_CLASSROOM_ASR_URL=https://api.openai.com/v1/audio/transcriptions
-MOCK_CLASSROOM_ASR_API_KEY=你的 ASR key
-MOCK_CLASSROOM_ASR_MODEL=whisper-1
+MOCK_CLASSROOM_ASR_PROVIDER=funasr
+MOCK_CLASSROOM_FUNASR_MODEL=paraformer-zh
+MOCK_CLASSROOM_FUNASR_VAD_MODEL=fsmn-vad
+MOCK_CLASSROOM_FUNASR_PUNC_MODEL=ct-punc
+MOCK_CLASSROOM_FUNASR_DEVICE=cpu
+MOCK_CLASSROOM_FUNASR_HUB=ms
 MOCK_CLASSROOM_ASR_TIMEOUT_SECONDS=120
 ```
 
-ASR 也可以只配置 `OPENAI_API_KEY`，系统会默认使用 OpenAI 兼容的 `/v1/audio/transcriptions` 地址。
+如需改用 OpenAI 兼容接口，再显式配置 `MOCK_CLASSROOM_ASR_PROVIDER=openai`、`MOCK_CLASSROOM_ASR_URL`、`MOCK_CLASSROOM_ASR_API_KEY` 和 `MOCK_CLASSROOM_ASR_MODEL`。
 
 ## 启动命令
 
@@ -105,7 +108,8 @@ http://127.0.0.1:5173/#/mock-classroom
 
 ## 常见问题
 
-- 如果报告显示未配置 ASR：检查 `MOCK_CLASSROOM_ASR_API_KEY` 或 `OPENAI_API_KEY`。
+- 如果报告显示未配置 ASR：检查 `MOCK_CLASSROOM_ASR_ENABLED` 和 `MOCK_CLASSROOM_ASR_PROVIDER`。
+- 如果报告显示本地 ASR 依赖未安装：确认已安装 `funasr` 和 `modelscope`，首次运行需要下载本地模型。
 - 如果知识理解分偏占位：说明没有拿到有效文字稿，需要先确认音频上传和 ASR。
 - 如果表达状态一直不准：先确认 YOLO 模型能加载，再检查摄像头画面是否太暗、脸部是否出画。
 - 如果后端启动时卡在模型加载：首次加载 BGE/YOLO 可能较慢，Docker 镜像构建时也可能下载模型。

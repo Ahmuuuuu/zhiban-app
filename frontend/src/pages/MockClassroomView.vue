@@ -14,9 +14,9 @@
     <section class="mock-classroom-shell" aria-label="模拟课堂">
       <header class="classroom-header">
         <div>
-          <p class="eyebrow">Teaching Studio</p>
+          <p class="eyebrow">Teach To Learn</p>
           <h1>模拟课堂</h1>
-          <p>把一个知识点讲给“学生”听，用主动输出检验自己是不是真的掌握。</p>
+          <p>用“讲给别人听”的方式帮助自己组织概念、发现漏洞、真正掌握知识点。</p>
         </div>
         <div class="lesson-state" :class="lessonMode">
           <component :is="lessonStateIcon" :size="18" />
@@ -28,16 +28,16 @@
         <article class="setup-panel">
           <div class="panel-title">
             <BookOpenCheck :size="19" />
-            <h2>本次试讲</h2>
+            <h2>本次掌握训练</h2>
           </div>
 
           <label class="form-field">
-            <span>讲解主题</span>
+            <span>要掌握的知识点</span>
             <input v-model.trim="topic" type="text" maxlength="60" placeholder="例如：二次函数的顶点式" />
           </label>
 
           <div class="form-field">
-            <span>讲解时长</span>
+            <span>输出训练时长</span>
             <div class="duration-options" role="group" aria-label="讲解时长">
               <button
                 v-for="option in durationOptions"
@@ -49,6 +49,14 @@
                 {{ option }} 分钟
               </button>
             </div>
+          </div>
+
+          <div class="learning-purpose">
+            <div>
+              <Brain :size="18" />
+              <strong>为什么要讲出来</strong>
+            </div>
+            <p>能看懂不等于会掌握。你需要把概念、推导、例子和易错点连成一段完整表达，系统再对照知识库找出遗漏和不准确的地方。</p>
           </div>
 
           <div class="device-grid">
@@ -82,7 +90,7 @@
             </button>
             <button class="start-button" type="button" :disabled="!devicesReady || isStartingLesson" @click="startTeaching">
               <Play :size="18" fill="currentColor" />
-              <span>{{ isStartingLesson ? '准备上课' : '开始讲课' }}</span>
+              <span>{{ isStartingLesson ? '准备训练' : '开始输出练习' }}</span>
             </button>
           </div>
         </article>
@@ -90,7 +98,7 @@
         <article class="stage-panel">
           <div class="board">
             <div class="board-topline">
-              <span>Today's Topic</span>
+              <span>Mastery Target</span>
               <Timer :size="18" />
             </div>
             <strong>{{ normalizedTopic }}</strong>
@@ -143,7 +151,7 @@
         <aside class="rubric-panel">
           <div class="panel-title">
             <ClipboardCheck :size="19" />
-            <h2>评分维度</h2>
+            <h2>掌握度检测</h2>
           </div>
 
           <div class="score-ring" :style="{ '--score': '60%' }">
@@ -161,7 +169,7 @@
 
           <div class="report-preview">
             <LineChart :size="18" />
-            <span>课堂报告会汇总综合分、文字稿、知识漏洞和练习建议。</span>
+            <span>结束后会生成掌握度报告，重点看知识是否讲准、讲全，以及哪里还需要回炉复习。</span>
           </div>
         </aside>
       </section>
@@ -171,7 +179,7 @@
           <div class="teaching-toolbar">
             <div>
               <span class="record-dot" :class="{ paused: lessonMode === 'finished' }"></span>
-              <strong>{{ lessonMode === 'finished' ? '讲课已结束' : '讲课进行中' }}</strong>
+              <strong>{{ lessonMode === 'finished' ? '输出训练已结束' : '输出训练中' }}</strong>
             </div>
             <span class="recording-chip">
               <CircleDot :size="14" fill="currentColor" />
@@ -196,7 +204,7 @@
             </button>
             <button class="end-button" type="button" :disabled="lessonMode === 'finished' || isFinishingLesson" @click="finishTeaching">
               <Square :size="17" fill="currentColor" />
-              <span>{{ isFinishingLesson ? '正在结束' : '结束讲课' }}</span>
+              <span>{{ isFinishingLesson ? '正在生成反馈' : '结束并看反馈' }}</span>
             </button>
           </div>
         </article>
@@ -204,7 +212,7 @@
         <aside class="teaching-status-panel live-transcript-panel">
           <div class="panel-title">
             <MessageSquareText :size="19" />
-            <h2>实时讲稿</h2>
+            <h2>实时输出记录</h2>
           </div>
 
           <div class="transcript-status-row">
@@ -250,7 +258,7 @@
         <article class="teaching-board-panel">
           <div class="board compact-board">
             <div class="board-topline">
-              <span>Lesson Notes</span>
+              <span>Explain To Understand</span>
               <Timer :size="18" />
             </div>
             <strong>{{ normalizedTopic }}</strong>
@@ -265,7 +273,7 @@
         <header class="report-modal-header">
           <div>
             <span>{{ reportStatusText }}</span>
-            <h2 id="mock-classroom-report-title">讲课报告</h2>
+            <h2 id="mock-classroom-report-title">掌握度报告</h2>
           </div>
           <button class="icon-button" type="button" aria-label="关闭报告" @click="cancelReport">
             <X :size="18" />
@@ -286,7 +294,7 @@
         <section class="report-section">
           <div class="report-section-title">
             <BookOpenCheck :size="16" />
-            <strong>讲课文字稿</strong>
+            <strong>输出文字稿</strong>
             <span>{{ asrStatusText }}</span>
           </div>
           <p class="transcript-text">{{ reportTranscriptText }}</p>
@@ -417,9 +425,9 @@ let audioChunks = []
 let liveRecognition = null
 let liveRecognitionStopped = true
 
-const normalizedTopic = computed(() => topic.value || '选择一个知识点，站上讲台讲清楚它')
+const normalizedTopic = computed(() => topic.value || '选择一个想真正掌握的知识点')
 const boardHint = computed(() => {
-  return '系统会从知识库检索相关资料，用来核对讲解内容是否准确完整。'
+  return '试着不用看答案讲清楚它。讲不顺、讲不全的地方，就是下一轮复习最该补的地方。'
 })
 const devicesReady = computed(() => cameraReady.value && micReady.value)
 const targetSeconds = computed(() => plannedMinutes.value * 60)
@@ -436,9 +444,9 @@ const sessionShortId = computed(() => {
   return activeSessionId.value.slice(-8)
 })
 const lessonStateText = computed(() => {
-  if (lessonMode.value === 'teaching') return '讲课中'
-  if (lessonMode.value === 'finished') return '已结束'
-  return '备课中'
+  if (lessonMode.value === 'teaching') return '输出中'
+  if (lessonMode.value === 'finished') return '待复盘'
+  return '准备训练'
 })
 const lessonStateIcon = computed(() => {
   if (lessonMode.value === 'teaching') return CircleDot
@@ -479,17 +487,17 @@ const liveSpeechStateText = computed(() => {
 })
 const liveSpeechPlaceholder = computed(() => {
   if (liveSpeechStatus.value === 'unsupported') return '当前浏览器不支持实时语音识别，可继续录音生成最终报告。'
-  if (liveSpeechStatus.value === 'error') return liveSpeechError.value || '实时识别暂不可用，可继续讲课。'
-  if (lessonMode.value === 'finished') return '本次讲课没有捕获到实时字幕。'
-  return '开始讲课后，这里会实时显示你讲出的内容。'
+  if (liveSpeechStatus.value === 'error') return liveSpeechError.value || '实时识别暂不可用，可继续完成输出练习。'
+  if (lessonMode.value === 'finished') return '本次输出练习没有捕获到实时字幕。'
+  return '开始输出练习后，这里会实时记录你的讲解内容。'
 })
 
 const backendStatusText = computed(() => {
   if (finishError.value) return finishError.value
   if (uploadError.value) return uploadError.value
-  if (isUploadingFrame.value) return '课堂画面上传中'
-  if (activeSessionId.value) return `后端课堂记录已连接：${sessionShortId.value}`
-  return '等待创建课堂记录'
+  if (isUploadingFrame.value) return '训练画面上传中'
+  if (activeSessionId.value) return `掌握训练记录已连接：${sessionShortId.value}`
+  return '等待创建训练记录'
 })
 const reportStatusText = computed(() => {
   const status = reportData.value?.status || reportStatus.value
@@ -506,7 +514,7 @@ const finalScoreText = computed(() => {
 })
 const reportSuggestionText = computed(() => {
   const suggestions = Array.isArray(reportData.value?.suggestions) ? reportData.value.suggestions : []
-  return suggestions[0] || '讲课数据已经保存，报告生成后会在这里返回反馈。'
+  return suggestions[0] || '输出记录已经保存，报告生成后会在这里返回反馈。'
 })
 const scoreBreakdown = computed(() => [
   {
@@ -528,9 +536,9 @@ const transcriptPreview = computed(() => {
   const liveTranscript = liveTranscriptText.value.trim()
   if (liveTranscript) return liveTranscript
   const status = reportData.value?.rubric?.asr?.status
-  if (status === 'unconfigured') return '当前未配置 ASR，系统已经先根据讲课时长、知识库资料和镜头状态生成降级报告。'
+  if (status === 'unconfigured') return '当前未配置 ASR，系统已经先根据输出时长、知识库资料和镜头状态生成降级报告。'
   if (status === 'failed') return '音频转写暂不可用，系统会优先使用实时讲稿或降级生成报告。'
-  if (reportStatus.value === 'ready') return '这次报告没有拿到有效文字稿，可以检查麦克风、音频上传和 ASR 配置。'
+  if (reportStatus.value === 'ready') return '这次报告没有拿到有效文字稿，可以检查麦克风、实时识别、音频上传和 ASR 配置。'
   return '报告生成中，文字稿完成后会显示在这里。'
 })
 const reportTranscriptText = computed(() => transcriptPreview.value)
@@ -551,17 +559,17 @@ const reportSections = computed(() => [
   {
     title: '讲得好的地方',
     icon: CheckCircle2,
-    items: normalizeReportList(reportData.value?.strengths, '报告生成后会列出本次讲解中值得保留的做法。')
+    items: normalizeReportList(reportData.value?.strengths, '报告生成后会列出本次输出中值得保留的表达方式。')
   },
   {
     title: '知识漏洞',
     icon: ClipboardCheck,
-    items: normalizeReportList(reportData.value?.gaps, '暂时没有发现明确知识漏洞，建议结合文字稿再复盘一次。')
+    items: normalizeReportList(reportData.value?.gaps, '暂时没有发现明确知识漏洞，建议结合输出文字稿再复盘一次。')
   },
   {
     title: '下次建议',
     icon: MessageSquareText,
-    items: normalizeReportList(reportData.value?.suggestions, '下一次可以按“定义-推导-例子-易错点-总结”的顺序讲。')
+    items: normalizeReportList(reportData.value?.suggestions, '下一次可以按“定义-推导-例子-易错点-总结”的顺序重新输出。')
   }
 ])
 
@@ -614,7 +622,7 @@ const requestMockClassroomLogin = () => {
 
 const mockClassroomStartErrorMessage = error => {
   if (isAuthRequiredError(error)) return LOGIN_REQUIRED_MESSAGE
-  return errorMessage(error, '开始讲课失败，请检查设备权限、登录状态和后端服务。')
+  return errorMessage(error, '开始输出练习失败，请检查设备权限、登录状态和后端服务。')
 }
 
 const getPreferredRecorderMimeType = () => {
@@ -1031,7 +1039,7 @@ const flushFrameQueue = async ({ force = false } = {}) => {
     return true
   } catch (error) {
     console.warn('[MockClassroom] frame upload failed:', error)
-    uploadError.value = errorMessage(error, '课堂画面上传失败，已保留待上传队列。')
+    uploadError.value = errorMessage(error, '训练画面上传失败，已保留待上传队列。')
     return false
   } finally {
     isUploadingFrame.value = false
@@ -1059,7 +1067,7 @@ const uploadLessonAudio = async audioBlob => {
   } catch (error) {
     console.warn('[MockClassroom] audio upload failed:', error)
     audioUploadStatus.value = 'error'
-    finishError.value = errorMessage(error, '讲课音频上传失败，本次报告会暂时缺少语音数据。')
+    finishError.value = errorMessage(error, '输出音频上传失败，本次报告会暂时缺少语音数据。')
     return null
   }
 }
@@ -1121,7 +1129,7 @@ const isReportTerminal = status => ['ready', 'failed'].includes(status)
 const finishTeaching = async () => {
   if (isFinishingLesson.value || lessonMode.value !== 'teaching') return
   if (!activeSessionId.value) {
-    finishError.value = '没有可结束的后端课堂记录，请重新开始。'
+    finishError.value = '没有可结束的掌握训练记录，请重新开始。'
     return
   }
 
@@ -1148,7 +1156,7 @@ const finishTeaching = async () => {
     stopDevicePreview()
   } catch (error) {
     console.warn('[MockClassroom] finish teaching failed:', error)
-    finishError.value = errorMessage(error, '结束讲课失败，请稍后再试。')
+    finishError.value = errorMessage(error, '结束输出练习失败，请稍后再试。')
   } finally {
     isFinishingLesson.value = false
   }

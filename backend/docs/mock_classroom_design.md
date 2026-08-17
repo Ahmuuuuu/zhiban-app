@@ -518,7 +518,7 @@ person_count == 1 -> stable
 当前已接入报告生成流水线：
 
 - 讲课结束后后台生成报告。
-- 音频转写走 OpenAI 兼容 ASR 接口；未配置 ASR 时不阻塞报告，会降级为无文字稿评分。
+- 音频转写默认走本地 FunASR；未安装或不可用时不阻塞报告，会优先使用前端实时讲稿或降级为无文字稿评分。
 - 摄像头帧复用自习室 YOLO 能力，统计人像是否稳定、是否离开画面、是否多人入镜。
 - 知识理解和讲解熟练度优先用 LLM 结合文字稿与后台知识库参考资料评分。
 - LLM 或 ASR 不可用时，使用启发式评分，并在建议里说明限制。
@@ -528,10 +528,20 @@ ASR 环境变量：
 
 ```text
 MOCK_CLASSROOM_ASR_ENABLED=true
-MOCK_CLASSROOM_ASR_URL=https://api.openai.com/v1/audio/transcriptions
-MOCK_CLASSROOM_ASR_API_KEY=你的 ASR key
-MOCK_CLASSROOM_ASR_MODEL=whisper-1
+MOCK_CLASSROOM_ASR_PROVIDER=funasr
+MOCK_CLASSROOM_FUNASR_MODEL=paraformer-zh
+MOCK_CLASSROOM_FUNASR_VAD_MODEL=fsmn-vad
+MOCK_CLASSROOM_FUNASR_PUNC_MODEL=ct-punc
+MOCK_CLASSROOM_FUNASR_DEVICE=cpu
+MOCK_CLASSROOM_FUNASR_HUB=ms
 MOCK_CLASSROOM_ASR_TIMEOUT_SECONDS=120
 ```
 
-如果只配置 `OPENAI_API_KEY`，且没有配置 `MOCK_CLASSROOM_ASR_URL`，系统会默认使用 OpenAI 兼容的 `/v1/audio/transcriptions` 地址。
+如果确实要使用 OpenAI 兼容接口，可以显式配置：
+
+```text
+MOCK_CLASSROOM_ASR_PROVIDER=openai
+MOCK_CLASSROOM_ASR_URL=https://api.openai.com/v1/audio/transcriptions
+MOCK_CLASSROOM_ASR_API_KEY=你的 ASR key
+MOCK_CLASSROOM_ASR_MODEL=whisper-1
+```
