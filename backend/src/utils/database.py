@@ -2,8 +2,10 @@ import asyncio
 
 from tortoise import Tortoise
 import os
+from pathlib import Path
 
-database = os.getenv("database")
+_DEFAULT_SQLITE_DB = Path(__file__).resolve().parents[2] / "dev.sqlite3"
+database = os.getenv("database") or f"sqlite://{_DEFAULT_SQLITE_DB.as_posix()}"
 # 连接池参数：默认最小5、最大20
 if "mysql://" in database and "minsize" not in database:
     sep = "&" if "?" in database else "?"

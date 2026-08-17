@@ -16,7 +16,15 @@ logger = logging.getLogger(__name__)
 
 api_key = os.getenv("api_key")
 
-_raw_llm = ChatOpenAI(
+def _build_chat_model(**kwargs) -> ChatOpenAI | None:
+    key = kwargs.get("api_key")
+    if not key:
+        logger.warning("LLM API key is not configured; AI calls will fail until api_key is set.")
+        return None
+    return ChatOpenAI(**kwargs)
+
+
+_raw_llm = _build_chat_model(
     model=os.getenv("AI_MODEL", "deepseek-v4-flash"),
     api_key=api_key,
     base_url=os.getenv("AI_BASE_URL", "https://api.deepseek.com"),
@@ -26,7 +34,7 @@ _raw_llm = ChatOpenAI(
 )
 
 # 多模态 LLM（MiMo，用于视觉审查 PPT 截图等）
-_vision_llm = ChatOpenAI(
+_vision_llm = _build_chat_model(
     model=os.getenv("VISION_MODEL", "MiMo-V2.5"),
     api_key=os.getenv("VISION_API_KEY", api_key),
     base_url=os.getenv("VISION_BASE_URL", "https://api.xiaomimimo.com/v1"),
@@ -86,6 +94,8 @@ class _PriorityLLM:
         self._cache_ttl = cache_ttl  # 0=不缓存；>0 缓存秒数（如 3600=1h）
 
     def __getattr__(self, name):
+        if self._raw is None:
+            raise RuntimeError("AI model is not configured. Set api_key in backend/.env.")
         return getattr(self._raw, name)
 
     @staticmethod
@@ -127,6 +137,8 @@ class _PriorityLLM:
             user_sem = _user_pool_async[key]
 
         async def _call():
+            if self._raw is None:
+                raise RuntimeError("AI model is not configured. Set api_key in backend/.env.")
             if user_sem:
                 async with user_sem:
                     resp = await self._raw.ainvoke(prompt)
@@ -167,6 +179,8 @@ class _PriorityLLM:
         user_sem = _get_user_sync_sem(user_id, pool)
 
         def _call():
+            if self._raw is None:
+                raise RuntimeError("AI model is not configured. Set api_key in backend/.env.")
             if user_sem:
                 with user_sem:
                     return self._raw.invoke(prompt)

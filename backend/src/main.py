@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -117,8 +118,11 @@ async def startup():
     from backend.src.service.resource.service import ResourceService
     await ResourceService.init_tasks()
     # 预加载 BGE 模型，避免首次知识库操作时等待下载/加载
-    from backend.src.utils.knowledge_base import _get_embed_model_async
-    await _get_embed_model_async()
+    if os.getenv("PRELOAD_BGE_ON_STARTUP", "true").strip().lower() not in {"0", "false", "no", "off"}:
+        from backend.src.utils.knowledge_base import _get_embed_model_async
+        await _get_embed_model_async()
+    else:
+        logger.info("BGE preload skipped by PRELOAD_BGE_ON_STARTUP=false")
     # 启动定时任务（周报 + AI 建议）
     from backend.src.utils.scheduler import start
     start()
