@@ -153,7 +153,18 @@
               </div>
               <h2>{{ node.title }}</h2>
               <p>{{ node.summary }}</p>
-              <div class="node-card__status">{{ statusLabel(node.status) }}</div>
+              <div class="node-card__bottom">
+                <div class="node-card__status">{{ statusLabel(node.status) }}</div>
+                <button
+                  class="node-start-btn"
+                  type="button"
+                  :disabled="node.status === 'locked' || isNodeGenerationBusy(node)"
+                  @click.stop="startNodeLearning(node)"
+                >
+                  <template v-if="isNodeGenerationBusy(node)">生成中...</template>
+                  <template v-else>开始学习</template>
+                </button>
+              </div>
             </div>
 
             <div v-if="node.status !== 'generating'" class="node-branches" @click.stop>
@@ -161,77 +172,8 @@
                 <div class="branch-line"></div>
                 <article class="branch-card">
                   <div class="branch-head">
-                    <FileText :size="16" />
-                    <strong>{{ sectionLabel(1) }} 学习资料</strong>
-                  </div>
-
-                  <div v-if="node._resLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
-                  <div v-else-if="node._resError" class="branch-message error">{{ node._resError }}</div>
-
-                  <template v-else-if="node._resources?.length">
-                    <div class="branch-resource-flow">
-                      <article
-                        v-for="(resource, resourceIndex) in node._resources.filter(r => !isExerciseResource(r) && !isDynamicLessonResource(r))"
-                        :key="resource.id"
-                        class="branch-resource-card"
-                        @click="previewNodeResource(resource)"
-                      >
-                        <div class="branch-resource-cover">
-                          <img :src="resource.coverUrl" :alt="resource.title" loading="lazy" />
-                        </div>
-                        <div class="branch-resource-main">
-                          <div class="branch-resource-title-row">
-                            <span class="branch-resource__icon">
-                              <FileImage v-if="isImageResource(resource)" :size="16" />
-                              <Presentation v-else-if="isPptResource(resource)" :size="16" />
-                              <GitBranch v-else-if="isMindmapResource(resource)" :size="16" />
-                              <Volume2 v-else-if="isAudioResource(resource)" :size="16" />
-                              <MonitorPlay v-else-if="isVideoResource(resource) || isHtmlResource(resource)" :size="16" />
-                              <FileText v-else :size="16" />
-                            </span>
-                            <strong>{{ resource.title }}</strong>
-                          </div>
-                          <div class="branch-resource-meta">
-                            <span>{{ resource.typeLabel }}</span>
-                            <span :class="{ read: resource.isRead }">{{ resourceReadLabel(resource) }}</span>
-                            <span v-if="resource.viewCount || resource.downloadCount">
-                              {{ resourceUsageLine(resource) }}
-                            </span>
-                          </div>
-                        </div>
-                        <div class="branch-resource-actions">
-                          <span class="branch-resource-index">{{ resourceIndex + 1 }}</span>
-                          <button
-                            v-if="canPreviewResource(resource)"
-                            class="branch-mini-action"
-                            type="button"
-                            @click.stop="previewNodeResource(resource)"
-                          >
-                            预览
-                          </button>
-                        </div>
-                      </article>
-                    </div>
-                  </template>
-
-                  <button
-                    v-if="!node._resources?.length || node._resources.length < (node.resourceTypes?.length || 3)"
-                    class="branch-action"
-                    type="button"
-                    :disabled="node.status === 'locked' || isNodeResourceGenerating(node)"
-                    @click.stop="ensureNodeResources(node, 'resources')"
-                  >
-                    {{ isNodeResourceGenerating(node) ? '生成中...' : (node._resources?.length ? '补充更多资料' : '生成资料') }}
-                  </button>
-                </article>
-              </section>
-
-              <section class="node-branch">
-                <div class="branch-line"></div>
-                <article class="branch-card">
-                  <div class="branch-head">
                     <Check :size="16" />
-                    <strong>{{ sectionLabel(2) }} 学习检测</strong>
+                    <strong>{{ sectionLabel(1) }} 学习检测</strong>
                   </div>
 
                   <div v-if="node._quizLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
@@ -2398,6 +2340,11 @@ const closeNodeCard = () => {
   }, 180)
 }
 
+const startNodeLearning = node => {
+  if (!node || node.status === 'locked' || isNodeGenerationBusy(node)) return
+  openNode(node)
+}
+
 const enterClassroom = () => {
   const node = selectedNode.value
   if (!node || node.status === 'locked') return
@@ -3666,10 +3613,10 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 34px minmax(190px, 0.3fr) minmax(360px, 1fr);
+  grid-template-columns: 34px minmax(260px, 430px) minmax(220px, 360px);
   gap: 14px;
   align-items: start;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
   cursor: pointer;
 }
 
@@ -3730,11 +3677,12 @@ onBeforeUnmount(() => {
 
 .node-card {
   min-height: 0;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border-radius: 18px;
   transition: transform 0.22s ease, border-color 0.22s ease, background 0.22s ease;
   display: flex;
   flex-direction: column;
+  gap: 7px;
 }
 
 .path-node:hover .node-card,
@@ -3776,7 +3724,6 @@ onBeforeUnmount(() => {
 
 .node-card__status {
   width: fit-content;
-  margin-top: 10px;
   padding: 5px 10px;
   border-radius: 999px;
   background: rgba(95, 143, 195, 0.12);
@@ -3785,8 +3732,36 @@ onBeforeUnmount(() => {
   font-weight: 900;
 }
 
+.node-card__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.node-start-btn {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #163f8f;
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(22, 63, 143, 0.16);
+}
+
+.node-start-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .node-card h2 {
-  margin: 8px 0 5px;
+  margin: 2px 0 0;
   color: #163f8f;
   font-size: 17px;
 }
@@ -4073,7 +4048,7 @@ onBeforeUnmount(() => {
   z-index: 4200;
   display: grid;
   place-items: center;
-  padding: clamp(18px, 4vh, 42px);
+  padding: clamp(14px, 3vh, 28px);
   background: rgba(12, 28, 58, 0.28);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -4082,9 +4057,9 @@ onBeforeUnmount(() => {
 
 .flip-card {
   position: relative;
-  width: min(560px, calc(100vw - 36px));
-  height: min(760px, calc(100vh - 36px));
-  min-height: min(600px, calc(100vh - 36px));
+  width: min(500px, calc(100vw - 36px));
+  height: min(480px, calc(100vh - 36px));
+  min-height: 0;
   transform-style: preserve-3d;
   transform: rotateY(180deg) scale(0.96);
   transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -4099,9 +4074,9 @@ onBeforeUnmount(() => {
   inset: 0;
   backface-visibility: hidden;
   border: 1px solid rgba(22, 63, 143, 0.16);
-  border-radius: 30px;
+  border-radius: 26px;
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 28px 80px rgba(22, 63, 143, 0.22);
+  box-shadow: 0 22px 64px rgba(22, 63, 143, 0.2);
   overflow: hidden;
 }
 
@@ -4116,53 +4091,54 @@ onBeforeUnmount(() => {
 
 .flip-front {
   max-height: 100%;
-  padding: 30px 32px 28px;
+  padding: 24px 28px 22px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
 
 .close-card {
   position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 38px;
-  height: 38px;
+  top: 14px;
+  right: 14px;
+  width: 34px;
+  height: 34px;
   border: 1px solid rgba(201, 220, 233, 0.9);
-  border-radius: 16px;
+  border-radius: 14px;
   background: #fafafa;
   color: #163f8f;
-  font-size: 24px;
+  font-size: 22px;
   cursor: pointer;
 }
 
 .flip-front h2 {
-  margin: 12px 0 0;
+  margin: 6px 0 0;
   color: #163f8f;
-  font-size: clamp(26px, 4.5vw, 34px);
-  line-height: 1.22;
+  font-size: clamp(23px, 3.2vw, 31px);
+  line-height: 1.18;
   overflow-wrap: anywhere;
 }
 
 .flip-front p {
   margin: 0;
   color: rgba(22, 63, 143, 0.72);
-  line-height: 1.8;
+  font-size: 15px;
+  line-height: 1.62;
   overflow-wrap: anywhere;
 }
 
 .flip-front dl {
   margin: 0;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .flip-front dl div {
-  min-height: 64px;
-  padding: 13px 16px;
-  border-radius: 16px;
+  min-height: 50px;
+  padding: 10px 14px;
+  border-radius: 14px;
   background: rgba(237, 249, 252, 0.78);
   overflow-wrap: anywhere;
 }
@@ -4174,17 +4150,18 @@ onBeforeUnmount(() => {
 }
 
 .flip-front dd {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
   color: #163f8f;
+  font-size: 16px;
   font-weight: 800;
 }
 
 .classroom-entry-note {
   display: grid;
-  gap: 6px;
-  padding: 16px 18px;
+  gap: 4px;
+  padding: 12px 14px;
   border: 1px solid rgba(201, 220, 233, 0.86);
-  border-radius: 18px;
+  border-radius: 16px;
   background: rgba(244, 250, 255, 0.86);
   overflow-wrap: anywhere;
 }
@@ -4196,15 +4173,16 @@ onBeforeUnmount(() => {
 
 .classroom-entry-note span {
   color: rgba(22, 63, 143, 0.7);
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.58;
 }
 
 .card-actions {
-  margin-top: auto;
+  margin-top: 4px;
   position: sticky;
-  bottom: -28px;
+  bottom: -22px;
   z-index: 2;
-  padding-top: 10px;
+  padding-top: 8px;
   padding-bottom: 2px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.98) 28%);
   display: flex;
@@ -4260,7 +4238,7 @@ onBeforeUnmount(() => {
 .node-branches {
   grid-column: 3;
   display: grid;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  grid-template-columns: minmax(220px, 1fr);
   gap: 10px;
   align-self: start;
   margin: 0;
@@ -4286,12 +4264,14 @@ onBeforeUnmount(() => {
   min-height: 0;
   padding: 10px 12px;
   border: 1px solid rgba(201, 220, 233, 0.78);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 8px 20px rgba(22, 63, 143, 0.06);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.04);
   display: flex;
-  flex-direction: column;
-  gap: 7px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .branch-head {
@@ -4299,7 +4279,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   color: #163f8f;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -5477,19 +5457,19 @@ onBeforeUnmount(() => {
   .node-branches {
     grid-column: 2;
     grid-template-columns: 1fr;
-    margin-top: -4px;
+    margin-top: -2px;
   }
 
   .node-branch {
-    padding-top: 16px;
+    padding-top: 0;
     padding-left: 0;
   }
 
   .branch-line {
-    left: 24px;
-    top: 0;
+    left: -14px;
+    top: -12px;
     width: 2px;
-    height: 16px;
+    height: 22px;
     transform: none;
   }
 
@@ -5540,16 +5520,16 @@ onBeforeUnmount(() => {
 
   .flip-card {
     width: min(100%, calc(100vw - 24px));
-    height: min(760px, calc(100vh - 24px));
-    min-height: min(560px, calc(100vh - 24px));
+    height: min(500px, calc(100vh - 24px));
+    min-height: 0;
   }
 
   .flip-front {
-    padding: 26px 22px 22px;
+    padding: 22px 20px 20px;
   }
 
   .card-actions {
-    bottom: -22px;
+    bottom: -20px;
   }
 
   .branch-resource-card {
