@@ -6,7 +6,21 @@
 import io
 import os
 import threading
+from pathlib import Path
 from typing import Any
+
+
+def _configure_local_runtime_dirs() -> None:
+    try:
+        project_root = Path(__file__).resolve().parents[4]
+    except IndexError:
+        project_root = Path.cwd()
+
+    os.environ.setdefault("YOLO_CONFIG_DIR", str(project_root / ".cache" / "ultralytics"))
+    os.environ.setdefault("MPLCONFIGDIR", str(project_root / ".cache" / "matplotlib"))
+
+
+_configure_local_runtime_dirs()
 
 
 def _bool_env(name: str, default: bool) -> bool:
