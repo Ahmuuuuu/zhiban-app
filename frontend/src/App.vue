@@ -53,8 +53,8 @@ function resolveComponent(targetRoute) {
 }
 
 // ---- nav order for slide direction ----
-// Must match TopNav order exactly: 首页→AI对话→资源中心→学习路径→学习情况→自习室
-const navOrder = ['/', '/chat', '/resources', '/learning-path', '/learning-situation', '/study-room']
+// Must match TopNav order exactly: 首页→AI对话→资源中心→学习路径→学习情况→自习室→模拟课堂
+const navOrder = ['/', '/chat', '/resources', '/learning-path', '/learning-situation', '/study-room', '/mock-classroom']
 function navIndex(p) {
   if (p.startsWith('/learning-resources')) return navOrder.indexOf('/resources')
   const i = navOrder.indexOf(p)
@@ -217,6 +217,7 @@ watch(
 .slide-pane .quiz-runner-page,
 .slide-pane .import-page,
 .slide-pane .study-room-page,
+.slide-pane .mock-classroom-page,
 .slide-pane .presentation-player {
   background: transparent !important;
 }

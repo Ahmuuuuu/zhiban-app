@@ -96,6 +96,24 @@ export function getStudyRoomTimelapse(sessionId: string): Promise<unknown>;
 
 export function deleteStudyRoomTimelapse(sessionId: string): Promise<unknown>;
 
+export function startMockClassroomSession(data: {
+  topic: string;
+  reference_text?: string | null;
+  planned_minutes: number;
+}): Promise<unknown>;
+
+export function uploadMockClassroomFrame(sessionId: string, data: FormData): Promise<unknown>;
+
+export function uploadMockClassroomAudio(sessionId: string, data: FormData): Promise<unknown>;
+
+export function finishMockClassroomSession(sessionId: string, data?: {
+  client_elapsed_seconds?: number;
+}): Promise<unknown>;
+
+export function getMockClassroomReport(sessionId: string): Promise<unknown>;
+
+export function deleteMockClassroomMedia(sessionId: string): Promise<unknown>;
+
 export function getStudyResource(resourceId: number | string): Promise<unknown>;
 
 export function getStudyResources(params?: Record<string, unknown>): Promise<unknown>;
