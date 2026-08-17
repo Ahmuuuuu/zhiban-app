@@ -5,6 +5,7 @@ import ResourceView from '../pages/ResourceView.vue'
 import ResourceCenterView from '../pages/ResourceCenterView.vue'
 import ChatView from '../pages/ChatView.vue'
 import StudyPath from '../pages/StudyPath.vue'
+import LearningClassroomView from '../pages/LearningClassroomView.vue'
 import StudySituation from '../pages/StudySituation.vue'
 import StudyRoomView from '../pages/StudyRoomView.vue'
 import StudyImportView from '../pages/StudyImportView.vue'
@@ -75,6 +76,11 @@ const router = createRouter({
       path: '/learning-path',
       name: 'learningPath',
       component: StudyPath
+    },
+    {
+      path: '/learning-classroom/:pathId/:nodeId',
+      name: 'learningClassroom',
+      component: LearningClassroomView
     },
     {
       path: '/learning-situation',

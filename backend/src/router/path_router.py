@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from starlette.responses import StreamingResponse
 
 from backend.src.service.path.service import PathService
+from backend.src.service.path.classroom import generate_classroom_audio, generate_classroom_lesson
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.schemas.path import (
     GeneratePathRequest,
@@ -11,6 +12,8 @@ from backend.src.schemas.path import (
     SubmitNodeQuizRequest,
     RegeneratePathRequest,
     GenerateFromProfileRequest,
+    GenerateClassroomRequest,
+    ClassroomNarrationRequest,
 )
 
 router = APIRouter(prefix="/path", tags=["学习路径"])
@@ -90,6 +93,35 @@ async def generate_node_quiz(path_id: int, node_id: int, user_id: int = Depends(
         result = await PathService.generate_node_quiz(path_id, node_id, user_id, pre_generate=True)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/{path_id}/node/{node_id}/classroom")
+async def generate_node_classroom(
+    path_id: int,
+    node_id: int,
+    data: GenerateClassroomRequest,
+    user_id: int = Depends(get_user_id_from_token),
+):
+    """为路径节点生成互动课堂脚本"""
+    result = await generate_classroom_lesson(
+        path_id,
+        node_id,
+        user_id,
+        {"node": data.node, "resources": data.resources, "quiz": data.quiz},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="节点不存在")
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.post("/classroom/narrate")
+async def narrate_classroom(data: ClassroomNarrationRequest, user_id: int = Depends(get_user_id_from_token)):
+    """生成互动课堂小知旁白音频"""
+    try:
+        result = await generate_classroom_audio(data.text, user_id, data.voice, data.rate)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"code": 200, "msg": "success", "data": result}
 
 

@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 # 每组最多生成的节点数（并行分组）
 _GROUP_SIZE = 4
+_MAX_GROUP_CONCURRENCY = 2
+_GROUP_RETRY_ATTEMPTS = 2
 
 
 _COGNITIVE_LEVELS = ["记忆", "理解", "应用", "分析", "评价", "创造"]
@@ -88,6 +90,24 @@ def _fallback_topic_outline(subject: str, node_count: int = 0) -> list[dict]:
             "micro_example": f"用一个小例子检查「{name}」是否掌握",
         })
     return outline
+
+
+def _fallback_group_nodes(group: list[dict], group_start: int) -> list[dict]:
+    nodes: list[dict] = []
+    for index, item in enumerate(group):
+        order_index = group_start + index
+        topic = str(item.get("topic") or f"学习节点 {order_index}").strip()
+        key_points = item.get("key_points") if isinstance(item.get("key_points"), list) else [topic]
+        nodes.append({
+            "topic": topic,
+            "order_index": order_index,
+            "knowledge_tags": key_points[:5],
+            "prerequisites": [group_start + index - 1] if order_index > 1 else [],
+            "resource_types": ["document", "ppt", "mindmap"],
+            "quiz_config": {"count": 5, "threshold": 0.7},
+            "description": str(item.get("learning_goal") or f"掌握{topic}的核心概念、典型应用和常见误区").strip(),
+        })
+    return nodes
 
 
 async def parse_or_repair_leader_result(raw_text: str, state: dict, *, retry_llm: bool = True) -> dict:
@@ -222,6 +242,8 @@ async def executor_node(state: PathState) -> dict:
     for i in range(0, total_nodes, _GROUP_SIZE):
         groups.append(topic_outline[i:i + _GROUP_SIZE])
 
+    group_sem = asyncio.Semaphore(_MAX_GROUP_CONCURRENCY)
+
     async def generate_group(group_idx: int, group: list[dict]) -> list[dict]:
         """为某一组节点生成详细信息"""
         group_start = group_idx * _GROUP_SIZE + 1
@@ -253,17 +275,23 @@ async def executor_node(state: PathState) -> dict:
             feedback=feedback,
         )
 
-        try:
-            response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="path")
-            nodes = parse_llm_json(response.content)
-            if isinstance(nodes, list):
-                logger.info(f"[PathExecutor] 组{group_idx+1} 生成 {len(nodes)} 个节点")
-                return nodes
-            logger.warning(f"[PathExecutor] 组{group_idx+1} 返回非列表: {type(nodes)}")
-            return []
-        except Exception:
-            logger.exception(f"[PathExecutor] 组{group_idx+1} 生成失败")
-            return []
+        async with group_sem:
+            for attempt in range(1, _GROUP_RETRY_ATTEMPTS + 1):
+                try:
+                    response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="path")
+                    nodes = parse_llm_json(response.content)
+                    if isinstance(nodes, list) and nodes:
+                        logger.info("[PathExecutor] group %s generated %s nodes on attempt %s", group_idx + 1, len(nodes), attempt)
+                        return nodes
+                    logger.warning("[PathExecutor] group %s returned invalid payload on attempt %s: %s", group_idx + 1, attempt, type(nodes))
+                except Exception:
+                    logger.exception("[PathExecutor] group %s failed on attempt %s", group_idx + 1, attempt)
+                if attempt < _GROUP_RETRY_ATTEMPTS:
+                    await asyncio.sleep(0.8 * attempt)
+
+        fallback_nodes = _fallback_group_nodes(group, group_start)
+        logger.warning("[PathExecutor] group %s used local fallback nodes count=%s", group_idx + 1, len(fallback_nodes))
+        return fallback_nodes
 
     # 并行执行所有分组
     results = await asyncio.gather(*[
@@ -320,10 +348,13 @@ async def reviewer_node(state: PathState) -> dict:
     feedback = result.get("feedback", "")
     issues = result.get("issues", [])
 
-    logger.info(f"[PathReviewer] passed={passed} score={score} issues={len(issues)} 耗时={time.perf_counter() - t0:.1f}s")
+    retry_count = state.get("retry_count", 0)
+    next_retry_count = retry_count if passed else retry_count + 1
+    logger.info(f"[PathReviewer] passed={passed} score={score} issues={len(issues)} retry={next_retry_count} 耗时={time.perf_counter() - t0:.1f}s")
     return {
         "review_passed": passed,
         "review_feedback": feedback if not passed else "",
+        "retry_count": next_retry_count,
     }
 
 

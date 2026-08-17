@@ -178,6 +178,22 @@ export function generatePathNodeQuiz(pathId, nodeId) {
   })
 }
 
+export function generateNodeClassroom(pathId, nodeId, data = {}) {
+  return request({
+    url: `/path/${pathId}/node/${nodeId}/classroom`,
+    method: 'post',
+    data
+  })
+}
+
+export function narrateClassroomText(data = {}) {
+  return request({
+    url: '/path/classroom/narrate',
+    method: 'post',
+    data
+  })
+}
+
 export function getPathVideo(pathId) {
   return request.get(`/path/${pathId}/video`)
 }

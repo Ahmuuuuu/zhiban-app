@@ -270,6 +270,7 @@ class PathService:
 
                 group_size = 4
                 groups = [topic_outline[i:i + group_size] for i in range(0, len(topic_outline), group_size)]
+                group_sem = asyncio.Semaphore(2)
 
                 async def generate_group(group_idx: int, group: list[dict]) -> list[dict]:
                     group_start = group_idx * group_size + 1
@@ -298,9 +299,58 @@ class PathService:
                         portrait_context=portrait_context,
                         feedback="",
                     )
-                    response = await llm.ainvoke(prompt_text, priority="high", user_id=user_id_int, pool="path")
-                    nodes = parse_llm_json(response.content)
-                    return nodes if isinstance(nodes, list) else []
+                    async with group_sem:
+                        for attempt in range(1, 3):
+                            try:
+                                response = await llm.ainvoke(prompt_text, priority="high", user_id=user_id_int, pool="path")
+                                nodes = parse_llm_json(response.content)
+                                if isinstance(nodes, list) and nodes:
+                                    logger.info(
+                                        "stream path group generated path_id=%s group=%s nodes=%s attempt=%s",
+                                        path.id,
+                                        group_idx + 1,
+                                        len(nodes),
+                                        attempt,
+                                    )
+                                    return nodes
+                                logger.warning(
+                                    "stream path group invalid payload path_id=%s group=%s attempt=%s type=%s",
+                                    path.id,
+                                    group_idx + 1,
+                                    attempt,
+                                    type(nodes),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "stream path group failed path_id=%s group=%s attempt=%s",
+                                    path.id,
+                                    group_idx + 1,
+                                    attempt,
+                                )
+                            if attempt < 2:
+                                await asyncio.sleep(0.8 * attempt)
+
+                    fallback_nodes = []
+                    for offset, item in enumerate(group):
+                        order_index = group_start + offset
+                        topic = str(item.get("topic") or f"学习节点 {order_index}").strip()
+                        key_points = item.get("key_points") if isinstance(item.get("key_points"), list) else [topic]
+                        fallback_nodes.append({
+                            "topic": topic,
+                            "order_index": order_index,
+                            "knowledge_tags": key_points[:5],
+                            "prerequisites": [order_index - 1] if order_index > 1 else [],
+                            "resource_types": ["document", "ppt", "mindmap"],
+                            "quiz_config": {"count": 5, "threshold": 0.7},
+                            "description": str(item.get("learning_goal") or f"掌握{topic}的核心概念、典型应用和常见误区").strip(),
+                        })
+                    logger.warning(
+                        "stream path group used fallback path_id=%s group=%s nodes=%s",
+                        path.id,
+                        group_idx + 1,
+                        len(fallback_nodes),
+                    )
+                    return fallback_nodes
 
                 tasks = [asyncio.create_task(generate_group(i, group)) for i, group in enumerate(groups)]
                 for done in asyncio.as_completed(tasks):
