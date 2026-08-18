@@ -1,10 +1,11 @@
 """学习路径路由"""
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body
 from starlette.responses import StreamingResponse
 
 from backend.src.service.path.service import PathService
 from backend.src.service.path.classroom import generate_classroom_audio, generate_classroom_lesson
+from backend.src.service.path.classroom_chat import stream_classroom_chat
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.schemas.path import (
     GeneratePathRequest,
@@ -14,6 +15,8 @@ from backend.src.schemas.path import (
     GenerateFromProfileRequest,
     GenerateClassroomRequest,
     ClassroomNarrationRequest,
+    ClassroomChatRequest,
+    GenerateNodeResourcesRequest,
 )
 
 router = APIRouter(prefix="/path", tags=["学习路径"])
@@ -125,11 +128,35 @@ async def narrate_classroom(data: ClassroomNarrationRequest, user_id: int = Depe
     return {"code": 200, "msg": "success", "data": result}
 
 
+@router.post("/classroom/chat")
+async def classroom_chat(data: ClassroomChatRequest, user_id: int = Depends(get_user_id_from_token)):
+    """互动课堂对话（流式）：复用 Brain 现成聊天逻辑，不落 ChatHistory"""
+    return StreamingResponse(
+        stream_classroom_chat(
+            user_id=user_id,
+            path_id=data.path_id,
+            node_id=data.node_id,
+            segment=data.segment,
+            scenario=data.scenario,
+            text=data.text,
+        ),
+        media_type="text/event-stream",
+    )
+
+
 @router.post("/{path_id}/node/{node_id}/generate-resources/stream")
-async def generate_node_resources_stream(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
+async def generate_node_resources_stream(
+    path_id: int,
+    node_id: int,
+    data: GenerateNodeResourcesRequest | None = Body(default=None),
+    user_id: int = Depends(get_user_id_from_token),
+):
     """流式为节点生成学习资源（SSE），生成好一个推送一个"""
     return StreamingResponse(
-        PathService.generate_node_resources_stream(path_id, node_id, user_id),
+        PathService.generate_node_resources_stream(
+            path_id, node_id, user_id,
+            resource_types=data.resource_types if data else None,
+        ),
         media_type="text/event-stream",
     )
 

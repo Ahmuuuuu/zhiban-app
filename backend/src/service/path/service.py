@@ -781,7 +781,21 @@ class PathService:
     # ── 资源生成 ──
 
     @staticmethod
-    async def generate_node_resources_stream(path_id: int, node_id: int, user_id: int):
+    async def _ensure_node_progress(user_id: int, path_id: int, node_id: int):
+        """生成资源时自动补建用户节点进度记录；失败返回 None。"""
+        try:
+            return await UserPathProgress.create(
+                user_id=user_id,
+                path_id=path_id,
+                node_id=node_id,
+                node_status="in_progress",
+            )
+        except Exception:
+            logger.exception("自动创建节点进度失败 user=%s path=%s node=%s", user_id, path_id, node_id)
+            return None
+
+    @staticmethod
+    async def generate_node_resources_stream(path_id: int, node_id: int, user_id: int, resource_types: list[str] | None = None):
         """流式为节点生成学习资源（SSE）—— 生成好一个推送一个"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
         if not node:
@@ -790,8 +804,11 @@ class PathService:
 
         progress = await UserPathProgress.filter(user_id=user_id, path_id=path_id, node_id=node_id).first()
         if not progress:
-            yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径'}, ensure_ascii=False)}\n\n"
-            return
+            # 用户可能未走 enroll 流程，但既然在生成该节点资料，补建进度记录避免生成被卡死
+            progress = await PathService._ensure_node_progress(user_id, path_id, node_id)
+            if progress is None:
+                yield f"data: {json.dumps({'type': 'error', 'detail': '未加入该路径，且无法创建进度记录'}, ensure_ascii=False)}\n\n"
+                return
 
         lock = await get_node_generation_lock(user_id, path_id, node_id, "resources")
         if lock.locked():
@@ -799,7 +816,7 @@ class PathService:
 
         async with lock:
             topic = node.topic
-            node_resource_types = ["document", "ppt", "mindmap"]
+            node_resource_types = resource_types or ["document", "ppt", "mindmap"]
             existing_records, missing_types = await get_bound_node_resources(progress, user_id, node_resource_types)
 
             for r in existing_records:
@@ -812,8 +829,6 @@ class PathService:
                 return
 
             gen_types = [t for t in missing_types if t != "exercise"]
-            if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
-                gen_types.insert(0, "ppt")
 
             if gen_types:
                 yield f"data: {json.dumps({'type': 'status', 'msg': f'开始生成 {len(gen_types)} 种资源...'}, ensure_ascii=False)}\n\n"
@@ -861,7 +876,7 @@ class PathService:
                 await update_progress_resource_ids(progress, all_ids)
 
     @staticmethod
-    async def generate_node_resources(path_id: int, node_id: int, user_id: int) -> dict:
+    async def generate_node_resources(path_id: int, node_id: int, user_id: int, resource_types: list[str] | None = None) -> dict:
         """为节点获取学习资源 — 已有则复用，没有则生成"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
         if not node:
@@ -869,17 +884,17 @@ class PathService:
 
         progress = await UserPathProgress.filter(user_id=user_id, path_id=path_id, node_id=node_id).first()
         if not progress:
-            raise ValueError("未加入该路径")
+            progress = await PathService._ensure_node_progress(user_id, path_id, node_id)
+            if progress is None:
+                raise ValueError("未加入该路径")
 
         lock = await get_node_generation_lock(user_id, path_id, node_id, "resources")
         async with lock:
             topic = node.topic
-            node_resource_types = ["document", "ppt", "mindmap"]
+            node_resource_types = resource_types or ["document", "ppt", "mindmap"]
             existing_records, missing_types = await get_bound_node_resources(progress, user_id, node_resource_types)
 
             gen_types = [t for t in missing_types if t != "exercise"]
-            if "ppt" not in gen_types and "ppt" not in [r.resource_type for r in existing_records]:
-                gen_types.insert(0, "ppt")
 
             generated_ids = []
             if gen_types:

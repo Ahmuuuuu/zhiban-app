@@ -49,6 +49,7 @@ _PER_USER = {
     "path": 8,          # 学习路径，低频
     "leader": 3,        # 大纲规划，单次调用，不需多路
     "reviewer": 50,     # 审核，5 用户 ×50=250，对齐 _review_sem
+    "classroom": 5,     # 互动课堂：1 规划 + 5 幕并行 + 1 审核，对齐 _MAX_SEGMENT_CONCURRENCY
     "thread": 10,       # 其他同步任务
 }
 _DEFAULT_PER_USER = 5

@@ -9,14 +9,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from backend.src.ai_core.llm_config import llm
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
 from backend.src.models.portraitmodel import User_picture
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
 from backend.src.service.portrait.service import PortraitRadarService, format_portrait
 from backend.src.utils.constants import STATIC_DIR
-from backend.src.utils.json_parser import parse_llm_json
 from backend.src.utils.tts_utils import clean_for_tts, generate_audio
 
 logger = logging.getLogger(__name__)
@@ -504,7 +502,9 @@ async def _build_portrait_context(user_id: int) -> str:
         if user.profile:
             parts.append(f"简介：{user.profile}")
 
-    picture = await User_picture.filter(user_id=user_id).first()
+    picture = None
+    if user and getattr(user, "picture_id", None):
+        picture = await User_picture.filter(id=user.picture_id).first()
     if picture:
         radar_data = None
         try:
@@ -570,43 +570,33 @@ async def generate_classroom_lesson(
     portrait_context = await _build_portrait_context(user_id)
     fallback = _fallback_lesson(topic, summary, resources, portrait_context)
 
-    prompt = f"""
-你是知伴的互动课堂规划智能体。请为一个学习路径节点生成真正可讲授的课堂脚本。
+    # 延迟导入规避循环依赖：classroom_graph 顶部 import 了本模块的 _normalize_lesson 等
+    from backend.src.ai_core.classroom_graph import classroom_graph, ClassroomState
+    from backend.src.service.path.generation_locks import get_node_generation_lock
 
-输出要求：
-1. 只输出 JSON，不要 Markdown，不要解释。
-2. JSON 顶层字段：title, personal_summary, segments。
-3. segments 必须是 5 段，id 固定为 lead-in, concept, resource-link, checkpoint, feynman。
-4. 每段包含 type、title、subtitle、intent、teacher_speech、script、board_title、board_items、points、visual_hint、example、resource_refs、duration_seconds、question。
-5. teacher_speech/script 是小知可直接朗读的讲稿，每段 120-190 中文字，必须讲具体知识，不要空泛宣传。
-6. board_items 是屏幕板书，3-5 条，每条不超过 24 字，必须是本节点知识内容，不要写“按当前节点动态讲解”。
-7. example 是本幕的短例子、类比或操作步骤，不超过 60 字。
-8. resource_refs 只能引用给出的可用资源，包含 title、type、how_to_use；没有合适资源则给空数组。
-9. question 包含 prompt、options、answer、feedback；options 3 个。
-10. 个性化必须基于画像、年级专业、弱点或资源，不要写“根据你的画像”这种空话。
-11. 课堂内容要像老师讲课：先抛问题，再讲板书，再用例子/题目检查。避免像资料预览列表。
-12. 禁止只描述产品功能，例如“课堂会根据节点讲解”“资料会辅助学习”；必须直接讲本节点知识本身。
-13. 如果节点涉及计算、公式、步骤或概念关系，至少在 example 或 board_items 中给出一个具体表达式、步骤链或易混对比。
-14. resource-link 段只能讲“如何用资料验证本节点的定义、步骤、例题或易错点”，不要写“资料不是摆设”“把资料用起来”这类产品说明。
-
-路径主题：{path.subject if path else "未知"}
-节点标题：{topic}
-节点摘要：{summary}
-知识标签：{json.dumps(knowledge_tags, ensure_ascii=False)}
-测验配置：{json.dumps(quiz_config, ensure_ascii=False)}
-前端测验快照：{json.dumps(quiz, ensure_ascii=False)[:900]}
-可用资源摘要：{json.dumps(resources, ensure_ascii=False)[:2200]}
-用户画像：
-{portrait_context}
-"""
-
-    try:
-        response = await llm.ainvoke(prompt, priority="high", user_id=user_id, pool="path")
-        parsed = parse_llm_json(response.content)
-        lesson = _normalize_lesson(parsed, fallback)
-    except Exception:
-        logger.exception("classroom lesson generation failed path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
-        lesson = fallback
+    lock = await get_node_generation_lock(user_id, path_id, node_id, "classroom")
+    async with lock:
+        try:
+            initial = ClassroomState(
+                path_id=path_id,
+                node_id=node_id,
+                user_id=user_id,
+                subject=path.subject if path else "未知",
+                topic=topic,
+                summary=summary,
+                knowledge_tags=knowledge_tags,
+                quiz_config=quiz_config,
+                quiz_snapshot=quiz,
+                resources=resources,
+                portrait_context=portrait_context,
+                fallback_lesson=fallback,
+                llm_priority="high",
+            )
+            final_state = await classroom_graph.ainvoke(initial)
+            lesson = final_state.get("lesson") or fallback
+        except Exception:
+            logger.exception("classroom lesson generation failed path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
+            lesson = fallback
 
     return {
         "path_id": path_id,

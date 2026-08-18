@@ -1,5 +1,5 @@
 import request from './request'
-import { apiFetchHeaders } from './config'
+import { apiFetchHeaders, parseStreamEvent } from './config'
 
 export function getCurrentLearningPath() {
   return request.get('/learning_path/current')
@@ -114,7 +114,7 @@ export function generatePathNodeResources(pathId, nodeId) {
   })
 }
 
-export async function generatePathNodeResourcesStream(pathId, nodeId, onResource, onStatus, onDone, onError) {
+export async function generatePathNodeResourcesStream(pathId, nodeId, onResource, onStatus, onDone, onError, data = {}) {
   const token = localStorage.getItem('token')
   const baseURL = request.defaults.baseURL || ''
   const url = `${baseURL}/path/${pathId}/node/${nodeId}/generate-resources/stream`
@@ -125,7 +125,8 @@ export async function generatePathNodeResourcesStream(pathId, nodeId, onResource
       headers: apiFetchHeaders({
         'Content-Type': 'application/json',
         ...(token ? { token } : {})
-      })
+      }),
+      body: JSON.stringify(data || {})
     })
 
     if (!response.ok) {
@@ -192,6 +193,43 @@ export function narrateClassroomText(data = {}) {
     method: 'post',
     data
   })
+}
+
+export async function streamClassroomChatMessage(data = {}, { onChunk, onDone, onError } = {}) {
+  const token = localStorage.getItem('token')
+  const baseURL = request.defaults.baseURL || ''
+  const url = `${baseURL}/path/classroom/chat`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: apiFetchHeaders({
+      'Content-Type': 'application/json',
+      ...(token ? { token } : {})
+    }),
+    body: JSON.stringify(data || {})
+  })
+  if (!response.ok || !response.body) {
+    throw new Error(`流式请求失败：${response.status}`)
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (value) buffer += decoder.decode(value, { stream: !done })
+    const events = buffer.split(/\r?\n\r?\n/)
+    buffer = events.pop() || ''
+    for (const eventText of events) {
+      for (const payload of parseStreamEvent(eventText)) {
+        if (payload === '[DONE]') { onDone?.({}); continue }
+        let ev
+        try { ev = JSON.parse(payload) } catch { continue }
+        if (ev.error) { await onError?.(ev.error); return }
+        if (ev.content) await onChunk?.(ev.content)
+        if (ev.type === 'done' || ev.done) await onDone?.(ev)
+      }
+    }
+    if (done) break
+  }
 }
 
 export function getPathVideo(pathId) {

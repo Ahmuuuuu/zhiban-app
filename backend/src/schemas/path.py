@@ -44,3 +44,17 @@ class ClassroomNarrationRequest(BaseModel):
     text: str = Field(description="需要朗读的课堂讲稿")
     voice: str = Field(default="zh-CN-XiaoxiaoNeural", description="EdgeTTS 音色")
     rate: str = Field(default="+0%", description="语速，例如 +0%、+8%、-5%")
+
+
+class ClassroomChatRequest(BaseModel):
+    """互动课堂对话（流式）"""
+    path_id: int = Field(description="路径 ID")
+    node_id: int = Field(description="节点 ID")
+    segment: dict = Field(default_factory=dict, description="前端当前幕快照（title/script/board_items/points/example/question）")
+    scenario: str = Field(default="free", description="checkpoint | feynman | free")
+    text: str = Field(default="", description="学生的话：选择结果 / 费曼反讲文本 / 自由提问")
+
+
+class GenerateNodeResourcesRequest(BaseModel):
+    """为节点生成学习资源（可选指定类型）"""
+    resource_types: list[str] | None = Field(default=None, description="指定生成的资源类型；不传则用默认（document/ppt/mindmap）")
