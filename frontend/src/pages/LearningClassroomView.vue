@@ -192,7 +192,7 @@
           <div v-if="activeResourceCards.length" class="resource-list">
             <article v-for="resource in activeResourceCards" :key="resource.id || resource.title" class="resource-card">
               <div class="resource-card__top">
-                <span>{{ resource.typeLabel || resource.fileType || '资料' }}</span>
+                <span>{{ fileTypeLabel(resource.typeLabel || resource.fileType || resource.type || '') }}</span>
                 <div class="resource-card__actions">
                   <button
                     type="button"
@@ -226,7 +226,66 @@
               <p>{{ resourceBrief(resource) }}</p>
             </article>
           </div>
-          <p v-else class="empty-copy">当前节点还没有生成资料，课堂会先按路径节点讲解。</p>
+          <div v-else class="resource-empty">
+            <p class="empty-copy">当前节点还没有生成资料，课堂会先按路径节点讲解。</p>
+            <button
+              type="button"
+              class="resource-generate-btn"
+              :disabled="resGenerating"
+              @click="generateNodeResources"
+            >
+              {{ resGenerating ? '资料生成中...' : '生成学习资料' }}
+            </button>
+            <p v-if="resStatus" class="resource-generate-error">{{ resStatus }}</p>
+            <p v-if="resGenerateError" class="resource-generate-error">{{ resGenerateError }}</p>
+          </div>
+        </section>
+
+        <section v-if="previewItem" class="resource-preview-overlay" @click.self="closeClassroomPreview">
+          <article class="resource-preview-panel">
+            <header>
+              <div>
+                <span>{{ previewItem.typeLabel || '资料' }}</span>
+                <h2>{{ previewItem.title }}</h2>
+              </div>
+              <button type="button" aria-label="关闭预览" @click="closeClassroomPreview">&times;</button>
+            </header>
+            <div class="resource-preview-body" :class="{ 'resource-preview-body--ppt': isPptResource(previewItem) }">
+              <img
+                v-if="isImageResource(previewItem) && previewItem.previewUrl"
+                :src="previewItem.previewUrl"
+                :alt="previewItem.title"
+              />
+              <PptPreview
+                v-else-if="(isPptResource(previewItem) || isHtmlResource(previewItem)) && previewItem.slides?.length"
+                v-model:slides="previewItem.slides"
+                :title="previewItem.title"
+                :editable="false"
+                :annotatable="false"
+                :annotations="[]"
+              />
+              <div v-else-if="isHtmlResource(previewItem) && previewItem.previewUrl" class="resource-html-placeholder">
+                <strong>{{ previewItem.title }}</strong>
+                <span>学习视频 — 点击下方按钮在新窗口播放</span>
+                <a :href="resolveApiUrl(previewItem.previewUrl)" target="_blank" rel="noopener noreferrer" class="html-open-btn">播放视频</a>
+              </div>
+              <MindmapPreview
+                v-else-if="isMindmapResource(previewItem) && previewItem.content"
+                :content="previewItem.content"
+                :title="previewItem.title"
+              />
+              <AnnotatedTextPreview
+                v-else-if="previewItem.content"
+                :content="previewItem.content"
+                :annotations="[]"
+                :annotatable="false"
+              />
+              <pre v-else>{{ previewItem.content || '暂无可预览内容，可以下载原文件查看。' }}</pre>
+            </div>
+            <footer v-if="previewItem.downloadUrl">
+              <button type="button" @click="downloadClassroomResource(previewItem)">下载原文件</button>
+            </footer>
+          </article>
         </section>
 
         <section class="feynman-panel" :class="{ unlocked: feynmanUnlocked }">
@@ -275,8 +334,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Download, Eye, MessageCircle, Pause, Play, Save, Volume2 } from 'lucide-vue-next'
-import { generateNodeClassroom, narrateClassroomText, streamClassroomChatMessage } from '../api/learningPath'
+import { generateNodeClassroom, generatePathNodeResourcesStream, narrateClassroomText, streamClassroomChatMessage } from '../api/learningPath'
 import { downloadWithToken, resolveApiUrl } from '../api/config'
+import { getGeneratedResource } from '../api/resource'
+import MindmapPreview from '../components/MindmapPreview.vue'
+import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
+import PptPreview from '../components/PptPreview.vue'
 import VideoGlowProgress from '../components/ppt_video/video/VideoGlowProgress.vue'
 import petImage from '../assets/pic/study-pet-reference-cutout.png'
 import { saveGeneratedResourceRef } from '../utils/savedResources'
@@ -301,6 +364,10 @@ const feynmanFeedback = ref('')
 const messages = ref([])
 const streamingTeacher = ref(false)
 const checkpointFeedbackText = ref('')
+const resGenerating = ref(false)
+const resGenerateError = ref('')
+const resStatus = ref('')
+const previewItem = ref(null)
 const isSpeaking = ref(false)
 const speechProgress = ref(0)
 const audioLoading = ref(false)
@@ -855,7 +922,7 @@ const activeResourceCards = computed(() => {
     })
   }
   if (matched.length) return matched.slice(0, 3)
-  return resourceList.value.slice(0, 2)
+  return resourceList.value.slice(0, 6)
 })
 
 const resourceBrief = resource => {
@@ -914,16 +981,84 @@ const canDownloadClassroomResource = resource => Boolean(classroomResourceDownlo
 
 const isClassroomResourceSaved = resource => savedClassroomResourceIds.value.has(classroomResourceId(resource))
 
-const previewClassroomResource = resource => {
-  const url = classroomResourcePreviewUrl(resource)
-  if (url) {
-    window.open(url, '_blank', 'noopener,noreferrer')
+const previewClassroomResource = async resource => {
+  // 学习视频（HTML）→ 新窗口播放（无内嵌播放器）
+  if (isHtmlResource(resource)) {
+    const directUrl = resource.previewUrl || resource.preview_url || resource.fileUrl || resource.file_url || resource.url || ''
+    if (directUrl) {
+      try {
+        const target = new URL(resolveApiUrl(directUrl), window.location.origin)
+        const token = localStorage.getItem('token')
+        if (token && !target.searchParams.has('token')) target.searchParams.set('token', token)
+        window.open(target.toString(), '_blank', 'noopener,noreferrer')
+      } catch {
+        window.open(resolveApiUrl(directUrl), '_blank', 'noopener,noreferrer')
+      }
+      return
+    }
+  }
+
+  // 其余类型：拉资源详情展示内容（与 StudyPath 预览同源）
+  const resourceId = Number(
+    resource.resourceId || resource.resource_id ||
+    (/^\d+$/.test(String(resource.id || '')) ? resource.id : '')
+  )
+  if (resourceId) {
+    try {
+      const res = await getGeneratedResource(resourceId)
+      const detail = res?.data?.data || res?.data || res
+      const content = detail?.content || resource.content || resource.summary || ''
+      previewItem.value = {
+        title: resource.title || detail?.title || '学习资料',
+        content: String(content).trim() ? String(content) : '（该资料无可预览的文本内容，请尝试下载查看）',
+        type: detail?.resource_type || detail?.file_type || resource.type || resource.fileType || resource.typeLabel || '',
+        typeLabel: resource.typeLabel || detail?.resource_type || '资料',
+        previewUrl: detail?.file_url || detail?.preview_url || resource.previewUrl || resource.file_url || '',
+        downloadUrl: classroomResourceDownloadUrl(resource) || (detail?.download_url ? resolveApiUrl(detail.download_url) : ''),
+        slides: Array.isArray(detail?.slides) ? detail.slides : []
+      }
+      return
+    } catch (err) {
+      console.warn('[LearningClassroom] get resource detail failed:', err)
+    }
+  }
+
+  if (resource?.content || resource?.summary) {
+    previewItem.value = {
+      title: resource.title || '学习资料',
+      content: resource.content || resource.summary,
+      type: resource.type || resource.fileType || resource.typeLabel || '',
+      typeLabel: resource.typeLabel || '资料',
+      previewUrl: resource.previewUrl || resource.file_url || resource.url || '',
+      downloadUrl: classroomResourceDownloadUrl(resource) || ''
+    }
     return
   }
-  if (resource?.content || resource?.summary) {
-    window.alert(resource.content || resource.summary)
-  }
+  window.alert('该资源暂无可预览内容。')
 }
+
+const closeClassroomPreview = () => {
+  previewItem.value = null
+}
+
+// ── 资源类型判断与中文映射（与 StudyPath 保持一致）──
+const fileTypeLabel = type => {
+  const t = String(type || '').toLowerCase()
+  if (t.includes('ppt')) return 'PPT 文件'
+  if (t.includes('image')) return '图片'
+  if (t.includes('mind')) return '思维导图'
+  if (t.includes('video') || t.includes('mp4')) return '视频'
+  if (t.includes('html')) return '学习视频'
+  if (t.includes('audio')) return '音频旁白'
+  if (t.includes('txt') || t.includes('document')) return '学习文档'
+  if (t.includes('pdf')) return 'PDF 文件'
+  return '文件'
+}
+const isImageResource = r => String(r?.type || r?.fileType || r?.typeLabel || '').toLowerCase().includes('image')
+const isPptResource = r => /ppt|powerpoint|presentation|slide/.test(String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase())
+const isMindmapResource = r => String(r?.type || r?.fileType || r?.title || r?.filename || '').toLowerCase().includes('mind')
+const isAudioResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('audio')
+const isHtmlResource = r => String(r?.type || r?.fileType || '').toLowerCase().includes('html')
 
 const saveClassroomResource = resource => {
   const sourceId = classroomResourceId(resource)
@@ -983,6 +1118,48 @@ const loadClassroomLesson = async () => {
     classroomError.value = err?.response?.data?.detail || err?.message || '课堂内容生成失败'
   } finally {
     classroomLoading.value = false
+  }
+}
+
+const generateNodeResources = async () => {
+  const pathId = String(launchPayload.value?.pathId || route.params.pathId || '')
+  const nodeId = String(node.value.id || node.value.node_id || node.value.nodeId || route.params.nodeId || '')
+  if (!/^\d+$/.test(pathId) || !/^\d+$/.test(nodeId) || resGenerating.value) return
+  resGenerating.value = true
+  resGenerateError.value = ''
+
+  const pushGenerated = data => {
+    const resource = {
+      id: `gen-${data.resource_id || data.resourceId || Date.now()}-${classroomResources.value.length}`,
+      resourceId: data.resource_id || data.resourceId || '',
+      title: data.title || `课堂资料 ${classroomResources.value.length + 1}`,
+      type: data.resource_type || data.fileType || data.file_type || '',
+      typeLabel: data.resource_type || data.fileType || data.file_type || '资料',
+      summary: data.content || data.summary || data.preview || data.text || '',
+      url: data.download_url || data.file_url || data.url || '',
+      previewUrl: data.file_url || data.preview_url || data.url || '',
+      fileType: data.file_type || data.resource_type || ''
+    }
+    if (!resource.title) return
+    const exists = classroomResources.value.some(r => String(r.title || '').trim() === String(resource.title).trim())
+    if (!exists) classroomResources.value = [...classroomResources.value, resource]
+  }
+
+  try {
+    await generatePathNodeResourcesStream(
+      pathId, nodeId,
+      pushGenerated,          // onResource
+      (data) => { resGenerateError.value = ''; resStatus.value = data?.msg || data?.message || '资料生成中...' },  // onStatus
+      () => {},               // onDone
+      (err) => { resGenerateError.value = err?.message || '生成学习资料失败'; resStatus.value = '' },  // onError
+      { resource_types: ['document', 'mindmap'] }  // 课堂只生成文档+思维导图，跳过最慢的 PPT
+    )
+  } catch (err) {
+    resGenerateError.value = err?.message || '生成学习资料失败'
+    resStatus.value = ''
+  } finally {
+    resGenerating.value = false
+    resStatus.value = ''
   }
 }
 
@@ -1960,6 +2137,172 @@ button:disabled {
   padding: 9px 10px;
   border-radius: 16px;
   box-shadow: none;
+}
+
+.resource-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.resource-generate-btn {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 10px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.resource-generate-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.resource-generate-error {
+  color: #e11d48;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.resource-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4300;
+  display: grid;
+  place-items: center;
+  padding: clamp(12px, 2vw, 24px);
+  background: rgba(12, 28, 58, 0.32);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.resource-preview-panel {
+  width: min(1380px, 98vw);
+  height: min(940px, 96vh);
+  max-height: 96vh;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 28px 80px rgba(22, 63, 143, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.resource-preview-panel header,
+.resource-preview-panel footer {
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid rgba(201, 220, 233, 0.7);
+}
+
+.resource-preview-panel footer {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(201, 220, 233, 0.7);
+  border-bottom: none;
+}
+
+.resource-preview-panel header span {
+  color: #5f8fc3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.resource-preview-panel header h2 {
+  margin: 4px 0 0;
+  color: #163f8f;
+  font-size: 24px;
+}
+
+.resource-preview-panel header button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(201, 220, 233, 0.9);
+  border-radius: 14px;
+  background: #fafafa;
+  color: #163f8f;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.resource-preview-panel footer button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: #163f8f;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.resource-preview-body {
+  min-height: 0;
+  flex: 1;
+  padding: clamp(14px, 1.8vw, 24px);
+  overflow: auto;
+}
+
+.resource-preview-body--ppt {
+  overflow: hidden;
+  padding: 10px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.resource-preview-body img {
+  display: block;
+  max-width: 100%;
+  max-height: 620px;
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: 18px;
+}
+
+.resource-preview-body pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #163f8f;
+}
+
+.resource-html-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: #5f8fc3;
+  text-align: center;
+}
+
+.resource-html-placeholder strong {
+  color: #163f8f;
+  font-size: 18px;
+}
+
+.html-open-btn {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 1px solid rgba(22, 63, 143, 0.16);
+  border-radius: 8px;
+  background: #163f8f;
+  color: #fff;
+  font: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 .resource-shelf .personal-panel {

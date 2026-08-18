@@ -114,7 +114,7 @@ export function generatePathNodeResources(pathId, nodeId) {
   })
 }
 
-export async function generatePathNodeResourcesStream(pathId, nodeId, onResource, onStatus, onDone, onError) {
+export async function generatePathNodeResourcesStream(pathId, nodeId, onResource, onStatus, onDone, onError, data = {}) {
   const token = localStorage.getItem('token')
   const baseURL = request.defaults.baseURL || ''
   const url = `${baseURL}/path/${pathId}/node/${nodeId}/generate-resources/stream`
@@ -125,7 +125,8 @@ export async function generatePathNodeResourcesStream(pathId, nodeId, onResource
       headers: apiFetchHeaders({
         'Content-Type': 'application/json',
         ...(token ? { token } : {})
-      })
+      }),
+      body: JSON.stringify(data || {})
     })
 
     if (!response.ok) {

@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-export const DEFAULT_API_BASE_URL = ' https://compel-dividable-unfasten.ngrok-free.dev'
+export const DEFAULT_API_BASE_URL = 'https://compel-dividable-unfasten.ngrok-free.dev'
 const rawApiBaseURL = import.meta.env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL
 export const apiBaseURL = rawApiBaseURL.replace(/\/+$/, '')
 
