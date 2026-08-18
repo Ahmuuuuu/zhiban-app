@@ -16,6 +16,7 @@ class UserAgent(Model):
 
     is_public = fields.BooleanField(default=False, description="是否公开到市场")
     enabled = fields.BooleanField(default=True)
+    is_system = fields.BooleanField(default=False, description="系统内置智能体，禁止用户编辑/删除")
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

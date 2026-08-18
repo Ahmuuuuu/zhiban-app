@@ -22,6 +22,23 @@ from backend.src.schemas.path import (
 router = APIRouter(prefix="/path", tags=["学习路径"])
 
 
+async def _assert_path_access(path_id: int, user_id: int, *, public_readable: bool = False) -> None:
+    """校验用户对该路径的访问权：创建者始终放行；公共路径可读；
+    其余读写一律要求已加入（enroll）。未通过统一抛 404，不暴露路径存在性。"""
+    from backend.src.models.path_model import LearningPath, UserPathProgress
+
+    path = await LearningPath.filter(id=path_id).only("id", "user_id", "is_public").first()
+    if not path:
+        raise HTTPException(status_code=404, detail="路径不存在")
+    if path.user_id == user_id:
+        return
+    if public_readable and path.is_public:
+        return
+    if await UserPathProgress.filter(user_id=user_id, path_id=path_id).exists():
+        return
+    raise HTTPException(status_code=404, detail="路径不存在")
+
+
 @router.post("/generate")
 async def generate_path(data: GeneratePathRequest, user_id: int = Depends(get_user_id_from_token)):
     """AI 生成学习路径"""
@@ -66,6 +83,7 @@ async def enroll_path(data: EnrollPathRequest, user_id: int = Depends(get_user_i
 @router.get("/{path_id}/progress")
 async def get_progress(path_id: int, user_id: int = Depends(get_user_id_from_token)):
     """用户在路径上的整体进度"""
+    await _assert_path_access(path_id, user_id)
     result = await PathService.get_progress(path_id, user_id)
     return {"code": 200, "msg": "success", "data": result}
 
@@ -73,6 +91,7 @@ async def get_progress(path_id: int, user_id: int = Depends(get_user_id_from_tok
 @router.get("/{path_id}/node/{node_id}")
 async def get_node(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
     """节点详情（含资源和进度）"""
+    await _assert_path_access(path_id, user_id)
     result = await PathService.get_node(path_id, node_id, user_id)
     if not result:
         raise HTTPException(status_code=404, detail="节点不存在")
@@ -82,6 +101,7 @@ async def get_node(path_id: int, node_id: int, user_id: int = Depends(get_user_i
 @router.post("/{path_id}/node/{node_id}/generate-resources")
 async def generate_node_resources(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
     """手动为节点生成学习资源"""
+    await _assert_path_access(path_id, user_id)
     try:
         result = await PathService.generate_node_resources(path_id, node_id, user_id)
     except ValueError as e:
@@ -92,6 +112,7 @@ async def generate_node_resources(path_id: int, node_id: int, user_id: int = Dep
 @router.post("/{path_id}/node/{node_id}/generate-quiz")
 async def generate_node_quiz(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
     """为节点生成测验题目"""
+    await _assert_path_access(path_id, user_id)
     try:
         result = await PathService.generate_node_quiz(path_id, node_id, user_id, pre_generate=True)
     except ValueError as e:
@@ -107,6 +128,7 @@ async def generate_node_classroom(
     user_id: int = Depends(get_user_id_from_token),
 ):
     """为路径节点生成互动课堂脚本"""
+    await _assert_path_access(path_id, user_id)
     result = await generate_classroom_lesson(
         path_id,
         node_id,
@@ -131,6 +153,7 @@ async def narrate_classroom(data: ClassroomNarrationRequest, user_id: int = Depe
 @router.post("/classroom/chat")
 async def classroom_chat(data: ClassroomChatRequest, user_id: int = Depends(get_user_id_from_token)):
     """互动课堂对话（流式）：复用 Brain 现成聊天逻辑，不落 ChatHistory"""
+    await _assert_path_access(data.path_id, user_id)
     return StreamingResponse(
         stream_classroom_chat(
             user_id=user_id,
@@ -152,6 +175,7 @@ async def generate_node_resources_stream(
     user_id: int = Depends(get_user_id_from_token),
 ):
     """流式为节点生成学习资源（SSE），生成好一个推送一个"""
+    await _assert_path_access(path_id, user_id)
     return StreamingResponse(
         PathService.generate_node_resources_stream(
             path_id, node_id, user_id,
@@ -164,6 +188,7 @@ async def generate_node_resources_stream(
 @router.post("/{path_id}/node/{node_id}/generate-quiz/stream")
 async def generate_node_quiz_stream(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
     """流式为节点生成测验题目（SSE）"""
+    await _assert_path_access(path_id, user_id)
     return StreamingResponse(
         PathService.generate_node_quiz_stream(path_id, node_id, user_id),
         media_type="text/event-stream",
@@ -178,6 +203,7 @@ async def submit_node_quiz(
     user_id: int = Depends(get_user_id_from_token),
 ):
     """提交节点测验 → 评分 → 门禁 → 解锁下一节点"""
+    await _assert_path_access(path_id, user_id)
     try:
         result = await PathService.submit_node_quiz(path_id, node_id, user_id, data.session_id)
     except ValueError as e:
@@ -188,6 +214,7 @@ async def submit_node_quiz(
 @router.post("/{path_id}/video")
 async def generate_path_video(path_id: int, user_id: int = Depends(get_user_id_from_token)):
     """为整条学习路径生成一个综合视频课件"""
+    await _assert_path_access(path_id, user_id)
     try:
         result = await PathService.generate_path_video(path_id, user_id)
     except ValueError as e:
@@ -200,6 +227,7 @@ async def generate_path_video(path_id: int, user_id: int = Depends(get_user_id_f
 @router.get("/{path_id}/video")
 async def get_path_video(path_id: int, user_id: int = Depends(get_user_id_from_token)):
     """获取路径已有的视频课件"""
+    await _assert_path_access(path_id, user_id)
     result = await PathService.get_path_video(path_id, user_id)
     if not result:
         return {"code": 200, "msg": "success", "data": None}
@@ -209,6 +237,7 @@ async def get_path_video(path_id: int, user_id: int = Depends(get_user_id_from_t
 @router.post("/regenerate")
 async def regenerate_path(data: RegeneratePathRequest, user_id: int = Depends(get_user_id_from_token)):
     """基于最新画像重建路径"""
+    await _assert_path_access(data.path_id, user_id)
     try:
         result = await PathService.regenerate_path(data.path_id, user_id)
     except ValueError as e:

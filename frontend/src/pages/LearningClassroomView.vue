@@ -109,23 +109,6 @@
           />
         </div>
 
-        <section class="dialog-panel classroom-dialog-panel">
-          <div class="section-head">
-            <span>课堂对话</span>
-            <small>{{ messages.length }} 条</small>
-          </div>
-          <div class="dialog-messages">
-            <article v-for="message in messages" :key="message.id" :class="message.role">
-              <strong>{{ message.role === 'teacher' ? '小知' : '我' }}</strong>
-              <p>{{ message.content }}</p>
-            </article>
-          </div>
-          <form class="dialog-input" @submit.prevent="sendLearnerMessage">
-            <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
-            <button type="submit" :disabled="!learnerInput || streamingTeacher">发送</button>
-          </form>
-        </section>
-
         <div v-if="showCheckpoint" class="checkpoint-card">
           <span><MessageCircle :size="16" /> 课堂追问</span>
           <h3>{{ activeQuestion.prompt }}</h3>
@@ -153,23 +136,6 @@
             {{ activeSegmentIndex === lessonSegments.length - 1 ? '完成本节总结' : '我懂了，继续' }}
           </button>
         </div>
-      </section>
-
-      <section class="dialog-panel classroom-dialog-panel">
-        <div class="section-head">
-          <span>课堂对话</span>
-          <small>{{ messages.length }} 条</small>
-        </div>
-        <div class="dialog-messages">
-          <article v-for="message in messages" :key="message.id" :class="message.role">
-            <strong>{{ message.role === 'teacher' ? '小知' : '我' }}</strong>
-            <p>{{ message.content }}</p>
-          </article>
-        </div>
-        <form class="dialog-input" @submit.prevent="sendLearnerMessage">
-          <input v-model.trim="learnerInput" placeholder="提问，或用自己的话讲一遍..." />
-          <button type="submit" :disabled="!learnerInput || streamingTeacher">发送</button>
-        </form>
       </section>
 
       <aside class="resource-shelf">
@@ -314,7 +280,7 @@
             <span>课堂对话</span>
             <small>{{ messages.length }} 条</small>
           </div>
-          <div class="dialog-messages">
+          <div ref="dialogMessagesEl" class="dialog-messages">
             <article v-for="message in messages" :key="message.id" :class="message.role">
               <strong>{{ message.role === 'teacher' ? '小知' : '我' }}</strong>
               <p>{{ message.content }}</p>
@@ -331,7 +297,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Download, Eye, MessageCircle, Pause, Play, Save, Volume2 } from 'lucide-vue-next'
 import { generateNodeClassroom, generatePathNodeResourcesStream, narrateClassroomText, streamClassroomChatMessage } from '../api/learningPath'
@@ -363,6 +329,7 @@ const feynmanAnswer = ref('')
 const feynmanFeedback = ref('')
 const messages = ref([])
 const streamingTeacher = ref(false)
+const dialogMessagesEl = ref(null)
 const checkpointFeedbackText = ref('')
 const resGenerating = ref(false)
 const resGenerateError = ref('')
@@ -374,6 +341,8 @@ const audioLoading = ref(false)
 const audioError = ref('')
 const audioUrls = ref({})
 const audioDurations = ref({})
+const audioUrlOrder = [] // audioUrls 键的插入顺序，配合 LRU 清理 Blob URL
+const AUDIO_URL_LIMIT = 8
 const savedClassroomResourceIds = ref(new Set())
 let lectureAudio = null
 
@@ -877,7 +846,9 @@ const activeQuestion = computed(() => {
       '概念之间的关系',
       '把定义逐字背下来',
       '先跳过，直接刷题'
-    ]
+    ],
+    answer: '概念之间的关系',
+    feedback: '对，理解一个知识点，最关键的是先抓住概念之间的关系。'
   }
 })
 
@@ -894,7 +865,9 @@ const chooseCheckpointOption = option => {
   const isCorrect = activeQuestion.value?.answer && option === activeQuestion.value.answer
   const fallback = isCorrect
     ? (activeQuestion.value?.feedback || '对，这个回答抓住了本段的关键。')
-    : `这个选项也能暴露思路，但本段更希望你先抓「${activeQuestion.value?.answer}」。`
+    : (activeQuestion.value?.answer
+      ? `这个选项也能暴露思路，但本段更希望你先抓「${activeQuestion.value.answer}」。`
+      : '这个选项也能暴露思路。对照板书再确认一下关键关系，抓住定义边界就稳了。')
   void streamTeacherReply({
     text: option,
     scenario: 'checkpoint',
@@ -1252,7 +1225,14 @@ const getClassroomAudioUrl = async () => {
     const payload = result?.data?.data || result?.data || result
     const url = resolveApiUrl(payload?.audio_url || payload?.url || '')
     if (!url) throw new Error('未返回音频地址')
+    // LRU：缓存上限内保留 Blob URL，超出释放最旧的，避免长期使用内存上涨
+    if (!(key in audioUrls.value)) audioUrlOrder.push(key)
     audioUrls.value = { ...audioUrls.value, [key]: url }
+    while (audioUrlOrder.length > AUDIO_URL_LIMIT) {
+      const oldest = audioUrlOrder.shift()
+      delete audioUrls.value[oldest]
+      delete audioDurations.value[oldest]
+    }
     return url
   } catch (err) {
     audioError.value = err?.response?.data?.detail || err?.message || '小知语音生成失败'
@@ -1391,12 +1371,27 @@ watch(lessonSegments, segments => {
   }
 })
 
+// 对话固定高度滚动，新消息/流式更新时自动滚到最新一条
+watch(
+  messages,
+  () => {
+    nextTick(() => {
+      const el = dialogMessagesEl.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  },
+  { deep: true }
+)
+
 onBeforeUnmount(stopLectureAudio)
 </script>
 
 <style scoped>
 .classroom-page {
-  min-height: calc(100vh - 78px);
+  height: calc(100vh - 64px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: 14px clamp(18px, 3.8vw, 64px) 20px;
   color: #123f7a;
   background:
@@ -1404,7 +1399,6 @@ onBeforeUnmount(stopLectureAudio)
     linear-gradient(180deg, #eef7ff 0%, #f7fbff 100%);
 }
 
-.classroom-header,
 .classroom-shell {
   max-width: 1760px;
   margin: 0 auto;
@@ -1440,13 +1434,12 @@ onBeforeUnmount(stopLectureAudio)
 }
 
 .classroom-shell {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(300px, 20vw, 340px);
-  grid-template-rows: auto minmax(650px, auto);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px 16px;
-  height: auto;
-  min-height: min(790px, calc(100vh - 118px));
-  max-height: none;
   align-items: stretch;
 }
 
@@ -1539,7 +1532,7 @@ onBeforeUnmount(stopLectureAudio)
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: min(700px, calc(100vh - 190px));
+  min-height: 0;
   padding: 12px;
   overflow: hidden;
   background:
@@ -2124,8 +2117,8 @@ button:disabled {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  min-height: 0;
   height: 100%;
-  max-height: none;
   padding-right: 0;
   font-size: 12px;
   overflow-y: hidden;
@@ -2317,17 +2310,23 @@ button:disabled {
 }
 
 .resource-shelf .dialog-panel .dialog-messages {
-  align-content: start;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 10px;
   padding: 8px;
   border-radius: 14px;
   background:
     linear-gradient(180deg, rgba(240, 248, 255, 0.82), rgba(247, 251, 255, 0.62));
-  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .resource-shelf .dialog-panel .dialog-input {
+  flex: 0 0 auto;
   margin-top: 8px;
 }
 
@@ -2346,7 +2345,8 @@ button:disabled {
   align-self: start;
   width: fit-content;
   height: auto;
-  min-height: 0;
+  min-height: auto;
+  flex: 0 0 auto;
   max-width: min(88%, 270px);
   padding: 8px 10px 9px;
   border: 1px solid rgba(197, 222, 242, 0.9);
@@ -2369,7 +2369,7 @@ button:disabled {
 }
 
 .resource-shelf .dialog-panel .dialog-messages article.learner {
-  justify-self: end;
+  align-self: flex-end;
   border-color: rgba(23, 74, 153, 0.24);
   border-radius: 14px 14px 5px 14px;
   background: #174a99;
@@ -2405,6 +2405,7 @@ button:disabled {
 }
 
 .resource-shelf .dialog-panel .section-head {
+  flex: 0 0 auto;
   margin-bottom: 8px;
 }
 
@@ -2604,14 +2605,6 @@ button:disabled {
   border-radius: 18px;
 }
 
-.teaching-stage > .classroom-dialog-panel {
-  display: none;
-}
-
-.classroom-shell > .classroom-dialog-panel {
-  display: none;
-}
-
 .classroom-dialog-panel .section-head {
   margin-bottom: 6px;
 }
@@ -2711,7 +2704,14 @@ button:disabled {
 }
 
 @media (max-width: 1080px) {
+  .classroom-page {
+    height: auto;
+    min-height: calc(100vh - 64px);
+  }
+
   .classroom-shell {
+    flex: 0 0 auto;
+    min-height: 0;
     grid-template-columns: 1fr;
     grid-template-rows: auto;
     height: auto;

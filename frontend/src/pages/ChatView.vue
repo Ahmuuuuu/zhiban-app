@@ -24,8 +24,9 @@
           @click="switchAgent(agent._rawId !== undefined ? agent._rawId : null)"
         >
           <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ agent.name }}</span>
+          <span v-if="agent.is_system" class="agent-pick-drop__sys" title="系统内置智能体，不可删除">系统</span>
           <button
-            v-if="agent._rawId !== undefined"
+            v-if="agent._rawId !== undefined && !agent.is_system"
             type="button"
             class="agent-pick-drop__del"
             title="删除智能体"
@@ -4793,6 +4794,17 @@ watch(
 .agent-pick-drop__del:hover {
   background: #c0392b;
   color: #fff;
+}
+
+.agent-pick-drop__sys {
+  flex: none;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #8b7355;
+  background: #f5f0e8;
 }
 
 /* ── 创建面板 ── */

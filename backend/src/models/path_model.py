@@ -10,7 +10,7 @@ class LearningPath(Model):
     difficulty = fields.CharField(max_length=16, default="medium", description="难度: easy/medium/hard")
     node_count = fields.IntField(default=5, description="节点数量")
     cover_tags = fields.TextField(null=True, description="标签 JSON 数组")
-    is_public = fields.BooleanField(default=True, description="是否全员可见")
+    is_public = fields.BooleanField(default=False, description="是否公开给其他用户(默认私有，服务于个体用户)")
     created_at = fields.DatetimeField(auto_now_add=True)
 
     user = fields.ForeignKeyField(

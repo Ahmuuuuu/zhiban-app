@@ -51,10 +51,13 @@ async def create_agent(
     data: CreateAgentBody = Body(...),
     user_id: int = Depends(get_user_id_from_token),
 ):
-    agent = await create(
-        user_id=user_id, name=data.name, persona=data.persona,
-        tools=data.tools, avatar=data.avatar, schedule=data.schedule,
-    )
+    try:
+        agent = await create(
+            user_id=user_id, name=data.name, persona=data.persona,
+            tools=data.tools, avatar=data.avatar, schedule=data.schedule,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"code": 200, "msg": "智能体创建成功", "data": agent}
 
 
@@ -145,7 +148,10 @@ async def update_agent(
     kwargs = {k: v for k, v in data.model_dump().items() if v is not None}
     if not kwargs:
         raise HTTPException(400, "无更新字段")
-    agent = await update(user_id, agent_id, **kwargs)
+    try:
+        agent = await update(user_id, agent_id, **kwargs)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if not agent:
         raise HTTPException(404, "智能体不存在")
     return {"code": 200, "msg": "智能体已更新", "data": agent}
@@ -156,7 +162,10 @@ async def delete_agent(
     agent_id: int,
     user_id: int = Depends(get_user_id_from_token),
 ):
-    ok = await delete(user_id, agent_id)
+    try:
+        ok = await delete(user_id, agent_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if not ok:
         raise HTTPException(404, "智能体不存在")
     return {"code": 200, "msg": "智能体已删除"}

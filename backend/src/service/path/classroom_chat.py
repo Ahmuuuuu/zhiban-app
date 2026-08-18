@@ -74,7 +74,11 @@ _CLASSROOM_AGENT_GUARD = asyncio.Lock()
 
 
 async def get_or_create_classroom_agent(user_id: int) -> int | None:
-    """懒创建课堂小知 agent，进程内缓存 agent_id。返回 None 表示用户不存在。"""
+    """懒创建课堂小知 agent，进程内缓存 agent_id。返回 None 表示用户不存在。
+
+    身份识别用 is_system 标记（用户无法伪造/编辑/删除），而不是 name 字符串；
+    发现 persona/tools 与当前定义不一致时重置，防止被外部改动污染。
+    """
     cached = _CLASSROOM_AGENT_IDS.get(user_id)
     if cached is not None:
         return cached
@@ -84,7 +88,17 @@ async def get_or_create_classroom_agent(user_id: int) -> int | None:
         user = await User.filter(id=user_id).first()
         if not user:
             return None
-        existing = await UserAgent.filter(user_id=user_id, name=_CLASSROOM_AGENT_NAME).first()
+        existing = await UserAgent.filter(user_id=user_id, is_system=True).first()
+        expected_tools = json.dumps(list(_CLASSROOM_TOOLS), ensure_ascii=False)
+        if existing and (
+            existing.name != _CLASSROOM_AGENT_NAME
+            or existing.persona != _CLASSROOM_PERSONA
+            or existing.tools != expected_tools
+        ):
+            existing.name = _CLASSROOM_AGENT_NAME
+            existing.persona = _CLASSROOM_PERSONA
+            existing.tools = expected_tools
+            await existing.save()
         if existing:
             _CLASSROOM_AGENT_IDS[user_id] = existing.id
             return existing.id
@@ -93,6 +107,7 @@ async def get_or_create_classroom_agent(user_id: int) -> int | None:
             name=_CLASSROOM_AGENT_NAME,
             persona=_CLASSROOM_PERSONA,
             tools=list(_CLASSROOM_TOOLS),
+            is_system=True,
         )
         _CLASSROOM_AGENT_IDS[user_id] = created["id"]
         return created["id"]

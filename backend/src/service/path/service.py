@@ -621,8 +621,8 @@ class PathService:
         if not path:
             return None
 
-        # 权限检查：仅创建者可查看
-        if path.user_id != user_id:
+        # 权限检查：创建者或公共路径可查看
+        if path.user_id != user_id and not path.is_public:
             return None
 
         nodes = path.nodes or []
@@ -650,6 +650,9 @@ class PathService:
         """加入路径 → 初始化 UserPathProgress，解锁首节点并自动生成资源"""
         path = await LearningPath.filter(id=path_id).prefetch_related("nodes").first()
         if not path:
+            raise ValueError("路径不存在")
+        # 权限检查：非创建者只能加入公开路径，避免任意加入他人私有路径
+        if path.user_id != user_id and not path.is_public:
             raise ValueError("路径不存在")
 
         nodes = path.nodes or []

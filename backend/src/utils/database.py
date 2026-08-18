@@ -23,6 +23,9 @@ async def _ensure_generated_resource_visibility_column():
         "ALTER TABLE generated_resources ADD COLUMN visibility VARCHAR(10) NOT NULL DEFAULT 'private'",
         "ALTER TABLE generated_images ADD COLUMN visibility VARCHAR(10) NOT NULL DEFAULT 'private'",
         "ALTER TABLE chat_history ADD COLUMN agent_id INT NULL",
+        "ALTER TABLE user_agents ADD COLUMN is_system INT NOT NULL DEFAULT 0",
+        # 学习路径服务于个体用户：存量数据统一置为私有
+        "UPDATE learning_paths SET is_public = 0 WHERE is_public = 1",
     ]:
         try:
             await conn.execute_query(sql)
