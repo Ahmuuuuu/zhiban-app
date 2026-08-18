@@ -6,10 +6,12 @@ import json
 import logging
 import hashlib
 import re
+import time
 from pathlib import Path
 from typing import Any
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
+from backend.src.models.classroom_model import ClassroomLesson
 from backend.src.models.portraitmodel import User_picture
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
@@ -20,6 +22,7 @@ from backend.src.utils.tts_utils import clean_for_tts, generate_audio
 logger = logging.getLogger(__name__)
 
 CLASSROOM_AUDIO_DIR = STATIC_DIR / "audio" / "classroom"
+_CLASSROOM_SCHEMA_VERSION = "exercise-v2"
 
 
 def _safe_json_loads(value: str | None, fallback):
@@ -30,6 +33,35 @@ def _safe_json_loads(value: str | None, fallback):
     except (json.JSONDecodeError, TypeError):
         logger.warning("Invalid path JSON payload skipped in classroom service", exc_info=True)
         return fallback
+
+
+def _classroom_fingerprint(
+    topic: str,
+    summary: str,
+    knowledge_tags: list[str],
+    resources: list[dict[str, Any]],
+    quiz: dict[str, Any],
+    portrait_context: str,
+) -> str:
+    """节点输入变化时自动使旧课堂失效；题目由独立题库管理，不参与课堂缓存键。"""
+    payload = {
+        "schema": _CLASSROOM_SCHEMA_VERSION,
+        "topic": topic,
+        "summary": summary,
+        "knowledge_tags": knowledge_tags,
+        "resources": [
+            {
+                "id": item.get("resource_id") or item.get("resourceId") or item.get("id"),
+                "title": item.get("title") or item.get("filename") or item.get("name"),
+                "type": item.get("resource_type") or item.get("resourceType") or item.get("fileType") or item.get("type"),
+            }
+            for item in resources
+            if isinstance(item, dict)
+        ],
+        "portrait": portrait_context,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _clip(text: Any, limit: int = 900) -> str:
@@ -43,6 +75,24 @@ def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(low, min(high, parsed))
+
+
+# 课堂模块协议：反讲统一在右侧对话区完成
+_CLASSROOM_SEGMENT_IDS = ("lead-in", "concept", "exercise", "feynman")
+
+# 每幕交互形态：reflect=自省引导 / open=开放问答 / feynman=费曼反讲
+# 与前端 LearningClassroomView 的默认映射保持同源；LLM 漏给或给非法值时回退到此
+_INTERACTION_BY_SEGMENT_ID = {
+    "lead-in": "reflect",
+    "concept": "open",
+    "exercise": "open",
+    "feynman": "feynman",
+}
+_VALID_INTERACTIONS = ("reflect", "open", "feynman")
+
+
+def _default_interaction(segment_id: str) -> str:
+    return _INTERACTION_BY_SEGMENT_ID.get(segment_id, "reflect")
 
 
 def _resource_snapshot(resource: dict[str, Any], content: str = "") -> dict[str, str]:
@@ -117,8 +167,42 @@ _GENERIC_CLASSROOM_PHRASES = [
 ]
 
 
-def _is_generic_teaching(script: Any, board_items: Any, example: Any) -> bool:
-    """Detect product-like classroom text before it reaches the UI."""
+_GENERIC_CONTENT_ITEMS = {
+    "是什么", "为什么重要", "怎么用", "核心定义", "关键步骤", "典型例题", "易错点",
+    "明确学习目标", "找到真实场景", "区分关键概念", "说清它们的关系", "找定义",
+    "找步骤或公式", "用例子核对", "先说判断依据", "再看具体结果", "实际应用",
+}
+
+
+def _content_evidence_terms(*values: Any) -> list[str]:
+    """Extract reusable topic terms used to distinguish knowledge from UI boilerplate."""
+    terms: list[str] = []
+    seen: set[str] = set()
+    stop_words = {
+        "当前知识点", "互动课堂", "学习资料", "课堂内容", "核心概念", "关键知识点", "知识内容",
+        "学习目标", "相关内容", "实际问题", "具体问题", "这个问题", "相关问题", "学生画像",
+        "资料验证", "知识理解", "课堂主线", "生成内容", "重点内容", "知识点",
+    }
+    for value in values:
+        text = str(value or "")
+        # 保留英文缩写/公式标识，同时保留连续中文知识短语。
+        candidates = re.findall(r"[A-Za-z][A-Za-z0-9+#._-]{1,}|[\u4e00-\u9fff]{2,12}", text)
+        for candidate in candidates:
+            candidate = candidate.strip()
+            if len(candidate) < 2 or candidate in stop_words or candidate in seen:
+                continue
+            seen.add(candidate)
+            terms.append(candidate)
+    return terms[:24]
+
+
+def _is_generic_teaching(
+    script: Any,
+    board_items: Any,
+    example: Any,
+    evidence_values: tuple[Any, ...] = (),
+) -> bool:
+    """Detect boilerplate without discarding a model answer containing node evidence."""
     text = " ".join([
         str(script or ""),
         " ".join(str(item or "") for item in board_items) if isinstance(board_items, list) else str(board_items or ""),
@@ -129,7 +213,12 @@ def _is_generic_teaching(script: Any, board_items: Any, example: Any) -> bool:
         return True
 
     hits = sum(1 for phrase in _GENERIC_CLASSROOM_PHRASES if phrase in compact)
-    if hits >= 2:
+    evidence_terms = _content_evidence_terms(*evidence_values)
+    matched_evidence = [term for term in evidence_terms if term in compact]
+    # 一个节点标题本身不算“讲了知识”；至少命中两个独立证据，才认为模型
+    # 真正落到了术语、步骤、公式或例子上。
+    has_evidence = len(set(matched_evidence)) >= 2
+    if hits >= 2 and not has_evidence:
         return True
 
     if isinstance(board_items, list):
@@ -137,10 +226,16 @@ def _is_generic_teaching(script: Any, board_items: Any, example: Any) -> bool:
             str(item).strip()
             for item in board_items
             if len(str(item).strip()) >= 4
+            and str(item).strip() not in _GENERIC_CONTENT_ITEMS
             and not any(phrase in str(item) for phrase in _GENERIC_CLASSROOM_PHRASES)
         ]
-        if len(meaningful_items) < 2:
+        if len(meaningful_items) < 2 and not has_evidence:
             return True
+
+    # A long paragraph can still be a placeholder. Only reject it when it has
+    # no recognizable node term at all; useful model text should survive.
+    if hits >= 1 and not has_evidence:
+        return True
 
     return False
 
@@ -299,6 +394,12 @@ def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], 
     return {
         "title": topic,
         "personal_summary": personal,
+        "learning_summary": f"本节围绕“{_clip(topic, 40)}”理解核心概念，结合资料核对关键事实，最后用自己的话完成反讲。",
+        "key_takeaways": [
+            _clip(item, 56)
+            for item in pack["core_items"][:4]
+            if str(item).strip()
+        ],
         "segments": [
             {
                 "id": "lead-in",
@@ -315,11 +416,12 @@ def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], 
                 "example": pack["example"],
                 "resource_refs": [],
                 "duration_seconds": 18,
+                "interaction": "reflect",
                 "question": {
                     "prompt": pack["question"],
-                    "options": ["先说定义", "先看例题", "先找易混点"],
-                    "answer": "先说定义",
-                    "feedback": "先把定义边界说清楚，再看例题和易混点。",
+                    "options": [],
+                    "answer": "",
+                    "feedback": "",
                 },
             },
             {
@@ -337,55 +439,35 @@ def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], 
                 "example": pack["example"],
                 "resource_refs": [],
                 "duration_seconds": 24,
+                "interaction": "open",
                 "question": {
                     "prompt": pack["question"],
-                    "options": ["定义边界", "步骤关系", "易错对比"],
-                    "answer": "定义边界",
-                    "feedback": "先抓定义边界，再补步骤关系和易错对比。",
+                    "options": [],
+                    "answer": "",
+                    "feedback": "",
                 },
             },
             {
-                "id": "resource-link",
-                "type": "resource",
-                "title": "资料佐证",
-                "subtitle": "用资料查证课堂主线",
-                "intent": "查证关键点",
-                "teacher_speech": f"现在用资料做校验。{''.join(pack['resource_lines'])}资料不需要整篇搬进课堂，只要找出能支撑刚才板书的证据。",
-                "script": f"现在用资料做校验。{''.join(pack['resource_lines'])}资料不需要整篇搬进课堂，只要找出能支撑刚才板书的证据。",
-                "board_title": "查证路径",
-                "board_items": pack["resource_items"],
-                "points": pack["resource_lines"],
-                "visual_hint": "资料负责查证，课堂负责讲清主线。",
-                "example": pack["resource_example"],
-                "resource_refs": _resource_refs(resources),
-                "duration_seconds": 22,
-                "question": {
-                    "prompt": "看资料时最应该优先验证什么？",
-                    "options": ["课堂刚讲的关键关系", "页面排版好不好看", "资料有多少页"],
-                    "answer": "课堂刚讲的关键关系",
-                    "feedback": "对，资料要为理解服务，不是单纯浏览。",
-                },
-            },
-            {
-                "id": "checkpoint",
-                "type": "quiz",
-                "title": "即时检查",
-                "subtitle": "用一个短问暴露薄弱点",
-                "intent": "用短问题卡住薄弱点",
-                "teacher_speech": f"现在做一次短检查：{pack['question']}如果答不上来，不急着继续刷题，先回到上一幕板书，把定义、步骤和例子重新对齐。",
-                "script": f"现在做一次短检查：{pack['question']}如果答不上来，不急着继续刷题，先回到上一幕板书，把定义、步骤和例子重新对齐。",
-                "board_title": "检查路径",
-                "board_items": ["用一句话概括", "举一个例子", "指出一个易错点"],
-                "points": [pack["question"], "答不上来就回看板书", "用例题定位薄弱点"],
-                "visual_hint": "先小问，再决定是否进入正式测验。",
-                "example": pack["question"],
+                "id": "exercise",
+                "type": "exercise",
+                "title": "随堂练习",
+                "subtitle": "用一道题检查刚才的主线",
+                "intent": "检查理解",
+                "teacher_speech": f"现在做一道题检查刚才的主线。{''.join(pack['lines'][:2])}先独立判断，再回看题干中的关键词，最后说清自己为什么选择这个答案。",
+                "script": f"现在做一道题检查刚才的主线。{''.join(pack['lines'][:2])}先独立判断，再回看题干中的关键词，最后说清自己为什么选择这个答案。",
+                "board_title": "解题检查",
+                "board_items": ["读题干关键词", "定位对应概念", "说明判断依据"],
+                "points": ["先独立判断", "再找题干依据", "最后解释原因"],
+                "visual_hint": "题目会在课堂中单独展示。",
+                "example": "先做题，再用一句话解释选择依据。",
                 "resource_refs": [],
-                "duration_seconds": 18,
+                "duration_seconds": 22,
+                "interaction": "open",
                 "question": {
-                    "prompt": pack["question"],
-                    "options": ["概念关系", "计算步骤", "例题迁移"],
-                    "answer": "概念关系",
-                    "feedback": "无论选哪项都可以，后面小知会按你的回答追问。",
+                    "prompt": "完成下方随堂练习，并说明你的判断依据。",
+                    "options": [],
+                    "answer": "",
+                    "feedback": "",
                 },
             },
             {
@@ -397,69 +479,78 @@ def _fallback_lesson(topic: str, summary: str, resources: list[dict[str, str]], 
                 "teacher_speech": f"最后换你讲。{pack['feynman_prompt']}讲不顺的地方不用藏起来，那正是下一轮学习最该补的位置。",
                 "script": f"最后换你讲。{pack['feynman_prompt']}讲不顺的地方不用藏起来，那正是下一轮学习最该补的位置。",
                 "board_title": "三句话反讲",
-                "board_items": ["是什么", "为什么重要", "怎么用"],
-                "points": ["是什么", "为什么重要", "怎么用"],
+                "board_items": pack["core_items"][:4],
+                "points": pack["lines"][:3],
                 "visual_hint": "讲不顺的地方就是下一轮补强点。",
                 "example": pack["feynman_prompt"],
                 "resource_refs": [],
                 "duration_seconds": 20,
+                "interaction": "feynman",
                 "question": {
-                    "prompt": "你准备用哪种方式讲给小知听？",
-                    "options": ["三句话总结", "举例说明", "先说不懂处"],
-                    "answer": "三句话总结",
-                    "feedback": "可以，从短解释开始，小知再继续追问。",
+                    "prompt": pack["feynman_prompt"],
+                    "options": [],
+                    "answer": "",
+                    "feedback": "",
                 },
             },
         ],
     }
 
 
-def _normalize_lesson(raw: Any, fallback: dict[str, Any]) -> dict[str, Any]:
+def _normalize_lesson(
+    raw: Any,
+    fallback: dict[str, Any],
+    topic: str = "",
+    summary: str = "",
+    knowledge_tags: list[str] | None = None,
+    resources: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     if not isinstance(raw, dict):
-        return fallback
+        return {}
     segments = raw.get("segments")
-    if not isinstance(segments, list) or len(segments) < 3:
-        return fallback
+    if not isinstance(segments, list) or len(segments) < len(_CLASSROOM_SEGMENT_IDS):
+        return {}
 
     normalized = []
-    fallback_by_id = {item["id"]: item for item in fallback["segments"]}
-    for index, item in enumerate(segments[:6]):
-        if not isinstance(item, dict):
-            continue
-        sid = str(item.get("id") or f"segment-{index + 1}")
-        base = fallback_by_id.get(sid, fallback["segments"][min(index, len(fallback["segments"]) - 1)])
-        question = item.get("question") if isinstance(item.get("question"), dict) else base.get("question", {})
-        script = item.get("teacher_speech") or item.get("script") or base["script"]
+    raw_by_id = {
+        str(item.get("id")): item
+        for item in segments
+        if isinstance(item, dict) and str(item.get("id")) in _CLASSROOM_SEGMENT_IDS
+    }
+    for index, sid in enumerate(_CLASSROOM_SEGMENT_IDS):
+        item = raw_by_id.get(sid, {})
+        question = item.get("question") if isinstance(item.get("question"), dict) else {}
+        script = item.get("teacher_speech") or item.get("script") or ""
         board_items = item.get("board_items") if isinstance(item.get("board_items"), list) else item.get("points")
-        resource_refs = item.get("resource_refs") if isinstance(item.get("resource_refs"), list) else base.get("resource_refs", [])
-        example = item.get("example") or base.get("example") or ""
-        if _is_generic_teaching(script, board_items, example):
-            script = base["script"]
-            board_items = base["board_items"]
-            example = base.get("example") or ""
-            if not resource_refs:
-                resource_refs = base.get("resource_refs", [])
+        resource_refs = item.get("resource_refs") if isinstance(item.get("resource_refs"), list) else []
+        example = item.get("example") or item.get("visual_hint") or ""
+        raw_interaction = str(item.get("interaction") or "").strip()
+        interaction = raw_interaction if raw_interaction in _VALID_INTERACTIONS else _default_interaction(sid)
+        q_prompt = _clip(question.get("prompt") or "", 90)
+        # 所有课堂问题都只是右侧对话的引导，不在左侧渲染选择题。
+        q_options, q_answer, q_feedback = [], "", ""
         normalized.append({
             "id": sid,
-            "type": _clip(item.get("type") or base.get("type") or sid, 24),
-            "title": _clip(item.get("title") or base["title"], 24),
-            "subtitle": _clip(item.get("subtitle") or base.get("subtitle") or "", 56),
-            "intent": _clip(item.get("intent") or base["intent"], 28),
+            "type": _clip(item.get("type") or sid, 24),
+            "title": _clip(item.get("title") or "", 24),
+            "subtitle": _clip(item.get("subtitle") or "", 56),
+            "intent": _clip(item.get("intent") or "", 28),
             "teacher_speech": _clip(script, 360),
             "script": _clip(script, 360),
-            "board_title": _clip(item.get("board_title") or base.get("board_title") or "课堂板书", 32),
+            "board_title": _clip(item.get("board_title") or "", 32),
             "board_items": [
                 _clip(point, 56)
-                for point in (board_items if isinstance(board_items, list) else base["points"])
+                for point in (board_items if isinstance(board_items, list) else [])
                 if str(point or "").strip()
             ][:5],
             "points": [
                 _clip(point, 72)
-                for point in (item.get("points") if isinstance(item.get("points"), list) else base["points"])
+                for point in (item.get("points") if isinstance(item.get("points"), list) else [])
                 if str(point or "").strip()
             ][:5],
-            "visual_hint": _clip(item.get("visual_hint") or base.get("visual_hint") or "", 90),
+            "visual_hint": _clip(item.get("visual_hint") or "", 90),
             "example": _clip(example, 120),
+            "interaction": interaction,
             "resource_refs": [
                 {
                     "title": _clip(ref.get("title") if isinstance(ref, dict) else ref, 48),
@@ -469,26 +560,55 @@ def _normalize_lesson(raw: Any, fallback: dict[str, Any]) -> dict[str, Any]:
                 for ref in resource_refs
                 if (isinstance(ref, dict) and ref.get("title")) or str(ref or "").strip()
             ][:3],
-            "duration_seconds": _bounded_int(item.get("duration_seconds") or base.get("duration_seconds"), 20, 12, 45),
+            "duration_seconds": _bounded_int(item.get("duration_seconds"), 20, 12, 45),
             "question": {
-                "prompt": _clip(question.get("prompt") or base["question"]["prompt"], 90),
-                "options": [
-                    _clip(option, 28)
-                    for option in (question.get("options") if isinstance(question.get("options"), list) else base["question"]["options"])
-                    if str(option or "").strip()
-                ][:4],
-                "answer": _clip(question.get("answer") or base["question"]["answer"], 28),
-                "feedback": _clip(question.get("feedback") or base["question"]["feedback"], 120),
+                "prompt": q_prompt,
+                "options": q_options,
+                "answer": q_answer,
+                "feedback": q_feedback,
             },
         })
 
-    if len(normalized) < 3:
-        return fallback
+    if len(normalized) < len(_CLASSROOM_SEGMENT_IDS):
+        return {}
     return {
-        "title": _clip(raw.get("title") or fallback["title"], 60),
-        "personal_summary": _clip(raw.get("personal_summary") or fallback["personal_summary"], 120),
+        "title": _clip(raw.get("title") or topic, 60),
+        "personal_summary": _clip(raw.get("personal_summary") or "", 120),
+        "learning_summary": _clip(raw.get("learning_summary") or "", 180),
+        "key_takeaways": [
+            _clip(item, 64)
+            for item in (raw.get("key_takeaways") if isinstance(raw.get("key_takeaways"), list) else [])
+            if str(item or "").strip()
+        ][:4],
         "segments": normalized,
     }
+
+
+def _is_lesson_ready(lesson: Any) -> bool:
+    """Only persist and serve a classroom snapshot that satisfies the UI contract."""
+    if not isinstance(lesson, dict):
+        return False
+    segments = lesson.get("segments")
+    if not isinstance(segments, list) or len(segments) != len(_CLASSROOM_SEGMENT_IDS):
+        return False
+    summary = str(lesson.get("learning_summary") or "").strip()
+    takeaways = lesson.get("key_takeaways")
+    if len(summary) < 20 or not isinstance(takeaways, list) or len([item for item in takeaways if str(item or "").strip()]) < 2:
+        return False
+    by_id = {str(item.get("id")): item for item in segments if isinstance(item, dict)}
+    for sid in _CLASSROOM_SEGMENT_IDS:
+        segment = by_id.get(sid)
+        if not isinstance(segment, dict) or not str(segment.get("title") or "").strip():
+            return False
+        script = str(segment.get("teacher_speech") or segment.get("script") or "").strip()
+        segment_points = segment.get("points") if isinstance(segment.get("points"), list) else []
+        board_items = segment.get("board_items") if isinstance(segment.get("board_items"), list) else []
+        points = [item for item in [*segment_points, *board_items] if str(item or "").strip()]
+        question = segment.get("question") if isinstance(segment.get("question"), dict) else {}
+        prompt = str(question.get("prompt") or "").strip()
+        if len(script) < 30 or len(points) < 2 or len(prompt) < 6:
+            return False
+    return True
 
 
 async def _build_portrait_context(user_id: int) -> str:
@@ -545,8 +665,10 @@ async def generate_classroom_lesson(
     user_id: int,
     client_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    request_started_at = time.perf_counter()
     node = await PathNode.filter(id=node_id, path_id=path_id).first()
     if not node:
+        logger.warning("[ClassroomService] 节点不存在 path=%s node=%s user=%s", path_id, node_id, user_id)
         return None
 
     path = await LearningPath.filter(id=path_id).first()
@@ -568,6 +690,24 @@ async def generate_classroom_lesson(
     )
     resources = await _load_node_resources(progress, client_resources)
     portrait_context = await _build_portrait_context(user_id)
+    force_regenerate = bool(client_payload.get("force_regenerate"))
+    logger.info(
+        "[ClassroomService] 请求课堂 path=%s node=%s user=%s force=%s resources=%s quiz=%s",
+        path_id,
+        node_id,
+        user_id,
+        force_regenerate,
+        len(resources),
+        bool(quiz),
+    )
+    fingerprint = _classroom_fingerprint(
+        topic,
+        summary,
+        knowledge_tags if isinstance(knowledge_tags, list) else [],
+        resources,
+        quiz,
+        portrait_context,
+    )
     fallback = _fallback_lesson(topic, summary, resources, portrait_context)
 
     # 延迟导入规避循环依赖：classroom_graph 顶部 import 了本模块的 _normalize_lesson 等
@@ -575,7 +715,68 @@ async def generate_classroom_lesson(
     from backend.src.service.path.generation_locks import get_node_generation_lock
 
     lock = await get_node_generation_lock(user_id, path_id, node_id, "classroom")
+    lock_wait_started_at = time.perf_counter()
     async with lock:
+        logger.info(
+            "[ClassroomService] 获得生成锁 path=%s node=%s user=%s wait=%.2fs",
+            path_id,
+            node_id,
+            user_id,
+            time.perf_counter() - lock_wait_started_at,
+        )
+        previous = await ClassroomLesson.filter(
+            user_id=user_id,
+            path_id=path_id,
+            node_id=node_id,
+            status="ready",
+        ).first()
+        if not force_regenerate:
+            legacy_cache = previous and previous.schema_version == "exercise-v1"
+            if previous:
+                logger.info(
+                    "[ClassroomService] 缓存未命中 path=%s node=%s user=%s fingerprint_match=%s schema=%s/%s ready=%s",
+                    path_id,
+                    node_id,
+                    user_id,
+                    previous.content_fingerprint == fingerprint,
+                    previous.schema_version,
+                    _CLASSROOM_SCHEMA_VERSION,
+                    _is_lesson_ready(previous.lesson_json),
+                )
+            if (
+                previous
+                and (previous.content_fingerprint == fingerprint or legacy_cache)
+                and (previous.schema_version == _CLASSROOM_SCHEMA_VERSION or legacy_cache)
+                and isinstance(previous.lesson_json, dict)
+                and _is_lesson_ready(previous.lesson_json)
+            ):
+                if legacy_cache:
+                    previous.content_fingerprint = fingerprint
+                    previous.schema_version = _CLASSROOM_SCHEMA_VERSION
+                    await previous.save(update_fields=["content_fingerprint", "schema_version", "updated_at"])
+                    logger.info("[ClassroomService] 已迁移旧课堂缓存 path=%s node=%s user=%s lesson=%s", path_id, node_id, user_id, previous.id)
+                logger.info(
+                    "[ClassroomService] 缓存命中 path=%s node=%s user=%s lesson=%s elapsed=%.2fs",
+                    path_id,
+                    node_id,
+                    user_id,
+                    previous.id,
+                    time.perf_counter() - request_started_at,
+                )
+                return {
+                    "path_id": path_id,
+                    "node_id": node_id,
+                    "topic": topic,
+                    "resources": resources,
+                    "portrait_context": portrait_context,
+                    "lesson": previous.lesson_json,
+                    "cached": True,
+                    "classroom_id": previous.id,
+                    "generated_at": previous.updated_at.isoformat() if previous.updated_at else None,
+                }
+        generated_new_lesson = False
+        graph_started_at = time.perf_counter()
+        logger.info("[ClassroomService] 开始调用课堂图 path=%s node=%s user=%s", path_id, node_id, user_id)
         try:
             initial = ClassroomState(
                 path_id=path_id,
@@ -593,11 +794,71 @@ async def generate_classroom_lesson(
                 llm_priority="high",
             )
             final_state = await classroom_graph.ainvoke(initial)
-            lesson = final_state.get("lesson") or fallback
+            lesson = final_state.get("lesson") if final_state.get("review_passed") else {}
+            generated_new_lesson = _is_lesson_ready(lesson)
+            logger.info(
+                "[ClassroomService] 课堂图结束 path=%s node=%s user=%s review_passed=%s score=%s retry=%s ready=%s elapsed=%.2fs",
+                path_id,
+                node_id,
+                user_id,
+                bool(final_state.get("review_passed")),
+                final_state.get("review_score"),
+                final_state.get("retry_count", 0),
+                generated_new_lesson,
+                time.perf_counter() - graph_started_at,
+            )
         except Exception:
             logger.exception("classroom lesson generation failed path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
-            lesson = fallback
+            lesson = previous.lesson_json if previous and _is_lesson_ready(previous.lesson_json) else {}
 
+        if not generated_new_lesson:
+            lesson = previous.lesson_json if previous and _is_lesson_ready(previous.lesson_json) else {}
+            logger.warning(
+                "[ClassroomService] 新课堂未完成 path=%s node=%s user=%s fallback_to_previous=%s",
+                path_id,
+                node_id,
+                user_id,
+                bool(lesson),
+            )
+
+        if generated_new_lesson:
+            quiz_data = quiz if isinstance(quiz, dict) else {}
+            quiz_session_id = quiz_data.get("session_id") or quiz_data.get("sessionId") or None
+            try:
+                lesson_record, created = await ClassroomLesson.update_or_create(
+                    user_id=user_id,
+                    path_id=path_id,
+                    node_id=node_id,
+                    defaults={
+                        "lesson_json": lesson,
+                        "resources_json": resources,
+                        "quiz_session_id": quiz_session_id,
+                        "content_fingerprint": fingerprint,
+                        "schema_version": _CLASSROOM_SCHEMA_VERSION,
+                        "status": "ready",
+                        "error_message": None,
+                    },
+                )
+                logger.info(
+                    "[ClassroomService] 课堂已落库 path=%s node=%s user=%s lesson=%s created=%s",
+                    path_id,
+                    node_id,
+                    user_id,
+                    lesson_record.id,
+                    created,
+                )
+            except Exception:
+                logger.exception("classroom lesson persistence failed path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
+
+    logger.info(
+        "[ClassroomService] 请求完成 path=%s node=%s user=%s generated=%s stale=%s elapsed=%.2fs",
+        path_id,
+        node_id,
+        user_id,
+        generated_new_lesson,
+        bool(lesson) and not generated_new_lesson,
+        time.perf_counter() - request_started_at,
+    )
     return {
         "path_id": path_id,
         "node_id": node_id,
@@ -605,4 +866,6 @@ async def generate_classroom_lesson(
         "resources": resources,
         "portrait_context": portrait_context,
         "lesson": lesson,
+        "cached": not generated_new_lesson,
+        "stale": bool(lesson) and not generated_new_lesson,
     }

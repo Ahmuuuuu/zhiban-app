@@ -37,6 +37,7 @@ class GenerateClassroomRequest(BaseModel):
     node: dict = Field(default_factory=dict, description="前端当前节点快照")
     resources: list[dict] = Field(default_factory=list, description="节点关联资源快照")
     quiz: dict | None = Field(default=None, description="节点测验快照")
+    force_regenerate: bool = Field(default=False, description="是否忽略已保存课堂并重新生成")
 
 
 class ClassroomNarrationRequest(BaseModel):
@@ -51,7 +52,7 @@ class ClassroomChatRequest(BaseModel):
     path_id: int = Field(description="路径 ID")
     node_id: int = Field(description="节点 ID")
     segment: dict = Field(default_factory=dict, description="前端当前幕快照（title/script/board_items/points/example/question）")
-    scenario: str = Field(default="free", description="checkpoint | feynman | free")
+    scenario: str = Field(default="free", description="open | feynman | free")
     text: str = Field(default="", description="学生的话：选择结果 / 费曼反讲文本 / 自由提问")
 
 

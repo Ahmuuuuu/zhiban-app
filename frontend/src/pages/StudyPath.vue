@@ -317,7 +317,7 @@
 
               <div class="classroom-entry-note">
                 <strong>互动课堂</strong>
-                <span>小知会按讲解、资料联动、课堂追问和费曼讲述带你完成这个节点。</span>
+                <span>小知会按讲解、随堂练习和费曼讲述带你完成这个节点。</span>
               </div>
 
               <div class="card-actions">

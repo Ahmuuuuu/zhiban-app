@@ -24,8 +24,8 @@ TIMELAPSE_FPS = 24
 TIMELAPSE_MAX_SECONDS = 60
 TIMELAPSE_TIMEOUT_SECONDS = 180
 WINDOW_LOOKBACK_LOGS = 24
-PHONE_WINDOW_FRAMES = 5
-PHONE_TRIGGER_FRAMES = 3
+PHONE_WINDOW_FRAMES = 4
+PHONE_TRIGGER_FRAMES = 2
 AWAY_WINDOW_SECONDS = 6
 MULTIPLE_PEOPLE_WINDOW_SECONDS = 6
 
@@ -316,15 +316,18 @@ class StudyRoomService:
 
     @staticmethod
     def _mock_detect(frame_index: int) -> dict[str, Any]:
-        if frame_index % 31 == 0:
+        # mock 仅用于 YOLO 不可用时的流程兜底。用周期短爆发代替单帧命中，
+        # 保证窗口判定（手机 4 帧内 2 帧、离席/多人持续约 6 秒）能真正触发告警态。
+        cycle = frame_index % 40
+        if 6 <= cycle <= 9:
             return {
-                "person_count": 2,
-                "phone_detected": False,
+                "person_count": 1,
+                "phone_detected": True,
                 "away": False,
-                "multiple_people": True,
-                "confidence": 0.82,
+                "multiple_people": False,
+                "confidence": 0.8,
             }
-        if frame_index % 17 == 0:
+        if 20 <= cycle <= 23:
             return {
                 "person_count": 0,
                 "phone_detected": False,
@@ -332,13 +335,13 @@ class StudyRoomService:
                 "multiple_people": False,
                 "confidence": 0.78,
             }
-        if frame_index % 11 == 0:
+        if 34 <= cycle <= 37:
             return {
-                "person_count": 1,
-                "phone_detected": True,
+                "person_count": 2,
+                "phone_detected": False,
                 "away": False,
-                "multiple_people": False,
-                "confidence": 0.8,
+                "multiple_people": True,
+                "confidence": 0.82,
             }
         return {
             "person_count": 1,

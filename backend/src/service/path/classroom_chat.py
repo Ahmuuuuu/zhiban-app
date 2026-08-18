@@ -6,6 +6,7 @@
 注入，流式回复由前端 streamClassroomChatMessage 消费。
 """
 import asyncio
+import hashlib
 import json
 import logging
 from collections import OrderedDict
@@ -42,8 +43,10 @@ _CLASSROOM_PERSONA = """你是知伴 App 里的"课堂小知"，一位专属于�
 - 你的职责是围绕这节课做点评、追问、答疑，帮用户把当前知识点真正学会。
 ## 行为准则
 - 学生做出选择、反讲或提问时，先针对他说的具体内容回应：哪里对、哪里含糊、下一步怎么补。
-- 根据学生当前所处的幕（情景导入/核心讲解/资料佐证/即时检查/费曼反讲）调整回应方式；小知此刻的具体职责见【课堂上下文】。
+- 根据学生当前所处的幕（情景导入/核心讲解/随堂练习/费曼反讲）调整回应方式；小知此刻的具体职责见【课堂上下文】。
 - 多用追问引导，少直接给完整答案；像课堂助教一样一步步把学生带明白。
+- 学生答开放问题时：先点评是否抓住要点、哪里模糊，再引导补一步，不要直接替他把话讲完。
+- 费曼反讲时：一次只追问一个薄弱点，先肯定再追问，引导他补例子或反例。
 - 回答简洁、口语化、有温度，中文为主，一次说清一个点，不要一次倒太多。
 - 使用 Markdown 排版，数学公式用 $...$，禁止输出 HTML 标签。
 ## 边界
@@ -51,40 +54,56 @@ _CLASSROOM_PERSONA = """你是知伴 App 里的"课堂小知"，一位专属于�
 - 不要改动学习路径或用户设置，不要管理技能。
 - 只在学生明确问到相关知识时才调用知识库、搜索、画像或记忆工具查证，平时直接对话。"""
 
-# 固定五幕：幕 id → 中文名 + 小知在该幕的职责（注入 path_context，让小知知道学生当前的位置）
-_SEGMENT_IDS = ("lead-in", "concept", "resource-link", "checkpoint", "feynman")
+# 固定四幕：随堂练习展示题目，费曼反讲统一在右侧对话区完成
+_SEGMENT_IDS = ("lead-in", "concept", "exercise", "feynman")
 _SEGMENT_NAMES = {
     "lead-in": "情景导入",
     "concept": "核心讲解",
-    "resource-link": "资料佐证",
-    "checkpoint": "即时检查",
+    "exercise": "随堂练习",
     "feynman": "费曼反讲",
 }
 _SEGMENT_ROLE_HINTS = {
     "lead-in": "学生刚进入本课，先引导建立问题意识、抓住本课要解决什么问题，不要急着深入细节。",
     "concept": "正在讲解核心概念，学生提问时对照板书拆解关键关系，分步讲清。",
-    "resource-link": "正在用资料查证课堂主线，引导学生学会在资料里找证据，不代替他浏览。",
-    "checkpoint": "学生在作答随堂小问，点评他的选择是否正确、好在哪、还差什么，不要直接背出答案。",
-    "feynman": "学生在费曼反讲（用自己的话讲知识点），你的任务是追问挑漏洞、引导他补例子或反例，不要替他把内容讲完。",
+    "exercise": "正在用一道题检查刚才的知识主线，先让学生独立判断，再围绕答案解释依据。",
+    "feynman": "学生在费曼反讲（用自己的话讲知识点），你的任务是边听边追问：一次只挑一个漏洞，先肯定再追问，引导他补例子或反例，不要替他把内容讲完。",
 }
 
-# agent_id 缓存：user_id -> 课堂小知 agent_id（进程内）
-_CLASSROOM_AGENT_IDS: dict[int, int] = {}
+# agent 缓存：user_id -> (agent_id, 定义 hash)（进程内）。
+# 存 hash 是为了检测 persona/tools 定义变化（代码升级），避免已缓存用户继续用旧 persona。
+_CLASSROOM_AGENT_IDS: dict[int, tuple[int, str]] = {}
 _CLASSROOM_AGENT_GUARD = asyncio.Lock()
+
+
+def _classroom_agent_definition_hash() -> str:
+    """当前课堂小知定义的指纹：name/persona/tools 任一变化都会导致 hash 变化。"""
+    blob = json.dumps(
+        {
+            "name": _CLASSROOM_AGENT_NAME,
+            "persona": _CLASSROOM_PERSONA,
+            "tools": _CLASSROOM_TOOLS,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.md5(blob.encode("utf-8")).hexdigest()[:16]
 
 
 async def get_or_create_classroom_agent(user_id: int) -> int | None:
     """懒创建课堂小知 agent，进程内缓存 agent_id。返回 None 表示用户不存在。
 
     身份识别用 is_system 标记（用户无法伪造/编辑/删除），而不是 name 字符串；
-    发现 persona/tools 与当前定义不一致时重置，防止被外部改动污染。
+    每次调用都会用定义 hash 快速校验 persona/tools 是否与当前代码一致，
+    不一致时重置并触发 Brain.rebuild_for_user，让旧 persona 立即失效。
     """
+    def_hash = _classroom_agent_definition_hash()
     cached = _CLASSROOM_AGENT_IDS.get(user_id)
-    if cached is not None:
-        return cached
+    if cached is not None and cached[1] == def_hash:
+        return cached[0]
     async with _CLASSROOM_AGENT_GUARD:
-        if user_id in _CLASSROOM_AGENT_IDS:
-            return _CLASSROOM_AGENT_IDS[user_id]
+        cached = _CLASSROOM_AGENT_IDS.get(user_id)
+        if cached is not None and cached[1] == def_hash:
+            return cached[0]
         user = await User.filter(id=user_id).first()
         if not user:
             return None
@@ -99,8 +118,10 @@ async def get_or_create_classroom_agent(user_id: int) -> int | None:
             existing.persona = _CLASSROOM_PERSONA
             existing.tools = expected_tools
             await existing.save()
+            # 重置该用户所有 Brain（含课堂实例）的工具/agent 配置缓存，新 persona 立即生效
+            Brain.rebuild_for_user(user_id)
         if existing:
-            _CLASSROOM_AGENT_IDS[user_id] = existing.id
+            _CLASSROOM_AGENT_IDS[user_id] = (existing.id, def_hash)
             return existing.id
         created = await _agent_create(
             user_id=user_id,
@@ -109,7 +130,7 @@ async def get_or_create_classroom_agent(user_id: int) -> int | None:
             tools=list(_CLASSROOM_TOOLS),
             is_system=True,
         )
-        _CLASSROOM_AGENT_IDS[user_id] = created["id"]
+        _CLASSROOM_AGENT_IDS[user_id] = (created["id"], def_hash)
         return created["id"]
 
 
@@ -183,18 +204,16 @@ async def _build_classroom_path_context(path_id: int, node_id: int, segment: dic
 
 
 def _compose_user_prompt(scenario: str, text: str, segment: dict) -> str:
-    """把"学生选了什么 / 反讲 / 提问"翻译成给模型的输入（后端组装，前端不拼 prompt）。"""
+    """把学生的反讲、开放回答或提问翻译成给模型的输入。"""
     text = str(text or "").strip()
     question = segment.get("question") or {}
-    if scenario == "checkpoint":
-        options = question.get("options") or []
-        prompt = _clip(question.get("prompt"), 120) or "（随堂小问）"
+    if scenario == "open":
+        prompt = _clip(question.get("prompt"), 120) or "（课堂开放问题）"
         return (
-            "【课堂追问】学生刚答了一道随堂小问。\n"
+            "【课堂追问】刚才讲完概念提了一个开放问题，学生用自己的话回答了：\n"
             f"问题：{prompt}\n"
-            f"选项：{'、'.join(str(o) for o in options[:4])}\n"
-            f"学生选择了：「{_clip(text, 60)}」\n"
-            "请点评：是否在点子上、好在哪、还差什么，给一段简短有力的反馈，不要直接背出正确答案。"
+            f"学生的回答：「{_clip(text, 800)}」\n"
+            "请点评：是否抓住要点、哪里模糊、怎么补一步，再追问一句帮助他把概念压实；不要直接替他把话讲完。"
         )
     if scenario == "feynman":
         return (
@@ -206,7 +225,7 @@ def _compose_user_prompt(scenario: str, text: str, segment: dict) -> str:
 
 
 _FALLBACK_REPLIES = {
-    "checkpoint": "这个选择能看出你的思路。对照板书再确认一下关键关系，抓住定义边界就稳了。",
+    "open": "你已经说到点子上了。再补一步：这个知识点和它解决的实际问题怎么对应，会更完整。",
     "feynman": "你的表达已经有雏形了。再补一句：它解决了什么问题、和前后知识点什么关系，会更完整。",
     "free": "可以继续往下想：试着把这个知识点套到一个具体的例子里，理解会更稳。",
 }

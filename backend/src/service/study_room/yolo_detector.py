@@ -50,12 +50,7 @@ YOLO_DEVICE = os.getenv("STUDY_ROOM_YOLO_DEVICE", "").strip() or None
 YOLO_IMG_SIZE = _int_env("STUDY_ROOM_YOLO_IMG_SIZE", 640)
 YOLO_CONF = _float_env("STUDY_ROOM_YOLO_CONF", 0.35)
 PERSON_CONF = _float_env("STUDY_ROOM_PERSON_CONF", 0.45)
-PHONE_CONF = _float_env("STUDY_ROOM_PHONE_CONF", 0.60)
-PHONE_MIN_AREA_RATIO = _float_env("STUDY_ROOM_PHONE_MIN_AREA_RATIO", 0.0004)
-PHONE_MAX_AREA_RATIO = _float_env("STUDY_ROOM_PHONE_MAX_AREA_RATIO", 0.16)
-PHONE_MAX_SIDE_RATIO = _float_env("STUDY_ROOM_PHONE_MAX_SIDE_RATIO", 0.55)
-PHONE_MIN_ASPECT_RATIO = _float_env("STUDY_ROOM_PHONE_MIN_ASPECT_RATIO", 0.30)
-PHONE_MAX_ASPECT_RATIO = _float_env("STUDY_ROOM_PHONE_MAX_ASPECT_RATIO", 3.60)
+PHONE_CONF = _float_env("STUDY_ROOM_PHONE_CONF", 0.35)
 
 PERSON_LABELS = {"person"}
 PHONE_LABELS = {"cell phone", "phone", "mobile phone", "cellphone"}
@@ -93,7 +88,6 @@ class StudyRoomYoloDetector:
             from PIL import Image
 
             image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            image_width, image_height = image.size
             predict_kwargs: dict[str, Any] = {
                 "source": image,
                 "imgsz": YOLO_IMG_SIZE,
@@ -139,33 +133,16 @@ class StudyRoomYoloDetector:
                 except Exception:
                     xyxy = []
 
-                accepted = False
-                filter_reason = None
-                phone_box_metrics = {}
-                if label in PHONE_LABELS:
-                    accepted, filter_reason, phone_box_metrics = StudyRoomYoloDetector._phone_box_allowed(
-                        xyxy,
-                        image_width,
-                        image_height,
-                    )
-
                 max_confidence = max(max_confidence, confidence)
-                detection = {
+                detections.append({
                     "label": label,
                     "confidence": round(confidence, 4),
                     "box": xyxy,
-                }
-                if label in PHONE_LABELS:
-                    detection.update({
-                        "accepted": accepted and confidence >= PHONE_CONF,
-                        "filter_reason": filter_reason,
-                        **phone_box_metrics,
-                    })
-                detections.append(detection)
+                })
 
                 if label in PERSON_LABELS and confidence >= PERSON_CONF:
                     person_count += 1
-                elif label in PHONE_LABELS and confidence >= PHONE_CONF and accepted:
+                elif label in PHONE_LABELS and confidence >= PHONE_CONF:
                     phone_detected = True
 
         return {
@@ -203,39 +180,6 @@ class StudyRoomYoloDetector:
             except Exception as exc:
                 _MODEL_LOAD_ERROR = str(exc)
                 return None
-
-    @staticmethod
-    def _phone_box_allowed(
-        xyxy: list[float],
-        image_width: int,
-        image_height: int,
-    ) -> tuple[bool, str | None, dict[str, float]]:
-        if len(xyxy) != 4 or image_width <= 0 or image_height <= 0:
-            return False, "invalid_box", {}
-
-        x1, y1, x2, y2 = xyxy
-        box_width = max(0.0, x2 - x1)
-        box_height = max(0.0, y2 - y1)
-        image_area = image_width * image_height
-        area_ratio = (box_width * box_height) / image_area if image_area else 0.0
-        side_ratio = max(box_width / image_width, box_height / image_height)
-        aspect_ratio = box_width / box_height if box_height > 0 else 0.0
-        metrics = {
-            "area_ratio": round(area_ratio, 5),
-            "side_ratio": round(side_ratio, 5),
-            "aspect_ratio": round(aspect_ratio, 4),
-        }
-
-        if area_ratio < PHONE_MIN_AREA_RATIO:
-            return False, "too_small", metrics
-        if area_ratio > PHONE_MAX_AREA_RATIO:
-            return False, "too_large", metrics
-        if side_ratio > PHONE_MAX_SIDE_RATIO:
-            return False, "side_too_large", metrics
-        if aspect_ratio < PHONE_MIN_ASPECT_RATIO or aspect_ratio > PHONE_MAX_ASPECT_RATIO:
-            return False, "bad_aspect_ratio", metrics
-
-        return True, None, metrics
 
     @staticmethod
     def _empty_result() -> dict[str, Any]:

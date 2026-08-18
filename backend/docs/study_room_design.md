@@ -393,7 +393,7 @@ MVP 规则：
 
 ```text
 最近约 6 秒连续没有检测到 person -> away
-最近 5 帧中 3 帧以上检测到有效 cell phone -> phone_detected
+最近 4 帧中 2 帧以上检测到有效 cell phone -> phone_detected
 person_count > 1 连续持续约 6 秒 -> multiple_people
 有人 + 无手机 + 无多人告警 -> focused
 ```
@@ -449,7 +449,7 @@ STUDY_ROOM_YOLO_DEVICE=
 STUDY_ROOM_YOLO_IMG_SIZE=640
 STUDY_ROOM_YOLO_CONF=0.35
 STUDY_ROOM_PERSON_CONF=0.45
-STUDY_ROOM_PHONE_CONF=0.60
+STUDY_ROOM_PHONE_CONF=0.35
 STUDY_ROOM_PHONE_MIN_AREA_RATIO=0.0004
 STUDY_ROOM_PHONE_MAX_AREA_RATIO=0.16
 STUDY_ROOM_PHONE_MAX_SIDE_RATIO=0.55

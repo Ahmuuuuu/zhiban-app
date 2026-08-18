@@ -11,7 +11,7 @@ import json
 import pytest
 
 import backend.src.ai_core.classroom_graph as cg
-from backend.src.service.path.classroom import _fallback_lesson
+from backend.src.service.path.classroom import _fallback_lesson, _normalize_lesson
 
 # ── 罐头数据 ──
 
@@ -22,11 +22,10 @@ PLAN = {
     "segments": [
         {"id": "lead-in", "goal": "导入", "focus": "数字表示与字符编号的区别", "style": "类比引导"},
         {"id": "concept", "goal": "讲解", "focus": "BCD 表示十进制数字", "style": "分步拆解"},
-        {"id": "resource-link", "goal": "佐证", "focus": "用资料验证 BCD 定义", "style": "查证引导"},
-        {"id": "checkpoint", "goal": "检查", "focus": "字符5的ASCII不等于数值5", "style": "提问"},
+        {"id": "exercise", "goal": "练习", "focus": "用题目检查 BCD 定义", "style": "做题引导"},
         {"id": "feynman", "goal": "反讲", "focus": "三句话讲清BCD与ASCII", "style": "费曼"},
     ],
-    "question_plan": {"checkpoint": {"prompt": "字符'5'的ASCII码为什么不是二进制数5？", "options": ["A", "B", "C"], "answer": "A", "feedback": "解析"}},
+    "question_plan": {"exercise": {"prompt": "字符'5'的ASCII码为什么不是二进制数5？", "options": ["A", "B", "C"], "answer": "A", "feedback": "解析"}},
 }
 
 SEG_TPL = {
@@ -34,27 +33,26 @@ SEG_TPL = {
                 "teacher_speech": "这节从一个问题进入：数字在机器里怎么保存，字符又怎么编号。两者是不同的编码线，不要混为一谈。理解这个区别，后面的BCD和ASCII就不会绕晕。", "script": "x",
                 "board_title": "问题入口", "board_items": ["数字表示", "字符编号", "两条编码线"], "points": ["数字按值保存", "字符按编号保存", "两者不同"],
                 "visual_hint": "数字 vs 字符", "example": "59 按 BCD 是 0101 1001，字符5是35H。", "resource_refs": [], "duration_seconds": 20,
-                "question": {"prompt": "先分清什么？", "options": ["定义边界", "步骤关系", "易错对比"], "answer": "定义边界", "feedback": "对。"}},
+                "interaction": "reflect",
+                "question": {"prompt": "先分清什么？", "options": [], "answer": "", "feedback": ""}},
     "concept": {"id": "concept", "type": "concept", "title": "核心讲解", "subtitle": "BCD 拆解", "intent": "讲清关键概念",
                 "teacher_speech": "BCD 用四位二进制表示一位十进制数字，每一位的位权是8421，所以叫8421BCD。十进制59的压缩BCD是0101 1001B。注意BCD服务的是数字，不是字符。", "script": "x",
                 "board_title": "概念主线", "board_items": ["8421权值", "压缩BCD一字节两位", "BCD只表示0-9"], "points": ["8421按权相加", "一字节两位", "只服务数字"],
                 "visual_hint": "8421BCD", "example": "59 → 0101 1001B", "resource_refs": [], "duration_seconds": 24,
-                "question": {"prompt": "8421BCD的位权是？", "options": ["8 4 2 1", "1 2 4 8", "无位权"], "answer": "8 4 2 1", "feedback": "正确。"}},
-    "resource-link": {"id": "resource-link", "type": "resource", "title": "资料佐证", "subtitle": "查证主线", "intent": "学会查证",
-                "teacher_speech": "现在用资料验证刚才的板书：在资料里找 BCD 定义和 8421 权值说明，确认数字表示与字符编号是两回事。资料是用来查证的，不是用来背的。", "script": "x",
-                "board_title": "查证路径", "board_items": ["查BCD定义", "查8421权值", "查ASCII码表"], "points": ["先找定义", "再找权值", "最后对比码表"],
-                "visual_hint": "资料查证", "example": "资料里同时出现BCD和ASCII，重点看服务对象。", "resource_refs": [{"title": "微机原理讲义", "type": "document", "how_to_use": "核对BCD定义"}], "duration_seconds": 22,
-                "question": {"prompt": "看资料优先验证什么？", "options": ["关键关系", "排版", "页数"], "answer": "关键关系", "feedback": "对。"}},
-    "checkpoint": {"id": "checkpoint", "type": "quiz", "title": "即时检查", "subtitle": "暴露薄弱点", "intent": "短问卡薄弱点",
-                "teacher_speech": "做一次短检查：字符'5'的ASCII码为什么不是二进制数5？因为ASCII是字符编号，编码值不等于数值。答不上来就回看板书。", "script": "x",
-                "board_title": "检查路径", "board_items": ["用一句话概括", "举一个例子", "指出易错点"], "points": ["ASCII编码值不等于数值", "回看板书", "例题定位"],
-                "visual_hint": "短检查", "example": "字符5的ASCII是35H，不是5。", "resource_refs": [], "duration_seconds": 18,
-                "question": {"prompt": "字符'5'的ASCII为什么不是数5？", "options": ["编码值不等于数值", "等于数值", "没区别"], "answer": "编码值不等于数值", "feedback": "对，编码≠数值。"}},
+                "interaction": "open",
+                "question": {"prompt": "用你自己的话说说 8421BCD 为什么一字节能存两位十进制？", "options": [], "answer": "", "feedback": ""}},
+    "exercise": {"id": "exercise", "type": "exercise", "title": "随堂练习", "subtitle": "检查主线", "intent": "检查理解",
+                "teacher_speech": "现在做一道题检查刚才的主线：字符5的ASCII码为什么不是数值5？先看题干中的对象，再判断它代表数字还是字符，最后说清判断依据。", "script": "x",
+                "board_title": "解题检查", "board_items": ["读题干", "定位概念", "说明依据"], "points": ["先独立判断", "找题干依据", "解释选择原因"],
+                "visual_hint": "随堂练习", "example": "先做题，再用一句话解释选择依据。", "resource_refs": [], "duration_seconds": 22,
+                "interaction": "open",
+                "question": {"prompt": "完成下方随堂练习，并说明你的判断依据。", "options": [], "answer": "", "feedback": ""}},
     "feynman": {"id": "feynman", "type": "feynman", "title": "费曼反讲", "subtitle": "换你当老师", "intent": "三句话反讲",
                 "teacher_speech": "最后换你讲：用三句话讲清BCD和ASCII的区别。讲不顺的地方，就是下一轮最该补的位置。", "script": "x",
                 "board_title": "三句话反讲", "board_items": ["是什么", "为什么重要", "怎么用"], "points": ["是什么", "为什么重要", "怎么用"],
                 "visual_hint": "讲不顺处即补强点", "example": "BCD服务数字，ASCII服务字符。", "resource_refs": [], "duration_seconds": 20,
-                "question": {"prompt": "你准备怎么讲？", "options": ["三句话总结", "举例", "先说不懂处"], "answer": "三句话总结", "feedback": "可以。"}},
+                "interaction": "feynman",
+                "question": {"prompt": "用三句话讲清BCD和ASCII的区别：各是什么、为什么重要、怎么用。", "options": [], "answer": "", "feedback": ""}},
 }
 
 
@@ -96,20 +94,48 @@ def make_state(user_id=1):
 def assert_lesson_contract(lesson):
     """断言 lesson 满足前端 segment 契约（LearningClassroomView 深度依赖）。"""
     segs = lesson.get("segments")
-    assert isinstance(segs, list) and len(segs) == 5, f"segments 应为5段, got {len(segs) if segs else 0}"
-    assert [s.get("id") for s in segs] == list(cg._SEGMENT_IDS), "id 顺序必须为固定五幕"
+    assert isinstance(segs, list) and len(segs) == 4, f"segments 应为4段, got {len(segs) if segs else 0}"
+    assert [s.get("id") for s in segs] == list(cg._SEGMENT_IDS), "id 顺序必须为固定四幕"
     for s in segs:
         for field in ("type", "title", "subtitle", "intent", "teacher_speech", "script",
                       "board_title", "board_items", "points", "visual_hint", "example",
-                      "resource_refs", "duration_seconds", "question"):
+                      "resource_refs", "duration_seconds", "interaction", "question"):
             assert field in s, f"segment 缺少字段 {field}"
-        for field in ("prompt", "options", "answer", "feedback"):
-            assert field in s["question"], f"question 缺少字段 {field}"
+        interaction = s.get("interaction")
+        assert interaction in ("reflect", "open", "choice", "feynman"), f"interaction 非法: {interaction}"
+        assert "prompt" in s["question"], "question 缺少 prompt"
+        if interaction == "choice":
+            for field in ("options", "answer", "feedback"):
+                assert field in s["question"], f"choice 幕 question 缺少字段 {field}"
+        else:
+            assert s["question"].get("options") == [], f"{interaction} 幕 options 应为空数组"
+
+
+def test_interaction_default_when_missing():
+    """LLM 漏给 interaction 时按幕类型回退默认值；非 choice 幕 question 无选项。"""
+    fallback = _fallback_lesson("数制转换", "基数决定可用数字、位权决定每位价值", [], "暂无画像数据")
+    raw = {
+        "title": "数制转换",
+        "segments": [
+            {"id": sid, "type": cg._SEGMENT_TYPES[sid], "title": f"幕{sid}", "script": f"围绕{sid}的具体讲解内容",
+             "teacher_speech": f"围绕{sid}的具体讲解内容", "board_items": ["基数定义", "位权计算", "分组互转"],
+             "points": ["按权展开", "除基取余", "分组互转"], "example": "1011B按位权展开为11D"}
+            for sid in cg._SEGMENT_IDS
+        ],
+    }
+    lesson = _normalize_lesson(raw, fallback)
+    by_id = {s["id"]: s for s in lesson["segments"]}
+    assert by_id["lead-in"]["interaction"] == "reflect"
+    assert by_id["concept"]["interaction"] == "open"
+    assert by_id["exercise"]["interaction"] == "open"
+    assert by_id["feynman"]["interaction"] == "feynman"
+    for sid in ("lead-in", "concept", "exercise", "feynman"):
+        assert by_id[sid]["question"]["options"] == [], f"{sid} 幕不应有选项"
 
 
 @pytest.mark.asyncio
 async def test_passed_first_try(monkeypatch):
-    """审核首轮通过：1 规划 + 5 幕并行 + 1 审核 = 7 次调用，retry=0。"""
+    """审核首轮通过：1 规划 + 4 幕并行 + 1 审核 = 6 次调用，retry=0。"""
     fake = FakeLLM([])
     monkeypatch.setattr(cg, "llm", fake)
     final = await cg.classroom_graph.ainvoke(make_state())
@@ -117,7 +143,7 @@ async def test_passed_first_try(monkeypatch):
     assert final.get("retry_count") == 0
     assert_lesson_contract(final.get("lesson"))
     assert set(fake.calls) == {"classroom"}, "所有调用必须走 classroom pool"
-    assert len(fake.calls) == 7, f"首轮应 7 次调用, got {len(fake.calls)}"
+    assert len(fake.calls) == 6, f"首轮应 6 次调用, got {len(fake.calls)}"
 
 
 @pytest.mark.asyncio
@@ -133,8 +159,8 @@ async def test_retry_then_pass(monkeypatch):
     assert final.get("retry_count") == 1
     assert final.get("review_passed") is True
     assert_lesson_contract(final.get("lesson"))
-    # 1 规划 + 5 幕 + 1 审 + 5 幕重写 + 1 审 = 13
-    assert len(fake.calls) == 13, f"应 13 次调用, got {len(fake.calls)}"
+    # 1 规划 + 4 幕 + 1 审 + 4 幕重写 + 1 审 = 11
+    assert len(fake.calls) == 11, f"应 11 次调用, got {len(fake.calls)}"
 
 
 @pytest.mark.asyncio
@@ -149,4 +175,4 @@ async def test_max_retries_stop(monkeypatch):
     assert final.get("retry_count") == 2
     assert final.get("review_passed") is False
     assert_lesson_contract(final.get("lesson"))
-    assert len(fake.calls) == 13, f"应 13 次调用（2 轮）, got {len(fake.calls)}"
+    assert len(fake.calls) == 11, f"应 11 次调用（2 轮）, got {len(fake.calls)}"

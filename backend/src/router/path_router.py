@@ -133,7 +133,7 @@ async def generate_node_classroom(
         path_id,
         node_id,
         user_id,
-        {"node": data.node, "resources": data.resources, "quiz": data.quiz},
+        {"node": data.node, "resources": data.resources, "quiz": data.quiz, "force_regenerate": data.force_regenerate},
     )
     if not result:
         raise HTTPException(status_code=404, detail="节点不存在")

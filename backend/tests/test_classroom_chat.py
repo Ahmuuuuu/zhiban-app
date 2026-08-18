@@ -47,14 +47,12 @@ async def _collect(generator):
 
 # ── _compose_user_prompt ──
 
-def test_compose_user_prompt_checkpoint():
-    segment = {
-        "question": {"prompt": "字符'5'的ASCII为什么不是数5？", "options": ["编码值不等于数值", "等于数值", "没区别"]},
-    }
-    prompt = cg_chat._compose_user_prompt("checkpoint", "编码值不等于数值", segment)
-    assert "字符'5'的ASCII为什么不是数5" in prompt
-    assert "编码值不等于数值" in prompt
-    assert "学生选择了：「编码值不等于数值」" in prompt
+def test_compose_user_prompt_open():
+    segment = {"question": {"prompt": "用你自己的话说说补码为什么能把减法变加法？"}}
+    prompt = cg_chat._compose_user_prompt("open", "因为补码取反加一", segment)
+    assert "课堂追问" in prompt
+    assert "用你自己的话说说补码为什么能把减法变加法" in prompt
+    assert "因为补码取反加一" in prompt
 
 
 def test_compose_user_prompt_feynman():
@@ -95,9 +93,9 @@ async def test_build_classroom_path_context_knows_segment_position(monkeypatch):
     monkeypatch.setattr(cg_chat.PathNode, "filter", lambda *a, **k: FakeQuerySet(FakeNode()))
     segment = {"id": "feynman", "title": "费曼反讲", "type": "feynman", "script": "讲给小知听"}
     ctx = await cg_chat._build_classroom_path_context(1, 1, segment)
-    assert "第 5/5 幕" in ctx
+    assert "第 4/4 幕" in ctx
     assert "费曼反讲" in ctx
-    assert "追问挑漏洞" in ctx
+    assert "挑一个漏洞" in ctx
     assert "不要替他把内容讲完" in ctx
 
 
@@ -119,7 +117,7 @@ async def test_get_or_create_classroom_agent_cached(monkeypatch):
     created = {"id": 123}
     calls = {"n": 0}
 
-    async def fake_create(user_id, name, persona, tools):
+    async def fake_create(user_id, name, persona, tools, **kwargs):
         calls["n"] += 1
         return created
 

@@ -248,6 +248,12 @@ class MockClassroomService:
             ])
 
             await MockClassroomService._save_report(session, score_result, asr_result, vision_summary, existing_report)
+
+            # 隐私保护：报告生成后不再需要原始摄像头帧图，自动清理（只删帧图，保留音频）
+            frames_dir = MockClassroomService._frames_dir(session.session_key)
+            shutil.rmtree(frames_dir, ignore_errors=True)
+            session.frame_count = 0
+            await session.save(update_fields=["frame_count", "updated_at"])
         except Exception:
             logger.warning("[MockClassroom] report generation failed session=%s", session_key, exc_info=True)
             session.report_status = "failed"

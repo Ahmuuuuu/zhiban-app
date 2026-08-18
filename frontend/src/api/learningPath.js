@@ -179,11 +179,12 @@ export function generatePathNodeQuiz(pathId, nodeId) {
   })
 }
 
-export function generateNodeClassroom(pathId, nodeId, data = {}) {
+export function generateNodeClassroom(pathId, nodeId, data = {}, config = {}) {
   return request({
     url: `/path/${pathId}/node/${nodeId}/classroom`,
     method: 'post',
-    data
+    data,
+    ...config
   })
 }
 

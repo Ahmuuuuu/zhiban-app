@@ -1,6 +1,9 @@
 import axios from 'axios'
 
-export const DEFAULT_API_BASE_URL = 'https://compel-dividable-unfasten.ngrok-free.dev'
+// Keep the default same-origin so Vite uses its local proxy in development and
+// Nginx owns the upstream route in production. Remote debugging can still set
+// VITE_API_BASE_URL explicitly.
+export const DEFAULT_API_BASE_URL = ''
 const rawApiBaseURL = import.meta.env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL
 export const apiBaseURL = rawApiBaseURL.replace(/\/+$/, '')
 
