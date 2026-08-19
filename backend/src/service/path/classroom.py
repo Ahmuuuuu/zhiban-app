@@ -7,6 +7,7 @@ import logging
 import hashlib
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -746,9 +747,10 @@ async def generate_classroom_lesson(
     llm_priority: str = "high",
 ) -> dict[str, Any] | None:
     request_started_at = time.perf_counter()
+    trace_id = uuid.uuid4().hex[:8]
     node = await PathNode.filter(id=node_id, path_id=path_id).first()
     if not node:
-        logger.warning("[ClassroomService] 节点不存在 path=%s node=%s user=%s", path_id, node_id, user_id)
+        logger.warning("[ClassroomService] 节点不存在 trace=%s path=%s node=%s user=%s", trace_id, path_id, node_id, user_id)
         return None
 
     path = await LearningPath.filter(id=path_id).first()
@@ -768,18 +770,21 @@ async def generate_classroom_lesson(
         or "、".join(str(item) for item in knowledge_tags[:6])
         or f"围绕 {topic} 完成概念理解、资料验证和检测。"
     )
+    context_started_at = time.perf_counter()
     resources = await _load_node_resources(progress, client_resources)
     quiz = await _load_node_quiz_snapshot(progress, client_quiz)
     portrait_context = await _build_portrait_context(user_id)
     force_regenerate = bool(client_payload.get("force_regenerate"))
     logger.info(
-        "[ClassroomService] 请求课堂 path=%s node=%s user=%s force=%s resources=%s quiz=%s",
+        "[ClassroomService] 请求课堂 trace=%s path=%s node=%s user=%s force=%s resources=%s quiz=%s context=%.2fs",
+        trace_id,
         path_id,
         node_id,
         user_id,
         force_regenerate,
         len(resources),
         bool(quiz),
+        time.perf_counter() - context_started_at,
     )
     fingerprint = _classroom_fingerprint(
         topic,
@@ -799,7 +804,8 @@ async def generate_classroom_lesson(
     lock_wait_started_at = time.perf_counter()
     async with lock:
         logger.info(
-            "[ClassroomService] 获得生成锁 path=%s node=%s user=%s wait=%.2fs",
+            "[ClassroomService] 获得生成锁 trace=%s path=%s node=%s user=%s wait=%.2fs",
+            trace_id,
             path_id,
             node_id,
             user_id,
@@ -815,7 +821,8 @@ async def generate_classroom_lesson(
             legacy_cache = previous and previous.schema_version == "exercise-v1"
             if previous:
                 logger.info(
-                    "[ClassroomService] 缓存未命中 path=%s node=%s user=%s fingerprint_match=%s schema=%s/%s ready=%s",
+                    "[ClassroomService] 缓存检查 trace=%s path=%s node=%s user=%s fingerprint_match=%s schema=%s/%s ready=%s",
+                    trace_id,
                     path_id,
                     node_id,
                     user_id,
@@ -837,7 +844,8 @@ async def generate_classroom_lesson(
                     await previous.save(update_fields=["content_fingerprint", "schema_version", "updated_at"])
                     logger.info("[ClassroomService] 已迁移旧课堂缓存 path=%s node=%s user=%s lesson=%s", path_id, node_id, user_id, previous.id)
                 logger.info(
-                    "[ClassroomService] 缓存命中 path=%s node=%s user=%s lesson=%s elapsed=%.2fs",
+                    "[ClassroomService] 缓存命中 trace=%s path=%s node=%s user=%s lesson=%s elapsed=%.2fs",
+                    trace_id,
                     path_id,
                     node_id,
                     user_id,
@@ -857,7 +865,7 @@ async def generate_classroom_lesson(
                 }
         generated_new_lesson = False
         graph_started_at = time.perf_counter()
-        logger.info("[ClassroomService] 开始调用课堂图 path=%s node=%s user=%s", path_id, node_id, user_id)
+        logger.info("[ClassroomService] 开始调用课堂图 trace=%s path=%s node=%s user=%s", trace_id, path_id, node_id, user_id)
         try:
             initial = ClassroomState(
                 path_id=path_id,
@@ -873,6 +881,7 @@ async def generate_classroom_lesson(
                 portrait_context=portrait_context,
                 fallback_lesson=fallback,
                 llm_priority=llm_priority,
+                trace_id=trace_id,
             )
             final_state = await classroom_graph.ainvoke(initial)
             # 图中的审核只负责检查展示契约；不能因为质量分数把已经完整的
@@ -880,7 +889,8 @@ async def generate_classroom_lesson(
             lesson = final_state.get("lesson")
             generated_new_lesson = _is_lesson_ready(lesson)
             logger.info(
-                "[ClassroomService] 课堂图结束 path=%s node=%s user=%s review_passed=%s score=%s retry=%s ready=%s elapsed=%.2fs",
+                "[ClassroomService] 课堂图结束 trace=%s path=%s node=%s user=%s review_passed=%s score=%s retry=%s ready=%s elapsed=%.2fs",
+                trace_id,
                 path_id,
                 node_id,
                 user_id,
@@ -891,13 +901,14 @@ async def generate_classroom_lesson(
                 time.perf_counter() - graph_started_at,
             )
         except Exception:
-            logger.exception("classroom lesson generation failed path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
+            logger.exception("[ClassroomService] 课堂图异常 trace=%s path=%s node=%s user=%s", trace_id, path_id, node_id, user_id)
             lesson = previous.lesson_json if previous and _is_lesson_ready(previous.lesson_json) else {}
 
         if not generated_new_lesson:
             lesson = previous.lesson_json if previous and _is_lesson_ready(previous.lesson_json) else {}
             logger.warning(
-                "[ClassroomService] 新课堂未完成 path=%s node=%s user=%s fallback_to_previous=%s",
+                "[ClassroomService] 新课堂未完成 trace=%s path=%s node=%s user=%s fallback_to_previous=%s",
+                trace_id,
                 path_id,
                 node_id,
                 user_id,
@@ -923,7 +934,8 @@ async def generate_classroom_lesson(
                     },
                 )
                 logger.info(
-                    "[ClassroomService] 课堂已落库 path=%s node=%s user=%s lesson=%s created=%s",
+                    "[ClassroomService] 课堂已落库 trace=%s path=%s node=%s user=%s lesson=%s created=%s",
+                    trace_id,
                     path_id,
                     node_id,
                     user_id,
@@ -931,10 +943,11 @@ async def generate_classroom_lesson(
                     created,
                 )
             except Exception:
-                logger.exception("classroom lesson persistence failed path_id=%s node_id=%s user_id=%s", path_id, node_id, user_id)
+                logger.exception("[ClassroomService] 课堂落库失败 trace=%s path=%s node=%s user=%s", trace_id, path_id, node_id, user_id)
 
     logger.info(
-        "[ClassroomService] 请求完成 path=%s node=%s user=%s generated=%s stale=%s elapsed=%.2fs",
+        "[ClassroomService] 请求完成 trace=%s path=%s node=%s user=%s generated=%s stale=%s elapsed=%.2fs",
+        trace_id,
         path_id,
         node_id,
         user_id,
@@ -951,4 +964,5 @@ async def generate_classroom_lesson(
         "lesson": lesson,
         "cached": not generated_new_lesson,
         "stale": bool(lesson) and not generated_new_lesson,
+        "trace_id": trace_id,
     }

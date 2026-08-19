@@ -5,6 +5,7 @@ from starlette.responses import StreamingResponse
 
 from backend.src.service.path.service import PathService
 from backend.src.service.path.classroom import generate_classroom_audio, generate_classroom_lesson
+from backend.src.service.path.classroom_transition import get_classroom_transition
 from backend.src.service.path.classroom_chat import stream_classroom_chat
 from backend.src.utils.jwt import get_user_id_from_token
 from backend.src.schemas.path import (
@@ -135,6 +136,16 @@ async def generate_node_classroom(
         user_id,
         {"node": data.node, "resources": data.resources, "quiz": data.quiz, "force_regenerate": data.force_regenerate},
     )
+    if not result:
+        raise HTTPException(status_code=404, detail="节点不存在")
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.get("/{path_id}/node/{node_id}/classroom-transition")
+async def get_node_classroom_transition(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """课堂生成时的非阻塞过渡内容，不调用课堂智能体。"""
+    await _assert_path_access(path_id, user_id)
+    result = await get_classroom_transition(path_id, node_id, user_id)
     if not result:
         raise HTTPException(status_code=404, detail="节点不存在")
     return {"code": 200, "msg": "success", "data": result}

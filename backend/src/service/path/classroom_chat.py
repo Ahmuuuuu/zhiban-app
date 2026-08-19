@@ -305,7 +305,9 @@ async def stream_classroom_chat(
 async def _refresh_portrait_after_classroom_chat(user_id: int, chat_group_id: int) -> None:
     """课堂问答结束后复用普通聊天的画像提取链路，不阻塞 SSE 收尾。"""
     try:
+        logger.info("[ClassroomPortrait] 开始更新 user=%s group=%s", user_id, chat_group_id)
         await extract_portrait_from_chat(user_id, chat_group_id)
+        logger.info("[ClassroomPortrait] 更新完成 user=%s group=%s", user_id, chat_group_id)
     except Exception:
         logger.exception(
             "classroom portrait extraction failed user_id=%s chat_group_id=%s",

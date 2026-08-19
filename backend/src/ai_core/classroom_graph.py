@@ -90,6 +90,7 @@ class ClassroomState(TypedDict):
     fallback_lesson: dict[str, Any]    # _fallback_lesson(...) 预计算结果，异常兜底用
     llm_priority: NotRequired[str]     # 默认 "high"
     max_retries: NotRequired[int]      # 默认 _MAX_REVIEW_RETRIES
+    trace_id: NotRequired[str]         # 一次课堂请求的日志关联标识
 
     # ── Writer 输出 ──
     teaching_outline: NotRequired[dict[str, Any]]  # 导演产物；重写轮次复用，不重复规划
@@ -114,7 +115,8 @@ async def writer_node(state: ClassroomState) -> dict:
     path_id = state.get("path_id")
     node_id = state.get("node_id")
     retry_count = state.get("retry_count", 0)
-    logger.info("[ClassroomWriter] 开始生成 path=%s node=%s retry=%s", path_id, node_id, retry_count)
+    trace_id = state.get("trace_id", "-")
+    logger.info("[ClassroomWriter] 开始生成 trace=%s path=%s node=%s retry=%s", trace_id, path_id, node_id, retry_count)
     try:
         outline = state.get("teaching_outline")
         if outline is None:
@@ -129,7 +131,8 @@ async def writer_node(state: ClassroomState) -> dict:
             resources=state.get("resources", []),
         )
         logger.info(
-            "[ClassroomWriter] 生成完成 path=%s node=%s retry=%s segments=%s elapsed=%.2fs",
+            "[ClassroomWriter] 生成完成 trace=%s path=%s node=%s retry=%s segments=%s elapsed=%.2fs",
+            trace_id,
             path_id,
             node_id,
             retry_count,
@@ -138,7 +141,7 @@ async def writer_node(state: ClassroomState) -> dict:
         )
         return {"teaching_outline": outline, "raw_lesson": raw_lesson, "lesson": lesson}
     except Exception:
-        logger.exception("[ClassroomWriter] 生成失败 path=%s node=%s elapsed=%.2fs", path_id, node_id, time.perf_counter() - started_at)
+        logger.exception("[ClassroomWriter] 生成失败 trace=%s path=%s node=%s elapsed=%.2fs", trace_id, path_id, node_id, time.perf_counter() - started_at)
         return {"lesson": {}, "raw_lesson": {}, "review_passed": False}
 
 
@@ -174,15 +177,17 @@ async def _plan_teaching_outline(state: ClassroomState) -> dict:
     )
     raw: dict = {}
     try:
+        logger.info("[ClassroomWriter] 蓝图请求模型 trace=%s path=%s node=%s", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"))
         response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="classroom")
         parsed = parse_llm_json(response.content)
         if isinstance(parsed, dict):
             raw = parsed
     except Exception:
-        logger.exception("[ClassroomWriter] 蓝图规划失败 path=%s node=%s", state.get("path_id"), state.get("node_id"))
+        logger.exception("[ClassroomWriter] 蓝图规划失败 trace=%s path=%s node=%s", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"))
     outline = _normalize_outline(raw, state)
     logger.info(
-        "[ClassroomWriter] 蓝图完成 path=%s node=%s source=%s elapsed=%.2fs",
+        "[ClassroomWriter] 蓝图完成 trace=%s path=%s node=%s source=%s elapsed=%.2fs",
+        state.get("trace_id", "-"),
         state.get("path_id"),
         state.get("node_id"),
         "llm" if raw else "default",
@@ -260,7 +265,8 @@ async def _generate_segments(state: ClassroomState, outline: dict) -> dict:
 
     parallel_ids = _SEGMENT_IDS[:-1]
     logger.info(
-        "[ClassroomWriter] 并行幕开始 path=%s node=%s scenes=%s mode=%s",
+        "[ClassroomWriter] 并行幕开始 trace=%s path=%s node=%s scenes=%s mode=%s",
+        state.get("trace_id", "-"),
         state.get("path_id"), state.get("node_id"), ",".join(parallel_ids),
         "targeted" if is_targeted_retry else "initial",
     )
@@ -273,7 +279,8 @@ async def _generate_segments(state: ClassroomState, outline: dict) -> dict:
     generated_by_id = {str(segment.get("id")): segment for segment in generated_parallel if isinstance(segment, dict)}
     parallel_segments = [generated_by_id.get(sid) or previous_by_id.get(sid, {}) for sid in parallel_ids]
     logger.info(
-        "[ClassroomWriter] 并行幕完成 path=%s node=%s valid=%s/%s elapsed=%.2fs",
+        "[ClassroomWriter] 并行幕完成 trace=%s path=%s node=%s valid=%s/%s elapsed=%.2fs",
+        state.get("trace_id", "-"),
         state.get("path_id"),
         state.get("node_id"),
         sum(bool(segment) for segment in parallel_segments),
@@ -283,7 +290,7 @@ async def _generate_segments(state: ClassroomState, outline: dict) -> dict:
     feynman_started_at = time.perf_counter()
     should_rewrite_feynman = not is_targeted_retry or _SEGMENT_IDS[-1] in targeted_ids
     if should_rewrite_feynman:
-        logger.info("[ClassroomWriter] 费曼幕开始 path=%s node=%s", state.get("path_id"), state.get("node_id"))
+        logger.info("[ClassroomWriter] 费曼幕开始 trace=%s path=%s node=%s", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"))
         feynman = await _gen_segment(
             state,
             outline,
@@ -298,7 +305,8 @@ async def _generate_segments(state: ClassroomState, outline: dict) -> dict:
         feynman = previous_by_id.get(_SEGMENT_IDS[-1], {})
         logger.info("[ClassroomWriter] 费曼幕复用 path=%s node=%s", state.get("path_id"), state.get("node_id"))
     logger.info(
-        "[ClassroomWriter] 费曼幕完成 path=%s node=%s valid=%s elapsed=%.2fs total=%.2fs",
+        "[ClassroomWriter] 费曼幕完成 trace=%s path=%s node=%s valid=%s elapsed=%.2fs total=%.2fs",
+        state.get("trace_id", "-"),
         state.get("path_id"),
         state.get("node_id"),
         bool(feynman),
@@ -368,12 +376,15 @@ async def _gen_segment(
     )
     user_id_int = int(state.get("user_id", 0))
     llm_priority = state.get("llm_priority", "high")
+    queue_started_at = time.perf_counter()
     try:
+        logger.info("[ClassroomWriter] 单幕等待并发槽 trace=%s path=%s node=%s scene=%s", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"), scene_id)
         async with sem:
+            logger.info("[ClassroomWriter] 单幕请求模型 trace=%s path=%s node=%s scene=%s queue_wait=%.2fs", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"), scene_id, time.perf_counter() - queue_started_at)
             response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="classroom")
         parsed = parse_llm_json(response.content)
         if not isinstance(parsed, dict):
-            logger.warning("[ClassroomWriter] 单幕返回非 JSON path=%s node=%s scene=%s elapsed=%.2fs", state.get("path_id"), state.get("node_id"), scene_id, time.perf_counter() - started_at)
+            logger.warning("[ClassroomWriter] 单幕返回非 JSON trace=%s path=%s node=%s scene=%s elapsed=%.2fs", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"), scene_id, time.perf_counter() - started_at)
             return {}
         parsed["id"] = scene_id
         parsed["type"] = _SEGMENT_TYPES.get(scene_id, scene_id)
@@ -390,10 +401,10 @@ async def _gen_segment(
             )
             _tts_prewarm_tasks.add(task)
             task.add_done_callback(_tts_prewarm_tasks.discard)
-        logger.info("[ClassroomWriter] 单幕完成 path=%s node=%s scene=%s elapsed=%.2fs", state.get("path_id"), state.get("node_id"), scene_id, time.perf_counter() - started_at)
+        logger.info("[ClassroomWriter] 单幕完成 trace=%s path=%s node=%s scene=%s chars=%s elapsed=%.2fs", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"), scene_id, len(str(parsed.get("teacher_speech") or parsed.get("script") or "")), time.perf_counter() - started_at)
         return parsed
     except Exception:
-        logger.exception("[ClassroomWriter] 单幕生成失败 path=%s node=%s scene=%s elapsed=%.2fs", state.get("path_id"), state.get("node_id"), scene_id, time.perf_counter() - started_at)
+        logger.exception("[ClassroomWriter] 单幕生成失败 trace=%s path=%s node=%s scene=%s elapsed=%.2fs", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"), scene_id, time.perf_counter() - started_at)
         return {}
 
 
@@ -473,8 +484,10 @@ def _feedback_for_segment(segment_id: str, issues: list[dict], global_feedback: 
 async def reviewer_node(state: ClassroomState) -> dict:
     """四个审核智能体并行检查分幕；只把问题回灌给对应模块。"""
     started_at = time.perf_counter()
+    trace_id = state.get("trace_id", "-")
     raw_lesson = state.get("raw_lesson") or state.get("lesson")
     if not raw_lesson or not isinstance(raw_lesson.get("segments"), list):
+        logger.warning("[ClassroomReviewer] 审核跳过：课堂为空 trace=%s path=%s node=%s", trace_id, state.get("path_id"), state.get("node_id"))
         return {"review_passed": False, "review_score": 0, "review_feedback": "课堂结构为空", "review_issues": [], "retry_count": state.get("retry_count", 0)}
 
     segments_by_id = {
@@ -487,6 +500,15 @@ async def reviewer_node(state: ClassroomState) -> dict:
         issues = [{"segment_id": scene_id, "category": "structure", "message": "缺少课堂模块"} for scene_id in missing_ids]
         retry_count = state.get("retry_count", 0)
         can_retry = retry_count < state.get("max_retries", _MAX_REVIEW_RETRIES)
+        logger.warning(
+            "[ClassroomReviewer] 结构审核失败 trace=%s path=%s node=%s missing=%s retry=%s can_retry=%s",
+            trace_id,
+            state.get("path_id"),
+            state.get("node_id"),
+            ",".join(missing_ids),
+            retry_count,
+            can_retry,
+        )
         return {
             "review_passed": False,
             "review_score": 0,
@@ -512,6 +534,15 @@ async def reviewer_node(state: ClassroomState) -> dict:
     if structural_issues:
         retry_count = state.get("retry_count", 0)
         can_retry = retry_count < state.get("max_retries", _MAX_REVIEW_RETRIES)
+        logger.warning(
+            "[ClassroomReviewer] 展示契约失败 trace=%s path=%s node=%s scenes=%s retry=%s can_retry=%s",
+            trace_id,
+            state.get("path_id"),
+            state.get("node_id"),
+            ",".join(str(item.get("segment_id")) for item in structural_issues),
+            retry_count,
+            can_retry,
+        )
         return {
             "review_passed": False,
             "review_score": 0,
@@ -522,8 +553,10 @@ async def reviewer_node(state: ClassroomState) -> dict:
 
     user_id_int = int(state.get("user_id", 0))
     llm_priority = state.get("llm_priority", "high")
+    logger.info("[ClassroomReviewer] 并行审核开始 trace=%s path=%s node=%s scenes=%s", trace_id, state.get("path_id"), state.get("node_id"), ",".join(_SEGMENT_IDS))
 
     async def review_scene(scene_id: str) -> tuple[str, bool, float, str, list[dict]]:
+        review_started_at = time.perf_counter()
         prompt_text = fill_prompt(
             load_prompt("classroom/reviewer_segment"),
             subject=state.get("subject", "未知"),
@@ -544,6 +577,7 @@ async def reviewer_node(state: ClassroomState) -> dict:
             segment_json=json.dumps(segments_by_id[scene_id], ensure_ascii=False)[:2600],
         )
         try:
+            logger.info("[ClassroomReviewer] 单幕请求模型 trace=%s path=%s node=%s scene=%s", trace_id, state.get("path_id"), state.get("node_id"), scene_id)
             response = await llm.ainvoke(prompt_text, priority=llm_priority, user_id=user_id_int, pool="classroom")
             result = parse_llm_json(response.content)
             if not isinstance(result, dict):
@@ -556,9 +590,20 @@ async def reviewer_node(state: ClassroomState) -> dict:
             passed = raw_passed and score >= _REVIEW_PASS_SCORE
             if not passed and not normalized_issues:
                 normalized_issues = [{"segment_id": scene_id, "category": "quality", "message": feedback or "当前模块未达到审核要求"}]
+            logger.info(
+                "[ClassroomReviewer] 单幕审核完成 trace=%s path=%s node=%s scene=%s passed=%s score=%.1f issues=%s elapsed=%.2fs",
+                trace_id,
+                state.get("path_id"),
+                state.get("node_id"),
+                scene_id,
+                passed,
+                score,
+                len(normalized_issues),
+                time.perf_counter() - review_started_at,
+            )
             return scene_id, passed, score, feedback, normalized_issues
         except Exception:
-            logger.exception("[ClassroomReviewer] 分幕审核失败，保留当前幕 path=%s node=%s scene=%s", state.get("path_id"), state.get("node_id"), scene_id)
+            logger.exception("[ClassroomReviewer] 分幕审核失败，保留当前幕 trace=%s path=%s node=%s scene=%s elapsed=%.2fs", trace_id, state.get("path_id"), state.get("node_id"), scene_id, time.perf_counter() - review_started_at)
             return scene_id, True, 0.0, "", []
 
     scene_reviews = await asyncio.gather(*(review_scene(scene_id) for scene_id in _SEGMENT_IDS))
@@ -574,7 +619,8 @@ async def reviewer_node(state: ClassroomState) -> dict:
     can_retry = not passed and retry_count < state.get("max_retries", _MAX_REVIEW_RETRIES) and bool(actionable_issues)
     next_retry_count = retry_count + 1 if can_retry else retry_count
     logger.info(
-        "[ClassroomReviewer] 审核完成 path=%s node=%s passed=%s score=%.1f issues=%s targeted=%s retry=%s elapsed=%.2fs",
+        "[ClassroomReviewer] 审核完成 trace=%s path=%s node=%s passed=%s score=%.1f issues=%s targeted=%s retry=%s elapsed=%.2fs",
+        trace_id,
         state.get("path_id"),
         state.get("node_id"),
         passed,
@@ -649,13 +695,13 @@ def _concept_definition_contract_issue(segment: dict, knowledge_tags: list[Any])
 
 def should_continue(state: ClassroomState) -> str:
     if state.get("review_passed"):
-        logger.info("[ClassroomGraph] 审核通过或无需全课重写，结束 path=%s node=%s", state.get("path_id"), state.get("node_id"))
+        logger.info("[ClassroomGraph] 审核通过或无需全课重写，结束 trace=%s path=%s node=%s", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"))
         return "end"
     issues = state.get("review_issues") or []
     if issues:
-        logger.info("[ClassroomGraph] 定向优化模块 path=%s node=%s scenes=%s", state.get("path_id"), state.get("node_id"), ",".join(str(item.get("segment_id")) for item in issues))
+        logger.info("[ClassroomGraph] 定向优化模块 trace=%s path=%s node=%s scenes=%s", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"), ",".join(str(item.get("segment_id")) for item in issues))
         return "writer"
-    logger.warning("[ClassroomGraph] 审核未通过但无可修复模块，结束 path=%s node=%s", state.get("path_id"), state.get("node_id"))
+    logger.warning("[ClassroomGraph] 审核未通过但无可修复模块，结束 trace=%s path=%s node=%s", state.get("trace_id", "-"), state.get("path_id"), state.get("node_id"))
     return "end"
 
 

@@ -84,10 +84,13 @@ async def _search_once(
     searxng_url: str,
     query: str,
     engines: str | None,
+    extra_params: dict[str, str] | None = None,
 ) -> tuple[list[dict], list]:
     params = {"q": query, "format": "json", "categories": "general"}
     if engines:
         params["engines"] = engines
+    if extra_params:
+        params.update(extra_params)
     resp = await client.get(searxng_url, params=params)
     if resp.status_code >= 400:
         body = resp.text[:300].replace("\n", " ").replace("\r", " ").strip()
@@ -199,6 +202,68 @@ async def _search_searxng_collect(query: str, max_results: int = 12) -> tuple[li
     if note:
         return [], note
     return [], last_error
+
+
+async def search_recent_web_brief(query: str, max_results: int = 3) -> list[dict[str, str]]:
+    """快速获取近期公开资讯，供非阻塞的课堂等待页使用。
+
+    只进行一次本地 SearXNG 请求，并使用独立短超时，避免等待页的资讯查询
+    挤占课堂生成或被多个搜索引擎的重试链路拖慢。
+    """
+    cleaned_query = _clean_query(query)
+    if not cleaned_query:
+        return []
+    try:
+        limit = max(1, min(int(max_results), 4))
+    except (TypeError, ValueError):
+        limit = 3
+    try:
+        timeout_seconds = max(1.0, min(float(os.getenv("CLASSROOM_BRIEF_SEARCH_TIMEOUT", "4")), 8.0))
+    except (TypeError, ValueError):
+        timeout_seconds = 4.0
+
+    timeout = httpx.Timeout(timeout_seconds, connect=min(2.0, timeout_seconds))
+    headers = {
+        "User-Agent": "ZhibanClassroom/1.0",
+        "Accept": "application/json",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
+    }
+    searxng_url = _normalize_searxng_url(os.getenv("SEARXNG_URL", "http://127.0.0.1:8888"))
+    engines = os.getenv("SEARXNG_ENGINES", "").strip() or None
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+            results, _ = await _search_once(
+                client,
+                searxng_url,
+                cleaned_query,
+                engines,
+                extra_params={"time_range": "month"},
+            )
+    except (httpx.RequestError, RuntimeError, ValueError):
+        return []
+
+    briefs: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or item.get("href") or "").strip()
+        title = " ".join(str(item.get("title") or "").split())
+        if not title or not url or not re.match(r"^https?://", url, re.I) or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        briefs.append(
+            {
+                "title": title[:100],
+                "summary": " ".join(str(item.get("content") or item.get("body") or "").split())[:180],
+                "url": url,
+                "source": str(item.get("engine") or item.get("source") or "公开来源").strip()[:32],
+                "published_at": str(item.get("publishedDate") or item.get("published_at") or "").strip()[:32],
+            }
+        )
+        if len(briefs) >= limit:
+            break
+    return briefs
 
 
 @tool

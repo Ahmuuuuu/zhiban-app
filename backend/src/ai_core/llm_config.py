@@ -50,6 +50,7 @@ _PER_USER = {
     "leader": 3,        # 大纲规划，单次调用，不需多路
     "reviewer": 50,     # 审核，5 用户 ×50=250，对齐 _review_sem
     "classroom": 5,     # 互动课堂：1 规划 + 4 幕并行 + 1 审核
+    "transition": 1,    # 课堂等待页：单用户串行，避免过渡摘要放大并发
     "thread": 10,       # 其他同步任务
 }
 _DEFAULT_PER_USER = 5

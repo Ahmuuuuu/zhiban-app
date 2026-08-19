@@ -188,6 +188,10 @@ export function generateNodeClassroom(pathId, nodeId, data = {}, config = {}) {
   })
 }
 
+export function getClassroomTransition(pathId, nodeId) {
+  return request.get(`/path/${pathId}/node/${nodeId}/classroom-transition`)
+}
+
 export function narrateClassroomText(data = {}) {
   return request({
     url: '/path/classroom/narrate',
