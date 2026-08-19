@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 from starlette.responses import StreamingResponse
 
 from backend.src.service.path.service import PathService
-from backend.src.service.path.classroom import generate_classroom_audio, generate_classroom_lesson
+from backend.src.service.path.classroom import generate_classroom_audio, generate_classroom_lesson, get_saved_classroom_lesson
 from backend.src.service.path.classroom_transition import get_classroom_transition
 from backend.src.service.path.classroom_chat import stream_classroom_chat
 from backend.src.utils.jwt import get_user_id_from_token
@@ -111,11 +111,22 @@ async def generate_node_resources(path_id: int, node_id: int, user_id: int = Dep
 
 
 @router.post("/{path_id}/node/{node_id}/generate-quiz")
-async def generate_node_quiz(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
+async def generate_node_quiz(
+    path_id: int,
+    node_id: int,
+    force_regenerate: bool = Body(default=False, embed=True),
+    user_id: int = Depends(get_user_id_from_token),
+):
     """为节点生成测验题目"""
     await _assert_path_access(path_id, user_id)
     try:
-        result = await PathService.generate_node_quiz(path_id, node_id, user_id, pre_generate=True)
+        result = await PathService.generate_node_quiz(
+            path_id,
+            node_id,
+            user_id,
+            pre_generate=True,
+            force_regenerate=force_regenerate,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"code": 200, "msg": "success", "data": result}
@@ -138,6 +149,14 @@ async def generate_node_classroom(
     )
     if not result:
         raise HTTPException(status_code=404, detail="节点不存在")
+    return {"code": 200, "msg": "success", "data": result}
+
+
+@router.get("/{path_id}/node/{node_id}/classroom")
+async def get_node_classroom(path_id: int, node_id: int, user_id: int = Depends(get_user_id_from_token)):
+    """Read a complete saved classroom; missing or incomplete records return null data."""
+    await _assert_path_access(path_id, user_id)
+    result = await get_saved_classroom_lesson(path_id, node_id, user_id)
     return {"code": 200, "msg": "success", "data": result}
 
 
@@ -217,7 +236,13 @@ async def submit_node_quiz(
     """提交节点测验 → 评分 → 门禁 → 解锁下一节点"""
     await _assert_path_access(path_id, user_id)
     try:
-        result = await PathService.submit_node_quiz(path_id, node_id, user_id, data.session_id)
+        result = await PathService.submit_node_quiz(
+            path_id,
+            node_id,
+            user_id,
+            data.session_id,
+            answers=data.answers,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"code": 200, "msg": "success", "data": result}

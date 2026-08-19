@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _CACHE_TTL_SECONDS = 15 * 60
 _transition_cache: dict[tuple[int, int], tuple[float, dict[str, Any]]] = {}
-_transition_locks: dict[tuple[int, int], asyncio.Lock] = {}
+_transition_tasks: dict[tuple[int, int], asyncio.Task[None]] = {}
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -63,6 +63,8 @@ async def _review_transition_content(
 ) -> dict[str, list[dict[str, str]]]:
     """一次低优先级调用同时整理新闻和画像故事；新闻失败时绝不直出原始候选。"""
     fallback = _fallback_stories(topic, major, interest, learning_goal, cognition)
+    if not candidates:
+        return {"news": [], "stories": fallback}
 
     try:
         from backend.src.ai_core.llm_config import llm
@@ -145,45 +147,77 @@ async def _review_transition_content(
         return {"news": [], "stories": fallback}
 
 
-async def get_classroom_transition(path_id: int, node_id: int, user_id: int) -> dict[str, Any] | None:
-    """Build waiting content: SearXNG candidates first, then low-priority LLM review."""
+async def _build_transition_context(path_id: int, node_id: int, user_id: int) -> dict[str, Any] | None:
     node = await PathNode.filter(id=node_id, path_id=path_id).first()
     if not node:
         return None
-    cache_key = (user_id, node_id)
-    cached = _transition_cache.get(cache_key)
-    if cached and time.monotonic() - cached[0] < _CACHE_TTL_SECONDS:
-        return cached[1]
+    path, user = await asyncio.gather(
+        LearningPath.filter(id=path_id).first(),
+        User.filter(id=user_id).first(),
+    )
+    picture = await user.picture if user else None
+    topic = _clip(node.topic, 80) or "当前知识点"
+    subject = _clip(getattr(path, "subject", ""), 48)
+    major = _clip(getattr(user, "major", ""), 48)
+    traits = parse_traits(getattr(picture, "traits", None)) if picture else {}
+    interest = _clip(trait_display(traits, "interest"), 48)
+    cognition = _clip(getattr(picture, "cognition", ""), 24) if picture else ""
+    learning_goal = _clip(getattr(picture, "learning_goal", ""), 32) if picture else ""
+    grade = _clip(getattr(user, "grade", ""), 24)
+    search_focus = interest or major or subject or topic
+    return {
+        "path_id": path_id,
+        "node_id": node_id,
+        "user_id": user_id,
+        "topic": topic,
+        "major": major,
+        "grade": grade,
+        "interest": interest,
+        "cognition": cognition,
+        "learning_goal": learning_goal,
+        "search_focus": search_focus,
+    }
 
-    lock = _transition_locks.setdefault(cache_key, asyncio.Lock())
-    async with lock:
-        cached = _transition_cache.get(cache_key)
-        if cached and time.monotonic() - cached[0] < _CACHE_TTL_SECONDS:
-            return cached[1]
 
-        path, user = await asyncio.gather(
-            LearningPath.filter(id=path_id).first(),
-            User.filter(id=user_id).first(),
-        )
-        picture = await user.picture if user else None
-        topic = _clip(node.topic, 80) or "当前知识点"
-        subject = _clip(getattr(path, "subject", ""), 48)
-        major = _clip(getattr(user, "major", ""), 48)
-        traits = parse_traits(getattr(picture, "traits", None)) if picture else {}
-        interest = _clip(trait_display(traits, "interest"), 48)
-        cognition = _clip(getattr(picture, "cognition", ""), 24) if picture else ""
-        learning_goal = _clip(getattr(picture, "learning_goal", ""), 32) if picture else ""
-        grade = _clip(getattr(user, "grade", ""), 24)
-        search_focus = interest or major or subject or topic
-        query = f"{search_focus} 近期 动态" if search_focus else f"{topic} 近期 动态"
+async def _refresh_transition_cache(cache_key: tuple[int, int], context: dict[str, Any]) -> None:
+    """在后台补齐近日资讯，绝不阻塞课堂等待页的首屏。"""
+    try:
+        topic = context["topic"]
+        search_focus = context["search_focus"]
+        queries = list(dict.fromkeys(
+            query
+            for query in (
+                f"{topic} 近期 最新进展",
+                f"{search_focus} 近期 最新动态" if search_focus else "",
+            )
+            if query.strip()
+        ))
         search_started_at = time.perf_counter()
-        candidates = await search_recent_web_brief(query, max_results=6)
+        batches = await asyncio.gather(
+            *(search_recent_web_brief(query, max_results=4) for query in queries),
+            return_exceptions=True,
+        )
+        candidates: list[dict[str, str]] = []
+        seen_urls: set[str] = set()
+        for batch in batches:
+            if isinstance(batch, Exception):
+                continue
+            for item in batch:
+                url = str(item.get("url") or "").strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                candidates.append(item)
+                if len(candidates) >= 6:
+                    break
+            if len(candidates) >= 6:
+                break
         logger.info(
-            "[ClassroomTransition] 近日资讯候选 path=%s node=%s user=%s query=%s candidates=%s elapsed=%.2fs",
-            path_id,
-            node_id,
-            user_id,
-            query,
+            "[ClassroomTransition] 近日资讯候选 path=%s node=%s user=%s queries=%s candidates=%s elapsed=%.2fs",
+            context["path_id"],
+            context["node_id"],
+            context["user_id"],
+            " | ".join(queries),
             len(candidates),
             time.perf_counter() - search_started_at,
         )
@@ -191,18 +225,62 @@ async def get_classroom_transition(path_id: int, node_id: int, user_id: int) -> 
             topic,
             search_focus,
             candidates,
-            user_id,
-            major,
-            grade,
-            learning_goal,
-            cognition,
-            interest,
+            context["user_id"],
+            context["major"],
+            context["grade"],
+            context["learning_goal"],
+            context["cognition"],
+            context["interest"],
         )
-        payload = {
+        _transition_cache[cache_key] = (time.monotonic(), {
             "topic": topic,
             "news": reviewed["news"],
             "stories": reviewed["stories"],
             "profile_focus": search_focus,
-        }
-        _transition_cache[cache_key] = (time.monotonic(), payload)
-        return payload
+            "pending": False,
+        })
+    except Exception:
+        logger.warning("[ClassroomTransition] 后台过渡内容生成失败 key=%s", cache_key, exc_info=True)
+        fallback = _fallback_stories(
+            context["topic"], context["major"], context["interest"], context["learning_goal"], context["cognition"]
+        )
+        _transition_cache[cache_key] = (time.monotonic(), {
+            "topic": context["topic"],
+            "news": [],
+            "stories": fallback,
+            "profile_focus": context["search_focus"],
+            "pending": False,
+        })
+
+
+def _forget_transition_task(cache_key: tuple[int, int], task: asyncio.Task[None]) -> None:
+    if _transition_tasks.get(cache_key) is task:
+        _transition_tasks.pop(cache_key, None)
+
+
+async def get_classroom_transition(path_id: int, node_id: int, user_id: int) -> dict[str, Any] | None:
+    """Return profile stories immediately; asynchronously enrich with reviewed recent news."""
+    cache_key = (user_id, node_id)
+    cached = _transition_cache.get(cache_key)
+    if cached and time.monotonic() - cached[0] < _CACHE_TTL_SECONDS:
+        return cached[1]
+
+    context = await _build_transition_context(path_id, node_id, user_id)
+    if not context:
+        return None
+
+    fallback = _fallback_stories(
+        context["topic"], context["major"], context["interest"], context["learning_goal"], context["cognition"]
+    )
+    payload = {
+        "topic": context["topic"],
+        "news": [],
+        "stories": fallback,
+        "profile_focus": context["search_focus"],
+        "pending": True,
+    }
+    _transition_cache[cache_key] = (time.monotonic(), payload)
+    task = asyncio.create_task(_refresh_transition_cache(cache_key, context), name=f"classroom-transition-{user_id}-{node_id}")
+    _transition_tasks[cache_key] = task
+    task.add_done_callback(lambda finished: _forget_transition_task(cache_key, finished))
+    return payload

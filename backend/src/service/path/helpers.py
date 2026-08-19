@@ -110,6 +110,35 @@ async def update_progress_resource_ids(progress, all_ids: list[int]):
     await UserPathProgress.filter(id=progress.id).update(**update_fields)
 
 
+async def reconcile_completed_prerequisites(progress_records, node_order: dict[int, int] | None = None):
+    """修复线性路径中不可能的回退状态。
+
+    后续节点已经完成，说明所有前置节点曾通过门禁。旧版复习交卷会把已完成
+    节点误写回 in_progress；这里仅恢复这种有明确后继完成证据的记录。
+    """
+    order = node_order or {}
+    records = sorted(
+        list(progress_records),
+        key=lambda record: order.get(record.node_id, getattr(getattr(record, "node", None), "order_index", 10**9)),
+    )
+    completed_later = False
+    restored_ids: list[int] = []
+    for record in reversed(records):
+        if record.node_status == "completed":
+            completed_later = True
+            continue
+        if completed_later and record.node_status in {"unlocked", "in_progress"}:
+            record.node_status = "completed"
+            record.quiz_passed = True
+            if not record.completed_at:
+                record.completed_at = datetime.now()
+            await record.save(update_fields=["node_status", "quiz_passed", "completed_at"])
+            restored_ids.append(record.node_id)
+    if restored_ids:
+        logger.warning("恢复被错误回退的路径节点 progress node_ids=%s", sorted(restored_ids))
+    return records
+
+
 async def check_resource_viewed(node_id: int, user_id: int) -> tuple[bool, int]:
     """Return whether any node resource has been viewed and the total view count."""
     progress = await UserPathProgress.filter(user_id=user_id, node_id=node_id).first()

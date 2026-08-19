@@ -354,7 +354,7 @@ export function markStudyResourceRead(resourceId: number | string, durationSecon
 
 export function markStudyResourceUnread(resourceId: number | string): Promise<unknown>;
 
-export function completeLearningPathNode(nodeId: number | string, sessionId: string): Promise<unknown>;
+export function completeLearningPathNode(nodeId: number | string, sessionId: string, answers?: Record<string, string>): Promise<unknown>;
 
 export function generateLearningPath(data: {
   subject: string;
@@ -388,4 +388,4 @@ export function enrollLearningPath(pathId: number | string): Promise<unknown>;
 
 export function generatePathNodeResources(pathId: number | string, nodeId: number | string): Promise<unknown>;
 
-export function generatePathNodeQuiz(pathId: number | string, nodeId: number | string): Promise<unknown>;
+export function generatePathNodeQuiz(pathId: number | string, nodeId: number | string, forceRegenerate?: boolean): Promise<unknown>;

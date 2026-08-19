@@ -5,13 +5,11 @@ export function getCurrentLearningPath() {
   return request.get('/learning_path/current')
 }
 
-export function completeLearningPathNode(nodeId, sessionId, answers = null, correctAnswers = null) {
+export function completeLearningPathNode(nodeId, sessionId, answers = null) {
   const data = { session_id: sessionId }
-  if (answers && typeof answers === 'object' && Object.keys(answers).length > 0) {
+  // 空对象也要发送：它代表本次交卷一题都没答，后端据此清除旧会话残留答案。
+  if (answers && typeof answers === 'object') {
     data.answers = answers
-  }
-  if (correctAnswers && typeof correctAnswers === 'object' && Object.keys(correctAnswers).length > 0) {
-    data.correct_answers = correctAnswers
   }
   return request({
     url: `/learning_path/nodes/${nodeId}/complete`,
@@ -172,10 +170,11 @@ export async function generatePathNodeResourcesStream(pathId, nodeId, onResource
   }
 }
 
-export function generatePathNodeQuiz(pathId, nodeId) {
+export function generatePathNodeQuiz(pathId, nodeId, forceRegenerate = false) {
   return request({
     url: `/path/${pathId}/node/${nodeId}/generate-quiz`,
-    method: 'post'
+    method: 'post',
+    data: { force_regenerate: Boolean(forceRegenerate) }
   })
 }
 
@@ -186,6 +185,10 @@ export function generateNodeClassroom(pathId, nodeId, data = {}, config = {}) {
     data,
     ...config
   })
+}
+
+export function getNodeClassroom(pathId, nodeId) {
+  return request.get(`/path/${pathId}/node/${nodeId}/classroom`)
 }
 
 export function getClassroomTransition(pathId, nodeId) {

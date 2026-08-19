@@ -1,4 +1,6 @@
 const SESSION_KEY = 'zhiban_quiz_sessions'
+// v3: 题面必须与后端会话记录一致，旧版本地缓存可能保存了重排前的选项。
+export const QUIZ_SCHEMA_VERSION = 3
 
 const uid = prefix => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
@@ -35,7 +37,7 @@ const normalizeAnswer = value => {
   } catch {}
   return text
     .replace(/^(答案|正确答案|参考答案)[:：]?\s*/i, '')
-    .replace(/^[（(]?\s*([A-D])\s*[）).、]?\s*$/i, '$1')
+    .replace(/^[（(]?\s*([A-F])\s*[）).、]?\s*$/i, '$1')
     .toUpperCase()
 }
 
@@ -46,7 +48,7 @@ const normalizeQuestion = (item, index) => {
       const text = typeof option === 'string'
         ? option
         : String(option.text || option.content || option.value || '')
-      const match = text.match(/^\s*([A-D])[\).、]\s*(.*)$/i)
+      const match = text.match(/^\s*([A-F])[\).、]\s*(.*)$/i)
 
       return {
         key: String(option.key || option.label || match?.[1] || String.fromCharCode(65 + optionIndex)).toUpperCase(),
@@ -64,26 +66,28 @@ const normalizeQuestion = (item, index) => {
     return `第 ${index + 1} 题`
   })()
 
+  const questionType = String(item.question_type || item.type || '').toLowerCase()
   const isMulti =
     item.multi ||
     item.is_multi ||
     item.multiple ||
-    ['multiple', 'multi', 'checkbox'].includes(String(item.type || item.question_type || '').toLowerCase())
+    ['multiple', 'multi', 'checkbox', 'multi_choice'].includes(questionType)
 
   const rawAnswer = item.answer ?? item.correctAnswer ?? item.correct_answer ?? item.correct ?? ''
   const answerStr = String(rawAnswer || '').trim()
-  const hasMultiple = /[,，、]/.test(answerStr) || /^[A-D]{2,}$/i.test(answerStr)
+  const hasMultiple = /[,，、]/.test(answerStr) || /^[A-F]{2,}$/i.test(answerStr)
 
   const multi = isMulti || hasMultiple
 
   return {
     question_id: item.question_id || item.questionId || item.id || null,
     id: item.question_id || item.questionId || item.id || uid(`question-${index + 1}`),
-    type: multi ? 'multiple' : (options.length ? 'choice' : 'short'),
+    type: questionType || (multi ? 'multiple' : (options.length ? 'choice' : 'short')),
+    question_type: questionType || (multi ? 'multi_choice' : (options.length ? 'single_choice' : 'fill_blank')),
     stem: String(stem).trim(),
     options,
     answer: multi
-      ? answerStr.toUpperCase().replace(/[^A-D,]/g, '').split(/[,，、]+/).filter(Boolean).sort().join(',')
+      ? answerStr.toUpperCase().replace(/[^A-F,]/g, '').split(/[,，、]+/).filter(Boolean).sort().join(',')
       : normalizeAnswer(answerStr),
     multi,
     explanation: String(item.explanation || item.analysis || item.reason || '').trim()
@@ -188,6 +192,7 @@ export const upsertQuizSet = payload => {
     (payload.sourceId ? `quiz-resource-${payload.sourceId}` : uid('quiz'))
 
   const session = {
+    schemaVersion: QUIZ_SCHEMA_VERSION,
     id: sessionId,
     sourceId: payload.sourceId || '',
     sessionId: payload.sessionId || payload.session_id || '',

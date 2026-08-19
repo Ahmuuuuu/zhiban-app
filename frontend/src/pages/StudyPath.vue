@@ -196,6 +196,14 @@
                         <router-link class="branch-action primary" :to="pathQuizLink(node._quiz, node)">
                           开始检测
                         </router-link>
+                        <button
+                          class="branch-action"
+                          type="button"
+                          :disabled="node.status === 'locked' || isNodeQuizGenerating(node)"
+                          @click.stop="ensureNodeResources(node, 'quiz', true)"
+                        >
+                          重新生成检测
+                        </button>
                       </div>
                     </template>
 
@@ -433,7 +441,7 @@ import {
   updateResourceAnnotation
 } from '../api/apis'
 import { getPathVideo, generatePathVideo } from '../api/learningPath'
-import { upsertQuizSet, getQuizSet } from '../utils/quizBank'
+import { QUIZ_SCHEMA_VERSION, upsertQuizSet, getQuizSet } from '../utils/quizBank'
 import AnnotatedTextPreview from '../components/AnnotatedTextPreview.vue'
 import MindmapPreview from '../components/MindmapPreview.vue'
 import PptPreview from '../components/PptPreview.vue'
@@ -1862,7 +1870,9 @@ const getNodeQuizSourceId = (node, data = null) => {
 
 const getNodeQuizSet = (node, data = null) => {
   const sourceId = getNodeQuizSourceId(node, data)
-  return sourceId ? getQuizSet(`quiz-resource-${sourceId}`) : null
+  const cached = sourceId ? getQuizSet(`quiz-resource-${sourceId}`) : null
+  // 学习路径不能继续展示旧版题库缓存，否则后端修复后的答案和解析不会生效。
+  return cached?.schemaVersion === QUIZ_SCHEMA_VERSION ? cached : null
 }
 
 const getNodeGenerationKey = node =>
@@ -2154,7 +2164,7 @@ const buildNodeQuiz = (node, quizData = null) => {
   if (!pathId || !node?.id) return null
 
   const data = quizData || node.quiz
-  if (!data) return null
+  if (!data && !getNodeQuizSet(node)) return null
 
   let existingQuiz = getNodeQuizSet(node, data)
   if (existingQuiz?.questions?.[0]?.question && typeof existingQuiz.questions[0].question === 'object') {
@@ -2173,6 +2183,9 @@ const buildNodeQuiz = (node, quizData = null) => {
 
   if (!questions.length && !data.content && !node.quiz) return null
 
+  // 没有后端本次返回的数据时，不把路径详情里的旧题目重新写入本地题库。
+  if (!quizData) return null
+
   return upsertQuizSet({
     sourceId: getNodeQuizSourceId(node, data),
     title: `${node.title} - 巩固练习`,
@@ -2182,7 +2195,7 @@ const buildNodeQuiz = (node, quizData = null) => {
   })
 }
 
-const ensureNodeResources = async (node, target = 'all') => {
+const ensureNodeResources = async (node, target = 'all', forceQuizRegenerate = false) => {
   if (!node || node.status === 'locked') return
 
   if (target === 'all' && isNodeGenerationBusy(node)) return
@@ -2268,13 +2281,13 @@ const ensureNodeResources = async (node, target = 'all') => {
     })
   }
 
-  if (shouldLoadQuiz && !node._quiz && pathId) {
+  if (shouldLoadQuiz && (!node._quiz || forceQuizRegenerate) && pathId) {
     if (isNodeQuizGenerating(node)) {
       patchNodeState(node, { _quizLoading: true, _quizError: '' })
       return
     }
     patchNodeState(node, { _quizError: '' })
-    const localQuiz = buildNodeQuiz(node)
+    const localQuiz = forceQuizRegenerate ? null : buildNodeQuiz(node)
     if (localQuiz) {
       patchNodeState(node, { _quiz: localQuiz })
       return
@@ -2284,7 +2297,7 @@ const ensureNodeResources = async (node, target = 'all') => {
     nodeGenerationState.rememberByKey(quizKey, 'quiz')
     patchNodeState(node, { _quizLoading: true, _quizError: '' })
     try {
-      const quizRes = await generatePathNodeQuiz(pathId, node.id)
+      const quizRes = await generatePathNodeQuiz(pathId, node.id, forceQuizRegenerate)
       const quizData = getResponseData(quizRes)
       if (quizData.blocked) {
         patchNodeState(node, {
@@ -2476,17 +2489,6 @@ const loadNodeResources = async () => {
       nodeSessionId.value = existingQuiz.sessionId || ''
       patchNodeState(node, { _quiz: existingQuiz })
       console.log('[StudyPath] 从题库加载已有题目：', existingQuiz)
-    } else if (node.quiz) {
-      const quiz = upsertQuizSet({
-        sourceId: getNodeQuizSourceId(node),
-        title: `${node.title} - 巩固练习`,
-        content: JSON.stringify(node.quiz),
-        fileType: 'exercise',
-        sessionId: node.sessionId || ''
-      })
-      if (quiz) nodeQuizData.value = quiz
-      nodeSessionId.value = node.sessionId || ''
-      if (quiz) patchNodeState(node, { _quiz: quiz })
     } else {
       quizKey = getNodeGenerationKey(node)
       nodeGenerationState.rememberByKey(quizKey, 'quiz')

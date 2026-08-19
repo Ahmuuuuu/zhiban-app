@@ -1,6 +1,8 @@
 <template>
   <TopNav />
 
+  <HomeNoticePopup />
+
   <div class="slide-stage">
     <!-- Current page -->
     <div
@@ -30,6 +32,7 @@ import { ref, watch, nextTick, shallowRef, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TopNav from './components/TopNav.vue'
 import StudyPet from './components/StudyPet.vue'
+import HomeNoticePopup from './features/homeNotice/HomeNoticePopup.vue'
 
 const route = useRoute()
 const router = useRouter()

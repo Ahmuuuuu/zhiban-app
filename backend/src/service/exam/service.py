@@ -2,6 +2,7 @@
 
 import json
 import logging
+import random
 import re
 import uuid
 from datetime import datetime
@@ -20,7 +21,7 @@ from backend.src.service.notification.service import check_and_create_ai_tip
 from backend.src.service.portrait.service import PortraitRadarService
 
 
-def _normalize_db_answer(raw: str) -> str:
+def _normalize_db_answer(raw: str, multi: bool = False) -> str:
     """归一化 DB 中存储的答案，消除 LLM 格式漂移。
 
     DB 里答案可能是: "A" / '"A"' / '["A"]' / "A. xxx" / "(A)" / "（A）" / true / "True"
@@ -45,9 +46,13 @@ def _normalize_db_answer(raw: str) -> str:
     upper = text.strip().upper()
     if upper in ("TRUE", "FALSE"):
         return "A" if upper == "TRUE" else "B"
+    if multi:
+        keys = re.findall(r'(?<![A-Z])([A-F])(?![A-Z])', text.upper())
+        return ",".join(dict.fromkeys(keys))
+
     # 去掉选项文本和括号只留字母
-    # 例: "A. xxx" → "A", "(A)" → "A", "（B）" → "B", "A " → "A"
-    m = re.search(r'[（(]?\s*([A-D])\s*[）).、]?', text, re.IGNORECASE)
+    # 例: "A. xxx" → "A", "(A)" → "A", "（B）" → "B", "E" → "E"
+    m = re.search(r'[（(]?\s*([A-F])\s*[）).、]?', text, re.IGNORECASE)
     if m:
         return m.group(1).upper()
     return upper
@@ -61,10 +66,63 @@ def _parse_multi_ans(ans: str) -> set:
             return set(str(x).strip().upper() for x in json.loads(text))
         except (json.JSONDecodeError, TypeError):
             logger.debug("Suppressed exception at backend/src/service/exam/service.py:61", exc_info=True)
-    return set(text.upper().replace(" ", "").split(","))
+    return set(re.findall(r"[A-F]", text.upper()))
+
+
+def _text_answer_candidates(raw: Any) -> list[str]:
+    """取出填空/简答题的可接受文本答案，兼容 JSON 数组。"""
+    if raw is None:
+        return []
+    value: Any = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        try:
+            value = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            value = text
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    return [str(item).strip() for item in values if str(item).strip()]
+
+
+def _normalize_text_answer(raw: Any) -> str:
+    """文本题比较时忽略大小写、空白和常见标点。"""
+    text = str(raw or "").strip().casefold()
+    return re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
+
+
+def _answer_matches(question_type: str, correct_answer: Any, user_answer: Any) -> bool:
+    """按题型比较答案，避免填空题误走选项字母判分。"""
+    qt = str(question_type or "").lower()
+    if not str(user_answer or "").strip():
+        return False
+    if qt == "multi_choice":
+        correct = _normalize_db_answer(correct_answer, multi=True)
+        return _parse_multi_ans(str(user_answer)) == _parse_multi_ans(correct)
+    if qt in {"single_choice", "true_false"}:
+        return _normalize_db_answer(str(correct_answer)) == _normalize_db_answer(str(user_answer))
+    user = _normalize_text_answer(user_answer)
+    return bool(user) and any(user == _normalize_text_answer(item) for item in _text_answer_candidates(correct_answer))
+
+
+def _display_answer(question_type: str, raw: Any) -> str:
+    """返回面向用户展示的标准答案，不把文本答案改成选项字母。"""
+    qt = str(question_type or "").lower()
+    if qt == "multi_choice":
+        return _normalize_db_answer(raw, multi=True)
+    if qt in {"single_choice", "true_false"}:
+        return _normalize_db_answer(str(raw))
+    return "、".join(_text_answer_candidates(raw))
 
 
 _OPTION_PREFIX_RE = re.compile(r"^\s*([A-F])[).、]\s*(.*)$", re.IGNORECASE)
+_ANSWER_CLAIM_RE = re.compile(
+    r"((?:正确答案|参考答案|答案)\s*(?:是|为|[:：])\s*)[（(]?\s*(?:[A-F](?:\s*[,，、/]\s*[A-F])*)\s*[）)]?",
+    re.IGNORECASE,
+)
+_OPTION_REFERENCE_PATTERNS = (
+    re.compile(r"(选项\s*)([A-F])", re.IGNORECASE),
+    re.compile(r"([A-F])(\s*(?:项|选项|正确|错误|对|错|[:：]))", re.IGNORECASE),
+)
 
 
 def _answer_option_keys(value: Any) -> list[str]:
@@ -93,8 +151,37 @@ def _is_objective_question(question: dict[str, Any]) -> bool:
     }
 
 
-def _rebalance_choice_options(question: dict[str, Any], choice_index: int) -> dict[str, Any]:
-    """稳定轮换选项位置，并把正确答案映射到新位置。"""
+def _format_answer_keys(answer_keys: list[str]) -> str:
+    return "、".join(dict.fromkeys(key for key in answer_keys if key))
+
+
+def _remap_analysis_option_references(analysis: Any, key_mapping: dict[str, str]) -> str:
+    """仅重映射明确的选项标签，避免误改解析中的自然语言或专业术语。"""
+    text = str(analysis or "").strip()
+    if not text or not key_mapping:
+        return text
+
+    for pattern in _OPTION_REFERENCE_PATTERNS:
+        def _replace(match: re.Match) -> str:
+            first, second = match.groups()
+            if first.strip().upper() in key_mapping:
+                return f"{key_mapping[first.strip().upper()]}{second}"
+            return f"{first}{key_mapping.get(second.upper(), second.upper())}"
+        text = pattern.sub(_replace, text)
+    return text
+
+
+def _synchronize_analysis_answer_claim(analysis: Any, answer: Any) -> str:
+    """兼容旧题：若解析直接声明答案，以数据库中真实答案为准。"""
+    text = str(analysis or "").strip()
+    answer_text = _format_answer_keys(_answer_option_keys(answer))
+    if not text or not answer_text:
+        return text
+    return _ANSWER_CLAIM_RE.sub(lambda match: f"{match.group(1)}{answer_text}", text)
+
+
+def _rebalance_choice_options(question: dict[str, Any], target_position: int) -> dict[str, Any]:
+    """将正确项移动到指定位置，并同步明确的选项标签引用。"""
     normalized = dict(question)
     raw_options = normalized.get("options")
     if not _is_objective_question(normalized) or not isinstance(raw_options, list) or len(raw_options) < 2:
@@ -115,7 +202,7 @@ def _rebalance_choice_options(question: dict[str, Any], choice_index: int) -> di
         return normalized
 
     original_position = next(index for index, item in enumerate(entries) if item[0] == answer_keys[0])
-    target_position = choice_index % len(entries)
+    target_position %= len(entries)
     shift = (original_position - target_position) % len(entries)
     reordered = entries[shift:] + entries[:shift]
     key_mapping = {old_key: chr(65 + index) for index, (old_key, _) in enumerate(reordered)}
@@ -123,19 +210,28 @@ def _rebalance_choice_options(question: dict[str, Any], choice_index: int) -> di
     normalized["options"] = [f"{chr(65 + index)}. {content}" for index, (_, content) in enumerate(reordered)]
     mapped_answer = [key_mapping[key] for key in answer_keys]
     normalized["answer"] = mapped_answer if str(normalized.get("question_type") or "").lower() == "multi_choice" else mapped_answer[0]
+    for analysis_key in ("analysis", "explanation", "reason"):
+        if analysis_key in normalized:
+            normalized[analysis_key] = _remap_analysis_option_references(normalized[analysis_key], key_mapping)
     return normalized
 
 
 def _prepare_questions_for_storage(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """让客观题正确选项均匀分布，避免模型示例导致整批答案都是 A。"""
-    prepared: list[dict[str, Any]] = []
-    choice_index = 0
-    for question in questions:
-        item = dict(question) if isinstance(question, dict) else {}
-        if _is_objective_question(item):
-            item = _rebalance_choice_options(item, choice_index)
-            choice_index += 1
-        prepared.append(item)
+    """一次性稳定打散正确项位置，避免形成 A/B/C/D 的可预测循环。"""
+    prepared = [dict(question) if isinstance(question, dict) else {} for question in questions]
+    groups: dict[int, list[int]] = {}
+    for index, item in enumerate(prepared):
+        options = item.get("options")
+        if _is_objective_question(item) and isinstance(options, list) and len(options) >= 2:
+            groups.setdefault(len(options), []).append(index)
+
+    seed_source = "|".join(str(item.get("content") or "") for item in prepared)
+    rng = random.Random(seed_source)
+    for option_count, indexes in groups.items():
+        positions = [index % option_count for index in range(len(indexes))]
+        rng.shuffle(positions)
+        for question_index, target_position in zip(indexes, positions):
+            prepared[question_index] = _rebalance_choice_options(prepared[question_index], target_position)
     return prepared
 
 
@@ -197,7 +293,7 @@ class ExamService:
                 content=q.get("content", ""),
                 options=json.dumps(q.get("options"), ensure_ascii=False) if q.get("options") else None,
                 answer=json.dumps(q.get("answer"), ensure_ascii=False) if isinstance(q.get("answer"), list) else str(q.get("answer") if q.get("answer") is not None else ""),
-                analysis=q.get("analysis", ""),
+                analysis=_synchronize_analysis_answer_claim(q.get("analysis", ""), q.get("answer")),
                 difficulty=diff,
                 knowledge_tags=json.dumps(q.get("knowledge_tags", []), ensure_ascii=False),
                 point_value=pv,
@@ -249,7 +345,15 @@ class ExamService:
                     # 修正占位记录的 node_id（ResourceService 存库时不知道 node_id）
                     if node_id:
                         await ExamRecord.filter(session_id=existing_session_id, node_id__isnull=True).update(node_id=node_id)
-                    records = await ExamRecord.filter(session_id=existing_session_id).prefetch_related("question").all()
+                    # ResourceService 已经把题目存进 ExamQuestion 后，这里不能直接读原始记录。
+                    # 先复用统一的 session 兼容修复，处理旧版全 A 答案和过期解析。
+                    await ExamService.get_session(existing_session_id, user_id)
+                    records = await (
+                        ExamRecord.filter(session_id=existing_session_id, user_id=user_id)
+                        .order_by("id")
+                        .prefetch_related("question")
+                        .all()
+                    )
                     saved = [_question_to_dict(rec.question) for rec in records if rec.question]
                     return {"session_id": existing_session_id, "questions": saved}
 
@@ -396,25 +500,16 @@ class ExamService:
         if not question:
             raise ValueError("题目不存在")
 
-        # 归一化 DB 中的答案（LLM 输出格式不稳定：A / "A" / ["A"] / a）
-        correct_answer = _normalize_db_answer(question.answer)
+        qt = (question.question_type or "").lower()
+        correct_answer = _display_answer(qt, question.answer)
 
         logger.info(
             "submit_answer qid=%s type=%s raw_db_answer=%r normalized_answer=%r user_answer=%r session_id=%r node_id=%r",
             question_id, question.question_type, question.answer, correct_answer, user_answer, session_id, node_id,
         )
 
-        # 判断对错（每题等权重 1 分）
-        qt = (question.question_type or "").lower()
-        if qt == "multi_choice":
-            try:
-                user_set = _parse_multi_ans(user_answer)
-                correct_set = _parse_multi_ans(correct_answer)
-                is_correct = (user_set == correct_set)
-            except Exception:
-                is_correct = user_answer.strip().upper() == correct_answer
-        else:
-            is_correct = (user_answer.strip().upper() == correct_answer)
+        # 判断对错（每题等权重 1 分），文本题不能走选项字母规则。
+        is_correct = _answer_matches(qt, question.answer, user_answer)
 
         score = 1.0 if is_correct else 0.0
 
@@ -561,25 +656,8 @@ class ExamService:
         if not records:
             return None
 
-        # 兼容旧批次：模型曾被示例锚定为整批答案 A。仅未作答会话允许修正，
-        # 已有提交记录时绝不改动题目，避免影响历史判分。
-        objective_records = [
-            record for record in records
-            if record.question and _is_objective_question(_question_to_dict(record.question))
-        ]
-        answer_keys = [_answer_option_keys(_question_to_dict(record.question).get("answer")) for record in objective_records]
-        primary_answers = [keys[0] for keys in answer_keys if keys]
-        has_attempts = any(record.user_answer is not None or record.is_correct is not None for record in records)
-        if len(primary_answers) >= 3 and len(set(primary_answers)) == 1 and not has_attempts:
-            for choice_index, record in enumerate(objective_records):
-                current = _question_to_dict(record.question)
-                balanced = _rebalance_choice_options(current, choice_index)
-                if balanced.get("options") == current.get("options") and balanced.get("answer") == current.get("answer"):
-                    continue
-                record.question.options = json.dumps(balanced["options"], ensure_ascii=False)
-                record.question.answer = json.dumps(balanced["answer"], ensure_ascii=False) if isinstance(balanced["answer"], list) else str(balanced["answer"])
-                await record.question.save(update_fields=["options", "answer"])
-            logger.info("Rebalanced legacy unanswered quiz session session_id=%s user_id=%s", session_id, user_id)
+        # 会话一经生成即不可变。读取时重排选项会让浏览器缓存的题面与数据库答案错位，
+        # 最终造成“按展示答案作答却得 0 分”。旧会话保持原状，新会话只在入库前处理一次。
 
         items = []
         for r in records:

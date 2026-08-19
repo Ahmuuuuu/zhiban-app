@@ -14,7 +14,6 @@ router = APIRouter(prefix="/learning_path", tags=["学习路径(轻量)"])
 class CompleteNodeBody(BaseModel):
     session_id: str
     answers: Optional[Dict[str, Any]] = None
-    correct_answers: Optional[Dict[str, Any]] = None
 
 
 @router.get("/current")
@@ -35,9 +34,9 @@ async def complete_node(
     """完成节点测验 → 评分门禁 → 解锁下一节点，返回新节点供动画展示"""
     import logging
     _logger = logging.getLogger(__name__)
-    _logger.info("complete_node 请求 node_id=%s user_id=%s session_id=%r answers_count=%s correct_answers_count=%s", node_id, user_id, body.session_id, len(body.answers) if body.answers else 0, len(body.correct_answers) if body.correct_answers else 0)
+    _logger.info("complete_node 请求 node_id=%s user_id=%s session_id=%r answers_count=%s", node_id, user_id, body.session_id, len(body.answers) if body.answers else 0)
     try:
-        result = await PathService.complete_node(node_id, user_id, body.session_id, answers=body.answers, correct_answers=body.correct_answers)
+        result = await PathService.complete_node(node_id, user_id, body.session_id, answers=body.answers)
     except ValueError as e:
         msg = str(e)
         if msg in ("节点不存在", "未加入该路径"):

@@ -18,6 +18,7 @@ class EnrollPathRequest(BaseModel):
 class SubmitNodeQuizRequest(BaseModel):
     """提交节点测验"""
     session_id: str = Field(description="答题会话 session_id")
+    answers: dict[str, str] | None = Field(default=None, description="题目答案，键为题目 ID")
 
 
 class RegeneratePathRequest(BaseModel):

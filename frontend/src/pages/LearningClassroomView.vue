@@ -117,7 +117,11 @@
       </section>
 
       <section v-else class="lesson-workspace lesson-generation-state" aria-live="polite">
-        <div v-if="classroomLoading" class="classroom-waiting-panel">
+        <div v-if="classroomRestoring" class="lesson-generation-state-inner classroom-restore-state">
+          <LoaderCircle :size="22" class="spinning" />
+          <strong>正在打开已保存的课堂</strong>
+        </div>
+        <div v-else-if="classroomLoading" class="classroom-waiting-panel">
           <header class="classroom-waiting-head">
             <span class="waiting-kicker"><LoaderCircle :size="16" class="spinning" /> 小知正在备课</span>
             <h2>正在生成课堂内容</h2>
@@ -252,7 +256,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Download, ExternalLink, Eye, FileText, Lightbulb, LoaderCircle, Newspaper, Pause, Play, Volume2, X } from 'lucide-vue-next'
-import { generateNodeClassroom, generatePathNodeQuiz, generatePathNodeResourcesStream, getClassroomTransition, narrateClassroomText, streamClassroomChatMessage } from '../api/learningPath'
+import { generateNodeClassroom, generatePathNodeQuiz, generatePathNodeResourcesStream, getClassroomTransition, getNodeClassroom, narrateClassroomText, streamClassroomChatMessage } from '../api/learningPath'
 import { downloadWithToken, resolveApiUrl } from '../api/config'
 import { getGeneratedResource } from '../api/resource'
 import { renderMarkdown, handleRenderedMarkdownClick } from '../utils/markdown'
@@ -273,9 +277,10 @@ const classroomLesson = ref(null)
 const classroomResources = ref([])
 const generatedQuiz = ref(null)
 const classroomLoading = ref(false)
+const classroomRestoring = ref(true)
 const classroomError = ref('')
 const transitionLoading = ref(false)
-const transitionContent = ref({ news: [], stories: [], topic: '', profile_focus: '' })
+const transitionContent = ref({ news: [], stories: [], topic: '', profile_focus: '', pending: false })
 const transitionSlideIndex = ref(0)
 const resourceGenerationLoading = ref(false)
 const resourceGenerationStatus = ref('')
@@ -300,6 +305,8 @@ const narrationPlaying = ref(false)
 let classroomNarrationAudio = null
 let narrationRequestId = 0
 let transitionRotationTimer = null
+let transitionRefreshTimer = null
+let transitionRequestInFlight = false
 
 const readJson = (storage, key) => {
   try { const raw = storage?.getItem(key); return raw ? JSON.parse(raw) : null } catch { return null }
@@ -346,7 +353,10 @@ const transitionStories = computed(() => {
 })
 const transitionRotationLength = computed(() => Math.max(transitionNews.value.length, transitionStories.value.length, 1))
 const activeTransitionNews = computed(() => transitionNews.value.length ? transitionNews.value[transitionSlideIndex.value % transitionNews.value.length] : {
-  key: 'news-empty', title: '暂未筛到相关公开信息', content: 'SearXNG 暂时没有返回经过审核的相关内容，本轮先展示画像小故事。', meta: '等待下一轮检索'
+  key: transitionContent.value.pending ? 'news-pending' : 'news-empty',
+  title: transitionContent.value.pending ? '正在筛选近日公开信息' : '暂未筛到相关公开信息',
+  content: transitionContent.value.pending ? '小知正在检索并核对公开来源，审核完成后会在这里显示。' : '本轮没有筛到足够相关的公开信息，先看看右侧的画像小故事。',
+  meta: transitionContent.value.pending ? '后台审核中' : '公开来源'
 })
 const activeTransitionStory = computed(() => transitionStories.value[transitionSlideIndex.value % transitionStories.value.length])
 const isQuizResource = resource => {
@@ -655,9 +665,38 @@ const loadClassroomLesson = async (forceRegenerate = false) => {
     classroomError.value = error?.response?.data?.detail || error?.message || '课堂内容生成失败'
   } finally { classroomLoading.value = false }
 }
-const loadClassroomTransition = async () => {
+const restoreClassroomLesson = async () => {
+  if (!/^\d+$/.test(pathId.value) || !/^\d+$/.test(nodeId.value)) return false
+  try {
+    const result = await getNodeClassroom(pathId.value, nodeId.value)
+    const data = result?.data?.data || result?.data || result
+    const lesson = data?.lesson || null
+    if (!isLessonReady(lesson)) return false
+    classroomLesson.value = lesson
+    for (const resource of (Array.isArray(data?.resources) ? data.resources : [])) appendGeneratedResource(resource)
+    void loadClassroomQuiz()
+    return true
+  } catch (error) {
+    console.warn('[LearningClassroom] restore saved lesson failed:', error)
+    return false
+  }
+}
+const stopTransitionRefresh = () => {
+  if (transitionRefreshTimer !== null) window.clearTimeout(transitionRefreshTimer)
+  transitionRefreshTimer = null
+}
+const scheduleTransitionRefresh = () => {
+  stopTransitionRefresh()
+  if (!classroomLoading.value || !transitionContent.value.pending) return
+  transitionRefreshTimer = window.setTimeout(() => {
+    void loadClassroomTransition({ silent: true })
+  }, 3500)
+}
+const loadClassroomTransition = async ({ silent = false } = {}) => {
   if (!/^\d+$/.test(pathId.value) || !/^\d+$/.test(nodeId.value)) return
-  transitionLoading.value = true
+  if (transitionRequestInFlight) return
+  transitionRequestInFlight = true
+  if (!silent) transitionLoading.value = true
   try {
     const result = await getClassroomTransition(pathId.value, nodeId.value)
     const data = result?.data?.data || result?.data || result
@@ -665,12 +704,18 @@ const loadClassroomTransition = async () => {
       news: Array.isArray(data?.news) ? data.news.slice(0, 3) : [],
       stories: Array.isArray(data?.stories) ? data.stories.slice(0, 3) : [],
       topic: String(data?.topic || ''),
-      profile_focus: String(data?.profile_focus || '')
+      profile_focus: String(data?.profile_focus || ''),
+      pending: Boolean(data?.pending)
     }
     transitionSlideIndex.value = 0
   } catch {
     // 过渡内容不影响课堂主流程；搜索不可用时显示本地学习方案。
-  } finally { transitionLoading.value = false }
+    transitionContent.value = { ...transitionContent.value, pending: false }
+  } finally {
+    transitionRequestInFlight = false
+    if (!silent) transitionLoading.value = false
+    scheduleTransitionRefresh()
+  }
 }
 const appendGeneratedResource = data => {
   const resource = {
@@ -877,15 +922,19 @@ const startTransitionRotation = () => {
   }, 10000)
 }
 
-onMounted(() => {
+onMounted(async () => {
   document.body.classList.add('classroom-active')
   launchPayload.value = readJson(sessionStorage, CLASSROOM_LAUNCH_KEY) || normalizeNodeFromCache() || normalizeNodeFromRoute()
-  // 课堂请求先发起，等待页的检索随后并行；两者互不等待，课堂结果优先展示。
-  void loadClassroomLesson()
-  void loadClassroomTransition()
+  const restored = await restoreClassroomLesson()
+  classroomRestoring.value = false
+  if (!restored) {
+    // 只有没有完整课堂时才生成并显示预热内容。
+    void loadClassroomLesson()
+    void loadClassroomTransition()
+  }
   queueMicrotask(() => { void generateClassroomResources({ background: true }) })
 })
-onBeforeUnmount(() => { stopTransitionRotation(); clearSegmentNarration(); document.body.classList.remove('classroom-active') })
+onBeforeUnmount(() => { stopTransitionRotation(); stopTransitionRefresh(); clearSegmentNarration(); document.body.classList.remove('classroom-active') })
 watch(activeSegmentIndex, index => { clearSegmentNarration(); const segment = lessonSegments.value[index]; if (segment) { if (segment.id === 'exercise') resetExerciseState(); announceSegmentPrompt(segment) } })
 watch(lessonSegments, segments => { if (activeSegmentIndex.value >= segments.length) activeSegmentIndex.value = Math.max(0, segments.length - 1) })
 watch(classroomLoading, loading => {
@@ -893,6 +942,7 @@ watch(classroomLoading, loading => {
     startTransitionRotation()
   } else {
     stopTransitionRotation()
+    stopTransitionRefresh()
   }
 }, { immediate: true })
 watch([transitionNews, transitionStories], () => { transitionSlideIndex.value = 0; startTransitionRotation() })
@@ -926,7 +976,7 @@ button { font:inherit; }
 @media(max-width:680px){.classroom-page{gap:10px;padding:12px}.classroom-header{flex-wrap:wrap;gap:10px}.back-button span{display:none}.back-button{width:42px;justify-content:center;padding:0}.classroom-heading{flex:1 1 calc(100% - 60px)}.classroom-heading h1{font-size:22px}.generation-status{order:3;width:100%;justify-content:center;margin-left:0}.module-nav{grid-template-columns:repeat(4,minmax(78px,1fr));overflow-x:auto}.module-tab{min-height:48px;padding:7px}.module-tab-copy small{display:none}.module-panel-header{padding:18px 16px 14px}.module-panel-header h2{font-size:26px}.module-content{grid-template-columns:1fr;padding:14px 16px}.speech-block{grid-row:auto;min-height:0}.question-block{grid-column:auto}.module-footer{padding:12px 16px 16px}.secondary-button,.primary-button{flex:1;padding:0 10px;font-size:13px}.resource-items{max-height:none}.resource-item{align-items:flex-start;flex-direction:column}.resource-open-button{align-self:flex-end}.resource-preview-overlay{padding:10px}.resource-preview-panel{height:calc(100vh - 20px);border-radius:12px}.resource-preview-panel header,.resource-preview-panel footer{padding:12px}.resource-preview-panel header h2{max-width:250px;font-size:17px}.resource-preview-body{padding:12px}}
 .lesson-summary{grid-column:1/-1;background:#f2f9ff;border-color:#cfe4f5}.summary-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#6d91b6;font-size:12px;font-weight:800}.summary-heading .content-label{margin:0;color:#3978b4}.lesson-summary>p{margin:0;color:#245385;font-size:14px;line-height:1.7}.lesson-summary ul{display:grid;gap:6px;margin:10px 0 0;padding-left:18px;color:#315e91;font-size:13px;line-height:1.5}
 .exercise-block{grid-column:1/-1;background:#fffaf0;border-color:#f1dfb8}.exercise-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#a76f2b;font-size:12px;font-weight:800}.exercise-heading .content-label{margin:0;color:inherit}.exercise-card{max-width:760px;margin-top:2px}.exercise-stem{max-height:76px;margin:0;overflow:auto;color:#805b2c;font-size:16px;font-weight:800;line-height:1.65;overflow-wrap:anywhere}.exercise-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:142px;margin-top:13px;overflow:auto}.exercise-options button{display:flex;align-items:flex-start;gap:8px;min-width:0;min-height:42px;max-height:64px;padding:9px 10px;border:1px solid #e6c979;border-radius:9px;color:#805b2c;background:#fff;text-align:left;cursor:pointer}.exercise-options button:hover,.exercise-options button.selected{border-color:#b67b2c;color:#fff;background:#b67b2c}.exercise-options strong{flex:0 0 auto}.exercise-options span{min-width:0;overflow:hidden;line-height:1.4;text-overflow:ellipsis}.exercise-text-answer{display:block;width:100%;height:72px;margin-top:13px;padding:9px 10px;border:1px solid #e6c979;border-radius:9px;outline:none;resize:none;color:#805b2c;background:#fff;font:inherit;font-size:13px}.exercise-text-answer:focus{border-color:#b67b2c;box-shadow:0 0 0 3px rgba(182,123,44,.12)}.exercise-result{display:grid;gap:4px;margin-top:10px;padding:8px 10px;border-radius:8px;color:#43835d;background:#edf9f0;font-size:12px;line-height:1.45}.exercise-result.wrong{color:#a7662c;background:#fff1e5}.exercise-result p{margin:0;overflow-wrap:anywhere}.exercise-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:13px}.exercise-check-button,.exercise-open-button{min-height:34px;padding:0 12px;border-radius:8px;font-size:12px;font-weight:900;cursor:pointer}.exercise-check-button{border:1px solid #c9954d;color:#8c5f25;background:#fff}.exercise-open-button{border:0;color:#fff;background:#b67b2c}.exercise-check-button:disabled{cursor:not-allowed;opacity:.5}.exercise-open-button:hover{background:#925e1e}.exercise-state{display:grid;gap:9px;margin-top:5px;color:#a27643;font-size:13px;line-height:1.5}.exercise-state-error button{justify-self:start;min-height:32px;padding:0 11px;border:1px solid #d2a15b;border-radius:8px;color:#8c5f25;background:#fff;font:inherit;font-size:12px;font-weight:800;cursor:pointer}
-.lesson-generation-state{display:grid;place-items:center;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.94);box-shadow:0 12px 28px rgba(38,93,150,.07)}.lesson-generation-state-inner{max-width:420px;padding:32px;text-align:center}.lesson-generation-state-inner strong{color:#174b91;font-size:18px}.lesson-generation-state-inner p{margin:10px 0 0;color:#7698b7;font-size:13px;line-height:1.7;overflow-wrap:anywhere}.classroom-waiting-panel{width:min(780px,calc(100% - 48px));padding:28px}.classroom-waiting-head h2{margin:8px 0 0;color:#174b91;font-size:25px;line-height:1.25}.classroom-waiting-head p{margin:8px 0 0;color:#6e90b1;font-size:14px;line-height:1.65}.waiting-kicker,.waiting-section-heading{display:inline-flex;align-items:center;gap:7px;color:#4b85ba;font-size:13px;font-weight:900}.waiting-progress{display:flex;align-items:center;gap:8px;margin:22px 0 20px}.waiting-progress i{width:8px;height:8px;border-radius:50%;background:#66a3d5;animation:classroom-wait-pulse 1.2s ease-in-out infinite}.waiting-progress i:nth-child(2){animation-delay:.18s}.waiting-progress i:nth-child(3){animation-delay:.36s}.waiting-progress span{height:2px;flex:1;background:#d7e8f6}@keyframes classroom-wait-pulse{50%{transform:scale(1.5);opacity:.35}}.classroom-waiting-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(220px,.65fr);gap:20px}.waiting-section{min-width:0}.waiting-section-heading{margin-bottom:11px}.waiting-news-list{display:grid;gap:9px}.waiting-news-item{display:block;padding:10px 0;border-top:1px solid #e4eff8;color:inherit;text-decoration:none}.waiting-news-item strong{display:block;overflow:hidden;color:#22558f;font-size:14px;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}.waiting-news-item p{display:-webkit-box;margin:4px 0;overflow:hidden;color:#6d8dab;font-size:12px;line-height:1.5;-webkit-box-orient:vertical;-webkit-line-clamp:2}.waiting-news-item small{display:inline-flex;align-items:center;gap:4px;color:#6090bb;font-size:11px}.waiting-news-item:hover strong{color:#1d6fd0}.waiting-tip-section{padding-left:20px;border-left:1px solid #dcebf7}.waiting-tip-section p,.waiting-empty{margin:0;color:#426e9a;font-size:13px;line-height:1.7}.waiting-tip-topic{display:inline-block;max-width:100%;margin-top:14px;overflow:hidden;color:#5e90bb;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.waiting-skeletons{display:grid;gap:12px}.waiting-skeletons i{display:block;height:38px;border-radius:6px;background:#edf5fb;animation:classroom-skeleton 1.2s ease-in-out infinite}.waiting-skeletons i:nth-child(2){width:84%;animation-delay:.16s}.waiting-skeletons i:nth-child(3){width:68%;animation-delay:.32s}@keyframes classroom-skeleton{50%{opacity:.45}}
+.lesson-generation-state{display:grid;place-items:center;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.94);box-shadow:0 12px 28px rgba(38,93,150,.07)}.lesson-generation-state-inner{max-width:420px;padding:32px;text-align:center}.lesson-generation-state-inner strong{color:#174b91;font-size:18px}.lesson-generation-state-inner p{margin:10px 0 0;color:#7698b7;font-size:13px;line-height:1.7;overflow-wrap:anywhere}.classroom-restore-state{display:grid;justify-items:center;gap:10px;color:#5790c7}.classroom-waiting-panel{width:min(780px,calc(100% - 48px));padding:28px}.classroom-waiting-head h2{margin:8px 0 0;color:#174b91;font-size:25px;line-height:1.25}.classroom-waiting-head p{margin:8px 0 0;color:#6e90b1;font-size:14px;line-height:1.65}.waiting-kicker,.waiting-section-heading{display:inline-flex;align-items:center;gap:7px;color:#4b85ba;font-size:13px;font-weight:900}.waiting-progress{display:flex;align-items:center;gap:8px;margin:22px 0 20px}.waiting-progress i{width:8px;height:8px;border-radius:50%;background:#66a3d5;animation:classroom-wait-pulse 1.2s ease-in-out infinite}.waiting-progress i:nth-child(2){animation-delay:.18s}.waiting-progress i:nth-child(3){animation-delay:.36s}.waiting-progress span{height:2px;flex:1;background:#d7e8f6}@keyframes classroom-wait-pulse{50%{transform:scale(1.5);opacity:.35}}.classroom-waiting-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(220px,.65fr);gap:20px}.waiting-section{min-width:0}.waiting-section-heading{margin-bottom:11px}.waiting-news-list{display:grid;gap:9px}.waiting-news-item{display:block;padding:10px 0;border-top:1px solid #e4eff8;color:inherit;text-decoration:none}.waiting-news-item strong{display:block;overflow:hidden;color:#22558f;font-size:14px;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}.waiting-news-item p{display:-webkit-box;margin:4px 0;overflow:hidden;color:#6d8dab;font-size:12px;line-height:1.5;-webkit-box-orient:vertical;-webkit-line-clamp:2}.waiting-news-item small{display:inline-flex;align-items:center;gap:4px;color:#6090bb;font-size:11px}.waiting-news-item:hover strong{color:#1d6fd0}.waiting-tip-section{padding-left:20px;border-left:1px solid #dcebf7}.waiting-tip-section p,.waiting-empty{margin:0;color:#426e9a;font-size:13px;line-height:1.7}.waiting-tip-topic{display:inline-block;max-width:100%;margin-top:14px;overflow:hidden;color:#5e90bb;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.waiting-skeletons{display:grid;gap:12px}.waiting-skeletons i{display:block;height:38px;border-radius:6px;background:#edf5fb;animation:classroom-skeleton 1.2s ease-in-out infinite}.waiting-skeletons i:nth-child(2){width:84%;animation-delay:.16s}.waiting-skeletons i:nth-child(3){width:68%;animation-delay:.32s}@keyframes classroom-skeleton{50%{opacity:.45}}
 .classroom-waiting-panel{width:min(760px,calc(100% - 48px));padding:28px}.waiting-progress{gap:7px}.waiting-progress i{width:7px;height:7px;flex:0 0 auto;background:#c8def1;animation:none}.waiting-progress i.active{background:#3f85c8;transform:scale(1.22)}.waiting-slide{min-height:178px;padding:22px 24px;border:1px solid #dcebf7;border-radius:12px;background:#f8fcff}.waiting-slide h3{margin:8px 0 0;color:#1d508c;font-size:21px;line-height:1.35}.waiting-slide p{max-width:620px;margin:12px 0 0;color:#426e9a;font-size:15px;line-height:1.78;overflow-wrap:anywhere}.waiting-source-link{display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:18px;overflow:hidden;color:#276cad;font-size:13px;font-weight:800;text-decoration:none;text-overflow:ellipsis;white-space:nowrap}.waiting-source-link:hover{text-decoration:underline}.waiting-slide-meta{display:inline-block;max-width:100%;margin-top:18px;overflow:hidden;color:#6c95bb;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.waiting-rotation-status{display:flex;justify-content:space-between;gap:12px;margin-top:12px;color:#7d9fbd;font-size:12px}.waiting-slide-enter-active,.waiting-slide-leave-active{transition:opacity .28s ease,transform .28s ease}.waiting-slide-enter-from,.waiting-slide-leave-to{opacity:0;transform:translateY(7px)}
 .waiting-dual-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.waiting-column{min-width:0}.waiting-column .waiting-section-heading{margin-bottom:10px}.waiting-column--news .waiting-slide{background:#f6fbff}.waiting-column--story .waiting-slide{background:#fffaf0;border-color:#f1dfb8}.waiting-column--story .waiting-slide h3{color:#8c6028}.waiting-column--story .waiting-slide p{color:#805b2c}.waiting-column--story .waiting-section-heading{color:#ae742d}
 .retry-generation-button{margin-top:18px;min-height:38px;padding:0 18px;border:0;border-radius:9px;background:#1f5da8;color:#fff;font:inherit;font-weight:700;cursor:pointer}.retry-generation-button:disabled{cursor:wait;opacity:.6}

@@ -641,6 +641,45 @@ def _is_lesson_ready(lesson: Any) -> bool:
     return True
 
 
+async def get_saved_classroom_lesson(path_id: int, node_id: int, user_id: int) -> dict[str, Any] | None:
+    """Read a complete saved classroom without rebuilding generation context or calling an LLM."""
+    started_at = time.perf_counter()
+    record = await ClassroomLesson.filter(
+        user_id=user_id,
+        path_id=path_id,
+        node_id=node_id,
+        status="ready",
+    ).first()
+    if not record or not isinstance(record.lesson_json, dict) or not _is_lesson_ready(record.lesson_json):
+        logger.info(
+            "[ClassroomService] 已保存课堂未命中 path=%s node=%s user=%s elapsed=%.2fs",
+            path_id,
+            node_id,
+            user_id,
+            time.perf_counter() - started_at,
+        )
+        return None
+
+    resources = record.resources_json if isinstance(record.resources_json, list) else []
+    logger.info(
+        "[ClassroomService] 已保存课堂命中 path=%s node=%s user=%s lesson=%s elapsed=%.2fs",
+        path_id,
+        node_id,
+        user_id,
+        record.id,
+        time.perf_counter() - started_at,
+    )
+    return {
+        "path_id": path_id,
+        "node_id": node_id,
+        "lesson": record.lesson_json,
+        "resources": resources,
+        "classroom_id": record.id,
+        "generated_at": record.updated_at.isoformat() if record.updated_at else None,
+        "cached": True,
+    }
+
+
 async def _build_portrait_context(user_id: int) -> str:
     user = await User.filter(id=user_id).first()
     parts = []

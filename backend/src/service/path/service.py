@@ -22,7 +22,7 @@ from backend.src.models.usermodel import User
 from backend.src.utils.database import init_db
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.service.portrait.service import format_portrait, PortraitRadarService, build_learning_guidance
-from backend.src.service.exam.service import ExamService, _normalize_db_answer, _parse_multi_ans
+from backend.src.service.exam.service import ExamService, _answer_matches, _display_answer
 from backend.src.service.resource.service import ResourceService
 from backend.src.service.resource.metadata import format_mindmap_content
 from backend.src.utils.knowledge_base import search as kb_search
@@ -35,6 +35,7 @@ from backend.src.service.path.helpers import (
     unlock_next_node,
     update_portrait_from_mastery,
     update_progress_resource_ids,
+    reconcile_completed_prerequisites,
 )
 from backend.src.service.path.generation_locks import get_node_generation_lock
 
@@ -44,6 +45,36 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_quiz_submission(answers: dict | None) -> dict[int, str]:
+    """将前端交卷快照规范为 question_id -> answer；缺席题由调用方按未答处理。"""
+    normalized: dict[int, str] = {}
+    for raw_question_id, raw_answer in (answers or {}).items():
+        try:
+            question_id = int(raw_question_id)
+        except (TypeError, ValueError):
+            continue
+
+        if isinstance(raw_answer, (list, tuple, set)):
+            answer = ",".join(str(item).strip().upper() for item in raw_answer if str(item).strip())
+        else:
+            answer = str(raw_answer or "").strip().upper()
+        if answer:
+            normalized[question_id] = answer
+    return normalized
+
+
+def _grade_objective_answer(question: ExamQuestion | None, user_answer: str) -> tuple[str, bool]:
+    """只以数据库题目为准判分，返回标准答案与对错。"""
+    if not question or not user_answer:
+        return "", False
+
+    correct_answer = _display_answer(question.question_type, question.answer)
+    if not correct_answer:
+        return "", False
+
+    return correct_answer, _answer_matches(question.question_type, question.answer, user_answer)
 
 
 def _compute_node_count(subject: str, picture) -> int:
@@ -706,6 +737,8 @@ class PathService:
         if not records:
             return {"path_id": path_id, "status": "not_enrolled"}
 
+        records = await reconcile_completed_prerequisites(records)
+
         total = len(records)
         completed = sum(1 for r in records if r.node_status == "completed")
         in_progress = sum(1 for r in records if r.node_status == "in_progress")
@@ -977,7 +1010,13 @@ class PathService:
             }
 
     @staticmethod
-    async def generate_node_quiz(path_id: int, node_id: int, user_id: int, pre_generate: bool = False) -> dict:
+    async def generate_node_quiz(
+        path_id: int,
+        node_id: int,
+        user_id: int,
+        pre_generate: bool = False,
+        force_regenerate: bool = False,
+    ) -> dict:
         """为节点获取测验题目 — 已有则复用，没有则生成
 
         Args:
@@ -998,8 +1037,9 @@ class PathService:
 
             quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
 
-            # 已有预生成的 session → 直接复用
-            if progress.quiz_session_id:
+            # 已有预生成的 session → 直接复用；手动重新生成必须创建新会话，
+            # 不能继续把旧题库/旧答案位置返回给前端。
+            if progress.quiz_session_id and not force_regenerate:
                 existing = await ExamService.get_session(progress.quiz_session_id, user_id)
                 if existing and existing.get("total_questions", 0) > 0:
                     # 查该 session 的 difficulty（从第一题推测）
@@ -1013,7 +1053,15 @@ class PathService:
                         "difficulty": first_record.question.difficulty if first_record and first_record.question else "medium",
                     }
 
-            # 没有则生成
+            if force_regenerate:
+                logger.info(
+                    "强制重新生成节点测验 path_id=%s node_id=%s old_session_id=%s",
+                    path_id,
+                    node_id,
+                    progress.quiz_session_id,
+                )
+
+            # 没有可复用会话，或用户明确要求重新生成。
             count = quiz_config.get("count", 10)
 
             if not pre_generate:
@@ -1159,12 +1207,53 @@ class PathService:
                     yield event
 
     @staticmethod
-    async def submit_node_quiz(path_id: int, node_id: int, user_id: int, session_id: str, answers: dict[str, str] | None = None, correct_answers: dict[str, str] | None = None) -> dict:
-        """提交节点测验结果 → 评分 → 门禁 → 解锁下一节点 → 更新画像
+    async def _load_quiz_session_records(session_id: str, user_id: int, node_id: int) -> list[ExamRecord]:
+        """读取一次节点测验的唯一题目集合，不允许跨会话回退查旧记录。"""
+        raw_records = await (
+            ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id)
+            .order_by("id")
+            .prefetch_related("question")
+            .all()
+        )
+        latest_by_question = {record.question_id: record for record in raw_records}
+        records = list(latest_by_question.values())
+        if not records:
+            raise ServiceError("该测验会话没有题目记录")
+        return records
 
-        answers: 可选，{question_id_str: user_answer}。传入则直接判分并写入 ExamRecord，
-        绕过逐题 submitExamAnswer 调用不可靠的问题。
-        """
+    @staticmethod
+    async def _apply_quiz_submission(records: list[ExamRecord], answers: dict | None) -> None:
+        """用本次交卷快照覆盖全部记录。未提交的题必须是空答案和 0 分。"""
+        submitted = _normalize_quiz_submission(answers)
+        record_ids = {record.question_id for record in records}
+        unknown_ids = set(submitted) - record_ids
+        if unknown_ids:
+            logger.warning("节点测验快照包含不属于会话的题目 question_ids=%s", sorted(unknown_ids))
+
+        for record in records:
+            user_answer = submitted.get(record.question_id, "")
+            correct_answer, is_correct = _grade_objective_answer(record.question, user_answer)
+            record.user_answer = user_answer
+            record.is_correct = is_correct
+            record.score = 1.0 if is_correct else 0.0
+            await record.save(update_fields=["user_answer", "is_correct", "score"])
+            logger.info(
+                "节点测验判分 question_id=%s answer=%r correct_answer=%r is_correct=%s",
+                record.question_id,
+                user_answer,
+                correct_answer,
+                is_correct,
+            )
+
+    @staticmethod
+    async def submit_node_quiz(
+        path_id: int,
+        node_id: int,
+        user_id: int,
+        session_id: str,
+        answers: dict | None = None,
+    ) -> dict:
+        """提交节点测验：快照判题、更新进度、返回统一成绩。"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
         if not node:
             raise ValueError("节点不存在")
@@ -1173,127 +1262,32 @@ class PathService:
         if not progress:
             raise ValueError("未加入该路径")
 
-        # 如果传入了 answers，直接在此判分写入
-        direct_results = []  # 内存判分结果，兜底用
-        if answers:
-            logger.info("submit_node_quiz 收到 %d 个答案，直接判分 node_id=%s session_id=%r", len(answers), node_id, session_id)
-            # 加载该 session 下已有的占位记录
-            existing_records = await ExamRecord.filter(
-                session_id=session_id, user_id=user_id
-            ).prefetch_related("question").all()
-            if not existing_records:
-                existing_records = await ExamRecord.filter(
-                    session_id=session_id, user_id=user_id, node_id=node_id
-                ).prefetch_related("question").all()
+        if not session_id or progress.quiz_session_id != session_id:
+            raise ValueError("测验会话与当前节点不匹配，请重新进入本节点测验")
 
-            record_by_qid = {}
-            for r in existing_records:
-                record_by_qid[r.question_id] = r
+        records = await PathService._load_quiz_session_records(session_id, user_id, node_id)
+        await PathService._apply_quiz_submission(records, answers)
 
-            for question_id_str, user_answer in answers.items():
-                try:
-                    qid = int(question_id_str)
-                except (ValueError, TypeError):
-                    continue
-                if not user_answer:
-                    continue
-
-                question = None
-                existing = record_by_qid.get(qid)
-                if existing and existing.question:
-                    question = existing.question
-                if not question:
-                    question = await ExamQuestion.filter(id=qid).first()
-
-                correct_answer = ""
-                qt = ""
-                if question:
-                    correct_answer = _normalize_db_answer(question.answer)
-                    qt = (question.question_type or "").lower()
-                elif correct_answers:
-                    # 兜底：题目不在 DB，用前端传来的正确答案直接比对
-                    correct_answer = _normalize_db_answer(correct_answers.get(question_id_str, ""))
-                if not correct_answer:
-                    continue
-
-                if qt == "multi_choice":
-                    try:
-                        user_set = _parse_multi_ans(user_answer)
-                        correct_set = _parse_multi_ans(correct_answer)
-                        is_correct = (user_set == correct_set)
-                    except Exception:
-                        is_correct = user_answer.strip().upper() == correct_answer
-                else:
-                    is_correct = user_answer.strip().upper() == correct_answer
-
-                score = 1.0 if is_correct else 0.0
-
-                logger.info("submit_node_quiz 判分 qid=%s type=%s correct_answer=%r user_answer=%r is_correct=%s",
-                            qid, qt, correct_answer, user_answer, is_correct)
-
-                # 记录内存判分结果（兜底用）
-                direct_results.append({
-                    "question_id": qid,
-                    "is_correct": is_correct,
-                    "correct_answer": correct_answer,
-                    "user_answer": user_answer,
-                    "score": score,
-                })
-
-                if existing:
-                    existing.user_answer = user_answer
-                    existing.is_correct = is_correct
-                    existing.score = score
-                    await existing.save()
-                else:
-                    await ExamRecord.create(
-                        question=question,
-                        user_id=user_id,
-                        user_answer=user_answer,
-                        is_correct=is_correct,
-                        score=score,
-                        session_id=session_id,
-                        node_id=node_id,
-                    )
-
-        # 从 session 汇总成绩
-        records = await ExamRecord.filter(session_id=session_id, user_id=user_id).order_by("id").prefetch_related("question").all()
-        if not records:
-            records = await ExamRecord.filter(session_id=session_id, user_id=user_id, node_id=node_id).order_by("id").prefetch_related("question").all()
-        logger.info("submit_node_quiz node_id=%s user_id=%s session_id=%r found %d records", node_id, user_id, session_id, len(records))
-        latest_by_question = {}
-        for r in records:
-            latest_by_question[r.question_id] = r
-        records = list(latest_by_question.values())
-        judged = [r for r in records if r.is_correct is not None]
-        if not judged:
-            # 兜底：如果传了 answers，直接用内存判分结果，不依赖 DB 记录
-            if answers and direct_results:
-                correct = sum(1 for r in direct_results if r["is_correct"])
-                score = round(correct / len(direct_results) * 100, 1) if direct_results else 0.0
-                judged_questions = direct_results
-            else:
-                raise ServiceError("该会话无已判分的答题记录")
-        else:
-            correct = sum(1 for r in judged if r.is_correct)
-            score = round(correct / len(judged) * 100, 1) if judged else 0.0
-            judged_questions = [
-                {
-                    "question_id": r.question_id,
-                    "is_correct": r.is_correct,
-                    "correct_answer": _normalize_db_answer(r.question.answer) if r.question else "",
-                    "user_answer": r.user_answer,
-                    "score": float(r.score or 0),
-                }
-                for r in judged
-            ]
+        correct = sum(1 for record in records if record.is_correct)
+        score = round(correct / len(records) * 100, 1)
+        judged_questions = [
+            {
+                "question_id": record.question_id,
+                "is_correct": bool(record.is_correct),
+                "correct_answer": _display_answer(record.question.question_type, record.question.answer) if record.question else "",
+                "user_answer": record.user_answer,
+                "score": float(record.score or 0),
+            }
+            for record in records
+        ]
         quiz_config = json.loads(node.quiz_config) if node.quiz_config else {"count": 5, "threshold": 0.7}
         threshold = quiz_config.get("threshold", 0.7)
         passed = score >= threshold * 100
 
-        progress.quiz_passed = passed
+        was_completed = progress.node_status == "completed" or bool(progress.quiz_passed)
 
         if passed:
+            progress.quiz_passed = True
             progress.node_status = "completed"
             progress.completed_at = datetime.now()
             await progress.save()
@@ -1308,9 +1302,16 @@ class PathService:
                 PathService.generate_node_classroom,
             )
         else:
-            progress.node_status = "in_progress"
-            await progress.save()
-            await check_and_create_quiz_failed(user_id, node.topic, path_id, node_id)
+            if was_completed:
+                # 复习旧节点只记录本次作答，不能把已经解锁的路径门禁拉回去。
+                progress.quiz_passed = True
+                await progress.save(update_fields=["quiz_passed"])
+                logger.info("已完成节点复习未通过，不回退进度 path=%s node=%s user=%s", path_id, node_id, user_id)
+            else:
+                progress.quiz_passed = False
+                progress.node_status = "in_progress"
+                await progress.save()
+                await check_and_create_quiz_failed(user_id, node.topic, path_id, node_id)
 
         # 更新画像 traits
         await update_portrait_from_mastery(user_id)
@@ -1322,7 +1323,7 @@ class PathService:
 
         return {
             "node_id": node_id,
-            "total_questions": len(judged_questions),
+            "total_questions": len(records),
             "correct_count": correct,
             "score": score,
             "threshold": threshold,
@@ -1577,6 +1578,7 @@ class PathService:
         progresses = await UserPathProgress.filter(user_id=user_id, path_id=path_id)\
             .prefetch_related("node").all()
         progresses.sort(key=lambda p: p.node.order_index if p.node else 0)
+        progresses = await reconcile_completed_prerequisites(progresses)
 
         # 批量收集所有资源 ID → 一次查询
         all_resource_ids = []
@@ -1704,11 +1706,10 @@ class PathService:
         }
 
     @staticmethod
-    async def complete_node(node_id: int, user_id: int, session_id: str, answers: dict[str, str] | None = None, correct_answers: dict[str, str] | None = None) -> dict:
+    async def complete_node(node_id: int, user_id: int, session_id: str, answers: dict | None = None) -> dict:
         """完成节点（提交测验）→ 返回更新后节点 + 新解锁节点
 
-        answers: 前端传来的所有答案 {question_id_str: user_answer}，直接判分
-        correct_answers: 前端传来的正确答案 {question_id_str: correct_answer}，DB 找不到题目时的兜底
+        answers: 前端传来的本次完整答案快照 {question_id_str: user_answer}。
         """
         node = await PathNode.filter(id=node_id).first()
         if not node:
@@ -1722,9 +1723,15 @@ class PathService:
         path_id = progress.path_id
 
         # 复用原有测验提交逻辑（传入 answers 直接判分）
-        quiz_result = await PathService.submit_node_quiz(path_id, node_id, user_id, session_id, answers=answers, correct_answers=correct_answers)
-        if "error" in quiz_result:
-            raise ValueError(quiz_result["error"])
+        current_quiz_result = await PathService.submit_node_quiz(
+            path_id,
+            node_id,
+            user_id,
+            session_id,
+            answers=answers,
+        )
+        if "error" in current_quiz_result:
+            raise ValueError(current_quiz_result["error"])
 
         # 当前节点更新后状态
         updated_progress = await UserPathProgress.filter(user_id=user_id, node_id=node_id)\
@@ -1733,8 +1740,8 @@ class PathService:
             "id": node_id,
             "title": node.topic,
             "status": updated_progress.node_status if updated_progress else "locked",
-            "quiz_passed": quiz_result.get("passed", False),
-            "score": quiz_result.get("score", 0),
+            "quiz_passed": current_quiz_result.get("passed", False),
+            "score": current_quiz_result.get("score", 0),
         }
 
         # 新解锁的节点
@@ -1749,8 +1756,8 @@ class PathService:
                 quiz_session_id = None
                 if next_node.quiz_config:
                     try:
-                        quiz_result = await PathService.generate_node_quiz(path_id, next_node.id, user_id)
-                        quiz_session_id = quiz_result.get("session_id")
+                        next_quiz_result = await PathService.generate_node_quiz(path_id, next_node.id, user_id)
+                        quiz_session_id = next_quiz_result.get("session_id")
                     except Exception:
                         logger.exception("下一节点测验预生成失败 path_id=%s node_id=%s", path_id, next_node.id)
                 knowledge_tags = json.loads(next_node.knowledge_tags) if next_node.knowledge_tags else []
@@ -1768,8 +1775,9 @@ class PathService:
         return {
             "node": updated_node,
             "new_nodes": new_nodes,
-            "passed": quiz_result.get("passed", False),
-            "score": quiz_result.get("score", 0),
+            "passed": current_quiz_result.get("passed", False),
+            "score": current_quiz_result.get("score", 0),
+            "quiz_result": current_quiz_result,
         }
 
 

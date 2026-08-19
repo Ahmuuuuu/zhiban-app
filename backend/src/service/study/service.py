@@ -10,6 +10,7 @@ from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
 from backend.src.service.portrait.service import build_learning_guidance, PortraitRadarService
 from backend.src.service.notification.service import check_and_create_weekly_report
+from backend.src.service.path.helpers import reconcile_completed_prerequisites
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,7 @@ class StudyService:
                 progress_by_path.get(p.id, []),
                 key=lambda r: node_order.get(r.node_id, 10**9),
             )
+            progress_records = await reconcile_completed_prerequisites(progress_records, node_order)
             total_nodes = len(nodes)
             completed_nodes = sum(1 for r in progress_records if r.node_status == "completed")
             current = None
@@ -328,6 +330,7 @@ class StudyService:
             node_order = {n.id: n.order_index for n in nodes}
             node_map = {n.id: n for n in nodes}
             progress_records = sorted(progress_records, key=lambda r: node_order.get(r.node_id, 10**9))
+            progress_records = await reconcile_completed_prerequisites(progress_records, node_order)
             total_nodes = len(nodes)
             completed_nodes = sum(1 for r in progress_records if r.node_status == "completed")
             in_progress = sum(1 for r in progress_records if r.node_status == "in_progress")

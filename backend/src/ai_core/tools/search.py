@@ -207,8 +207,8 @@ async def _search_searxng_collect(query: str, max_results: int = 12) -> tuple[li
 async def search_recent_web_brief(query: str, max_results: int = 3) -> list[dict[str, str]]:
     """快速获取近期公开资讯，供非阻塞的课堂等待页使用。
 
-    只进行一次本地 SearXNG 请求，并使用独立短超时，避免等待页的资讯查询
-    挤占课堂生成或被多个搜索引擎的重试链路拖慢。
+    复用聊天搜索的查询变体和多引擎兜底；调用方在后台执行，因此优先保证
+    召回率，不把单个引擎或一次请求的失败直接当成没有资讯。
     """
     cleaned_query = _clean_query(query)
     if not cleaned_query:
@@ -218,27 +218,7 @@ async def search_recent_web_brief(query: str, max_results: int = 3) -> list[dict
     except (TypeError, ValueError):
         limit = 3
     try:
-        timeout_seconds = max(1.0, min(float(os.getenv("CLASSROOM_BRIEF_SEARCH_TIMEOUT", "4")), 8.0))
-    except (TypeError, ValueError):
-        timeout_seconds = 4.0
-
-    timeout = httpx.Timeout(timeout_seconds, connect=min(2.0, timeout_seconds))
-    headers = {
-        "User-Agent": "ZhibanClassroom/1.0",
-        "Accept": "application/json",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
-    }
-    searxng_url = _normalize_searxng_url(os.getenv("SEARXNG_URL", "http://127.0.0.1:8888"))
-    engines = os.getenv("SEARXNG_ENGINES", "").strip() or None
-    try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
-            results, _ = await _search_once(
-                client,
-                searxng_url,
-                cleaned_query,
-                engines,
-                extra_params={"time_range": "month"},
-            )
+        results, _ = await _search_searxng_collect(cleaned_query, max_results=max(limit * 2, 8))
     except (httpx.RequestError, RuntimeError, ValueError):
         return []
 
