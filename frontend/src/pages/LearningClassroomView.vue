@@ -123,24 +123,34 @@
             <h2>正在生成课堂内容</h2>
             <p>这组内容会每 10 秒切换一次，课堂完成后自动收起。</p>
           </header>
-          <div class="waiting-progress" aria-hidden="true"><i v-for="(_, index) in transitionSlides" :key="index" :class="{ active: index === transitionSlideIndex }"></i><span></span></div>
+          <div class="waiting-progress" aria-hidden="true"><i v-for="(_, index) in transitionRotationLength" :key="index" :class="{ active: index === transitionSlideIndex }"></i><span></span></div>
           <div v-if="transitionLoading" class="waiting-skeletons"><i></i><i></i><i></i></div>
-          <Transition v-else name="waiting-slide" mode="out-in">
-            <article :key="activeTransitionSlide.key" class="waiting-slide">
-              <div class="waiting-section-heading">
-                <Newspaper v-if="activeTransitionSlide.kind === 'news'" :size="18" />
-                <Lightbulb v-else :size="18" />
-                <span>{{ activeTransitionSlide.eyebrow }}</span>
-              </div>
-              <h3>{{ activeTransitionSlide.title }}</h3>
-              <p>{{ activeTransitionSlide.content }}</p>
-              <a v-if="activeTransitionSlide.url" :href="activeTransitionSlide.url" target="_blank" rel="noopener noreferrer" class="waiting-source-link">
-                {{ activeTransitionSlide.meta || '打开公开来源' }} <ExternalLink :size="14" />
-              </a>
-              <span v-else class="waiting-slide-meta">{{ activeTransitionSlide.meta }}</span>
-            </article>
-          </Transition>
-          <footer class="waiting-rotation-status"><span>{{ transitionSlideIndex + 1 }} / {{ transitionSlides.length }}</span><span>10 秒后切换</span></footer>
+          <div v-else class="waiting-dual-grid">
+            <section class="waiting-column waiting-column--news">
+              <div class="waiting-section-heading"><Newspaper :size="18" /><span>近日大事</span></div>
+              <Transition name="waiting-slide" mode="out-in">
+                <article :key="activeTransitionNews.key" class="waiting-slide">
+                  <h3>{{ activeTransitionNews.title }}</h3>
+                  <p>{{ activeTransitionNews.content }}</p>
+                  <a v-if="activeTransitionNews.url" :href="activeTransitionNews.url" target="_blank" rel="noopener noreferrer" class="waiting-source-link">
+                    {{ activeTransitionNews.meta || '打开公开来源' }} <ExternalLink :size="14" />
+                  </a>
+                  <span v-else class="waiting-slide-meta">{{ activeTransitionNews.meta }}</span>
+                </article>
+              </Transition>
+            </section>
+            <section class="waiting-column waiting-column--story">
+              <div class="waiting-section-heading"><Lightbulb :size="18" /><span>画像小故事</span></div>
+              <Transition name="waiting-slide" mode="out-in">
+                <article :key="activeTransitionStory.key" class="waiting-slide">
+                  <h3>{{ activeTransitionStory.title }}</h3>
+                  <p>{{ activeTransitionStory.content }}</p>
+                  <span class="waiting-slide-meta">{{ activeTransitionStory.meta }}</span>
+                </article>
+              </Transition>
+            </section>
+          </div>
+          <footer class="waiting-rotation-status"><span>第 {{ transitionSlideIndex + 1 }} / {{ transitionRotationLength }} 组</span><span>10 秒后同步切换</span></footer>
         </div>
         <div v-else class="lesson-generation-state-inner">
           <strong>{{ classroomError ? '课堂内容未生成完成' : '等待课堂内容' }}</strong>
@@ -265,7 +275,7 @@ const generatedQuiz = ref(null)
 const classroomLoading = ref(false)
 const classroomError = ref('')
 const transitionLoading = ref(false)
-const transitionContent = ref({ news: [], activities: [], topic: '', profile_focus: '' })
+const transitionContent = ref({ news: [], stories: [], topic: '', profile_focus: '' })
 const transitionSlideIndex = ref(0)
 const resourceGenerationLoading = ref(false)
 const resourceGenerationStatus = ref('')
@@ -310,35 +320,35 @@ const resourceType = resource => [
   resource?.title
 ].filter(Boolean).join(' ').toLowerCase()
 const quiz = computed(() => generatedQuiz.value || launchPayload.value?.quiz || null)
-const transitionSlides = computed(() => {
-  const activities = Array.isArray(transitionContent.value.activities) ? transitionContent.value.activities : []
+const transitionNews = computed(() => {
   const news = Array.isArray(transitionContent.value.news) ? transitionContent.value.news : []
-  const activitySlides = activities.map((item, index) => ({
-    key: `activity-${index}`,
-    kind: 'activity',
-    eyebrow: '本节预想',
-    title: String(item?.title || '整理一个问题'),
-    content: String(item?.content || ''),
-    meta: transitionContent.value.topic || node.value.title || '当前知识点'
-  })).filter(item => item.content)
-  const newsSlides = news.map((item, index) => ({
+  return news.map((item, index) => ({
     key: `news-${item?.url || index}`,
-    kind: 'news',
-    eyebrow: '近日关注',
     title: String(item?.title || '近期公开资讯'),
     content: String(item?.summary || '打开来源查看详情。'),
     url: String(item?.url || ''),
     meta: String(item?.published_at || item?.source || '公开来源')
   })).filter(item => item.url)
-  const slides = [...activitySlides, ...newsSlides]
-  return slides.length ? slides : [{
-    key: 'fallback', kind: 'activity', eyebrow: '本节预想',
-    title: `先找出“${node.value.title || '当前知识点'}”的核心问题`,
-    content: '先写下你最不确定的一个术语或步骤。课堂生成后，优先用核心概念和随堂练习核对它。',
-    meta: '当前节点'
+})
+const transitionStories = computed(() => {
+  const stories = Array.isArray(transitionContent.value.stories) ? transitionContent.value.stories : []
+  return stories.length ? stories.map((item, index) => ({
+    key: `story-${index}`,
+    title: String(item?.title || '一个小问题的转弯'),
+    content: String(item?.content || ''),
+    meta: String(transitionContent.value.profile_focus || transitionContent.value.topic || '根据当前画像生成')
+  })).filter(item => item.content) : [{
+    key: 'story-fallback',
+    title: '先从一个小问题开始',
+    content: `你正在学习“${node.value.title || '当前知识点'}”，先想想它会在哪个真实任务里帮你少走一步。`,
+    meta: '根据当前节点生成'
   }]
 })
-const activeTransitionSlide = computed(() => transitionSlides.value[transitionSlideIndex.value % transitionSlides.value.length])
+const transitionRotationLength = computed(() => Math.max(transitionNews.value.length, transitionStories.value.length, 1))
+const activeTransitionNews = computed(() => transitionNews.value.length ? transitionNews.value[transitionSlideIndex.value % transitionNews.value.length] : {
+  key: 'news-empty', title: '暂未筛到相关公开信息', content: 'SearXNG 暂时没有返回经过审核的相关内容，本轮先展示画像小故事。', meta: '等待下一轮检索'
+})
+const activeTransitionStory = computed(() => transitionStories.value[transitionSlideIndex.value % transitionStories.value.length])
 const isQuizResource = resource => {
   if (!resource || typeof resource !== 'object') return false
   if (Array.isArray(resource.questions) || Array.isArray(resource.question_list) || Array.isArray(resource.questionList)) return true
@@ -653,7 +663,7 @@ const loadClassroomTransition = async () => {
     const data = result?.data?.data || result?.data || result
     transitionContent.value = {
       news: Array.isArray(data?.news) ? data.news.slice(0, 3) : [],
-      activities: Array.isArray(data?.activities) ? data.activities.slice(0, 3) : [],
+      stories: Array.isArray(data?.stories) ? data.stories.slice(0, 3) : [],
       topic: String(data?.topic || ''),
       profile_focus: String(data?.profile_focus || '')
     }
@@ -861,9 +871,9 @@ const stopTransitionRotation = () => {
 }
 const startTransitionRotation = () => {
   stopTransitionRotation()
-  if (!classroomLoading.value || transitionSlides.value.length < 2) return
+  if (!classroomLoading.value || transitionRotationLength.value < 2) return
   transitionRotationTimer = window.setInterval(() => {
-    transitionSlideIndex.value = (transitionSlideIndex.value + 1) % transitionSlides.value.length
+    transitionSlideIndex.value = (transitionSlideIndex.value + 1) % transitionRotationLength.value
   }, 10000)
 }
 
@@ -885,7 +895,7 @@ watch(classroomLoading, loading => {
     stopTransitionRotation()
   }
 }, { immediate: true })
-watch(transitionSlides, () => { transitionSlideIndex.value = 0; startTransitionRotation() })
+watch([transitionNews, transitionStories], () => { transitionSlideIndex.value = 0; startTransitionRotation() })
 watch(messages, () => nextTick(() => { if (dialogMessagesEl.value) dialogMessagesEl.value.scrollTop = dialogMessagesEl.value.scrollHeight }), { deep: true })
 </script>
 
@@ -918,7 +928,8 @@ button { font:inherit; }
 .exercise-block{grid-column:1/-1;background:#fffaf0;border-color:#f1dfb8}.exercise-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#a76f2b;font-size:12px;font-weight:800}.exercise-heading .content-label{margin:0;color:inherit}.exercise-card{max-width:760px;margin-top:2px}.exercise-stem{max-height:76px;margin:0;overflow:auto;color:#805b2c;font-size:16px;font-weight:800;line-height:1.65;overflow-wrap:anywhere}.exercise-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:142px;margin-top:13px;overflow:auto}.exercise-options button{display:flex;align-items:flex-start;gap:8px;min-width:0;min-height:42px;max-height:64px;padding:9px 10px;border:1px solid #e6c979;border-radius:9px;color:#805b2c;background:#fff;text-align:left;cursor:pointer}.exercise-options button:hover,.exercise-options button.selected{border-color:#b67b2c;color:#fff;background:#b67b2c}.exercise-options strong{flex:0 0 auto}.exercise-options span{min-width:0;overflow:hidden;line-height:1.4;text-overflow:ellipsis}.exercise-text-answer{display:block;width:100%;height:72px;margin-top:13px;padding:9px 10px;border:1px solid #e6c979;border-radius:9px;outline:none;resize:none;color:#805b2c;background:#fff;font:inherit;font-size:13px}.exercise-text-answer:focus{border-color:#b67b2c;box-shadow:0 0 0 3px rgba(182,123,44,.12)}.exercise-result{display:grid;gap:4px;margin-top:10px;padding:8px 10px;border-radius:8px;color:#43835d;background:#edf9f0;font-size:12px;line-height:1.45}.exercise-result.wrong{color:#a7662c;background:#fff1e5}.exercise-result p{margin:0;overflow-wrap:anywhere}.exercise-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:13px}.exercise-check-button,.exercise-open-button{min-height:34px;padding:0 12px;border-radius:8px;font-size:12px;font-weight:900;cursor:pointer}.exercise-check-button{border:1px solid #c9954d;color:#8c5f25;background:#fff}.exercise-open-button{border:0;color:#fff;background:#b67b2c}.exercise-check-button:disabled{cursor:not-allowed;opacity:.5}.exercise-open-button:hover{background:#925e1e}.exercise-state{display:grid;gap:9px;margin-top:5px;color:#a27643;font-size:13px;line-height:1.5}.exercise-state-error button{justify-self:start;min-height:32px;padding:0 11px;border:1px solid #d2a15b;border-radius:8px;color:#8c5f25;background:#fff;font:inherit;font-size:12px;font-weight:800;cursor:pointer}
 .lesson-generation-state{display:grid;place-items:center;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.94);box-shadow:0 12px 28px rgba(38,93,150,.07)}.lesson-generation-state-inner{max-width:420px;padding:32px;text-align:center}.lesson-generation-state-inner strong{color:#174b91;font-size:18px}.lesson-generation-state-inner p{margin:10px 0 0;color:#7698b7;font-size:13px;line-height:1.7;overflow-wrap:anywhere}.classroom-waiting-panel{width:min(780px,calc(100% - 48px));padding:28px}.classroom-waiting-head h2{margin:8px 0 0;color:#174b91;font-size:25px;line-height:1.25}.classroom-waiting-head p{margin:8px 0 0;color:#6e90b1;font-size:14px;line-height:1.65}.waiting-kicker,.waiting-section-heading{display:inline-flex;align-items:center;gap:7px;color:#4b85ba;font-size:13px;font-weight:900}.waiting-progress{display:flex;align-items:center;gap:8px;margin:22px 0 20px}.waiting-progress i{width:8px;height:8px;border-radius:50%;background:#66a3d5;animation:classroom-wait-pulse 1.2s ease-in-out infinite}.waiting-progress i:nth-child(2){animation-delay:.18s}.waiting-progress i:nth-child(3){animation-delay:.36s}.waiting-progress span{height:2px;flex:1;background:#d7e8f6}@keyframes classroom-wait-pulse{50%{transform:scale(1.5);opacity:.35}}.classroom-waiting-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(220px,.65fr);gap:20px}.waiting-section{min-width:0}.waiting-section-heading{margin-bottom:11px}.waiting-news-list{display:grid;gap:9px}.waiting-news-item{display:block;padding:10px 0;border-top:1px solid #e4eff8;color:inherit;text-decoration:none}.waiting-news-item strong{display:block;overflow:hidden;color:#22558f;font-size:14px;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}.waiting-news-item p{display:-webkit-box;margin:4px 0;overflow:hidden;color:#6d8dab;font-size:12px;line-height:1.5;-webkit-box-orient:vertical;-webkit-line-clamp:2}.waiting-news-item small{display:inline-flex;align-items:center;gap:4px;color:#6090bb;font-size:11px}.waiting-news-item:hover strong{color:#1d6fd0}.waiting-tip-section{padding-left:20px;border-left:1px solid #dcebf7}.waiting-tip-section p,.waiting-empty{margin:0;color:#426e9a;font-size:13px;line-height:1.7}.waiting-tip-topic{display:inline-block;max-width:100%;margin-top:14px;overflow:hidden;color:#5e90bb;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.waiting-skeletons{display:grid;gap:12px}.waiting-skeletons i{display:block;height:38px;border-radius:6px;background:#edf5fb;animation:classroom-skeleton 1.2s ease-in-out infinite}.waiting-skeletons i:nth-child(2){width:84%;animation-delay:.16s}.waiting-skeletons i:nth-child(3){width:68%;animation-delay:.32s}@keyframes classroom-skeleton{50%{opacity:.45}}
 .classroom-waiting-panel{width:min(760px,calc(100% - 48px));padding:28px}.waiting-progress{gap:7px}.waiting-progress i{width:7px;height:7px;flex:0 0 auto;background:#c8def1;animation:none}.waiting-progress i.active{background:#3f85c8;transform:scale(1.22)}.waiting-slide{min-height:178px;padding:22px 24px;border:1px solid #dcebf7;border-radius:12px;background:#f8fcff}.waiting-slide h3{margin:8px 0 0;color:#1d508c;font-size:21px;line-height:1.35}.waiting-slide p{max-width:620px;margin:12px 0 0;color:#426e9a;font-size:15px;line-height:1.78;overflow-wrap:anywhere}.waiting-source-link{display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:18px;overflow:hidden;color:#276cad;font-size:13px;font-weight:800;text-decoration:none;text-overflow:ellipsis;white-space:nowrap}.waiting-source-link:hover{text-decoration:underline}.waiting-slide-meta{display:inline-block;max-width:100%;margin-top:18px;overflow:hidden;color:#6c95bb;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.waiting-rotation-status{display:flex;justify-content:space-between;gap:12px;margin-top:12px;color:#7d9fbd;font-size:12px}.waiting-slide-enter-active,.waiting-slide-leave-active{transition:opacity .28s ease,transform .28s ease}.waiting-slide-enter-from,.waiting-slide-leave-to{opacity:0;transform:translateY(7px)}
+.waiting-dual-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.waiting-column{min-width:0}.waiting-column .waiting-section-heading{margin-bottom:10px}.waiting-column--news .waiting-slide{background:#f6fbff}.waiting-column--story .waiting-slide{background:#fffaf0;border-color:#f1dfb8}.waiting-column--story .waiting-slide h3{color:#8c6028}.waiting-column--story .waiting-slide p{color:#805b2c}.waiting-column--story .waiting-section-heading{color:#ae742d}
 .retry-generation-button{margin-top:18px;min-height:38px;padding:0 18px;border:0;border-radius:9px;background:#1f5da8;color:#fff;font:inherit;font-weight:700;cursor:pointer}.retry-generation-button:disabled{cursor:wait;opacity:.6}
-@media(max-width:680px){.module-nav{grid-template-columns:repeat(4,minmax(78px,1fr))}.lesson-summary{grid-column:auto}.classroom-waiting-panel{width:calc(100% - 32px);padding:20px}.classroom-waiting-grid{grid-template-columns:1fr;gap:18px}.waiting-tip-section{padding-top:16px;padding-left:0;border-top:1px solid #dcebf7;border-left:0}}
+@media(max-width:680px){.module-nav{grid-template-columns:repeat(4,minmax(78px,1fr))}.lesson-summary{grid-column:auto}.classroom-waiting-panel{width:calc(100% - 32px);padding:20px}.classroom-waiting-grid{grid-template-columns:1fr;gap:18px}.waiting-tip-section{padding-top:16px;padding-left:0;border-top:1px solid #dcebf7;border-left:0}.waiting-dual-grid{grid-template-columns:1fr;gap:12px}.waiting-slide{min-height:144px;padding:16px}.waiting-slide h3{font-size:18px}.waiting-slide p{font-size:13px;line-height:1.65}}
 @media(max-width:680px){.exercise-options{grid-template-columns:1fr;max-height:180px}.exercise-actions{flex-wrap:wrap}.exercise-check-button,.exercise-open-button{flex:1;min-width:120px}}
 </style>

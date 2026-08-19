@@ -24,52 +24,45 @@ def _clip(value: Any, limit: int) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
-def _node_tags(raw: Any) -> list[str]:
-    try:
-        values = json.loads(raw) if isinstance(raw, str) else raw
-    except (TypeError, ValueError, json.JSONDecodeError):
-        values = []
-    if not isinstance(values, list):
-        return []
-    return [text for item in values if (text := _clip(item, 32))][:4]
-
-
-def _learning_activities(topic: str, tags: list[str], cognition: str) -> list[dict[str, str]]:
-    """不编造专业事实，只将节点自身的术语组织成可立即执行的预习动作。"""
-    first = tags[0] if tags else topic
-    second = tags[1] if len(tags) > 1 else topic
-    activities = [
+def _fallback_stories(
+    topic: str,
+    major: str,
+    interest: str,
+    learning_goal: str,
+    cognition: str,
+) -> list[dict[str, str]]:
+    focus = interest or major or "你的专业方向"
+    goal_text = learning_goal or "把知识真正用起来"
+    stories = [
         {
-            "title": f"给“{first}”下一句定义",
-            "content": f"先不看资料，补全这句话：“{first} 是____，它用来____。”只写定义和用途，不举例。课堂生成后先对照核心概念修正。",
+            "title": "一个小问题的转弯",
+            "content": f"你在做{focus}相关项目时，遇到一个看似简单却总出错的小问题。后来你没有继续堆代码，而是回到“{topic}”的定义，先把输入、规则和结果分开，问题很快露出了位置。",
         },
         {
-            "title": f"推断“{first}”与“{second}”的关系",
-            "content": f"在纸上写“{first} → {second}”，并在箭头上填一个动词：决定、限制、转换或校验。先猜，再用课堂验证这条关系。",
+            "title": "从会用到会解释",
+            "content": f"为了{goal_text}，你把“{topic}”讲给一个完全不了解这门课的人听。讲到一半卡住的地方，往往正是你还没有真正理解的地方，这比背下结论更有价值。",
         },
         {
-            "title": "提前标出一个边界",
-            "content": f"针对“{topic}”，写下一个你不敢完全确定的条件或步骤。课堂里的随堂练习会优先帮你核对这个疑点。",
+            "title": "换一种记忆入口",
+            "content": f"今天学习“{topic}”时，你没有从长定义开始，而是先画出一条关系线，再用一句话解释它。{('这种先看结构再听解释的方式很适合你。' if cognition == 'visual' else '这种先动手验证再补概念的方式很适合你。' if cognition == 'practical' else '这种先读出来再整理概念的方式很适合你。' if cognition == 'auditory' else '把定义写下来再举例，会让它更牢固。')}",
         },
     ]
-    if cognition == "visual":
-        activities[1]["content"] = f"画两个方框：“{first}”和“{second}”，用一根箭头连起来，并在箭头上写“为什么会影响”。课堂会验证你的图。"
-    elif cognition == "practical":
-        activities[2]["content"] = f"为“{topic}”设一个最小输入，写出你预计的结果；不要追求算对，先让课堂帮你定位中间缺失的步骤。"
-    elif cognition == "auditory":
-        activities[0]["content"] = f"用自己的话读出这句：“{first} 是什么，它解决什么问题？”录不录音都可以，关键是发现自己在哪个词上停住。"
-    return activities
+    return [{"title": _clip(item["title"], 40), "content": _clip(item["content"], 150)} for item in stories]
 
 
-async def _review_recent_news(
+async def _review_transition_content(
     topic: str,
     profile_focus: str,
     candidates: list[dict[str, str]],
     user_id: int,
-) -> list[dict[str, str]]:
-    """让低优先级 LLM 筛选搜索候选；失败时不把原始搜索结果直接展示给用户。"""
-    if not candidates:
-        return []
+    major: str,
+    grade: str,
+    learning_goal: str,
+    cognition: str,
+    interest: str,
+) -> dict[str, list[dict[str, str]]]:
+    """一次低优先级调用同时整理新闻和画像故事；新闻失败时绝不直出原始候选。"""
+    fallback = _fallback_stories(topic, major, interest, learning_goal, cognition)
 
     try:
         from backend.src.ai_core.llm_config import llm
@@ -80,6 +73,11 @@ async def _review_recent_news(
             load_prompt("classroom/transition_news"),
             topic=topic,
             profile_focus=profile_focus or "未提供，优先判断与当前知识点的直接关系",
+            major=major or "未提供",
+            grade=grade or "未提供",
+            learning_goal=learning_goal or "未提供",
+            cognition=cognition or "未提供",
+            interest=interest or "未提供",
             candidates_json=json.dumps(candidates, ensure_ascii=False),
         )
         started_at = time.perf_counter()
@@ -88,9 +86,9 @@ async def _review_recent_news(
             timeout=18,
         )
         parsed = parse_llm_json(str(getattr(response, "content", "") or ""))
-        items = parsed.get("items", []) if isinstance(parsed, dict) else []
+        items = parsed.get("news", []) if isinstance(parsed, dict) else []
         if not isinstance(items, list):
-            return []
+            items = []
 
         candidate_by_url = {
             str(item.get("url") or "").strip(): item
@@ -129,10 +127,22 @@ async def _review_recent_news(
             len(reviewed),
             time.perf_counter() - started_at,
         )
-        return reviewed
+        stories_raw = parsed.get("stories", []) if isinstance(parsed, dict) else []
+        stories: list[dict[str, str]] = []
+        if isinstance(stories_raw, list):
+            for item in stories_raw:
+                if not isinstance(item, dict):
+                    continue
+                title = _clip(item.get("title"), 40)
+                content = _clip(item.get("content"), 150)
+                if title and content:
+                    stories.append({"title": title, "content": content})
+                if len(stories) >= 3:
+                    break
+        return {"news": reviewed, "stories": stories or fallback}
     except Exception:
-        logger.warning("[ClassroomTransition] 近日资讯审核失败 user=%s，丢弃原始候选", user_id, exc_info=True)
-        return []
+        logger.warning("[ClassroomTransition] 过渡内容审核失败 user=%s，丢弃原始新闻并使用画像故事兜底", user_id, exc_info=True)
+        return {"news": [], "stories": fallback}
 
 
 async def get_classroom_transition(path_id: int, node_id: int, user_id: int) -> dict[str, Any] | None:
@@ -157,12 +167,13 @@ async def get_classroom_transition(path_id: int, node_id: int, user_id: int) -> 
         )
         picture = await user.picture if user else None
         topic = _clip(node.topic, 80) or "当前知识点"
-        tags = _node_tags(node.knowledge_tags)
         subject = _clip(getattr(path, "subject", ""), 48)
         major = _clip(getattr(user, "major", ""), 48)
         traits = parse_traits(getattr(picture, "traits", None)) if picture else {}
         interest = _clip(trait_display(traits, "interest"), 48)
         cognition = _clip(getattr(picture, "cognition", ""), 24) if picture else ""
+        learning_goal = _clip(getattr(picture, "learning_goal", ""), 32) if picture else ""
+        grade = _clip(getattr(user, "grade", ""), 24)
         search_focus = interest or major or subject or topic
         query = f"{search_focus} 近期 动态" if search_focus else f"{topic} 近期 动态"
         search_started_at = time.perf_counter()
@@ -176,11 +187,21 @@ async def get_classroom_transition(path_id: int, node_id: int, user_id: int) -> 
             len(candidates),
             time.perf_counter() - search_started_at,
         )
-        news = await _review_recent_news(topic, search_focus, candidates, user_id)
+        reviewed = await _review_transition_content(
+            topic,
+            search_focus,
+            candidates,
+            user_id,
+            major,
+            grade,
+            learning_goal,
+            cognition,
+            interest,
+        )
         payload = {
             "topic": topic,
-            "news": news,
-            "activities": _learning_activities(topic, tags, cognition),
+            "news": reviewed["news"],
+            "stories": reviewed["stories"],
             "profile_focus": search_focus,
         }
         _transition_cache[cache_key] = (time.monotonic(), payload)
