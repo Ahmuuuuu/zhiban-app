@@ -45,6 +45,22 @@ async def _collect(generator):
     return [chunk async for chunk in generator]
 
 
+@pytest.fixture(autouse=True)
+def _stub_classroom_chat_persistence(monkeypatch):
+    """课堂流测试不连接真实 MySQL，同时保留对话落库行为的可观察性。"""
+    records = []
+
+    async def fake_create(**kwargs):
+        records.append(kwargs)
+
+    async def fake_refresh(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(cg_chat.ChatHistory, "create", fake_create)
+    monkeypatch.setattr(cg_chat, "_refresh_portrait_after_classroom_chat", fake_refresh)
+    return records
+
+
 # ── _compose_user_prompt ──
 
 def test_compose_user_prompt_open():
@@ -139,7 +155,7 @@ async def test_get_or_create_classroom_agent_missing_user(monkeypatch):
 # ── stream_classroom_chat 事件序列 ──
 
 @pytest.mark.asyncio
-async def test_stream_classroom_chat_events(monkeypatch):
+async def test_stream_classroom_chat_events(monkeypatch, _stub_classroom_chat_persistence):
     monkeypatch.setattr(cg_chat, "get_or_create_classroom_agent", _async_value(123))
     monkeypatch.setattr(cg_chat, "_get_classroom_brain", lambda *a, **k: StubBrain([
         {"role": "assistant", "type": "chunk", "content": "你理解对了，"},
@@ -154,6 +170,13 @@ async def test_stream_classroom_chat_events(monkeypatch):
     assert "再补一个例子更稳" in joined
     assert '"type":"done"' in joined
     assert "[DONE]" in joined
+    assert _stub_classroom_chat_persistence == [{
+        "user_id": 1,
+        "chat_group_id": cg_chat._classroom_group_id(1, 1, 1),
+        "agent_id": 123,
+        "req": "为什么补码能统一加减？",
+        "res": "你理解对了，再补一个例子更稳。",
+    }]
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@
 classroom_graph 双智能体编排测试
 
 测试目标：backend/src/ai_core/classroom_graph.py
-覆盖：Writer(规划+并行分幕) → Reviewer(审核) → 重写循环的三种路径。
+覆盖：Writer(规划+并行分幕) → 分幕审核智能体 → 定向重写。
 所有 LLM 调用用 FakeLLM 模拟（不联网、不烧钱）。
 """
 import json
@@ -12,6 +12,15 @@ import pytest
 
 import backend.src.ai_core.classroom_graph as cg
 from backend.src.service.path.classroom import _fallback_lesson, _normalize_lesson
+
+
+@pytest.fixture(autouse=True)
+def _disable_tts_prewarm(monkeypatch):
+    """课堂图测试只验证分幕编排，不触发真实 EdgeTTS 网络请求。"""
+    async def fake_prewarm(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(cg, "_prewarm_segment_audio", fake_prewarm)
 
 # ── 罐头数据 ──
 
@@ -36,7 +45,7 @@ SEG_TPL = {
                 "interaction": "reflect",
                 "question": {"prompt": "先分清什么？", "options": [], "answer": "", "feedback": ""}},
     "concept": {"id": "concept", "type": "concept", "title": "核心讲解", "subtitle": "BCD 拆解", "intent": "讲清关键概念",
-                "teacher_speech": "BCD 用四位二进制表示一位十进制数字，每一位的位权是8421，所以叫8421BCD。十进制59的压缩BCD是0101 1001B。注意BCD服务的是数字，不是字符。", "script": "x",
+                "teacher_speech": "BCD是一种十进制数字编码，用四位二进制表示一位十进制数字，8421是它的位权。ASCII是一种字符编码，用编号表示字符。十进制59的压缩BCD是0101 1001B，注意BCD服务数字，不服务字符。", "script": "x",
                 "board_title": "概念主线", "board_items": ["8421权值", "压缩BCD一字节两位", "BCD只表示0-9"], "points": ["8421按权相加", "一字节两位", "只服务数字"],
                 "visual_hint": "8421BCD", "example": "59 → 0101 1001B", "resource_refs": [], "duration_seconds": 24,
                 "interaction": "open",
@@ -72,7 +81,7 @@ class FakeLLM:
         self.calls.append(pool)
         if "总导演（ClassroomDirector）" in prompt:
             return FakeResp(json.dumps(PLAN, ensure_ascii=False))
-        if "课堂脚本审核员（ClassroomReviewer）" in prompt:
+        if "课堂分幕审核员（ClassroomSceneReviewer）" in prompt:
             result = self.reviewer_results.pop(0) if self.reviewer_results else {"passed": True, "score": 90, "feedback": "", "issues": []}
             return FakeResp(json.dumps(result, ensure_ascii=False))
         for sid in cg._SEGMENT_IDS:
@@ -133,9 +142,23 @@ def test_interaction_default_when_missing():
         assert by_id[sid]["question"]["options"] == [], f"{sid} 幕不应有选项"
 
 
+def test_concept_definition_contract_rejects_examples_without_definition():
+    issue = cg._concept_definition_contract_issue(
+        {"teacher_speech": "同一字节0x53按ASCII是S，按BCD是53，按纯二进制是83。规则不同，含义就不同。"},
+        ["ASCII", "BCD", "奇偶校验"],
+    )
+    assert issue is not None
+    assert issue["category"] == "concept_definition"
+
+    assert cg._concept_definition_contract_issue(
+        {"teacher_speech": "ASCII是一种字符编码，用编号表示字符。BCD是一种十进制数字编码，每位数字用四位二进制表示。随后再比较两者的对象和边界。"},
+        ["ASCII", "BCD"],
+    ) is None
+
+
 @pytest.mark.asyncio
 async def test_passed_first_try(monkeypatch):
-    """审核首轮通过：1 规划 + 4 幕并行 + 1 审核 = 6 次调用，retry=0。"""
+    """首轮通过：1 规划 + 4 幕生成 + 4 个并行分幕审核。"""
     fake = FakeLLM([])
     monkeypatch.setattr(cg, "llm", fake)
     final = await cg.classroom_graph.ainvoke(make_state())
@@ -143,12 +166,12 @@ async def test_passed_first_try(monkeypatch):
     assert final.get("retry_count") == 0
     assert_lesson_contract(final.get("lesson"))
     assert set(fake.calls) == {"classroom"}, "所有调用必须走 classroom pool"
-    assert len(fake.calls) == 6, f"首轮应 6 次调用, got {len(fake.calls)}"
+    assert len(fake.calls) == 9, f"首轮应为规划、四幕、四个并行审核，共 9 次调用，got {len(fake.calls)}"
 
 
 @pytest.mark.asyncio
-async def test_retry_then_pass(monkeypatch):
-    """首轮未通过 → 带反馈重写（跳过规划）→ 次轮通过，retry=1。"""
+async def test_targeted_review_rewrites_only_failed_scene(monkeypatch):
+    """分幕审核不通过时只重写被点名的模块，不重写完整四幕。"""
     fake = FakeLLM([
         {"passed": False, "score": 62, "feedback": "concept 幕知识讲解不够具体，需给出8421权值表达式。",
          "issues": [{"segment_id": "concept", "category": "accuracy", "message": "concept 幕缺少具体表达式，请补充 8421 权值示例。"}]},
@@ -159,20 +182,24 @@ async def test_retry_then_pass(monkeypatch):
     assert final.get("retry_count") == 1
     assert final.get("review_passed") is True
     assert_lesson_contract(final.get("lesson"))
-    # 1 规划 + 4 幕 + 1 审 + 4 幕重写 + 1 审 = 11
-    assert len(fake.calls) == 11, f"应 11 次调用, got {len(fake.calls)}"
+    assert len(fake.calls) == 14, f"只应重写一个模块后再次审核，got {len(fake.calls)}"
 
 
 @pytest.mark.asyncio
-async def test_max_retries_stop(monkeypatch):
-    """连续未通过 → retry=2 达上限强制结束，返回最后一次归一化 lesson（不回退模板）。"""
-    fake = FakeLLM([
-        {"passed": False, "score": 50, "feedback": "问题1", "issues": [{"segment_id": None, "category": "generic", "message": "整体模板化"}]},
-        {"passed": False, "score": 55, "feedback": "问题2", "issues": [{"segment_id": None, "category": "generic", "message": "仍模板化"}]},
-    ])
+async def test_invalid_lesson_stops_without_retry(monkeypatch):
+    """单幕缺字段时只允许一轮定向修复，随后立即结束。"""
+    fake = FakeLLM([])
     monkeypatch.setattr(cg, "llm", fake)
+    broken = {key: dict(value) for key, value in SEG_TPL.items()}
+    broken["concept"] = {"id": "concept", "type": "concept", "title": "核心概念"}
+    original = cg._generate_segments
+
+    async def generate_broken(*args, **kwargs):
+        return {"title": "BCD与ASCII编码", "learning_summary": "本节理解数字保存与字符编号的差别，并能用例子说明两者。", "key_takeaways": ["BCD表示数字", "ASCII表示字符"], "segments": list(broken.values())}
+
+    monkeypatch.setattr(cg, "_generate_segments", generate_broken)
     final = await cg.classroom_graph.ainvoke(make_state())
-    assert final.get("retry_count") == 2
+    monkeypatch.setattr(cg, "_generate_segments", original)
+    assert final.get("retry_count") == 1
     assert final.get("review_passed") is False
-    assert_lesson_contract(final.get("lesson"))
-    assert len(fake.calls) == 11, f"应 11 次调用（2 轮）, got {len(fake.calls)}"
+    assert len(fake.calls) == 1, f"只应调用规划, got {len(fake.calls)}"

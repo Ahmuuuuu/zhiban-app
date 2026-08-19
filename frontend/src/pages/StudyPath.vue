@@ -173,40 +173,42 @@
                 <article class="branch-card">
                   <div class="branch-head">
                     <Check :size="16" />
-                    <strong>{{ sectionLabel(1) }} 学习检测</strong>
+                    <strong>{{ chapterLabel(index) }} 学习检测</strong>
                   </div>
+                  <p class="branch-node-title">{{ node.title }}</p>
+                  <div class="branch-card__body">
+                    <div v-if="node._quizLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
+                    <div v-else-if="node._quizError" class="branch-error-block">
+                      <div class="branch-message error">{{ node._quizError }}</div>
+                      <button
+                        class="branch-action"
+                        type="button"
+                        :disabled="node.status === 'locked' || isNodeQuizGenerating(node)"
+                        @click.stop="ensureNodeResources(node, 'quiz')"
+                      >
+                        {{ isNodeQuizGenerating(node) ? '生成中...' : '重新生成检测' }}
+                      </button>
+                    </div>
 
-                  <div v-if="node._quizLoading" class="branch-loading">AI 生成中，请耐心等待...</div>
-                  <div v-else-if="node._quizError" class="branch-error-block">
-                    <div class="branch-message error">{{ node._quizError }}</div>
+                    <template v-else-if="node._quiz">
+                      <div class="branch-quiz">
+                        <span>{{ node._quiz.questionCount || 0 }} 道题</span>
+                        <router-link class="branch-action primary" :to="pathQuizLink(node._quiz, node)">
+                          开始检测
+                        </router-link>
+                      </div>
+                    </template>
+
                     <button
+                      v-else
                       class="branch-action"
                       type="button"
                       :disabled="node.status === 'locked' || isNodeQuizGenerating(node)"
                       @click.stop="ensureNodeResources(node, 'quiz')"
                     >
-                      {{ isNodeQuizGenerating(node) ? '生成中...' : '重新生成检测' }}
+                      {{ isNodeQuizGenerating(node) ? '生成中...' : '生成检测' }}
                     </button>
                   </div>
-
-                  <template v-else-if="node._quiz">
-                    <div class="branch-quiz">
-                      <span>{{ node._quiz.questionCount || 0 }} 道题</span>
-                      <router-link class="branch-action primary" :to="pathQuizLink(node._quiz, node)">
-                        开始检测
-                      </router-link>
-                    </div>
-                  </template>
-
-                  <button
-                    v-else
-                    class="branch-action"
-                    type="button"
-                    :disabled="node.status === 'locked' || isNodeQuizGenerating(node)"
-                    @click.stop="ensureNodeResources(node, 'quiz')"
-                  >
-                    {{ isNodeQuizGenerating(node) ? '生成中...' : '生成检测' }}
-                  </button>
                 </article>
               </section>
             </div>
@@ -1429,7 +1431,6 @@ const cnNumber = value => {
   return `${cnNumbers[tens - 1] || tens}十${ones ? cnNumbers[ones - 1] : ''}`
 }
 const chapterLabel = index => `第${cnNumber(index + 1)}章`
-const sectionLabel = index => `第${cnNumber(index)}节`
 
 const pathQuizLink = (quiz, node) => {
   const query = new URLSearchParams({
@@ -3615,7 +3616,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 34px minmax(300px, 420px) minmax(300px, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
   margin-bottom: 14px;
   cursor: pointer;
 }
@@ -3631,6 +3632,7 @@ onBeforeUnmount(() => {
 .node-pin {
   width: 34px;
   height: 34px;
+  align-self: start;
   border-radius: 50%;
   background: #ffffff;
   border: 2px solid #c9dce9;
@@ -3676,6 +3678,9 @@ onBeforeUnmount(() => {
 }
 
 .node-card {
+  height: 100%;
+  min-height: 190px;
+  box-sizing: border-box;
   min-height: 0;
   padding: 14px 16px;
   border-radius: 18px;
@@ -4240,14 +4245,15 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(220px, 1fr);
   gap: 10px;
-  align-self: start;
+  align-self: stretch;
   margin: 0;
 }
 
 .node-branch {
   position: relative;
   display: grid;
-  align-items: start;
+  min-height: 100%;
+  align-items: stretch;
   padding-left: 18px;
 }
 
@@ -4261,17 +4267,20 @@ onBeforeUnmount(() => {
 }
 
 .branch-card {
-  min-height: 0;
-  padding: 10px 12px;
-  border: 1px solid rgba(201, 220, 233, 0.78);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.62);
-  box-shadow: 0 8px 18px rgba(22, 63, 143, 0.04);
+  min-height: 190px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border: 1px solid rgba(22, 63, 143, 0.14);
+  border-radius: 18px;
+  background: rgba(250, 250, 250, 0.78);
+  box-shadow: 0 14px 34px rgba(22, 63, 143, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
 }
 
 .branch-head {
@@ -4281,6 +4290,28 @@ onBeforeUnmount(() => {
   color: #163f8f;
   font-size: 12px;
   font-weight: 900;
+}
+
+.branch-node-title {
+  display: -webkit-box;
+  min-height: 48px;
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: #163f8f;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.branch-card__body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  margin-top: auto;
+  gap: 10px;
 }
 
 .branch-resource-flow {
@@ -4504,12 +4535,14 @@ onBeforeUnmount(() => {
 }
 
 .branch-error-block {
+  width: 100%;
   display: grid;
   gap: 8px;
   justify-items: start;
 }
 
 .branch-quiz {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -37,7 +37,22 @@
               <h2>{{ activeSegment.title }}</h2>
               <p v-if="activeSegment.subtitle" class="module-subtitle">{{ activeSegment.subtitle }}</p>
             </div>
-            <span class="interaction-badge">{{ interactionLabel }}</span>
+            <div class="module-panel-actions">
+              <button
+                class="narration-button"
+                type="button"
+                :disabled="Boolean(narrationLoadingSegmentId)"
+                :title="narrationTitle"
+                :aria-label="narrationTitle"
+                @click="toggleSegmentNarration()"
+              >
+                <LoaderCircle v-if="narrationLoadingSegmentId === activeSegment?.id" :size="18" class="spinning" />
+                <Pause v-else-if="narrationSegmentId === activeSegment?.id && narrationPlaying" :size="18" fill="currentColor" />
+                <Play v-else-if="narrationSegmentId === activeSegment?.id" :size="18" fill="currentColor" />
+                <Volume2 v-else :size="18" />
+              </button>
+              <span class="interaction-badge">{{ interactionLabel }}</span>
+            </div>
           </header>
 
           <div class="module-content">
@@ -167,7 +182,10 @@
         <article class="resource-preview-panel" role="dialog" aria-modal="true" :aria-label="previewItem.title">
           <header>
             <div><span>{{ previewItem.typeLabel }}</span><h2>{{ previewItem.title }}</h2></div>
-            <button type="button" aria-label="关闭预览" @click="closeClassroomPreview"><X :size="20" /></button>
+            <div class="resource-preview-header-actions">
+              <button v-if="previewItem.downloadUrl" type="button" class="resource-preview-download" @click="downloadClassroomResource(previewItem)"><Download :size="16" /> 下载</button>
+              <button type="button" aria-label="关闭预览" @click="closeClassroomPreview"><X :size="20" /></button>
+            </div>
           </header>
           <div class="resource-preview-body" :class="{ 'resource-preview-body--ppt': isPptResource(previewItem), 'resource-preview-body--mindmap': isMindmapResource(previewItem) }">
             <div v-if="resourcePreviewLoading" class="resource-preview-loading">正在加载预览...</div>
@@ -199,8 +217,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Download, Eye, FileText, X } from 'lucide-vue-next'
-import { generateNodeClassroom, generatePathNodeQuiz, generatePathNodeResourcesStream, streamClassroomChatMessage } from '../api/learningPath'
+import { ArrowLeft, Download, Eye, FileText, LoaderCircle, Pause, Play, Volume2, X } from 'lucide-vue-next'
+import { generateNodeClassroom, generatePathNodeQuiz, generatePathNodeResourcesStream, narrateClassroomText, streamClassroomChatMessage } from '../api/learningPath'
 import { downloadWithToken, resolveApiUrl } from '../api/config'
 import { getGeneratedResource } from '../api/resource'
 import { renderMarkdown, handleRenderedMarkdownClick } from '../utils/markdown'
@@ -239,6 +257,11 @@ const exerciseSelected = ref([])
 const exerciseTextAnswer = ref('')
 const exerciseChecked = ref(false)
 const exerciseCorrect = ref(false)
+const narrationLoadingSegmentId = ref('')
+const narrationSegmentId = ref('')
+const narrationPlaying = ref(false)
+let classroomNarrationAudio = null
+let narrationRequestId = 0
 
 const readJson = (storage, key) => {
   try { const raw = storage?.getItem(key); return raw ? JSON.parse(raw) : null } catch { return null }
@@ -271,11 +294,17 @@ const classroomResourceKind = resource => {
   if (/document|doc|pdf|markdown|\.md\b|\.txt\b|文档/.test(type) || !type) return 'document'
   return ''
 }
+const isFailedResource = resource => {
+  const content = resource?.content ?? resource?.preview ?? resource?.summary ?? ''
+  const text = typeof content === 'string' ? content : JSON.stringify(content || '')
+  return /^\s*\[(?:生成失败|generation failed|failed to generate)\b/i.test(text) ||
+    /read operation timed out|incomplete chunked read|peer closed connection/i.test(text)
+}
 const resourceList = computed(() => {
   const byType = new Map()
   for (const item of [...resources.value, ...classroomResources.value]) {
     const type = classroomResourceKind(item)
-    if (!item || isQuizResource(item) || !CLASSROOM_RESOURCE_TYPES.includes(type) || byType.has(type)) continue
+    if (!item || isQuizResource(item) || isFailedResource(item) || !CLASSROOM_RESOURCE_TYPES.includes(type) || byType.has(type)) continue
     byType.set(type, item)
   }
   return CLASSROOM_RESOURCE_TYPES.map(type => byType.get(type)).filter(Boolean)
@@ -345,6 +374,12 @@ const learningSummary = computed(() => clip(classroomLesson.value?.learning_summ
 const keyTakeaways = computed(() => listValue(classroomLesson.value?.key_takeaways, 4, 48))
 const interactionLabel = computed(() => ({ reflect: '想一想', open: '开放回答', exercise: '随堂练习', feynman: '右侧反讲' }[activeSegment.value?.interaction] || '课堂内容'))
 const dialogPlaceholder = computed(() => activeSegment.value?.interaction === 'feynman' ? '把这个知识点讲给小知听...' : activeSegment.value?.interaction === 'open' ? '用自己的话回答当前问题...' : activeSegment.value?.interaction === 'exercise' ? '可以在这里追问这道题...' : '提问，或补充你的想法...')
+const narrationTitle = computed(() => {
+  const segmentId = activeSegment.value?.id
+  if (narrationLoadingSegmentId.value === segmentId) return '正在生成本幕语音'
+  if (narrationSegmentId.value !== segmentId) return '朗读本幕讲解和要点'
+  return narrationPlaying.value ? '暂停朗读' : '继续朗读'
+})
 const isLessonReady = lesson => {
   const segments = lesson?.segments
   if (!Array.isArray(segments) || segments.length !== SEGMENT_IDS.length) return false
@@ -375,6 +410,93 @@ const resetExerciseState = () => {
   exerciseTextAnswer.value = ''
   exerciseChecked.value = false
   exerciseCorrect.value = false
+}
+
+const narrationTextForSegment = segment => {
+  if (!segment) return ''
+  const parts = []
+  if (segment.script) parts.push(`讲解。${segment.script}`)
+  if (segment.points?.length) {
+    const points = segment.points.map((point, index) => `第${index + 1}点，${point}`).join('。')
+    parts.push(`抓住这几点。${points}`)
+  }
+  return clip(parts.join('。'), 500)
+}
+const clearSegmentNarration = () => {
+  narrationRequestId += 1
+  if (classroomNarrationAudio) {
+    classroomNarrationAudio.pause()
+    classroomNarrationAudio.currentTime = 0
+    classroomNarrationAudio.onended = null
+    classroomNarrationAudio.onerror = null
+    classroomNarrationAudio.src = ''
+    classroomNarrationAudio = null
+  }
+  narrationLoadingSegmentId.value = ''
+  narrationSegmentId.value = ''
+  narrationPlaying.value = false
+}
+const toggleSegmentNarration = async () => {
+  const segment = activeSegment.value
+  const segmentId = String(segment?.id || '')
+  if (!segmentId || narrationLoadingSegmentId.value) return
+
+  if (narrationSegmentId.value === segmentId && classroomNarrationAudio) {
+    if (classroomNarrationAudio.paused) {
+      try {
+        await classroomNarrationAudio.play()
+        narrationPlaying.value = true
+      } catch (error) {
+        console.warn('[LearningClassroom] resume segment narration failed:', error)
+      }
+    } else {
+      classroomNarrationAudio.pause()
+      narrationPlaying.value = false
+    }
+    return
+  }
+
+  const text = narrationTextForSegment(segment)
+  if (!text) return
+  clearSegmentNarration()
+  const requestId = ++narrationRequestId
+  narrationLoadingSegmentId.value = segmentId
+  try {
+    const result = await narrateClassroomText({ text })
+    const data = result?.data?.data || result?.data || result || {}
+    const audioUrl = resolveApiUrl(data?.audio_url || data?.audioUrl || '')
+    if (!audioUrl) throw new Error('旁白音频地址为空')
+    if (requestId !== narrationRequestId) return
+
+    const audio = new Audio(audioUrl)
+    classroomNarrationAudio = audio
+    narrationSegmentId.value = segmentId
+    audio.onended = () => {
+      if (classroomNarrationAudio === audio) {
+        classroomNarrationAudio = null
+        narrationSegmentId.value = ''
+        narrationPlaying.value = false
+      }
+    }
+    audio.onerror = () => {
+      if (classroomNarrationAudio === audio) {
+        classroomNarrationAudio = null
+        narrationSegmentId.value = ''
+        narrationPlaying.value = false
+      }
+    }
+    await audio.play()
+    if (requestId === narrationRequestId) narrationPlaying.value = true
+  } catch (error) {
+    if (requestId === narrationRequestId) {
+      narrationSegmentId.value = ''
+      narrationPlaying.value = false
+      console.warn('[LearningClassroom] segment narration failed:', error)
+      window.alert(error?.response?.data?.detail || error?.message || '本幕语音生成失败，请稍后再试。')
+    }
+  } finally {
+    if (requestId === narrationRequestId) narrationLoadingSegmentId.value = ''
+  }
 }
 
 const loadClassroomQuiz = async () => {
@@ -459,7 +581,8 @@ const loadClassroomLesson = async (forceRegenerate = false) => {
     const lesson = data?.lesson || null
     if (!isLessonReady(lesson)) throw new Error('智能体尚未生成完整课堂，暂不展示内容')
     classroomLesson.value = lesson
-    classroomResources.value = Array.isArray(data?.resources) ? data.resources : []
+    // 资源流可能先于课堂接口返回，逐项合并避免旧快照覆盖已完成的资源卡片。
+    for (const resource of (Array.isArray(data?.resources) ? data.resources : [])) appendGeneratedResource(resource)
     void loadClassroomQuiz()
   } catch (error) {
     classroomError.value = error?.response?.data?.detail || error?.message || '课堂内容生成失败'
@@ -492,8 +615,9 @@ const appendGeneratedResource = data => {
     classroomResources.value = next
   }
 }
-const generateClassroomResources = async () => {
+const generateClassroomResources = async (options = {}) => {
   if (resourceGenerationLoading.value || !/^\d+$/.test(pathId.value) || !/^\d+$/.test(nodeId.value)) return
+  const background = Boolean(options?.background)
   resourceGenerationLoading.value = true
   resourceGenerationStatus.value = '正在准备节点资源...'
   resourceGenerationError.value = ''
@@ -506,7 +630,7 @@ const generateClassroomResources = async () => {
       data => { resourceGenerationStatus.value = data?.msg || data?.message || '正在生成学习资料...' },
       () => { resourceGenerationStatus.value = '学习资料生成完成，正在整理预览...' },
       error => { streamError = error || new Error('学习资料生成失败') },
-      { resource_types: CLASSROOM_RESOURCE_TYPES }
+      { resource_types: CLASSROOM_RESOURCE_TYPES, background }
     )
     if (streamError) throw streamError
     resourceGenerationStatus.value = `生成完成，共 ${resourceList.value.length} 份资源`
@@ -660,10 +784,12 @@ const backToPath = () => router.push({ name: 'learningPath' })
 onMounted(() => {
   document.body.classList.add('classroom-active')
   launchPayload.value = readJson(sessionStorage, CLASSROOM_LAUNCH_KEY) || normalizeNodeFromCache() || normalizeNodeFromRoute()
+  // 课堂先发起，资料紧接着低优先级并行生成；资源流不会阻塞课堂首屏。
   void loadClassroomLesson()
+  queueMicrotask(() => { void generateClassroomResources({ background: true }) })
 })
-onBeforeUnmount(() => document.body.classList.remove('classroom-active'))
-watch(activeSegmentIndex, index => { const segment = lessonSegments.value[index]; if (segment) { if (segment.id === 'exercise') resetExerciseState(); announceSegmentPrompt(segment) } })
+onBeforeUnmount(() => { clearSegmentNarration(); document.body.classList.remove('classroom-active') })
+watch(activeSegmentIndex, index => { clearSegmentNarration(); const segment = lessonSegments.value[index]; if (segment) { if (segment.id === 'exercise') resetExerciseState(); announceSegmentPrompt(segment) } })
 watch(lessonSegments, segments => { if (activeSegmentIndex.value >= segments.length) activeSegmentIndex.value = Math.max(0, segments.length - 1) })
 watch(messages, () => nextTick(() => { if (dialogMessagesEl.value) dialogMessagesEl.value.scrollTop = dialogMessagesEl.value.scrollHeight }), { deep: true })
 </script>
@@ -682,7 +808,7 @@ button { font:inherit; }
 .generation-status { display:inline-flex; align-items:center; gap:8px; margin-left:auto; padding:9px 13px; border:1px solid #cce5d4; border-radius:999px; color:#3b8c60; background:#f3fff7; font-size:13px; font-weight:800; white-space:nowrap; }.generation-status.loading{border-color:#c9def7;color:#3973b4;background:#f1f8ff}.generation-status.error{border-color:#f1d4b7;color:#a7662c;background:#fff8ef}.status-dot{width:8px;height:8px;border-radius:50%;background:currentColor}
 .classroom-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(310px,360px); gap:16px; flex:1 1 auto; min-height:0; }.lesson-workspace{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}.classroom-sidebar{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
 .module-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;flex:0 0 auto;padding:6px;border:1px solid var(--line);border-radius:14px;background:#fff}.module-tab{display:flex;align-items:center;gap:8px;min-width:0;min-height:54px;padding:8px 10px;border-radius:10px;color:var(--muted);text-align:left;background:transparent}.module-tab:hover{background:#f1f7fd}.module-tab.active{color:var(--ink);background:#eaf4ff}.module-number{display:grid;place-items:center;width:26px;height:26px;flex:0 0 auto;border-radius:50%;color:#4c83bc;background:#e7f1fb;font-size:11px;font-weight:900}.module-tab.active .module-number,.module-tab.done .module-number{color:#fff;background:var(--blue)}.module-tab-copy{min-width:0}.module-tab strong,.module-tab small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.module-tab strong{color:inherit;font-size:14px}.module-tab small{margin-top:3px;color:#8aa8c5;font-size:11px}
-.module-panel,.dialog-panel{min-height:0;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.94);box-shadow:0 12px 28px rgba(38,93,150,.07)}.module-panel{display:flex;flex-direction:column;overflow:hidden}.module-panel-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:24px 28px 18px;border-bottom:1px solid #e5eff8}.module-panel-header h2{margin:6px 0 0;color:#114b91;font-size:clamp(25px,3vw,38px);line-height:1.18}.module-subtitle{max-width:600px;margin:7px 0 0;color:var(--muted);font-size:15px}.interaction-badge{flex:0 0 auto;padding:7px 11px;border:1px solid #c9e1f5;border-radius:999px;color:#3d78b8;background:#f0f8ff;font-size:12px;font-weight:900}
+.module-panel,.dialog-panel{min-height:0;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.94);box-shadow:0 12px 28px rgba(38,93,150,.07)}.module-panel{display:flex;flex-direction:column;overflow:hidden}.module-panel-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:24px 28px 18px;border-bottom:1px solid #e5eff8}.module-panel-header h2{margin:6px 0 0;color:#114b91;font-size:clamp(25px,3vw,38px);line-height:1.18}.module-subtitle{max-width:600px;margin:7px 0 0;color:var(--muted);font-size:15px}.module-panel-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}.narration-button{display:grid;place-items:center;width:38px;height:38px;flex:0 0 38px;padding:0;border:1px solid #c9e1f5;border-radius:50%;color:#2869ab;background:#fff;cursor:pointer}.narration-button:hover:not(:disabled){color:#fff;border-color:#2869ab;background:#2869ab}.narration-button:disabled{cursor:wait;opacity:.7}.spinning{animation:classroom-spin 1s linear infinite}.interaction-badge{flex:0 0 auto;padding:7px 11px;border:1px solid #c9e1f5;border-radius:999px;color:#3d78b8;background:#f0f8ff;font-size:12px;font-weight:900}@keyframes classroom-spin{to{transform:rotate(360deg)}}
 .module-content{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(220px,.7fr);align-content:start;gap:14px;padding:22px 28px;overflow:auto}.content-block{min-width:0;padding:17px 18px;border:1px solid #e1edf7;border-radius:12px;background:#fbfdff}.speech-block{grid-row:span 2;min-height:170px;background:#f5faff}.content-label{display:block;margin-bottom:9px;color:#5b91c3;font-size:12px;font-weight:900}.speech-block p,.example-block p,.question-block>p{margin:0;color:#234e82;font-size:16px;line-height:1.85;overflow-wrap:anywhere}.points-block ul{display:grid;gap:9px;margin:0;padding:0;list-style:none}.points-block li{position:relative;padding-left:16px;color:#315e91;font-size:14px;line-height:1.55;overflow-wrap:anywhere}.points-block li:before{position:absolute;top:.65em;left:0;width:6px;height:6px;border-radius:50%;background:#4b93d5;content:''}.example-block{background:#fffaf0;border-color:#f1dfb8}.example-block .content-label{color:#b37a30}.example-block p{color:#805b2c;font-size:14px}.question-block{grid-column:1/-1;background:#fffaf0;border-color:#f1dfb8}.question-heading{display:flex;align-items:center;justify-content:space-between;color:#b37a30}.question-heading .content-label{margin:0;color:inherit}.question-block>p{margin-top:10px;color:#805b2c;font-weight:800}.question-options{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.question-options button{min-height:36px;padding:0 13px;border:1px solid #e6c979;border-radius:9px;color:#8d652d;background:#fff;font-size:13px}.question-options button:hover,.question-options button.selected{color:#fff;background:#b67b2c;border-color:#b67b2c}.question-hint{display:block;margin-top:12px;color:#aa8452;font-size:12px}
 .resource-preview-card{background:#f7fbff;border-color:#cfe3f5}.resource-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.resource-card-head .content-label{display:inline-flex;align-items:center;gap:6px;margin-bottom:0}.resource-preview-card strong{display:block;margin-top:13px;color:#174b91;font-size:15px;line-height:1.45;overflow-wrap:anywhere}.resource-preview-card p{display:-webkit-box;margin:6px 0 0;overflow:hidden;color:#6383a4;font-size:13px;line-height:1.55;overflow-wrap:anywhere;-webkit-box-orient:vertical;-webkit-line-clamp:2}.resource-open-button{display:inline-flex;align-items:center;gap:5px;min-height:30px;padding:0 10px;border:1px solid #b9d7f0;border-radius:8px;color:#2160a8;background:#fff;font-size:12px;font-weight:900;cursor:pointer}.resource-open-button:hover:not(:disabled){border-color:#2160a8;color:#fff;background:#2160a8}.resource-open-button:disabled{cursor:wait;opacity:.65}
 .resource-workbench{flex:0 0 auto;background:#f7fbff;border-color:#cfe3f5}.resource-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.resource-card-head .content-label{display:inline-flex;align-items:center;gap:6px;margin-bottom:0}.resource-count{color:#7b9bb9;font-size:12px;font-weight:800}.resource-workbench-intro{margin:10px 0 12px;color:#6383a4;font-size:12px;line-height:1.5}.resource-items{display:grid;gap:8px;max-height:260px;overflow:auto}.resource-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid #dcebf6;border-radius:9px;background:#fff}.resource-item-copy{min-width:0}.resource-item-copy>span{display:block;color:#6c99be;font-size:11px;font-weight:900}.resource-item-copy strong{display:block;margin-top:3px;overflow:hidden;color:#174b91;font-size:13px;line-height:1.4;text-overflow:ellipsis;white-space:nowrap}.resource-item-copy p{display:-webkit-box;margin:3px 0 0;overflow:hidden;color:#7595b1;font-size:11px;line-height:1.4;-webkit-box-orient:vertical;-webkit-line-clamp:2}.resource-empty-state{padding:14px 10px;border:1px dashed #b9d7ee;border-radius:9px;color:#6f92b1;background:#fff;font-size:12px;line-height:1.5}.resource-generation-status{margin:10px 0 0;padding:8px 10px;border-radius:8px;color:#3973b4;background:#edf7ff;font-size:12px;line-height:1.45}.resource-generation-error{margin:10px 0 0;color:#a7662c;font-size:12px;line-height:1.45}.resource-generate-button{display:flex;align-items:center;justify-content:center;width:100%;min-height:36px;margin-top:12px;border:0;border-radius:9px;color:#fff;background:#2572d8;font-size:13px;font-weight:900;cursor:pointer}.resource-generate-button:hover:not(:disabled){background:#185bb5}.resource-generate-button:disabled{cursor:wait;opacity:.6}
@@ -690,6 +816,7 @@ button { font:inherit; }
 .module-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:auto;padding:14px 28px 20px;border-top:1px solid #e5eff8}.primary-button{min-height:42px;padding:0 18px;border-radius:10px;color:#fff;background:var(--blue);font-weight:900}.primary-button:hover{background:#174b96}.secondary-button:disabled{cursor:not-allowed;opacity:.45}
 .dialog-panel{display:flex;flex:1 1 auto;flex-direction:column;overflow:hidden}.dialog-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 18px 15px;border-bottom:1px solid #e5eff8}.dialog-header h2{margin:3px 0 0;color:#174b91;font-size:20px}.message-count{color:#7e9fbe;font-size:12px;font-weight:800}.dialog-messages{display:flex;flex-direction:column;gap:12px;flex:1 1 auto;min-height:0;padding:16px;overflow-y:auto;background:#f8fbfe}.dialog-empty{margin:auto 0;color:#8aa9c4;font-size:13px;text-align:center}.message{max-width:92%;padding:10px 12px;border:1px solid #dbeaf7;border-radius:11px;color:#275686;background:#fff;overflow-wrap:anywhere}.message.learner{align-self:flex-end;border-color:#5aaec1;color:#fff;background:#55aebb}.message-author{display:block;margin-bottom:5px;color:#5d91c0;font-size:11px;font-weight:900}.message.learner .message-author{color:rgba(255,255,255,.82)}.message p{margin:0;line-height:1.6}.message :deep(.markdown-body){font-size:13px;line-height:1.6}.message :deep(.markdown-body>:first-child){margin-top:0}.message :deep(.markdown-body>:last-child){margin-bottom:0}.message :deep(.markdown-body p){margin:0 0 6px}.message :deep(.markdown-body ul),.message :deep(.markdown-body ol){margin:4px 0;padding-left:17px}.message :deep(.markdown-body pre){max-width:100%;overflow:auto}.message :deep(.markdown-body a){color:#2f6fe4;text-decoration:underline}.dialog-input{display:flex;gap:8px;padding:12px;border-top:1px solid #e5eff8;background:#fff}.dialog-input input{min-width:0;flex:1;height:40px;padding:0 11px;border:1px solid #d5e5f3;border-radius:9px;outline:none;color:var(--ink);background:#f9fcff}.dialog-input input:focus{border-color:#67a3da;box-shadow:0 0 0 3px rgba(79,151,214,.12)}.dialog-input button{width:58px;height:40px;border-radius:9px;color:#fff;background:var(--blue);font-size:13px;font-weight:900}.dialog-input button:disabled{cursor:not-allowed;opacity:.5}
 .resource-preview-overlay{position:fixed;inset:0;z-index:1500;display:grid;place-items:center;padding:18px;background:rgba(12,28,58,.32);backdrop-filter:blur(10px)}.resource-preview-panel{display:flex;flex-direction:column;width:min(1120px,100%);height:min(820px,calc(100vh - 36px));border:1px solid #c9deef;border-radius:16px;background:#fff;box-shadow:0 28px 80px rgba(22,63,143,.22);overflow:hidden}.resource-preview-panel header,.resource-preview-panel footer{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 18px;border-bottom:1px solid #deebf5}.resource-preview-panel footer{justify-content:flex-end;border-top:1px solid #deebf5;border-bottom:0}.resource-preview-panel header span{color:#5f8fc3;font-size:12px;font-weight:900}.resource-preview-panel header h2{max-width:760px;margin:3px 0 0;overflow:hidden;color:#174b91;font-size:20px;line-height:1.3;text-overflow:ellipsis;white-space:nowrap}.resource-preview-panel header button{display:grid;place-items:center;width:36px;height:36px;border:1px solid #c9deef;border-radius:9px;color:#174b91;background:#f8fbfe;cursor:pointer}.resource-preview-panel footer button{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:0 14px;border:0;border-radius:9px;color:#fff;background:var(--blue);font:inherit;font-size:13px;font-weight:900;cursor:pointer}.resource-preview-body{position:relative;min-height:0;flex:1;padding:18px;overflow:auto;background:#fbfdff}.resource-preview-body--ppt{display:grid;padding:10px;overflow:hidden;grid-template-rows:minmax(0,1fr)}.resource-preview-body--mindmap{padding:10px;overflow:hidden}.resource-preview-body--mindmap :deep(.mindmap-preview){height:100%;min-height:0}.resource-preview-body--mindmap :deep(.mindmap-canvas){height:100%;min-height:0}.resource-preview-body img{display:block;max-width:100%;max-height:100%;margin:0 auto;object-fit:contain}.resource-preview-loading{display:grid;place-items:center;min-height:180px;color:#5f8fc3;font-weight:800}.resource-html-placeholder{display:grid;min-height:200px;place-items:center;align-content:center;gap:14px;color:#5f8fc3;text-align:center}.resource-html-placeholder strong{color:#174b91;font-size:18px}.resource-html-placeholder a{display:inline-flex;align-items:center;min-height:36px;padding:0 14px;border-radius:9px;color:#fff;background:var(--blue);font-weight:900;text-decoration:none}.resource-preview-body pre{margin:0;padding:16px;border-radius:10px;color:#174b91;background:#f1f8ff;white-space:pre-wrap;word-break:break-word;font:inherit;line-height:1.8}
+.resource-preview-header-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}.resource-preview-panel header .resource-preview-download{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:auto;min-height:36px;padding:0 10px;border:1px solid var(--blue);border-radius:9px;color:#fff;background:var(--blue);font:inherit;font-size:13px;font-weight:900}
 @media(max-width:980px){.classroom-page{height:auto;min-height:calc(100vh - 64px);overflow:visible}.classroom-layout{grid-template-columns:1fr}.dialog-panel{min-height:390px}}
 @media(max-width:680px){.classroom-page{gap:10px;padding:12px}.classroom-header{flex-wrap:wrap;gap:10px}.back-button span{display:none}.back-button{width:42px;justify-content:center;padding:0}.classroom-heading{flex:1 1 calc(100% - 60px)}.classroom-heading h1{font-size:22px}.generation-status{order:3;width:100%;justify-content:center;margin-left:0}.module-nav{grid-template-columns:repeat(4,minmax(78px,1fr));overflow-x:auto}.module-tab{min-height:48px;padding:7px}.module-tab-copy small{display:none}.module-panel-header{padding:18px 16px 14px}.module-panel-header h2{font-size:26px}.module-content{grid-template-columns:1fr;padding:14px 16px}.speech-block{grid-row:auto;min-height:0}.question-block{grid-column:auto}.module-footer{padding:12px 16px 16px}.secondary-button,.primary-button{flex:1;padding:0 10px;font-size:13px}.resource-items{max-height:none}.resource-item{align-items:flex-start;flex-direction:column}.resource-open-button{align-self:flex-end}.resource-preview-overlay{padding:10px}.resource-preview-panel{height:calc(100vh - 20px);border-radius:12px}.resource-preview-panel header,.resource-preview-panel footer{padding:12px}.resource-preview-panel header h2{max-width:250px;font-size:17px}.resource-preview-body{padding:12px}}
 .lesson-summary{grid-column:1/-1;background:#f2f9ff;border-color:#cfe4f5}.summary-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#6d91b6;font-size:12px;font-weight:800}.summary-heading .content-label{margin:0;color:#3978b4}.lesson-summary>p{margin:0;color:#245385;font-size:14px;line-height:1.7}.lesson-summary ul{display:grid;gap:6px;margin:10px 0 0;padding-left:18px;color:#315e91;font-size:13px;line-height:1.5}

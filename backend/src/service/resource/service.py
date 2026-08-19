@@ -35,6 +35,7 @@ from backend.src.service.resource.history import save_generation_to_history as _
 from backend.src.service.resource.library import ResourceLibraryService
 from backend.src.service.resource.persistence import (
     clean_generation_topic as _clean_generation_topic,
+    is_failed_generation_content as _is_failed_generation_content,
     save_resources as _save_resources,
 )
 from backend.src.service.resource.tasks import ResourceTaskService
@@ -57,7 +58,7 @@ async def _save_single_generated_resource(
     retry_count: int = 0,
     ppt_theme_id: str | None = None,
 ) -> dict | None:
-    if not user or not resource_type or content is None:
+    if not user or not resource_type or content is None or _is_failed_generation_content(content):
         return None
     topic = _clean_generation_topic(topic)
 
@@ -230,7 +231,7 @@ class ResourceService:
                 if chunk.get("type") == "resource_complete":
                     rt = str(chunk.get("resource_type") or chunk.get("file_type") or "").strip()
                     content = chunk.get("content")
-                    if rt and rt not in saved_types and user and content is not None:
+                    if rt and rt not in saved_types and user and content is not None and not _is_failed_generation_content(content):
                         item_content = _apply_ppt_theme_to_content(content, ppt_theme_id) if rt == "ppt" else content
                         saved = await _save_single_generated_resource(
                             topic,
@@ -255,7 +256,7 @@ class ResourceService:
                 resources = chunk.get("generated_resources", {})
                 if resources:
                     for rt, content in resources.items():
-                        if rt not in saved_types and rt not in yielded_types and user:
+                        if rt not in saved_types and rt not in yielded_types and user and not _is_failed_generation_content(content):
                             item_content = _apply_ppt_theme_to_content(content, ppt_theme_id) if rt == "ppt" else content
                             record = await GeneratedResource.create(
                                 topic=topic, resource_type=rt, content=item_content,

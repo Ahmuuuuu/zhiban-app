@@ -31,6 +31,7 @@ from backend.src.utils.exceptions import ServiceError
 from backend.src.service.path.helpers import (
     check_resource_viewed,
     get_bound_node_resources,
+    pre_generate_node,
     unlock_next_node,
     update_portrait_from_mastery,
     update_progress_resource_ids,
@@ -784,6 +785,18 @@ class PathService:
     # ── 资源生成 ──
 
     @staticmethod
+    async def generate_node_classroom(path_id: int, node_id: int, user_id: int) -> dict | None:
+        """后台预生成节点课堂，复用课堂缓存、节点锁和低优先级限流。"""
+        from backend.src.service.path.classroom import generate_classroom_lesson
+
+        return await generate_classroom_lesson(
+            path_id,
+            node_id,
+            user_id,
+            llm_priority="low",
+        )
+
+    @staticmethod
     async def _ensure_node_progress(user_id: int, path_id: int, node_id: int):
         """生成资源时自动补建用户节点进度记录；失败返回 None。"""
         try:
@@ -798,7 +811,13 @@ class PathService:
             return None
 
     @staticmethod
-    async def generate_node_resources_stream(path_id: int, node_id: int, user_id: int, resource_types: list[str] | None = None):
+    async def generate_node_resources_stream(
+        path_id: int,
+        node_id: int,
+        user_id: int,
+        resource_types: list[str] | None = None,
+        llm_priority: str = "high",
+    ):
         """流式为节点生成学习资源（SSE）—— 生成好一个推送一个"""
         node = await PathNode.filter(id=node_id, path_id=path_id).first()
         if not node:
@@ -851,6 +870,7 @@ class PathService:
                     async for event_str in ResourceService.generate_stream(
                         topic=topic, user_id=user_id, resource_types=gen_types, skip_review=True,
                         ppt_prompt_key="ppt_video",
+                        llm_priority=llm_priority,
                         chat_group_id=0,
                         bind_chat_history=False,
                         include_request_in_history=False,
@@ -1285,6 +1305,7 @@ class PathService:
                 user_id,
                 PathService.generate_node_resources,
                 PathService.generate_node_quiz,
+                PathService.generate_node_classroom,
             )
         else:
             progress.node_status = "in_progress"
@@ -1915,10 +1936,13 @@ def _schedule_first_node_warmup(path_id: int, node_id: int, user_id: int) -> Non
 
 async def _generate_first_node_warmup_background(path_id: int, node_id: int, user_id: int) -> None:
     try:
-        await asyncio.gather(
-            PathService.generate_node_resources(path_id, node_id, user_id),
-            PathService.generate_node_quiz(path_id, node_id, user_id),
-            return_exceptions=True,
+        await pre_generate_node(
+            path_id,
+            node_id,
+            user_id,
+            PathService.generate_node_resources,
+            PathService.generate_node_quiz,
+            PathService.generate_node_classroom,
         )
     except Exception:
         logger.exception("first node warmup failed path_id=%s node_id=%s", path_id, node_id)

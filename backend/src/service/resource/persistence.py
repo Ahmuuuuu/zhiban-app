@@ -13,6 +13,20 @@ from backend.src.service.resource.metadata import (
 )
 
 
+_GENERATION_FAILURE_RE = re.compile(
+    r"^\s*\[(?:生成失败|generation failed|failed to generate)\b|"
+    r"read operation timed out|incomplete chunked read|peer closed connection",
+    re.IGNORECASE,
+)
+
+
+def is_failed_generation_content(content) -> bool:
+    """识别上游超时等错误文本，避免把错误信息当成学习资源保存。"""
+    if not isinstance(content, str):
+        return False
+    return bool(_GENERATION_FAILURE_RE.search(content.strip()))
+
+
 def clean_generation_topic(topic: str | None) -> str:
     text = str(topic or "").strip()
     text = re.sub(r"\n\n【生成类型指令】[\s\S]*$", "", text)
@@ -47,6 +61,8 @@ async def save_resources(
                 if resource_type == "ppt"
                 else content
             )
+            if is_failed_generation_content(item_content):
+                continue
             record = await GeneratedResource.create(
                 topic=topic,
                 resource_type=resource_type,

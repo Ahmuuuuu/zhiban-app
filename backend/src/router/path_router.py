@@ -180,6 +180,7 @@ async def generate_node_resources_stream(
         PathService.generate_node_resources_stream(
             path_id, node_id, user_id,
             resource_types=data.resource_types if data else None,
+            llm_priority="low" if data and data.background else "high",
         ),
         media_type="text/event-stream",
     )

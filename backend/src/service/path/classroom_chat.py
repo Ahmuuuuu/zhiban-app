@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-互动课堂对话 — 复用 Brain 现成聊天逻辑（不落 ChatHistory）
+互动课堂对话 — 复用 Brain 现成聊天逻辑（独立课堂组落 ChatHistory）
 
 每用户懒创建一个"课堂小知" persona agent（工具白名单），课堂内容通过 path_context
-注入，流式回复由前端 streamClassroomChatMessage 消费。
+注入，流式回复由前端 streamClassroomChatMessage 消费；完成后复用现有画像提取链路。
 """
 import asyncio
 import hashlib
@@ -12,11 +12,16 @@ import logging
 from collections import OrderedDict
 
 from backend.src.ai_core.brain import Brain
+from backend.src.models.chat_history_model import ChatHistory
 from backend.src.models.usermodel import User
 from backend.src.models.user_agent_model import UserAgent
 from backend.src.models.path_model import PathNode
 from backend.src.service.agent.service import create as _agent_create
-from backend.src.service.chat.service import _build_portrait_context as _build_global_portrait_context
+from backend.src.service.chat.service import (
+    _build_portrait_context as _build_global_portrait_context,
+    invalidate_portrait_cache,
+)
+from backend.src.service.portrait.service import extract_portrait_from_chat
 from backend.src.service.path.classroom import _clip
 from backend.src.service.path.generation_locks import get_node_generation_lock
 
@@ -49,6 +54,7 @@ _CLASSROOM_PERSONA = """你是知伴 App 里的"课堂小知"，一位专属于�
 - 费曼反讲时：一次只追问一个薄弱点，先肯定再追问，引导他补例子或反例。
 - 回答简洁、口语化、有温度，中文为主，一次说清一个点，不要一次倒太多。
 - 使用 Markdown 排版，数学公式用 $...$，禁止输出 HTML 标签。
+- 涉及位数、编码范围、公式、标准或历史事实时，先核对【课堂上下文】；上下文不足就调用知识库或搜索工具查证，不凭记忆补数值。要明确区分定义、例子和推论。
 ## 边界
 - 不要主动推荐生成学习资料，不要出题，不要生成 PPT、图片、动画、视频。
 - 不要改动学习路径或用户设置，不要管理技能。
@@ -243,7 +249,7 @@ async def stream_classroom_chat(
     scenario: str,
     text: str,
 ):
-    """async generator：复用 Brain.stream 产出课堂对话 SSE 事件，不落 ChatHistory。"""
+    """async generator：复用 Brain.stream 产出课堂对话 SSE 事件。"""
     fallback = _FALLBACK_REPLIES.get(scenario, _FALLBACK_REPLIES["free"])
     try:
         agent_id = await get_or_create_classroom_agent(user_id)
@@ -260,6 +266,7 @@ async def stream_classroom_chat(
             portrait_ctx = await _build_global_portrait_context(user_id)
 
             got_chunk = False
+            full_response = ""
             async for event in brain.stream(
                 user_prompt,
                 path_context=path_ctx,
@@ -270,15 +277,43 @@ async def stream_classroom_chat(
                     continue
                 if event.get("type") in ("chunk", "content") and event.get("content"):
                     got_chunk = True
+                    full_response += str(event["content"])
                 yield _sse(event)
 
             if not got_chunk:
-                yield _sse({"role": "assistant", "type": "chunk", "content": fallback})
+                full_response = fallback
+                yield _sse({"role": "assistant", "type": "chunk", "content": full_response})
+
+            # 课堂小知不使用普通聊天组的生成流程，但画像提取复用现有
+            # extract_portrait_from_chat，因此把已完成的一轮写入同一个稳定课堂组。
+            chat_group_id = _classroom_group_id(user_id, path_id, node_id)
+            await ChatHistory.create(
+                user_id=user_id,
+                chat_group_id=chat_group_id,
+                agent_id=agent_id,
+                req=str(text or "").strip(),
+                res=full_response,
+            )
+            asyncio.create_task(_refresh_portrait_after_classroom_chat(user_id, chat_group_id))
             yield _sse(None, done=True)
     except Exception:
         logger.exception("classroom chat failed user_id=%s path_id=%s node_id=%s", user_id, path_id, node_id)
         yield _sse({"error": "小知暂时走神了，稍后再问一次吧"})
         yield _sse(None, done=True)
+
+
+async def _refresh_portrait_after_classroom_chat(user_id: int, chat_group_id: int) -> None:
+    """课堂问答结束后复用普通聊天的画像提取链路，不阻塞 SSE 收尾。"""
+    try:
+        await extract_portrait_from_chat(user_id, chat_group_id)
+    except Exception:
+        logger.exception(
+            "classroom portrait extraction failed user_id=%s chat_group_id=%s",
+            user_id,
+            chat_group_id,
+        )
+    finally:
+        invalidate_portrait_cache(user_id)
 
 
 def _sse(payload: dict | None, done: bool = False) -> str:

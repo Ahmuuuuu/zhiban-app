@@ -14,11 +14,14 @@ from backend.src.models.portraitmodel import User_picture
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
 from backend.src.service.notification.service import check_and_create_node_unlocked
+from backend.src.service.resource.persistence import is_failed_generation_content
 
 logger = logging.getLogger(__name__)
 
 GenerateResources = Callable[[int, int, int], Awaitable[dict]]
 GenerateQuiz = Callable[..., Awaitable[dict]]
+GenerateClassroom = Callable[[int, int, int], Awaitable[dict | None]]
+_CLASSROOM_WARMUP_TASKS: set[asyncio.Task] = set()
 
 
 async def check_existing_resources(
@@ -78,7 +81,11 @@ async def get_bound_node_resources(
     if not bound_ids:
         return [], list(resource_types)
 
-    records = await GeneratedResource.filter(id__in=bound_ids, user_id=user_id).all()
+    records = [
+        record
+        for record in await GeneratedResource.filter(id__in=bound_ids, user_id=user_id).all()
+        if not is_failed_generation_content(record.content)
+    ]
     by_id = {record.id: record for record in records}
     ordered = [by_id[rid] for rid in bound_ids if rid in by_id]
 
@@ -124,14 +131,21 @@ async def pre_generate_node(
     user_id: int,
     generate_resources: GenerateResources,
     generate_quiz: GenerateQuiz,
+    generate_classroom: GenerateClassroom | None = None,
 ):
     try:
         await asyncio.gather(
             generate_resources(path_id, node_id, user_id),
             generate_quiz(path_id, node_id, user_id, pre_generate=True),
         )
+        # 课堂依赖资源和题目快照，二者落库后再预生成避免空上下文版本。
+        if generate_classroom:
+            task = asyncio.create_task(generate_classroom(path_id, node_id, user_id))
+            _CLASSROOM_WARMUP_TASKS.add(task)
+            task.add_done_callback(_CLASSROOM_WARMUP_TASKS.discard)
+            logger.info("课堂预生成已排队 path_id=%s node_id=%s", path_id, node_id)
     except Exception:
-        logger.exception("预生成节点资源/检测题失败 path_id=%s node_id=%s", path_id, node_id)
+        logger.exception("预生成节点资源/检测题/课堂失败 path_id=%s node_id=%s", path_id, node_id)
 
 
 async def unlock_next_node(
@@ -140,8 +154,9 @@ async def unlock_next_node(
     user_id: int,
     generate_resources: GenerateResources,
     generate_quiz: GenerateQuiz,
+    generate_classroom: GenerateClassroom | None = None,
 ):
-    """Unlock the next node and pre-generate resources for the next two nodes."""
+    """解锁下一节点，并为最近两个节点预生成资料、测验和互动课堂。"""
     next_node = await PathNode.filter(path_id=path_id, order_index=current_order + 1).first()
     if not next_node:
         return
@@ -161,7 +176,7 @@ async def unlock_next_node(
 
     await asyncio.gather(
         *(
-            pre_generate_node(path_id, node_id, user_id, generate_resources, generate_quiz)
+            pre_generate_node(path_id, node_id, user_id, generate_resources, generate_quiz, generate_classroom)
             for node_id in pre_gen_ids
         )
     )

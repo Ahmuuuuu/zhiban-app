@@ -12,17 +12,19 @@ from typing import Any
 
 from backend.src.models.path_model import LearningPath, PathNode, UserPathProgress
 from backend.src.models.classroom_model import ClassroomLesson
+from backend.src.service.exam.service import ExamService
 from backend.src.models.portraitmodel import User_picture
 from backend.src.models.resource_model import GeneratedResource
 from backend.src.models.usermodel import User
 from backend.src.service.portrait.service import PortraitRadarService, format_portrait
 from backend.src.utils.constants import STATIC_DIR
 from backend.src.utils.tts_utils import clean_for_tts, generate_audio
+from backend.src.service.resource.persistence import is_failed_generation_content
 
 logger = logging.getLogger(__name__)
 
 CLASSROOM_AUDIO_DIR = STATIC_DIR / "audio" / "classroom"
-_CLASSROOM_SCHEMA_VERSION = "exercise-v2"
+_CLASSROOM_SCHEMA_VERSION = "concept-first-v3"
 
 
 def _safe_json_loads(value: str | None, fallback):
@@ -67,6 +69,33 @@ def _classroom_fingerprint(
 def _clip(text: Any, limit: int = 900) -> str:
     value = " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split())
     return value[:limit]
+
+
+def _classroom_segment_narration_text(segment: dict[str, Any] | None) -> str:
+    """构造单幕旁白，和前端课堂卡片展示范围保持一致以命中 TTS 缓存。"""
+    if not isinstance(segment, dict):
+        return ""
+    script = _clip(segment.get("teacher_speech") or segment.get("script") or "", 240)
+    raw_points = [
+        *(segment.get("points") if isinstance(segment.get("points"), list) else []),
+        *(segment.get("board_items") if isinstance(segment.get("board_items"), list) else []),
+    ]
+    points: list[str] = []
+    seen: set[str] = set()
+    for item in raw_points:
+        point = _clip(item, 70)
+        if point and point not in seen:
+            seen.add(point)
+            points.append(point)
+        if len(points) >= 5:
+            break
+    parts = []
+    if script:
+        parts.append(f"讲解。{script}")
+    if points:
+        numbered = "。".join(f"第{index + 1}点，{point}" for index, point in enumerate(points))
+        parts.append(f"抓住这几点。{numbered}")
+    return _clip("。".join(parts), 500)
 
 
 def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
@@ -278,18 +307,18 @@ def _teaching_pack(topic: str, summary: str) -> dict[str, Any]:
         return {
             "lead": "先分清两件事：数字怎样保存，字符怎样编号。",
             "entry_items": ["数字表示", "字符编码", "易混对比"],
-            "core_items": ["BCD表示十进制数字", "8421BCD按权相加", "压缩BCD一字节两位", "ASCII表示字符编号", "编码值不等于数值"],
+            "core_items": ["BCD表示十进制数字", "8421BCD按权相加", "ASCII表示字符编号", "奇偶校验检测传输错误", "编码值不等于数值"],
             "lines": [
-                "BCD服务十进制数字，每一位只允许表示0到9。",
-                "8421BCD靠8、4、2、1四个位权组合出一位十进制数。",
-                "ASCII服务字符，字符“5”的编码是35H，不等于数值5。",
+                "BCD是一种十进制数字编码：每个十进制位单独用4位二进制表示，8421BCD的位权是8、4、2、1。",
+                "ASCII是一种字符编码：它给字符分配编号；字符“5”的编码是35H，不等于数值5。",
+                "奇偶校验是在数据外增加校验位，使1的总数保持为奇数或偶数；它能发现奇数个比特翻转，不能纠错。",
             ],
-            "example": "十进制59的压缩BCD是0101 1001B；字符“5”的ASCII码是35H。",
-            "resource_items": ["查BCD定义", "查8421权值", "查ASCII码表"],
-            "resource_lines": ["先在资料中找BCD定义。", "再找8421BCD权值说明。", "最后对比ASCII码表里的字符编号。"],
-            "resource_example": "资料里若同时出现BCD和ASCII，重点看它们分别服务“数字”和“字符”。",
-            "question": "为什么字符“5”的ASCII码不是二进制数5？",
-            "feynman_prompt": "请用“数字表示”和“字符编号”的区别讲清BCD与ASCII。",
+            "example": "十进制59的压缩BCD是0101 1001B；字符“5”的ASCII码是35H；偶校验要求含校验位后1的总数为偶数。",
+            "resource_items": ["查BCD定义", "查ASCII码表", "查奇偶校验规则"],
+            "resource_lines": ["先在资料中找BCD定义。", "再对比ASCII码表里的字符编号。", "最后核对奇偶校验能检测什么、不能做什么。"],
+            "resource_example": "资料里同时出现BCD、ASCII和校验位时，先分别标出数字、字符和传输检查三种职责。",
+            "question": "字符“5”的ASCII码、数值5的BCD表示和奇偶校验位，分别解决什么问题？",
+            "feynman_prompt": "请用“数字表示、字符编号、传输检查”三句话讲清BCD、ASCII和奇偶校验。",
         }
 
     if re.search(r"补码|反码|原码|符号", context):
@@ -637,7 +666,11 @@ async def _build_portrait_context(user_id: int) -> str:
 
 
 async def _load_node_resources(progress: UserPathProgress | None, client_resources: list[dict[str, Any]]) -> list[dict[str, str]]:
-    snapshots = [_resource_snapshot(item) for item in client_resources[:6] if isinstance(item, dict)]
+    snapshots = [
+        _resource_snapshot(item)
+        for item in client_resources[:6]
+        if isinstance(item, dict) and not is_failed_generation_content(item.get("content"))
+    ]
     seen_titles = {item["title"] for item in snapshots}
 
     resource_ids = _safe_json_loads(progress.resource_ids if progress else None, [])
@@ -646,6 +679,8 @@ async def _load_node_resources(progress: UserPathProgress | None, client_resourc
 
     records = await GeneratedResource.filter(id__in=resource_ids).all()
     for record in records:
+        if is_failed_generation_content(record.content):
+            continue
         item = _resource_snapshot(
             {"title": record.topic, "resource_type": record.resource_type},
             content=record.content,
@@ -659,11 +694,56 @@ async def _load_node_resources(progress: UserPathProgress | None, client_resourc
     return snapshots
 
 
+async def _load_node_quiz_snapshot(
+    progress: UserPathProgress | None,
+    client_quiz: dict[str, Any],
+) -> dict[str, Any]:
+    """优先使用前端快照；后台预生成时从节点测验会话补齐课堂上下文。"""
+    if client_quiz:
+        return client_quiz
+    if not progress:
+        return {}
+    session_id = str(progress.quiz_session_id or "").strip()
+    if not session_id:
+        return {}
+    try:
+        session = await ExamService.get_session(session_id, progress.user_id)
+    except Exception:
+        logger.exception(
+            "Load classroom quiz snapshot failed user=%s node=%s session=%s",
+            progress.user_id,
+            progress.node_id,
+            session_id,
+        )
+        return {}
+    if not session:
+        return {}
+
+    # 课堂只需要少量题干、选项和解析理解检查点，完整题目仍由测验接口提供。
+    questions = []
+    for record in session.get("records", [])[:3]:
+        question = record.get("question") if isinstance(record, dict) else None
+        if not isinstance(question, dict):
+            continue
+        questions.append({
+            "content": _clip(question.get("content"), 220),
+            "options": question.get("options") if isinstance(question.get("options"), list) else [],
+            "answer": _clip(question.get("answer"), 24),
+            "analysis": _clip(question.get("analysis"), 180),
+        })
+    return {
+        "session_id": session_id,
+        "questions": questions,
+        "total_questions": session.get("total_questions", len(questions)),
+    }
+
+
 async def generate_classroom_lesson(
     path_id: int,
     node_id: int,
     user_id: int,
     client_payload: dict[str, Any] | None = None,
+    llm_priority: str = "high",
 ) -> dict[str, Any] | None:
     request_started_at = time.perf_counter()
     node = await PathNode.filter(id=node_id, path_id=path_id).first()
@@ -677,7 +757,7 @@ async def generate_classroom_lesson(
     client_payload = client_payload or {}
     client_node = client_payload.get("node") if isinstance(client_payload.get("node"), dict) else {}
     client_resources = client_payload.get("resources") if isinstance(client_payload.get("resources"), list) else []
-    quiz = client_payload.get("quiz") if isinstance(client_payload.get("quiz"), dict) else {}
+    client_quiz = client_payload.get("quiz") if isinstance(client_payload.get("quiz"), dict) else {}
 
     topic = node.topic or client_node.get("title") or client_node.get("topic") or "当前节点"
     knowledge_tags = _safe_json_loads(node.knowledge_tags, [])
@@ -689,6 +769,7 @@ async def generate_classroom_lesson(
         or f"围绕 {topic} 完成概念理解、资料验证和检测。"
     )
     resources = await _load_node_resources(progress, client_resources)
+    quiz = await _load_node_quiz_snapshot(progress, client_quiz)
     portrait_context = await _build_portrait_context(user_id)
     force_regenerate = bool(client_payload.get("force_regenerate"))
     logger.info(
@@ -791,10 +872,12 @@ async def generate_classroom_lesson(
                 resources=resources,
                 portrait_context=portrait_context,
                 fallback_lesson=fallback,
-                llm_priority="high",
+                llm_priority=llm_priority,
             )
             final_state = await classroom_graph.ainvoke(initial)
-            lesson = final_state.get("lesson") if final_state.get("review_passed") else {}
+            # 图中的审核只负责检查展示契约；不能因为质量分数把已经完整的
+            # 智能体课堂丢掉，造成前端长时间白屏。
+            lesson = final_state.get("lesson")
             generated_new_lesson = _is_lesson_ready(lesson)
             logger.info(
                 "[ClassroomService] 课堂图结束 path=%s node=%s user=%s review_passed=%s score=%s retry=%s ready=%s elapsed=%.2fs",

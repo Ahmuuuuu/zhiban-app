@@ -33,6 +33,7 @@ from backend.src.utils.knowledge_base import search as kb_search
 from backend.src.utils.prompt_loader import load_prompt, fill_prompt
 from backend.src.utils.json_parser import parse_llm_json
 from backend.src.utils.slide_schema import PPT_SPEAKER_NOTES_MAX_CHARS, limit_speaker_notes
+from backend.src.service.resource.persistence import is_failed_generation_content
 
 logger = logging.getLogger(__name__)
 
@@ -1355,18 +1356,35 @@ async def executor_node(state: ResourceState) -> dict:
     def gen_one_sync(rt: str) -> tuple[str, str]:
         t_start = time.perf_counter()
         _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "running", f"正在生成 {rt}", resource_type=rt)
-        try:
-            response = llm.invoke(prompts[rt], priority=llm_priority, user_id=user_id_int, pool="thread")
-            result = rt, response.content
-            elapsed = time.perf_counter() - t_start
-            _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "done", f"{rt} 生成完成", resource_type=rt, elapsed_ms=int(elapsed * 1000))
-            logger.info(f"[Executor] {rt} 生成完成 耗时={elapsed:.2f}s")
-            return result
-        except Exception as e:
-            elapsed = time.perf_counter() - t_start
-            _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "failed", f"{rt} 生成失败", resource_type=rt, elapsed_ms=int(elapsed * 1000))
-            logger.exception(f"[Executor] {rt} 调用失败 耗时={elapsed:.2f}s")
-            return rt, f"[生成失败: {e}]"
+        max_attempts = 2 if rt == "mindmap" else 1
+        last_error = None
+        for attempt in range(max_attempts):
+            try:
+                response = llm.invoke(prompts[rt], priority=llm_priority, user_id=user_id_int, pool="thread")
+                content = str(response.content or "").strip()
+                if not content:
+                    raise ValueError(f"{rt} 返回内容为空")
+                elapsed = time.perf_counter() - t_start
+                _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "done", f"{rt} 生成完成", resource_type=rt, elapsed_ms=int(elapsed * 1000))
+                logger.info("[Executor] %s 生成完成 耗时=%.2fs 尝试=%d", rt, elapsed, attempt + 1)
+                return rt, content
+            except Exception as error:
+                last_error = error
+                error_text = str(error).lower()
+                transient = any(token in error_text for token in (
+                    "timeout", "timed out", "incomplete", "connecterror", "readerror", "remoteprotocolerror",
+                ))
+                if rt == "mindmap" and attempt + 1 < max_attempts and transient:
+                    _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "retrying", "思维导图请求超时，正在重试", resource_type=rt)
+                    logger.warning("[Executor] mindmap 临时错误，准备重试：%s", error)
+                    time.sleep(1.5)
+                    continue
+                break
+
+        elapsed = time.perf_counter() - t_start
+        _push_agent_event(writer, f"executor:{rt}", f"{rt}生成智能体", "executor", "failed", f"{rt} 生成失败", resource_type=rt, elapsed_ms=int(elapsed * 1000))
+        logger.error("[Executor] %s 调用失败，错误内容不会入库，耗时=%.2fs：%s", rt, elapsed, last_error)
+        return rt, ""
 
     t_gen_start = time.perf_counter()
 
@@ -1494,6 +1512,9 @@ async def executor_node(state: ResourceState) -> dict:
         if content.get("url"):
             file_urls[actual_rt] = content["url"]
     for rt, content in other_results:
+        if not content or is_failed_generation_content(content):
+            logger.warning("[Executor] 跳过失败资源 rt=%s topic=%s", rt, topic)
+            continue
         if rt.startswith("image:"):
             actual_rt = rt.replace("image:", "")
             generated[actual_rt] = content.get("prompt", "")
