@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections import OrderedDict
 
 from backend.src.ai_core.brain import Brain
@@ -19,9 +20,8 @@ from backend.src.models.path_model import PathNode
 from backend.src.service.agent.service import create as _agent_create
 from backend.src.service.chat.service import (
     _build_portrait_context as _build_global_portrait_context,
-    invalidate_portrait_cache,
+    schedule_post_chat_enrichment,
 )
-from backend.src.service.portrait.service import extract_portrait_from_chat
 from backend.src.service.path.classroom import _clip
 from backend.src.service.path.generation_locks import get_node_generation_lock
 
@@ -249,7 +249,7 @@ async def stream_classroom_chat(
     scenario: str,
     text: str,
 ):
-    """async generator：复用 Brain.stream 产出课堂对话 SSE 事件。"""
+    """async generator：以普通聊天相同的持久化和流式顺序产出 SSE 事件。"""
     fallback = _FALLBACK_REPLIES.get(scenario, _FALLBACK_REPLIES["free"])
     try:
         agent_id = await get_or_create_classroom_agent(user_id)
@@ -264,60 +264,76 @@ async def stream_classroom_chat(
             user_prompt = _compose_user_prompt(scenario, text, segment)
             path_ctx = await _build_classroom_path_context(path_id, node_id, segment)
             portrait_ctx = await _build_global_portrait_context(user_id)
+            chat_group_id = _classroom_group_id(user_id, path_id, node_id)
+
+            # 与普通流式聊天一致：先记下用户输入，再从该课堂专属组恢复短期历史。
+            # 这样进程重启后仍能接上本节点的课堂对话，工具也能读取当前问题。
+            record = await ChatHistory.create(
+                user_id=user_id,
+                chat_group_id=chat_group_id,
+                agent_id=agent_id,
+                req=str(text or "").strip(),
+                res="",
+            )
+            await brain.hydrate_history(before_id=record.id)
 
             got_chunk = False
             full_response = ""
+            started_at = time.monotonic()
+            logger.info(
+                "[ClassroomChat] stream started user=%s path=%s node=%s segment=%s group=%s",
+                user_id,
+                path_id,
+                node_id,
+                segment.get("id"),
+                chat_group_id,
+            )
             async for event in brain.stream(
                 user_prompt,
                 path_context=path_ctx,
                 portrait_context=portrait_ctx,
+                # 课堂短对话由本节点的 ChatHistory 续接即可，不污染用户全局长期记忆。
                 memory_context="",
             ):
-                if not isinstance(event, dict):
-                    continue
-                if event.get("type") in ("chunk", "content") and event.get("content"):
+                if isinstance(event, dict):
+                    if event.get("type") in ("chunk", "content") and event.get("content"):
+                        got_chunk = True
+                        full_response += str(event["content"])
+                    yield _sse(event)
+                elif event:
+                    content = str(event)
                     got_chunk = True
-                    full_response += str(event["content"])
-                yield _sse(event)
+                    full_response += content
+                    yield _sse({"role": "assistant", "type": "chunk", "content": content})
 
             if not got_chunk:
                 full_response = fallback
                 yield _sse({"role": "assistant", "type": "chunk", "content": full_response})
 
-            # 课堂小知不使用普通聊天组的生成流程，但画像提取复用现有
-            # extract_portrait_from_chat，因此把已完成的一轮写入同一个稳定课堂组。
-            chat_group_id = _classroom_group_id(user_id, path_id, node_id)
-            await ChatHistory.create(
-                user_id=user_id,
-                chat_group_id=chat_group_id,
-                agent_id=agent_id,
-                req=str(text or "").strip(),
-                res=full_response,
+            record.res = full_response
+            await record.save()
+            # 课堂一问一答是完整观察样本；复用普通聊天的画像后处理，
+            # 但不把当前节点的临时问答写入全局长期记忆。
+            schedule_post_chat_enrichment(
+                user_id,
+                chat_group_id,
+                agent_id,
+                portrait_minimum_records=1,
+                persist_memory=False,
             )
-            asyncio.create_task(_refresh_portrait_after_classroom_chat(user_id, chat_group_id))
+            logger.info(
+                "[ClassroomChat] stream finished user=%s path=%s node=%s chars=%s elapsed=%.2fs",
+                user_id,
+                path_id,
+                node_id,
+                len(full_response),
+                time.monotonic() - started_at,
+            )
             yield _sse(None, done=True)
     except Exception:
         logger.exception("classroom chat failed user_id=%s path_id=%s node_id=%s", user_id, path_id, node_id)
         yield _sse({"error": "小知暂时走神了，稍后再问一次吧"})
         yield _sse(None, done=True)
-
-
-async def _refresh_portrait_after_classroom_chat(user_id: int, chat_group_id: int) -> None:
-    """课堂问答结束后复用普通聊天的画像提取链路，不阻塞 SSE 收尾。"""
-    try:
-        logger.info("[ClassroomPortrait] 开始更新 user=%s group=%s", user_id, chat_group_id)
-        await extract_portrait_from_chat(user_id, chat_group_id)
-        logger.info("[ClassroomPortrait] 更新完成 user=%s group=%s", user_id, chat_group_id)
-    except Exception:
-        logger.exception(
-            "classroom portrait extraction failed user_id=%s chat_group_id=%s",
-            user_id,
-            chat_group_id,
-        )
-    finally:
-        invalidate_portrait_cache(user_id)
-
-
 def _sse(payload: dict | None, done: bool = False) -> str:
     """把事件包成 SSE 文本；done=True 时发结束事件 + [DONE]。"""
     if done:

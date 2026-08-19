@@ -201,10 +201,11 @@
           </header>
           <div ref="dialogMessagesEl" class="dialog-messages" @click.capture="handleRenderedMarkdownClick">
             <div v-if="!messages.length" class="dialog-empty">{{ lessonSegments.length ? '进入模块后，可以随时问小知。' : '课堂内容生成完成后，这里才会开始对话。' }}</div>
-            <article v-for="message in messages" :key="message.id" class="message" :class="message.role">
+            <article v-for="message in messages" :key="message.id" class="message" :class="[message.role, { streaming: message.streaming }]">
               <span class="message-author">{{ message.role === 'teacher' ? '小知' : '我' }}</span>
               <div v-if="message.role === 'teacher'" class="markdown-body" v-html="renderMarkdown(message.content)"></div>
               <p v-else>{{ message.content }}</p>
+              <span v-if="message.role === 'teacher' && message.streaming" class="message-streaming-status" aria-live="polite">正在输入</span>
             </article>
           </div>
           <form class="dialog-input" @submit.prevent="sendLearnerMessage">
@@ -874,7 +875,7 @@ const downloadClassroomResource = async resource => {
   catch (error) { window.alert(error?.message || '下载失败，请稍后再试。') }
 }
 const trimMessages = () => { if (messages.value.length > 40) messages.value.splice(0, messages.value.length - 40) }
-const pushTeacher = content => { const text = clip(content, 500); if (text) { messages.value.push({ id: `teacher-${Date.now()}-${messages.value.length}`, role: 'teacher', content: text }); trimMessages() } }
+const pushTeacher = content => { const text = clip(content, 500); if (text) { messages.value.push({ id: `teacher-${Date.now()}-${messages.value.length}`, role: 'teacher', content: text, streaming: false }); trimMessages() } }
 const pushLearner = content => { const text = String(content || '').trim(); if (text) { messages.value.push({ id: `learner-${Date.now()}-${messages.value.length}`, role: 'learner', content: text }); trimMessages() } }
 const announceSegmentPrompt = segment => {
   if (segment?.id === 'exercise') return
@@ -888,16 +889,17 @@ const announceSegmentPrompt = segment => {
 
 const streamTeacherReply = async ({ text, scenario = 'free', segment = activeSegment.value }) => {
   if (streamingTeacher.value) return
-  const message = { id: `teacher-${Date.now()}-${messages.value.length}`, role: 'teacher', content: '正在思考...' }
+  const message = { id: `teacher-${Date.now()}-${messages.value.length}`, role: 'teacher', content: '正在思考...', streaming: true }
   messages.value.push(message); trimMessages(); streamingTeacher.value = true
   let hasChunk = false
   try {
     await streamClassroomChatMessage({ path_id: Number(pathId.value), node_id: Number(nodeId.value), scenario, text, segment: { id: segment?.id, title: segment?.title, script: segment?.script, points: segment?.points, example: segment?.example, question: segment?.question } }, {
-      onChunk: chunk => { if (chunk) { message.content = hasChunk ? `${message.content}${chunk}` : chunk; hasChunk = true } }
+      onChunk: chunk => { if (chunk) { message.content = hasChunk ? `${message.content}${chunk}` : chunk; hasChunk = true } },
+      onError: error => { throw new Error(error || '小知暂时没有回应，请稍后再试。') }
     })
     if (!hasChunk) message.content = '小知暂时没有生成回答，请稍后重试。'
   } catch (error) { message.content = error?.message || '小知暂时没有回应，请稍后再试。' }
-  finally { streamingTeacher.value = false }
+  finally { message.streaming = false; streamingTeacher.value = false }
 }
 const sendLearnerMessage = () => {
   const text = learnerInput.value.trim(); if (!text || streamingTeacher.value || !lessonSegments.value.length) return
@@ -982,4 +984,5 @@ button { font:inherit; }
 .retry-generation-button{margin-top:18px;min-height:38px;padding:0 18px;border:0;border-radius:9px;background:#1f5da8;color:#fff;font:inherit;font-weight:700;cursor:pointer}.retry-generation-button:disabled{cursor:wait;opacity:.6}
 @media(max-width:680px){.module-nav{grid-template-columns:repeat(4,minmax(78px,1fr))}.lesson-summary{grid-column:auto}.classroom-waiting-panel{width:calc(100% - 32px);padding:20px}.classroom-waiting-grid{grid-template-columns:1fr;gap:18px}.waiting-tip-section{padding-top:16px;padding-left:0;border-top:1px solid #dcebf7;border-left:0}.waiting-dual-grid{grid-template-columns:1fr;gap:12px}.waiting-slide{min-height:144px;padding:16px}.waiting-slide h3{font-size:18px}.waiting-slide p{font-size:13px;line-height:1.65}}
 @media(max-width:680px){.exercise-options{grid-template-columns:1fr;max-height:180px}.exercise-actions{flex-wrap:wrap}.exercise-check-button,.exercise-open-button{flex:1;min-width:120px}}
+.message-streaming-status{display:inline-flex;align-items:center;gap:5px;margin-top:7px;color:#6e96bb;font-size:11px;font-weight:800}.message-streaming-status:after{width:5px;height:5px;border-radius:50%;background:#4c8ccb;box-shadow:9px 0 #91b9dc,18px 0 #c5dced;content:'';animation:classroom-typing 1s steps(3,end) infinite}@keyframes classroom-typing{50%{opacity:.35}}
 </style>

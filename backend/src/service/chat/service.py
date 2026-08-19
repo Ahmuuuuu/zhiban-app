@@ -135,10 +135,21 @@ def invalidate_portrait_cache(user_id: int):
     _portrait_cache.pop(user_id, None)
 
 
-async def _extract_portrait_and_refresh(user_id: int, chat_group_id: int):
+async def _extract_portrait_and_refresh(
+    user_id: int,
+    chat_group_id: int,
+    *,
+    portrait_minimum_records: int = 2,
+):
     """后台提取画像并刷新缓存"""
-    await extract_portrait_from_chat(user_id, chat_group_id)
-    invalidate_portrait_cache(user_id)
+    try:
+        await extract_portrait_from_chat(
+            user_id,
+            chat_group_id,
+            minimum_records=portrait_minimum_records,
+        )
+    finally:
+        invalidate_portrait_cache(user_id)
 
 
 async def _persist_memory_and_refresh(user_id: int, chat_group_id: int, agent_id: int | None = None):
@@ -148,6 +159,33 @@ async def _persist_memory_and_refresh(user_id: int, chat_group_id: int, agent_id
         await persist_memory_after_chat(user_id, chat_group_id, agent_id)
     except Exception:
         logger.exception("记忆写入失败 user=%s group=%s", user_id, chat_group_id)
+
+
+def schedule_post_chat_enrichment(
+    user_id: int,
+    chat_group_id: int,
+    agent_id: int | None = None,
+    *,
+    portrait_minimum_records: int = 2,
+    persist_memory: bool = True,
+) -> None:
+    """统一安排聊天结束后的画像更新；普通聊天可额外写入长期记忆。"""
+    logger.info(
+        "[ChatEnrichment] scheduled user=%s group=%s portrait_min_records=%s persist_memory=%s",
+        user_id,
+        chat_group_id,
+        portrait_minimum_records,
+        persist_memory,
+    )
+    asyncio.create_task(
+        _extract_portrait_and_refresh(
+            user_id,
+            chat_group_id,
+            portrait_minimum_records=portrait_minimum_records,
+        )
+    )
+    if persist_memory:
+        asyncio.create_task(_persist_memory_and_refresh(user_id, chat_group_id, agent_id))
 
 
 async def _build_memory_context(user_id: int, chat_group_id: int, user_query: str = "") -> str:
@@ -202,8 +240,7 @@ async def create_new_history(user_id: int, user_req: str, agent_id: int | None =
     res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context, memory_context=memory_context)
     message.res = res
     await message.save()
-    asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
-    asyncio.create_task(_persist_memory_and_refresh(user_id, chat_group_id, agent_id))
+    schedule_post_chat_enrichment(user_id, chat_group_id, agent_id)
     return message, "新对话保存成功"
 
 async def create_message_into_history(user_id: int, chat_group_id: int, user_req: str, agent_id: int | None = None):
@@ -225,8 +262,7 @@ async def create_message_into_history(user_id: int, chat_group_id: int, user_req
     res = await bot.chat(user_req, path_context=path_context, portrait_context=portrait_context, memory_context=memory_context)
     message.res = res
     await message.save()
-    asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
-    asyncio.create_task(_persist_memory_and_refresh(user_id, chat_group_id, agent_id))
+    schedule_post_chat_enrichment(user_id, chat_group_id, agent_id)
     return message, "问答保存成功"
 
 # ── 流式 ──
@@ -260,8 +296,7 @@ async def _stream_chat(user_id: int, chat_group_id: int, user_req: str, agent_id
 
     record.res = full_response
     await record.save()
-    asyncio.create_task(_extract_portrait_and_refresh(user_id, chat_group_id))
-    asyncio.create_task(_persist_memory_and_refresh(user_id, chat_group_id, agent_id))
+    schedule_post_chat_enrichment(user_id, chat_group_id, agent_id)
     yield f"data: {json.dumps({'role': 'system', 'type': 'done', 'chat_group_id': chat_group_id}, ensure_ascii=False)}\n\n"
     yield "data: [DONE]\n\n"
 

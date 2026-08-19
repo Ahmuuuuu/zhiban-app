@@ -714,8 +714,17 @@ async def build_learning_guidance(user_id: int) -> str:
     return "\n".join(lines)
 
 
-async def extract_portrait_from_chat(user_id: int, chat_group_id: int) -> None:
-    """每次对话后异步调用，从最近聊天记录中提取画像特征"""
+async def extract_portrait_from_chat(
+    user_id: int,
+    chat_group_id: int,
+    *,
+    minimum_records: int = 2,
+) -> None:
+    """每次对话后异步调用，从最近聊天记录中提取画像特征。
+
+    普通聊天默认积累两轮再提取；互动课堂按节点隔离聊天组，一问一答本身就是
+    完整观察样本，因此调用方可显式传入 ``minimum_records=1``。
+    """
     now = _time.time()
     elapsed = now - _last_extraction.get(user_id, 0)
     if elapsed < _EXTRACTION_INTERVAL:
@@ -744,8 +753,15 @@ async def extract_portrait_from_chat(user_id: int, chat_group_id: int) -> None:
             user_id=user_id, chat_group_id=chat_group_id
         ).order_by("-created_at").limit(10).all()
 
-        if len(records) < 2:
-            logger.debug(f"画像提取跳过：消息数不足 user_id={user_id} records={len(records)}")
+        required_records = max(1, int(minimum_records))
+        if len(records) < required_records:
+            logger.debug(
+                "画像提取跳过：消息数不足 user_id=%s records=%s required=%s group=%s",
+                user_id,
+                len(records),
+                required_records,
+                chat_group_id,
+            )
             return
 
         _last_extraction[user_id] = now

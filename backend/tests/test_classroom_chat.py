@@ -9,6 +9,7 @@ classroom_chat 课堂对话服务测试
 import pytest
 
 from backend.src.service.path import classroom_chat as cg_chat
+from backend.src.service.chat import service as chat_service
 
 
 # ── 测试替身 ──
@@ -33,6 +34,10 @@ class StubBrain:
     def __init__(self, events, raise_error=False):
         self._events = events
         self._raise_error = raise_error
+        self.hydrated_before_ids = []
+
+    async def hydrate_history(self, before_id=None):
+        self.hydrated_before_ids.append(before_id)
 
     async def stream(self, user_prompt, path_context="", portrait_context="", memory_context=""):
         if self._raise_error:
@@ -50,15 +55,28 @@ def _stub_classroom_chat_persistence(monkeypatch):
     """课堂流测试不连接真实 MySQL，同时保留对话落库行为的可观察性。"""
     records = []
 
+    class FakeRecord:
+        id = 88
+
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+            self.saved = False
+
+        async def save(self):
+            self.saved = True
+
     async def fake_create(**kwargs):
         records.append(kwargs)
+        return FakeRecord(**kwargs)
 
-    async def fake_refresh(*args, **kwargs):
-        return None
+    scheduled = []
+
+    def fake_schedule(*args, **kwargs):
+        scheduled.append((args, kwargs))
 
     monkeypatch.setattr(cg_chat.ChatHistory, "create", fake_create)
-    monkeypatch.setattr(cg_chat, "_refresh_portrait_after_classroom_chat", fake_refresh)
-    return records
+    monkeypatch.setattr(cg_chat, "schedule_post_chat_enrichment", fake_schedule)
+    return records, scheduled
 
 
 # ── _compose_user_prompt ──
@@ -157,10 +175,11 @@ async def test_get_or_create_classroom_agent_missing_user(monkeypatch):
 @pytest.mark.asyncio
 async def test_stream_classroom_chat_events(monkeypatch, _stub_classroom_chat_persistence):
     monkeypatch.setattr(cg_chat, "get_or_create_classroom_agent", _async_value(123))
-    monkeypatch.setattr(cg_chat, "_get_classroom_brain", lambda *a, **k: StubBrain([
+    brain = StubBrain([
         {"role": "assistant", "type": "chunk", "content": "你理解对了，"},
         {"role": "assistant", "type": "chunk", "content": "再补一个例子更稳。"},
-    ]))
+    ])
+    monkeypatch.setattr(cg_chat, "_get_classroom_brain", lambda *a, **k: brain)
     monkeypatch.setattr(cg_chat, "_build_classroom_path_context", _async_value("【课堂上下文】补码"))
     monkeypatch.setattr(cg_chat, "_build_global_portrait_context", _async_value("计算机专业"))
 
@@ -170,13 +189,36 @@ async def test_stream_classroom_chat_events(monkeypatch, _stub_classroom_chat_pe
     assert "再补一个例子更稳" in joined
     assert '"type":"done"' in joined
     assert "[DONE]" in joined
-    assert _stub_classroom_chat_persistence == [{
+    records, scheduled = _stub_classroom_chat_persistence
+    assert records == [{
         "user_id": 1,
         "chat_group_id": cg_chat._classroom_group_id(1, 1, 1),
         "agent_id": 123,
         "req": "为什么补码能统一加减？",
-        "res": "你理解对了，再补一个例子更稳。",
+        "res": "",
     }]
+    assert brain.hydrated_before_ids == [88]
+    assert scheduled == [
+        ((1, cg_chat._classroom_group_id(1, 1, 1), 123), {
+            "portrait_minimum_records": 1,
+            "persist_memory": False,
+        })
+    ]
+
+
+@pytest.mark.asyncio
+async def test_classroom_portrait_enrichment_accepts_one_complete_turn(monkeypatch):
+    """课堂每个节点独立成组，一问一答也必须能进入同一画像提取器。"""
+    calls = []
+
+    async def fake_extract(user_id, chat_group_id, *, minimum_records=2):
+        calls.append((user_id, chat_group_id, minimum_records))
+
+    monkeypatch.setattr(chat_service, "extract_portrait_from_chat", fake_extract)
+    monkeypatch.setattr(chat_service, "invalidate_portrait_cache", lambda user_id: None)
+
+    await chat_service._extract_portrait_and_refresh(1, 321, portrait_minimum_records=1)
+    assert calls == [(1, 321, 1)]
 
 
 @pytest.mark.asyncio

@@ -182,7 +182,7 @@ async def narrate_classroom(data: ClassroomNarrationRequest, user_id: int = Depe
 
 @router.post("/classroom/chat")
 async def classroom_chat(data: ClassroomChatRequest, user_id: int = Depends(get_user_id_from_token)):
-    """互动课堂对话（流式）：复用 Brain 现成聊天逻辑，不落 ChatHistory"""
+    """互动课堂对话（流式）：保存课堂专属历史并参与画像、记忆更新。"""
     await _assert_path_access(data.path_id, user_id)
     return StreamingResponse(
         stream_classroom_chat(
@@ -194,6 +194,11 @@ async def classroom_chat(data: ClassroomChatRequest, user_id: int = Depends(get_
             text=data.text,
         ),
         media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 
