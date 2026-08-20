@@ -53,8 +53,8 @@
         <footer class="runner-actions">
           <button type="button" class="soft-btn" :disabled="currentIndex === 0" @click="currentIndex -= 1">上一题</button>
           <button type="button" class="soft-btn" @click="checkCurrent">判断对错</button>
-          <button type="button" class="primary-btn" @click="goNext">
-            {{ currentIndex === questions.length - 1 ? '交卷' : '下一题' }}
+          <button type="button" class="primary-btn" :disabled="submitting" @click="goNext">
+            {{ submitting ? '正在交卷...' : currentIndex === questions.length - 1 ? '交卷' : '下一题' }}
           </button>
         </footer>
       </article>
@@ -98,6 +98,7 @@ const checked = ref({})
 const results = ref({})
 const finished = ref(false)
 const sessionSummary = ref(null)
+const submitting = ref(false)
 // 节点测验必须以最终交卷接口的汇总为准，避免单题提交返回的临时汇总覆盖最终成绩。
 const finalQuizScore = ref(null)
 const runSessionId = ref('')
@@ -406,6 +407,10 @@ const getQuestionResult = (question) => {
 }
 
 const goNext = async () => {
+  if (submitting.value) return
+  const finalStep = currentIndex.value >= questions.value.length - 1
+  if (finalStep) submitting.value = true
+  try {
   await checkCurrent()
 
   if (currentIndex.value >= questions.value.length - 1) {
@@ -494,6 +499,9 @@ const goNext = async () => {
   }
 
   currentIndex.value += 1
+  } finally {
+    if (finalStep) submitting.value = false
+  }
 }
 </script>
 

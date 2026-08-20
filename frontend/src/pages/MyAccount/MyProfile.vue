@@ -40,8 +40,8 @@
           </label>
 
           <label class="form-item">
-            <span>专业</span>
-            <input v-model.trim="form.major" type="text" placeholder="请输入专业" />
+            <span>专业 <small class="field-note">暂不可修改</small></span>
+            <input v-model.trim="form.major" type="text" placeholder="暂无专业信息" disabled />
           </label>
 
           <label class="form-item">
@@ -790,6 +790,13 @@ button {
   font-weight: 800;
 }
 
+.field-note {
+  margin-left: 6px;
+  color: var(--profile-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .form-wide,
 .error-message,
 .success-message,
@@ -812,6 +819,12 @@ textarea {
 input {
   height: 44px;
   padding: 0 14px;
+}
+
+input:disabled {
+  color: var(--profile-muted);
+  background: #f3f7fb;
+  cursor: not-allowed;
 }
 
 select {

@@ -100,7 +100,7 @@ def _fallback_stories(
         ],
     ]
     stories = sets[seed % len(sets)]
-    return [{"title": _clip(item["title"], 40), "content": _clip(item["content"], 150)} for item in stories]
+    return [{"title": _clip(title, 40), "content": _clip(content, 150)} for title, content in stories]
 
 
 async def _review_transition_content(
@@ -177,11 +177,15 @@ async def _review_transition_content(
             )
             if len(reviewed) >= 3:
                 break
+        used_fallback = bool(candidates and not reviewed)
+        news = reviewed or _candidate_news_fallback(candidates)
         logger.info(
-            "[ClassroomTransition] 近日资讯审核完成 user=%s candidates=%s results=%s elapsed=%.2fs",
+            "[ClassroomTransition] 近日资讯审核完成 user=%s candidates=%s reviewed=%s visible=%s fallback=%s elapsed=%.2fs",
             user_id,
             len(candidates),
             len(reviewed),
+            len(news),
+            used_fallback,
             time.perf_counter() - started_at,
         )
         stories_raw = parsed.get("stories", []) if isinstance(parsed, dict) else []
@@ -196,7 +200,7 @@ async def _review_transition_content(
                     stories.append({"title": title, "content": content})
                 if len(stories) >= 3:
                     break
-        return {"news": reviewed, "stories": stories or fallback}
+        return {"news": news, "stories": stories or fallback}
     except Exception as exc:
         # 搜索候选已经过 SearXNG 的结构化过滤。LLM 审核超时不能把用户看到的资讯清空，
         # 降级时只保留候选原文的标题、摘要和链接，不生成任何额外事实。
@@ -247,11 +251,14 @@ async def _refresh_transition_cache(cache_key: tuple[int, int], context: dict[st
     try:
         topic = context["topic"]
         search_focus = context["search_focus"]
+        # 与聊天工具接收用户原话的方式保持一致：先搜原始主题，再补一条画像方向的近期查询。
+        # 不能只搜“8086 总线周期 近期最新进展”这类长词，静态知识点通常没有新闻索引。
         queries = list(dict.fromkeys(
             query
             for query in (
-                f"{topic} 近期 最新进展",
-                f"{search_focus} 近期 最新动态" if search_focus else "",
+                topic,
+                search_focus if search_focus != topic else "",
+                f"{search_focus} 近期动态" if search_focus else "",
             )
             if query.strip()
         ))

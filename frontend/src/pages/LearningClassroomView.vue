@@ -708,7 +708,6 @@ const loadClassroomTransition = async ({ silent = false } = {}) => {
       profile_focus: String(data?.profile_focus || ''),
       pending: Boolean(data?.pending)
     }
-    transitionSlideIndex.value = 0
   } catch {
     // 过渡内容不影响课堂主流程；搜索不可用时显示本地学习方案。
     transitionContent.value = { ...transitionContent.value, pending: false }
@@ -947,7 +946,10 @@ watch(classroomLoading, loading => {
     stopTransitionRefresh()
   }
 }, { immediate: true })
-watch([transitionNews, transitionStories], () => { transitionSlideIndex.value = 0; startTransitionRotation() })
+watch(transitionRotationLength, length => {
+  if (transitionSlideIndex.value >= length) transitionSlideIndex.value = 0
+  startTransitionRotation()
+})
 watch(messages, () => nextTick(() => { if (dialogMessagesEl.value) dialogMessagesEl.value.scrollTop = dialogMessagesEl.value.scrollHeight }), { deep: true })
 </script>
 

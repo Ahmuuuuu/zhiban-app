@@ -1752,14 +1752,9 @@ class PathService:
                 user_id=user_id, path_id=path_id, node_id=next_node.id
             ).first()
             if next_progress and next_progress.node_status in ("unlocked", "in_progress"):
-                # 确保下一节点的 quiz 已预生成
-                quiz_session_id = None
-                if next_node.quiz_config:
-                    try:
-                        next_quiz_result = await PathService.generate_node_quiz(path_id, next_node.id, user_id)
-                        quiz_session_id = next_quiz_result.get("session_id")
-                    except Exception:
-                        logger.exception("下一节点测验预生成失败 path_id=%s node_id=%s", path_id, next_node.id)
+                # 预生成已由 unlock_next_node 后台并发处理，这里只读取现有 session，
+                # 不能为了组装响应再次同步调用 LLM。
+                quiz_session_id = next_progress.quiz_session_id
                 knowledge_tags = json.loads(next_node.knowledge_tags) if next_node.knowledge_tags else []
                 new_nodes.append({
                     "id": next_node.id,

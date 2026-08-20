@@ -22,6 +22,7 @@ GenerateResources = Callable[[int, int, int], Awaitable[dict]]
 GenerateQuiz = Callable[..., Awaitable[dict]]
 GenerateClassroom = Callable[[int, int, int], Awaitable[dict | None]]
 _CLASSROOM_WARMUP_TASKS: set[asyncio.Task] = set()
+_NODE_WARMUP_TASKS: set[asyncio.Task] = set()
 
 
 async def check_existing_resources(
@@ -203,11 +204,37 @@ async def unlock_next_node(
     if node_after:
         pre_gen_ids.append(node_after.id)
 
-    await asyncio.gather(
-        *(
-            pre_generate_node(path_id, node_id, user_id, generate_resources, generate_quiz, generate_classroom)
-            for node_id in pre_gen_ids
-        )
+    async def warmup_nodes() -> None:
+        try:
+            # 解锁接口只负责更新门禁；资料、题目和课堂继续并发预生成，不能阻塞交卷响应。
+            await asyncio.gather(
+                *(
+                    pre_generate_node(path_id, node_id, user_id, generate_resources, generate_quiz, generate_classroom)
+                    for node_id in pre_gen_ids
+                )
+            )
+            logger.info(
+                "节点预生成完成 path_id=%s user_id=%s node_ids=%s",
+                path_id,
+                user_id,
+                pre_gen_ids,
+            )
+        except Exception:
+            logger.exception(
+                "节点预生成后台任务失败 path_id=%s user_id=%s node_ids=%s",
+                path_id,
+                user_id,
+                pre_gen_ids,
+            )
+
+    task = asyncio.create_task(warmup_nodes(), name=f"path-node-warmup-{path_id}-{current_order + 1}")
+    _NODE_WARMUP_TASKS.add(task)
+    task.add_done_callback(_NODE_WARMUP_TASKS.discard)
+    logger.info(
+        "节点已解锁，预生成已后台排队 path_id=%s user_id=%s node_ids=%s",
+        path_id,
+        user_id,
+        pre_gen_ids,
     )
 
 

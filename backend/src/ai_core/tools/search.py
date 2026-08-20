@@ -1,8 +1,12 @@
+import logging
 import os
 import re
 
 import httpx
 from langchain_core.tools import tool
+
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_searxng_url(value: str | None) -> str:
@@ -218,8 +222,11 @@ async def search_recent_web_brief(query: str, max_results: int = 3) -> list[dict
     except (TypeError, ValueError):
         limit = 3
     try:
-        results, _ = await _search_searxng_collect(cleaned_query, max_results=max(limit * 2, 8))
-    except (httpx.RequestError, RuntimeError, ValueError):
+        # 和普通聊天共用同一条检索链路：单引擎 -> 组合引擎 -> 不限引擎。
+        # 课堂等待页只在结果已返回后做卡片字段裁剪，不再维护另一套搜索兜底。
+        results, search_note = await _search_searxng(cleaned_query)
+    except (httpx.RequestError, RuntimeError, ValueError) as exc:
+        logger.warning("[Search][ClassroomBrief] request failed query=%r error=%s", cleaned_query, exc)
         return []
 
     briefs: list[dict[str, str]] = []
@@ -243,6 +250,13 @@ async def search_recent_web_brief(query: str, max_results: int = 3) -> list[dict
         )
         if len(briefs) >= limit:
             break
+    logger.info(
+        "[Search][ClassroomBrief] query=%r raw=%s briefs=%s note=%s",
+        cleaned_query,
+        len(results),
+        len(briefs),
+        search_note or "-",
+    )
     return briefs
 
 
