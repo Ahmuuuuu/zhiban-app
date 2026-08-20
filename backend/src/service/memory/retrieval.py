@@ -49,12 +49,26 @@ _context_cache: dict[tuple[int, int], tuple[float, str]] = {}
 # 评分
 # ---------------------------------------------------------------------------
 
+def _naive(dt):
+    """把数据库时间统一成无时区 datetime，避免 naive/aware 相减报错。
+
+    MySQL（aiomysql）读出的时间可能带 tzinfo，SQLite 读出的是 naive。
+    统一转为本地时区的 naive 后，与 datetime.now() 直接相减安全。
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
 def _score(sim: float, same_group: bool, updated_at, importance: float) -> float:
     if sim < MEMORY_SIM_THRESHOLD:
         return float("-inf")
     score = sim
     if same_group:
         score *= SAME_GROUP_BOOST
+    updated_at = _naive(updated_at)
     if updated_at:
         age_days = max((datetime.now() - updated_at).days, 0)
         score *= 0.5 + 0.5 * math.exp(-age_days / 30.0)

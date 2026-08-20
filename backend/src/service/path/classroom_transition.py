@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import random
 import time
 from typing import Any
 
@@ -18,6 +20,51 @@ logger = logging.getLogger(__name__)
 _CACHE_TTL_SECONDS = 15 * 60
 _transition_cache: dict[tuple[int, int], tuple[float, dict[str, Any]]] = {}
 _transition_tasks: dict[tuple[int, int], asyncio.Task[None]] = {}
+
+_STORY_MODES = (
+    "故障复现：从一个反常输出倒推最小触发条件。",
+    "小实验：用电脑、纸笔或身边物品做一个可观察的微型验证。",
+    "产品现场：把知识点放进用户真实操作流程，解决一个具体麻烦。",
+    "代码评审：两种写法都能运行，但在边界条件下出现不同后果。",
+    "资源受限：时间、内存、带宽或设备受限时，知识点改变了取舍。",
+    "数据侦探：一条异常记录、一列数据或一个日志字段暴露了关键关系。",
+    "接口误会：前后端或两个工具对同一个字段的理解不一致。",
+    "反直觉预测：先猜结果，再通过一次运行或计算发现猜错在哪里。",
+    "用户追问：用户只问了一句很短的话，却迫使你看清系统真正的规则。",
+    "规模变化：样例很顺利，数据量或任务数量放大后出现新的问题。",
+    "工具链插曲：编辑器、数据库、模型或脚本的一个小差异改变了结果。",
+    "迁移场景：把当前知识点从课堂换到另一个专业或兴趣场景中验证。",
+)
+
+
+def _random_story_modes() -> str:
+    selected = random.sample(_STORY_MODES, 3)
+    return "\n".join(f"{index}. {mode}" for index, mode in enumerate(selected, 1))
+
+
+def _candidate_news_fallback(candidates: list[dict[str, str]]) -> list[dict[str, str]]:
+    """审核超时的最后兜底：只展示搜索结果原文中的事实，不补写新闻结论。"""
+    fallback: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        title = _clip(item.get("title"), 100)
+        if not url or not title or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        summary = _clip(item.get("summary") or item.get("content") or item.get("body"), 180)
+        fallback.append({
+            "title": title,
+            "summary": summary or "搜索结果未提供摘要，请打开来源查看原文。",
+            "url": url,
+            "source": _clip(item.get("source") or item.get("engine") or "公开来源", 32),
+            "published_at": _clip(item.get("published_at") or item.get("publishedDate"), 32),
+        })
+        if len(fallback) >= 3:
+            break
+    return fallback
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -33,20 +80,26 @@ def _fallback_stories(
 ) -> list[dict[str, str]]:
     focus = interest or major or "你的专业方向"
     goal_text = learning_goal or "把知识真正用起来"
-    stories = [
-        {
-            "title": "一个小问题的转弯",
-            "content": f"你在做{focus}相关项目时，遇到一个看似简单却总出错的小问题。后来你没有继续堆代码，而是回到“{topic}”的定义，先把输入、规则和结果分开，问题很快露出了位置。",
-        },
-        {
-            "title": "从会用到会解释",
-            "content": f"为了{goal_text}，你把“{topic}”讲给一个完全不了解这门课的人听。讲到一半卡住的地方，往往正是你还没有真正理解的地方，这比背下结论更有价值。",
-        },
-        {
-            "title": "换一种记忆入口",
-            "content": f"今天学习“{topic}”时，你没有从长定义开始，而是先画出一条关系线，再用一句话解释它。{('这种先看结构再听解释的方式很适合你。' if cognition == 'visual' else '这种先动手验证再补概念的方式很适合你。' if cognition == 'practical' else '这种先读出来再整理概念的方式很适合你。' if cognition == 'auditory' else '把定义写下来再举例，会让它更牢固。')}",
-        },
+    # 兜底内容也要有变化：按节点和画像稳定选择一组场景，避免每次都是同三句。
+    seed = int(hashlib.sha1(f"{topic}|{focus}|{goal_text}".encode("utf-8")).hexdigest()[:8], 16)
+    sets = [
+        [
+            ("凌晨的异常日志", f"你在做{focus}项目时，日志里只多出一个看似无关的“{topic}”值。把前后两次输入并排一放，真正的线索藏在那次变化里。你会先查哪一处？"),
+            ("三分钟纸笔实验", f"拿纸写下“{topic}”里的三个关键量，再只改变其中一个。结果和直觉不一样的那一格，正好暴露了它们之间的关系。"),
+            ("上线前的一个按钮", f"为了{goal_text}，你给{focus}工具加了一个小功能：它不只给结果，还显示“{topic}”参与了哪一步。用户第一次定位问题少绕了一圈。"),
+        ],
+        [
+            ("那条不该出现的结果", f"测试{focus}应用时，只有一组输入触发了异常结果。你把它拆成几个更小的步骤，发现“{topic}”并不是答案，而是决定答案走哪条路的开关。"),
+            ("把概念放进浏览器", f"打开一个空白页面，给“{topic}”只留一个输入和一个输出，再换两次输入观察变化。屏幕上的差异，比一段长解释更容易记住。"),
+            ("同事只问了一句", f"你向同事演示{focus}项目时，对方问：“这里为什么要经过{topic}？”你删掉多余步骤后，流程反而更稳定了。"),
+        ],
+        [
+            ("接口返回得太快", f"{focus}项目的接口突然返回成功，但页面内容是空的。沿着“{topic}”对应的数据流回看，原来完成和可用并不是同一件事。"),
+            ("一张便签的预测", f"在便签上写下你认为“{topic}”下一步会发生什么，再实际运行一次。预测错的地方，可能比预测对的地方更值得保留。"),
+            ("给流程加一道护栏", f"你想让{focus}工具更可靠，于是在{topic}最容易混淆的位置加了一条检查。它没有让代码变长多少，却让后面的排查有了落点。"),
+        ],
     ]
+    stories = sets[seed % len(sets)]
     return [{"title": _clip(item["title"], 40), "content": _clip(item["content"], 150)} for item in stories]
 
 
@@ -60,6 +113,7 @@ async def _review_transition_content(
     learning_goal: str,
     cognition: str,
     interest: str,
+    story_modes: str,
 ) -> dict[str, list[dict[str, str]]]:
     """一次低优先级调用同时整理新闻和画像故事；新闻失败时绝不直出原始候选。"""
     fallback = _fallback_stories(topic, major, interest, learning_goal, cognition)
@@ -80,6 +134,7 @@ async def _review_transition_content(
             learning_goal=learning_goal or "未提供",
             cognition=cognition or "未提供",
             interest=interest or "未提供",
+            story_modes=story_modes,
             candidates_json=json.dumps(candidates, ensure_ascii=False),
         )
         started_at = time.perf_counter()
@@ -142,9 +197,17 @@ async def _review_transition_content(
                 if len(stories) >= 3:
                     break
         return {"news": reviewed, "stories": stories or fallback}
-    except Exception:
-        logger.warning("[ClassroomTransition] 过渡内容审核失败 user=%s，丢弃原始新闻并使用画像故事兜底", user_id, exc_info=True)
-        return {"news": [], "stories": fallback}
+    except Exception as exc:
+        # 搜索候选已经过 SearXNG 的结构化过滤。LLM 审核超时不能把用户看到的资讯清空，
+        # 降级时只保留候选原文的标题、摘要和链接，不生成任何额外事实。
+        news = _candidate_news_fallback(candidates)
+        logger.warning(
+            "[ClassroomTransition] 过渡内容审核失败 user=%s error=%s fallback_news=%s",
+            user_id,
+            type(exc).__name__,
+            len(news),
+        )
+        return {"news": news, "stories": fallback}
 
 
 async def _build_transition_context(path_id: int, node_id: int, user_id: int) -> dict[str, Any] | None:
@@ -231,6 +294,7 @@ async def _refresh_transition_cache(cache_key: tuple[int, int], context: dict[st
             context["learning_goal"],
             context["cognition"],
             context["interest"],
+            _random_story_modes(),
         )
         _transition_cache[cache_key] = (time.monotonic(), {
             "topic": topic,

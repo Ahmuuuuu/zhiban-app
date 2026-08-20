@@ -347,8 +347,8 @@ const transitionStories = computed(() => {
     meta: String(transitionContent.value.profile_focus || transitionContent.value.topic || '根据当前画像生成')
   })).filter(item => item.content) : [{
     key: 'story-fallback',
-    title: '先从一个小问题开始',
-    content: `你正在学习“${node.value.title || '当前知识点'}”，先想想它会在哪个真实任务里帮你少走一步。`,
+    title: '给当前知识点找个现场',
+    content: `假设“${node.value.title || '当前知识点'}”出现在一个真实项目里：哪个输入、动作或结果最可能先出现异常？`,
     meta: '根据当前节点生成'
   }]
 })

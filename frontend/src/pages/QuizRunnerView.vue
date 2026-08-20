@@ -98,6 +98,8 @@ const checked = ref({})
 const results = ref({})
 const finished = ref(false)
 const sessionSummary = ref(null)
+// 节点测验必须以最终交卷接口的汇总为准，避免单题提交返回的临时汇总覆盖最终成绩。
+const finalQuizScore = ref(null)
 const runSessionId = ref('')
 const fromPage = ref(route.query.from || '')
 const nodeId = ref(route.query.nodeId || '')
@@ -376,6 +378,9 @@ const score = computed(() => questions.value.reduce((total, q) => {
 
 const percentScore = computed(() => {
   if (!questions.value.length) return '0.0'
+  if (finalQuizScore.value !== null && Number.isFinite(Number(finalQuizScore.value))) {
+    return Number(finalQuizScore.value).toFixed(1)
+  }
   const localPercent = (score.value / questions.value.length) * 100
   // 有后端加权分数时优先使用，否则用本地简单百分比
   const backendScore = Number(sessionSummary.value?.percentage ?? sessionSummary.value?.earned_points)
@@ -404,14 +409,14 @@ const goNext = async () => {
   await checkCurrent()
 
   if (currentIndex.value >= questions.value.length - 1) {
-    finished.value = true
-    dispatchQuizContext()
-    showPetNotice(`finish-${quiz.value?.id}`, `交卷啦！${score.value}/${questions.value.length} 题正确，得分 ${percentScore.value} 分`, 7000)
-    // 诊断：打印当前 results 和 score 状态
+    // 路径测验由节点交卷接口重新读取整套 ExamRecord 判分；在响应回来前不要展示成绩。
     console.log('[QuizRunner] 交卷前 results:', JSON.parse(JSON.stringify(results.value)))
     console.log('[QuizRunner] 交卷前 score:', score.value, 'percentScore:', percentScore.value)
     console.log('[QuizRunner] 交卷前 questions:', questions.value.map(q => ({id: q.id, question_id: q.question_id, answer: q.answer, type: q.type})))
     if (fromPage.value !== 'path' || !nodeId.value || !runSessionId.value) {
+      finished.value = true
+      dispatchQuizContext()
+      showPetNotice(`finish-${quiz.value?.id}`, `交卷啦！${score.value}/${questions.value.length} 题正确，得分 ${percentScore.value} 分`, 7000)
       persistAttempt()
       return
     }
@@ -453,7 +458,18 @@ const goNext = async () => {
             earned_points: quizResult.score,
             pending_count: 0
           }
-          console.log('[QuizRunner] 后端判分结果已同步:', quizResult.score, '分,', quizResult.correct_count, '/', quizResult.total_questions)
+        }
+        // 无论是否返回逐题明细，最终分数都只取节点交卷接口的汇总。
+        if (quizResult && Number.isFinite(Number(quizResult.score))) {
+          finalQuizScore.value = Number(quizResult.score)
+          sessionSummary.value = {
+            total_questions: Number(quizResult.total_questions ?? questions.value.length),
+            correct_count: Number(quizResult.correct_count ?? 0),
+            percentage: Number(quizResult.score),
+            earned_points: Number(quizResult.score),
+            pending_count: 0
+          }
+          console.log('[QuizRunner] 后端最终判分已同步:', finalQuizScore.value, '分,', quizResult.correct_count, '/', quizResult.total_questions)
         }
         window.sessionStorage.setItem('zhiban_path_needs_refresh', '1')
         window.dispatchEvent(new CustomEvent('zhiban-path-node-completed', {
@@ -469,6 +485,9 @@ const goNext = async () => {
         console.error('[QuizRunner] 自动完成节点失败:', detail, '| nodeId:', nodeId.value, '| sessionId:', runSessionId.value)
       }
     }
+    finished.value = true
+    dispatchQuizContext()
+    showPetNotice(`finish-${quiz.value?.id}`, `交卷啦！${score.value}/${questions.value.length} 题正确，得分 ${percentScore.value} 分`, 7000)
     // 节点交卷接口返回后再落本地历史，保证历史分数和后端最终判分一致。
     persistAttempt()
     return
