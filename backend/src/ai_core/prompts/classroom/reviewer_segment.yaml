@@ -15,7 +15,7 @@ system: |
   {segment_json}
 
   ## 审核要求
-  1. title、teacher_speech/script、board_items、points、question.prompt 必须完整；讲稿应为 90-130 字左右，可朗读；板书为3-4条且每条不超过20字，要点为3条且每条不超过36字，例子不超过44字
+  1. title、teacher_speech/script、board_items、points、question.prompt 必须完整；讲稿应为 150-220 字左右，可朗读且不能靠重复句子凑长度；板书为3-4条且每条不超过20字，要点为3条且每条不超过36字，例子不超过44字
   2. 内容必须围绕节点中的具体术语、步骤、公式、数值或例子，不能泛泛而谈或描述产品功能。若出现精确数值、位数、范围、公式、标准名称或因果结论，必须与节点摘要/标签/资源摘要相符；无法从上下文或稳定常识确认时，判为 accuracy 问题，不得放行
   3. lead-in 必须说明学生与知识点的关系；concept 必须讲清概念本体；exercise 必须说明练习检查什么；feynman 必须要求学生到右侧对话框反讲
   4. 对 concept 额外严格检查：讲稿开头必须先给术语定义，不能一上来就举例、报编码值、给结果或比较；节点存在多个核心术语时，至少分别定义两个，并说明它们的关系或边界。例子和板书不能代替定义。不满足时必须 passed=false，issue.category 使用 concept_definition，并指出缺少哪个定义层次

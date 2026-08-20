@@ -12,6 +12,20 @@ from backend.src.models.portraitmodel import User_picture
 from backend.src.schemas.user import Create_User, Login_User, Update_User_Password, Update_User_Information, Delete_User, SendEmailCode, RegisterByEmail, LoginByEmail
 from backend.src.utils.pwintohash import get_password_hash, verify_password
 
+_DEFAULT_DISPOSABLE_EMAIL_DOMAINS = {
+    "10minutemail.com", "guerrillamail.com", "guerrillamailblock.com",
+    "mailinator.com", "tempmail.com", "temp-mail.org", "yopmail.com",
+    "emalupe.com", "westcast-systems.com",
+}
+
+
+def _is_disposable_email(email: str) -> bool:
+    domain = str(email or "").rsplit("@", 1)[-1].strip().lower()
+    configured = os.getenv("BLOCKED_EMAIL_DOMAINS", "")
+    domains = set(_DEFAULT_DISPOSABLE_EMAIL_DOMAINS)
+    domains.update(item.strip().lower() for item in configured.split(",") if item.strip())
+    return any(domain == item or domain.endswith(f".{item}") for item in domains)
+
 
 async def _on_profile_changed(user_id: int, major: str, grade: str):
     """专业/年级变更时后台执行：同步课程体系 → 生成学习路径 → 发通知"""
@@ -206,6 +220,9 @@ async def send_email_code(email: str, purpose: str = "login"):
     from backend.src.models.email_code_model import EmailVerificationCode
     from backend.src.utils.email_sender import send_email
 
+    if purpose == "register" and _is_disposable_email(email):
+        return None, "暂不支持临时邮箱注册，请使用常用邮箱"
+
     # 1 分钟内不能重复发
     recent = await EmailVerificationCode.filter(
         email=email, purpose=purpose, used=False,
@@ -236,6 +253,9 @@ async def register_by_email(email: str, code: str, password: str, username: str)
     from datetime import datetime
     from backend.src.models.email_code_model import EmailVerificationCode
     from tortoise.exceptions import IntegrityError
+
+    if _is_disposable_email(email):
+        return None, "暂不支持临时邮箱注册，请使用常用邮箱"
 
     # 校验验证码
     record = await EmailVerificationCode.filter(

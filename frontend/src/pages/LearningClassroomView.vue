@@ -171,24 +171,51 @@
             <span class="content-label"><FileText :size="15" /> 学习资源</span>
             <span class="resource-count">{{ resourceList.length }} 份</span>
           </div>
-          <p class="resource-workbench-intro">资源按类型图标展示，点一下就能预览。</p>
+          <p class="resource-workbench-intro">资源按类型展示，可直接预览或下载。</p>
           <div v-if="resourceList.length" class="resource-items">
-            <button
+            <article
               v-for="resource in resourceList"
               :key="resourceKey(resource)"
-              type="button"
               class="resource-item"
               :class="`resource-item--${classroomResourceKind(resource) || 'document'}`"
               :title="`${fileTypeLabel(resource)} · ${resourceTitle(resource)}`"
-              :aria-label="`${fileTypeLabel(resource)}，${resourceTitle(resource)}，点击预览`"
-              :disabled="resourcePreviewLoading"
-              @click="previewClassroomResource(resource)"
             >
-              <span class="resource-item-icon" aria-hidden="true">
-                <component :is="resourceIcon(resource)" :size="18" />
+              <button
+                type="button"
+                class="resource-item-main"
+                :aria-label="`${fileTypeLabel(resource)}，${resourceTitle(resource)}，预览`"
+                :disabled="resourcePreviewLoading"
+                @click="previewClassroomResource(resource)"
+              >
+                <span class="resource-item-icon" aria-hidden="true">
+                  <component :is="resourceIcon(resource)" :size="18" />
+                </span>
+                <span class="resource-item-copy">
+                  <strong>{{ fileTypeLabel(resource) }}</strong>
+                </span>
+              </button>
+              <span class="resource-item-actions">
+                <button
+                  type="button"
+                  class="resource-item-action"
+                  :disabled="resourcePreviewLoading"
+                  :aria-label="`预览${resourceTitle(resource)}`"
+                  title="预览"
+                  @click="previewClassroomResource(resource)"
+                >
+                  <Eye :size="15" />
+                </button>
+                <button
+                  type="button"
+                  class="resource-item-action"
+                  :aria-label="`下载${resourceTitle(resource)}`"
+                  title="下载"
+                  @click="downloadClassroomResource(buildPreviewItem(resource))"
+                >
+                  <Download :size="15" />
+                </button>
               </span>
-              <strong>{{ fileTypeLabel(resource) }}</strong>
-            </button>
+            </article>
           </div>
           <div v-else class="resource-empty-state">当前节点还没有资源，点击下方按钮开始生成。</div>
           <p v-if="resourceGenerationStatus" class="resource-generation-status" aria-live="polite">
@@ -262,7 +289,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Download, ExternalLink, FileText, GitBranch, Lightbulb, LoaderCircle, Newspaper, Pause, Play, Presentation, Volume2, X } from 'lucide-vue-next'
+import { ArrowLeft, Download, ExternalLink, Eye, FileText, GitBranch, Lightbulb, LoaderCircle, Newspaper, Pause, Play, Presentation, Volume2, X } from 'lucide-vue-next'
 import { generateNodeClassroom, generatePathNodeQuiz, generatePathNodeResourcesStream, getClassroomTransition, getNodeClassroom, narrateClassroomText, streamClassroomChatMessage } from '../api/learningPath'
 import { downloadWithToken, resolveApiUrl } from '../api/config'
 import { getGeneratedResource } from '../api/resource'
@@ -435,7 +462,7 @@ const normalizeSegment = (raw, index) => {
   const normalizedPoints = listValue(contentPoints, 5, 70)
   return {
     id, type: String(raw?.type || ''), title: clip(raw?.title, 28), subtitle: clip(raw?.subtitle, 42), intent: clip(raw?.intent, 20),
-    script: clip(raw?.teacher_speech || raw?.script, 240),
+    script: clip(raw?.teacher_speech || raw?.script, 360),
     points: normalizedPoints,
     example: clip(raw?.example || raw?.visual_hint, 100), interaction: interactionFor({ ...raw, id, type: raw?.type }),
     resourceRefs: Array.isArray(raw?.resource_refs) ? raw.resource_refs.filter(item => item && typeof item === 'object').slice(0, 3) : [],
@@ -993,4 +1020,15 @@ button { font:inherit; }
 @media(max-width:680px){.module-nav{grid-template-columns:repeat(4,minmax(78px,1fr))}.lesson-summary{grid-column:auto}.classroom-waiting-panel{width:calc(100% - 32px);padding:20px}.classroom-waiting-grid{grid-template-columns:1fr;gap:18px}.waiting-tip-section{padding-top:16px;padding-left:0;border-top:1px solid #dcebf7;border-left:0}.waiting-dual-grid{grid-template-columns:1fr;gap:12px}.waiting-slide{min-height:144px;padding:16px}.waiting-slide h3{font-size:18px}.waiting-slide p{font-size:13px;line-height:1.65}}
 @media(max-width:680px){.exercise-options{grid-template-columns:1fr;max-height:180px}.exercise-actions{flex-wrap:wrap}.exercise-check-button,.exercise-open-button{flex:1;min-width:120px}}
 .message-streaming-status{display:inline-flex;align-items:center;gap:5px;margin-top:7px;color:#6e96bb;font-size:11px;font-weight:800}.message-streaming-status:after{width:5px;height:5px;border-radius:50%;background:#4c8ccb;box-shadow:9px 0 #91b9dc,18px 0 #c5dced;content:'';animation:classroom-typing 1s steps(3,end) infinite}@keyframes classroom-typing{50%{opacity:.35}}
+.resource-item{position:relative;display:grid;place-items:center;min-height:88px;padding:10px 38px 10px 8px;cursor:default}
+.resource-item:hover{border-color:#b7d3ec;background:#f8fbff;box-shadow:0 8px 18px rgba(38,93,150,.08);transform:translateY(-1px)}
+.resource-item-main{display:grid;place-items:center;gap:8px;width:100%;min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:center;cursor:pointer}
+.resource-item-main:disabled{cursor:wait;opacity:.62}
+.resource-item-copy{display:block;min-width:0;max-width:100%}
+.resource-item-copy strong{display:block;overflow:hidden;color:#174b91;font-size:12px;line-height:1.2;text-align:center;text-overflow:ellipsis;white-space:nowrap}
+.resource-item-actions{position:absolute;top:50%;right:3px;display:flex;flex-direction:column;align-items:center;gap:3px;transform:translateY(-50%)}
+.resource-item-action{display:grid;place-items:center;width:27px;height:24px;padding:0;border:1px solid #c9e1f4;border-radius:6px;color:#2869ab;background:#fff;cursor:pointer}
+.resource-item-action:hover:not(:disabled){border-color:#2869ab;color:#fff;background:#2869ab}
+.resource-item-action:disabled{cursor:not-allowed;opacity:.45}
+@media(max-width:680px){.resource-item{min-height:80px;padding:8px 34px 8px 5px}.resource-item-actions{right:2px;gap:3px}.resource-item-action{width:25px;height:23px}}
 </style>

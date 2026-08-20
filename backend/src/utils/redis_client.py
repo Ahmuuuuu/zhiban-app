@@ -105,6 +105,21 @@ async def cache_set(key: str, value: Any, ttl: int):
 #  限流助手（固定窗口，INCR + EXPIRE）
 # ═══════════════════════════════════════════════
 
+async def check_rate_limit_key(prefix: str, identity: str, max_requests: int, window: int = 60) -> bool:
+    """按任意匿名身份限流，例如客户端 IP 或邮箱。"""
+    if not identity:
+        return True
+    try:
+        r = await get_redis()
+        key = f"ratelimit:{prefix}:{identity}"
+        count = await r.incr(key)
+        if count == 1:
+            await r.expire(key, window)
+        return count <= max_requests
+    except Exception:
+        return True  # Redis 不可用时保持现有降级策略
+
+
 async def check_rate_limit(prefix: str, user_id: int, max_requests: int, window: int = 60) -> bool:
     """检查是否超过限流阈值
 
@@ -117,17 +132,7 @@ async def check_rate_limit(prefix: str, user_id: int, max_requests: int, window:
     Returns:
         True = 通过（未超限），False = 被限流（超限）
     """
-    if not user_id:
-        return True
-    try:
-        r = await get_redis()
-        key = f"ratelimit:{prefix}:user:{user_id}"
-        count = await r.incr(key)
-        if count == 1:
-            await r.expire(key, window)
-        return count <= max_requests
-    except Exception:
-        return True  # Redis 不可用时放行
+    return await check_rate_limit_key(prefix, f"user:{user_id}" if user_id else "", max_requests, window)
 
 
 # ═══════════════════════════════════════════════

@@ -76,7 +76,7 @@ def _classroom_segment_narration_text(segment: dict[str, Any] | None) -> str:
     """构造单幕旁白，和前端课堂卡片展示范围保持一致以命中 TTS 缓存。"""
     if not isinstance(segment, dict):
         return ""
-    script = _clip(segment.get("teacher_speech") or segment.get("script") or "", 240)
+    script = _clip(segment.get("teacher_speech") or segment.get("script") or "", 360)
     raw_points = [
         *(segment.get("points") if isinstance(segment.get("points"), list) else []),
         *(segment.get("board_items") if isinstance(segment.get("board_items"), list) else []),
@@ -96,7 +96,7 @@ def _classroom_segment_narration_text(segment: dict[str, Any] | None) -> str:
     if points:
         numbered = "。".join(f"第{index + 1}点，{point}" for index, point in enumerate(points))
         parts.append(f"抓住这几点。{numbered}")
-    return _clip("。".join(parts), 500)
+    return _clip("。".join(parts), 680)
 
 
 def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
@@ -149,7 +149,7 @@ async def generate_classroom_audio(
     voice: str = "zh-CN-XiaoxiaoNeural",
     rate: str = "+0%",
 ) -> dict[str, Any]:
-    cleaned = clean_for_tts(_clip(text, 520))
+    cleaned = clean_for_tts(_clip(text, 700))
     if not cleaned:
         raise ValueError("讲解文本不能为空")
 
@@ -565,8 +565,8 @@ def _normalize_lesson(
             "title": _clip(item.get("title") or "", 24),
             "subtitle": _clip(item.get("subtitle") or "", 56),
             "intent": _clip(item.get("intent") or "", 28),
-            "teacher_speech": _clip(script, 360),
-            "script": _clip(script, 360),
+            "teacher_speech": _clip(script, 480),
+            "script": _clip(script, 480),
             "board_title": _clip(item.get("board_title") or "", 32),
             "board_items": [
                 _clip(point, 56)
